@@ -29,10 +29,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - name: Template test dependency
-        run: sudo apt-get update -qq && sudo apt-get install -y gettext-base
+      - name: Test dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Intent, rendering, output validation, history and translation
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual
+      - name: Raid and country-name regression tests
+        run: python3 -m unittest tests.test_raid_research tests.test_country_stage_names
       - name: Shell syntax and comment delivery contracts
         run: |
           bash -n broadcast/comment.sh broadcast/radio_engine.sh

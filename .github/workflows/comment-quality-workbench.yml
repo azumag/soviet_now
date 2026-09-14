@@ -21,9 +21,28 @@ jobs:
           ref: fix/comment-reply-quality-20260915
           persist-credentials: true
       - name: Apply exact reviewed source (fail on drift)
-        run: python3 tools/_apply_comment_quality_20260915.py
-      - name: Install test-only template dependency
-        run: sudo apt-get update -qq && sudo apt-get install -y gettext-base
+        run: |
+          python3 tools/_apply_comment_quality_20260915.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('broadcast/comment.sh')
+          s = p.read_text()
+          start = s.index('# All reply routes share this contract')
+          end = s.index('# カテゴリ別の追加指示', start)
+          block = s[start:end]
+          s = s[:start] + s[end:]
+          s = s.rstrip() + '\n\n' + block
+          assert hashlib.sha256(s.encode()).hexdigest() == 'e129f6fc73a19a7b64c0f3a99834b724cc20a7767a6989c1e1ad347b2d0ff63b'
+          p.write_text(s)
+          p = Path('tests/test_comment_reply_quality.py')
+          s = p.read_text().replace('for key in re.findall(', 'for variable in re.findall(').replace("self.env[key] = '(none)'", "self.env[variable] = '(none)'")
+          assert hashlib.sha256(s.encode()).hexdigest() == '897b204f89d1cc56ef21400165aa068ceec9cc7b01547633658206816957a139'
+          p.write_text(s)
+          PY
+          git add broadcast/comment.sh tests/test_comment_reply_quality.py
+      - name: Install test-only template and status dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Offline regression tests
         run: |
           python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual
