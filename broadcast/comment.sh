@@ -1021,6 +1021,13 @@ print("\n".join(hints) if hints else "（なし）")
 PY
 }
 
+# soren91(メリケンAI)中に本編(ソレンゲーム)のスコア歴を読み上げさせないための
+# 差し替えメモ。ソ連ゲーム91はスコアの概念がなく順位で振り返るゲームなので、
+# 本編のスコア・建国統計を「いまの画面のゲームのもの」として注入すると誤読する。
+_comment_soren91_game_state_note() {
+	printf '%s' "- いまのメイン画面はソ連ゲーム91(対戦版/メリケンAI)です。このゲームにはスコアの概念がなく、順位(何人抜きで何位だったか)で振り返ります。本編(ソレンゲーム)のスコア・建国統計は、いまの画面のゲームのものではないので、91のスコアとして読み上げないこと。"
+}
+
 _build_comment_game_context() {
 	local gs_file="${1:-$GAME_STATE}"
 	python3 - "$gs_file" "score_history.txt" "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY'
@@ -3378,8 +3385,18 @@ generate_comment_response() {
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
+	# いま画面に出ているゲームのモード。soren91(メリケンAI)中はソレンゲーム本編の
+	# スコア歴を「現在のゲームのもの」として読ませない。ソ連ゲーム91はスコアの概念が
+	# なく順位で振り返るゲームなので、本編(ソレンゲーム)のスコア履歴を注入すると
+	# 91のスコアとして誤って読み上げてしまう(2026-09-14 実機報告)。
+	local _spoken_ctx_mode=""
+	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	local game_state_context=""
-	game_state_context=$(_build_comment_game_context "$GAME_STATE")
+	if [ "$_spoken_ctx_mode" = "soren91" ]; then
+		game_state_context=$(_comment_soren91_game_state_note)
+	else
+		game_state_context=$(_build_comment_game_context "$GAME_STATE")
+	fi
 	local celebration_history_context=""
 	celebration_history_context=$(_build_comment_celebration_history_context)
 
@@ -3405,8 +3422,6 @@ generate_comment_response() {
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context | _sanitize_comment_prompt_context)
 	local recent_spoken_comment_context=""
-	local _spoken_ctx_mode=""
-	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local viewer_memory_context=""
 	viewer_memory_context=$(_build_comment_viewer_memory_context "$comment_prompt_batch_file" "$viewer_chat_source" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
