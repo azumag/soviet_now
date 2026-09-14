@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { join } from 'path';
 import { execFile } from 'child_process';
 import sharp from 'sharp';
+import { STRATEGY_CONTRACT, validateStrategyBehavior } from './strategy_contract.mjs';
 import {
   archiveStrategySnapshotByHash,
   buildImproveReferenceContext,
@@ -437,16 +438,18 @@ ${lineageContext ? `${lineageContext}\n` : ''}\
 ## Instructions
 Based on the game analysis${screenshots.length > 0 ? ' and screenshots' : ''} above, improve the strategy.mjs code.
 The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
-where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, nextPieces: [{type, r}, ...] (up to 3), hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount, gauge} } (gauge: ojama gauge level 0-1, higher = ojama drop imminent)
+where boardState has: { pieces: [{type, x, y, r, confidence}], next: {type, r}, nextPieces: [{type, r}|null, ...] (three fixed slots), hold: {type, r}|null, holdKnownEmpty?: boolean, canHold: boolean, confidence: number, garbage: {ratio, height, pixelCount, gauge, columns?: [{left,right,top}]} } (gauge: ojama gauge level 0-1, higher = ojama drop imminent)
 
 HOLD mechanic: right-click saves current piece to HOLD slot, or swaps with held piece.
-- boardState.hold: currently held piece (null if empty)
+- boardState.hold: currently detected held piece (null means empty OR unrecognized; require holdKnownEmpty to assume empty)
 - boardState.canHold: true if hold is available this turn (resets after each drop)
 - Return hold: true to use HOLD (x is ignored, bot will re-analyze after swap)
 - HOLD logic MUST be preserved in any improvement.
 
 Prefer changes that improve stable survival turns against the current anchor.
 Use rank as a strong hint only when it was actually detected; do not overfit to sparse rank samples.
+
+${STRATEGY_CONTRACT}
 
 Return ONLY the complete improved strategy.mjs code, enclosed in a single code block.
 Focus on practical improvements based on the observed game behavior.`;
@@ -762,7 +765,7 @@ async function validateStrategy(code) {
       const result = module.decide(state);
 
       // 戻り値の形式チェック
-      if (typeof result !== 'object' || typeof result.x !== 'number' || typeof result.reason !== 'string') {
+      if (!result || typeof result !== 'object' || !Number.isFinite(result.x) || typeof result.reason !== 'string') {
         console.log(`[improve] Validation failed (${label}): invalid return format`, result);
         return { valid: false, error: `decide() returned invalid format in "${label}" test: ${JSON.stringify(result)}. Must return { x: number, reason: string }` };
       }
@@ -775,6 +778,11 @@ async function validateStrategy(code) {
 
       console.log(`[improve] Smoke test "${label}" passed:`, JSON.stringify(result));
     }
+
+    // Shared by both single-game and standalone adoption paths. Syntax-only
+    // smoke tests previously accepted NaN and deadline-seeking strategies.
+    const behavior = validateStrategyBehavior(module.decide);
+    if (!behavior.valid) return behavior;
 
     // 5. ESLint 静的解析: 未定義変数の検出
     try {
