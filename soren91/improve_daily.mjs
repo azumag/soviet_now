@@ -11,19 +11,20 @@
  * 想定運用: VM の soren91 ランタイムを repo チェックアウトの soren91/ へ同期してから
  * このスクリプトを実行する (同期はスケジューラ側の責務)。実行後は改善PRが作られ、
  * PR本文の `<!-- improve-daily: from=.. to=.. -->` を scheduler が読み、マージ確認後に
- * `--reconcile` で消費済みファイルを消す。
+ * `--reconcile` で消費済み (lastConsumedGame) を記録する。
+ * **ファイル削除はここでは行わない** — コーナー起動時の cleanup_retention.mjs
+ * (直近3日保持) が担当する。
  *
  * サブコマンド:
  *   propose     (既定) 新しい試合から改善候補を作り、strategy.mjs を書き換えて PR を作る
- *   reconcile   直近の改善PRがマージ済みなら、消費済みの入力を消して state を進める
+ *   reconcile   直近の改善PRがマージ済みなら、消費済み (lastConsumedGame) を記録する
  *
  * 主なオプション:
  *   --runtime-dir <dir>  ランタイム (default: このスクリプトのあるディレクトリ)
  *   --repo-dir <dir>     git ルート (default: <runtime-dir>/..)
  *   --state <path>       state ファイル (default: <runtime-dir>/tmp/state/improve_daily.json)
- *   --dry-run            外部呼び出し/git/gh/削除をせず、やることだけ表示
- *   --no-pr              PR を作らず、候補と manifest の書き出しだけ行う
- *   --clear-cmd <cmd>    reconcile 時のクリア実行コマンド (例: 'ssh vm bash -s')
+ *   --dry-run            外部呼び出し/git/gh をせず、やることだけ表示
+ *   --no-pr              PR を作らず、候補の書き出しだけ行う
  */
 
 import 'dotenv/config';
@@ -44,7 +45,6 @@ function parseArgs(argv) {
     state: null,
     dryRun: false,
     noPr: false,
-    clearCmd: process.env.SOREN91_DAILY_CLEAR_CMD || '',
     base: process.env.SOREN91_DAILY_BASE || 'main',
   };
   const positional = [];
@@ -63,7 +63,6 @@ function parseArgs(argv) {
       case '--runtime-dir': opts.runtimeDir = resolve(next()); break;
       case '--repo-dir': opts.repoDir = resolve(next()); break;
       case '--state': opts.state = resolve(next()); break;
-      case '--clear-cmd': opts.clearCmd = next(); break;
       case '--base': opts.base = next(); break;
       case '--dry-run': opts.dryRun = true; break;
       case '--no-pr': opts.noPr = true; break;
@@ -122,28 +121,6 @@ export function pendingRange(runtimeDir, lastConsumedGame) {
   return { games, from, to, fresh, hasFresh: fresh.length > 0 };
 }
 
-/**
- * 改善PRに埋め込むクリア manifest を作る。**消費した試合だけ**を範囲指定する
- * (glob 全消しはしない: PRレビュー中に増えた未消費の試合を消さないため)。
- * なおディスクの恒常的な有界化は、コーナー起動時の cleanup_retention.mjs が担う。
- */
-export function buildClearManifest(fromGame, toGame) {
-  const pad = n => String(n).padStart(4, '0');
-  const games = [];
-  const targets = [];
-  for (let i = fromGame; i <= toGame; i += 1) {
-    games.push(i);
-    targets.push(
-      `tmp/summaries/game_${pad(i)}.json`,
-      `tmp/summaries/ranking_${pad(i)}.png`,
-      `game_history/game_${pad(i)}.jsonl`,
-      `tmp/game_screenshots/game_${pad(i)}`,
-      `tmp/strategy_snapshots/game_${pad(i)}_strategy.mjs`,
-    );
-  }
-  return { fromGame, toGame, games, targets };
-}
-
 export function formatPrMarker(fromGame, toGame) {
   return `<!-- improve-daily: from=${fromGame} to=${toGame} -->`;
 }
@@ -183,12 +160,10 @@ async function propose(opts) {
   const toGame = pending.to;
   log(`改善対象: game #${fromGame}..#${toGame} (${pending.fresh.length} 試合)`);
 
-  const manifest = buildClearManifest(fromGame, toGame);
   const marker = formatPrMarker(fromGame, toGame);
 
   if (opts.dryRun) {
     log('[dry-run] モデル呼び出し・strategy.mjs 書き換え・PR作成はスキップします。');
-    log('[dry-run] clear manifest:', JSON.stringify(manifest.targets));
     log('[dry-run] PR marker:', marker);
     return 0;
   }
@@ -259,7 +234,8 @@ async function propose(opts) {
     marker,
     '',
     'マージ確定後に scheduler が `improve_daily.mjs --reconcile` を実行し、',
-    `消費済みの入力を消します: ${manifest.targets.join(', ')}`,
+    '消費済み (lastConsumedGame) を記録します。',
+    'ファイル削除はコーナー起動時の `cleanup_retention.mjs` (直近3日保持) が担当します。',
   ].join('\n');
 
   const git = (args, { allowFail = false } = {}) => {
@@ -293,23 +269,6 @@ async function propose(opts) {
 
 // ------------------------------ reconcile -----------------------------------
 
-function runClear(opts, manifest) {
-  const cmds = manifest.targets.map(t => `rm -f ${t} 2>/dev/null; rm -rf ${t} 2>/dev/null`);
-  if (!opts.clearCmd) {
-    log('clear コマンドが未設定です。以下をスケジューラ側で実行してください:');
-    for (const c of cmds) log('  ' + c);
-    return false;
-  }
-  const script = cmds.join('\n') + '\n';
-  const r = spawnSync(opts.clearCmd, { shell: true, input: script, encoding: 'utf-8' });
-  if (r.status !== 0) {
-    log(`clear 実行が失敗: ${(r.stderr || '').trim()}`);
-    return false;
-  }
-  log('消費済み入力をクリアしました。');
-  return true;
-}
-
 function reconcile(opts) {
   const state = loadState(opts);
   const pending = state.pendingPr;
@@ -336,18 +295,16 @@ function reconcile(opts) {
     saveState(opts, { ...state, pendingPr: null });
     return 0;
   }
-  const manifest = buildClearManifest(pending.fromGame, pending.toGame);
   if (opts.dryRun) {
-    log('[dry-run] clear manifest:', JSON.stringify(manifest.targets));
+    log(`[dry-run] lastConsumedGame を ${pending.toGame} へ進めます。`);
     return 0;
   }
-  const cleared = runClear(opts, manifest);
   saveState(opts, {
     ...state,
     pendingPr: null,
     lastConsumedGame: Math.max(state.lastConsumedGame || 0, pending.toGame),
-    ...(cleared ? {} : { clearPending: manifest }),
   });
+  log(`消費済みを記録: lastConsumedGame=${pending.toGame} (ファイル削除はコーナー起動時の retention)`);
   return 0;
 }
 
