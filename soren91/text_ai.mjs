@@ -286,7 +286,11 @@ export function runOpencodeText(tag, promptText, options = {}) {
 
   return new Promise((resolve, reject) => {
     const command = `LC_ALL=en_US.UTF-8 opencode run --agent ${shellSingleQuote(agent)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
-    execFile('script', ['-q', rawFile, 'bash', '-lc', command], {
+    // util-linux の script は `script -q -e -c '<cmd>' <file>` が正しい。
+    // 旧来の `script -q <file> bash -lc '<cmd>'` はこのVMで exit=1・出力空になり、
+    // opencode フォールバックが常に失敗していた (2026-09-15 実測)。
+    const scriptCommand = `bash -lc ${shellSingleQuote(command)}`;
+    execFile('script', ['-q', '-e', '-c', scriptCommand, rawFile], {
       encoding: 'utf-8',
       timeout: options.timeoutMs || config.opencodeTimeoutMs,
       env: {
