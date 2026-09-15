@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ニュースの出典は読み上げず、帰属表示は字幕・チャット側だけで行うことを検証する。
+# ニュースの出典は内部判断材料に残し、読み上げず字幕・チャット側だけで帰属することを検証する。
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,6 +16,7 @@ PAST_NEWS_READ_SOURCES="$TMP/past_sources.txt"
 : >"$PAST_NEWS_READ_SOURCES"
 
 . "$ROOT/broadcast/radio_news.sh"
+. "$ROOT/broadcast/radio_news_context.sh"
 . "$ROOT/core/phyrogenetic.sh"
 
 cat >tmp/news_meta.json <<'JSON'
@@ -42,15 +43,20 @@ JSON
 blocks=$'■ 国内政策ニュース\nRSS概要です。\n\n■ 海外の市民社会ニュース\nRSS summary.'
 prepared="$(_prepare_news_prompt_blocks "$blocks")"
 
-if printf '%s' "$prepared" | grep -q '出典:'; then
-	not_ok 'no source line is exposed to the generation prompt'
+if printf '%s' "$prepared" | grep -q '【内部メタ情報・読み上げ禁止】媒体=Google News 日本政治 / 公開日時=2026-08-30T01:00:00Z'; then
+	ok 'source and published-at remain available as explicitly non-spoken internal context'
 else
-	ok 'no source line is exposed to the generation prompt'
+	not_ok 'source and published-at remain available as explicitly non-spoken internal context'
 fi
-if printf '%s' "$prepared" | grep -q '公開日時:'; then
-	not_ok 'no published-at line is exposed to the generation prompt'
+if printf '%s' "$prepared" | grep -q '【内部メタ情報・読み上げ禁止】媒体=Global Voices(EN) / 公開日時=2026-08-30T02:00:00Z'; then
+	ok 'Global Voices provenance remains available as explicitly non-spoken internal context'
 else
-	ok 'no published-at line is exposed to the generation prompt'
+	not_ok 'Global Voices provenance remains available as explicitly non-spoken internal context'
+fi
+if printf '%s' "$prepared" | grep -q 'https://example.test'; then
+	not_ok 'source URLs are not exposed to the generation prompt'
+else
+	ok 'source URLs are not exposed to the generation prompt'
 fi
 if printf '%s' "$prepared" | grep -q '国内政策ニュース' && printf '%s' "$prepared" | grep -q 'RSS概要です。'; then
 	ok 'non-attribution news material remains available for reconstruction'
@@ -104,6 +110,11 @@ if [ "$(grep -c '出典名・媒体名・配信元・URL・公開日時は一切
 	ok 'generated and self-searched news prompts enforce the same no-source policy'
 else
 	not_ok 'generated and self-searched news prompts enforce the same no-source policy'
+fi
+if grep -q 'broadcast/radio_news_context.sh' "$ROOT/eloop_lib.sh"; then
+	ok 'runtime loads the internal provenance wrapper after radio_news'
+else
+	not_ok 'runtime loads the internal provenance wrapper after radio_news'
 fi
 
 exit "$FAIL"
