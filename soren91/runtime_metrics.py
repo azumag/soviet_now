@@ -21,8 +21,6 @@ from pathlib import Path
 TURN_RE = re.compile(r"\[game\] Turn \d+: .*?reason=([A-Za-z0-9_-]+)")
 DECISION_RE = re.compile(r"\[game\] Decision: .*?reason=(.*)$")
 SUMMARY_RE = re.compile(r"\[game\] Summary: turns=(\d+), rank=([^,\s]+)")
-TEMPORAL_RE = re.compile(r"(?:^|[;\s])temporalNext=(\d+)(?:$|[;\s])")
-EMPTY_HOLD_RE = re.compile(r"(?:^|[;\s])holdEmptyKnown=([01])(?:$|[;\s])")
 
 
 def _percentile(values: list[int], q: float) -> int | None:
@@ -40,9 +38,8 @@ class MetricsState:
         self.started_at = float(started_at if started_at is not None else time.time())
         self.decisions = 0
         self.hold_decisions = 0
-        self.hold_empty_known_decisions = 0
-        self.temporal_next_decisions = 0
-        self.temporal_next_slots = 0
+        self.temporal_next_observations = 0
+        self.hold_empty_observations = 0
         self.observations = 0
         self.reasons: Counter[str] = Counter()
         self.games_completed = 0
@@ -60,15 +57,20 @@ class MetricsState:
 
         turn = TURN_RE.search(line)
         if turn:
-            reason = turn.group(1)
+            raw_reason = turn.group(1)
             self.observations += 1
-            # Fixed/bounded reason taxonomy. Unknown strings collapse to other.
-            if reason.startswith("stable-slow-advance"):
+            if "temporal-next" in raw_reason:
+                self.temporal_next_observations += 1
+            if "hold-empty" in raw_reason:
+                self.hold_empty_observations += 1
+            # Fixed/bounded reason taxonomy. Telemetry suffixes do not create
+            # unbounded keys in the public metrics document.
+            if raw_reason.startswith("stable-slow-advance"):
                 reason = "stable-slow-advance"
-            elif reason == "stable":
+            elif raw_reason.startswith("stable"):
                 reason = "stable"
-            elif reason in {"confirm-frame", "preview-changed", "board-moving", "unknown-current", "uncalibrated", "invalid-board"}:
-                pass
+            elif raw_reason in {"confirm-frame", "preview-changed", "board-moving", "unknown-current", "uncalibrated", "invalid-board"}:
+                reason = raw_reason
             else:
                 reason = "other"
             self.reasons[reason] += 1
@@ -84,15 +86,6 @@ class MetricsState:
             self.last_decision_at = now
             if "[HOLD]" in line or reason_text.startswith("HOLD:"):
                 self.hold_decisions += 1
-            temporal = TEMPORAL_RE.search(reason_text)
-            if temporal:
-                slots = max(0, min(int(temporal.group(1)), 2))
-                if slots:
-                    self.temporal_next_decisions += 1
-                    self.temporal_next_slots += slots
-            empty_hold = EMPTY_HOLD_RE.search(reason_text)
-            if empty_hold and empty_hold.group(1) == "1":
-                self.hold_empty_known_decisions += 1
             return True
 
         summary = SUMMARY_RE.search(line)
@@ -127,9 +120,8 @@ class MetricsState:
             "started_at": int(self.started_at),
             "decisions": self.decisions,
             "hold_decisions": self.hold_decisions,
-            "hold_empty_known_decisions": self.hold_empty_known_decisions,
-            "temporal_next_decisions": self.temporal_next_decisions,
-            "temporal_next_slots": self.temporal_next_slots,
+            "temporal_next_observations": self.temporal_next_observations,
+            "hold_empty_observations": self.hold_empty_observations,
             "observations": self.observations,
             "observation_reasons": {
                 key: int(self.reasons.get(key, 0))
