@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# turn-based 戦略の GitHub 永続化 (strategy/persist.sh) の契約テスト。
-#
-# 本番ランタイムは .git を持たないため、eloop_improve.sh の素の git add/commit/push は
-# no-op だった。管理用 clone 経由の永続化が main へ push し、未整備時は no-op、
-# 変更なしは 3 を返すことを保証する。
+# turn-based 戦略の GitHub 永続化契約。
+# runtime の採用戦略は main へ直pushせず、専用 candidate branch + PR に限定する。
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +18,30 @@ seed="$tmp/seed"
 origin="$tmp/origin.git"
 work="$tmp/persist"
 runtime="$tmp/runtime"
-mkdir -p "$seed" "$runtime" "$seed/strategy_helpers" "$runtime/strategy_helpers"
+fakebin="$tmp/bin"
+gh_log="$tmp/gh.log"
+gh_open_pr="$tmp/gh-open-pr"
+mkdir -p "$seed" "$runtime" "$seed/strategy_helpers" "$runtime/strategy_helpers" "$fakebin"
+
+cat > "$fakebin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$GH_LOG"
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "list" ]; then
+  if [ -f "$GH_OPEN_PR" ]; then
+    printf '42\n'
+  fi
+  exit 0
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "create" ]; then
+  touch "$GH_OPEN_PR"
+  printf 'https://example.invalid/pull/42\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$fakebin/gh"
+export PATH="$fakebin:$PATH" GH_LOG="$gh_log" GH_OPEN_PR="$gh_open_pr"
 
 git init -q "$seed"
 git -C "$seed" config user.name t
@@ -49,24 +69,43 @@ SOREN_PERSIST_REPO="$tmp/does-not-exist"
 rc=0; persist_strategy_improve "m" strategy.py || rc=$?
 [ "$rc" -eq 0 ] && pass "missing repo no-op returns 0" || fail "missing repo rc=$rc (want 0)"
 
-# 2) 変更なしは 3
+# 2) runtime == main は 3。PRも作らない。
 SOREN_PERSIST_REPO="$work"
+SOREN_PERSIST_BRANCH="runtime/eloop-improve"
+SOREN_PERSIST_GITHUB_REPO="azumag/soviet_now"
 rc=0; persist_strategy_improve "no-change" strategy.py || rc=$?
 [ "$rc" -eq 3 ] && pass "no change returns 3" || fail "no-change rc=$rc (want 3)"
+[ ! -s "$gh_log" ] && pass "no change does not touch GitHub PR API" || fail "unexpected gh call on no-change"
 
-# 3) 変更ありは main へ push
+# 3) 変更ありは main を変更せず candidate branch + PR へ出す。
 printf 'v2-improved\n' > "$runtime/strategy.py"
 printf 'h2\n' > "$runtime/strategy_helpers/a.sh"
 rc=0; persist_strategy_improve "eloop Improve test" strategy.py strategy_helpers || rc=$?
-[ "$rc" -eq 0 ] && pass "changed push returns 0" || fail "push rc=$rc (want 0)"
+[ "$rc" -eq 0 ] && pass "changed candidate returns 0" || fail "candidate rc=$rc (want 0)"
 
-got="$(git --git-dir="$origin" show main:strategy.py)"
-[ "$got" = "v2-improved" ] && pass "strategy.py persisted to origin/main" || fail "origin strategy.py='$got'"
-got2="$(git --git-dir="$origin" show main:strategy_helpers/a.sh)"
-[ "$got2" = "h2" ] && pass "strategy_helpers persisted to origin/main" || fail "origin helper='$got2'"
+main_value="$(git --git-dir="$origin" show main:strategy.py)"
+[ "$main_value" = "v1" ] && pass "origin/main remains unchanged" || fail "origin/main was mutated: '$main_value'"
+candidate_value="$(git --git-dir="$origin" show runtime/eloop-improve:strategy.py)"
+[ "$candidate_value" = "v2-improved" ] && pass "strategy persisted to candidate branch" || fail "candidate strategy='$candidate_value'"
+candidate_helper="$(git --git-dir="$origin" show runtime/eloop-improve:strategy_helpers/a.sh)"
+[ "$candidate_helper" = "h2" ] && pass "helper persisted to candidate branch" || fail "candidate helper='$candidate_helper'"
+grep -q '^pr create .*--base main .*--head runtime/eloop-improve ' "$gh_log" \
+  && pass "candidate opens PR against main" || fail "PR create contract missing"
+[ "$(grep -c '^pr create ' "$gh_log")" -eq 1 ] || fail "expected exactly one PR creation"
 
-# 4) 再度呼ぶと変更なしで 3 (多重 push しない)
-rc=0; persist_strategy_improve "again" strategy.py strategy_helpers || rc=$?
-[ "$rc" -eq 3 ] && pass "idempotent second call returns 3" || fail "second call rc=$rc (want 3)"
+# 4) 同じ runtime を再度永続化しても branch を書き換えず、既存PRを再利用して 3。
+rc=0; persist_strategy_improve "eloop Improve same" strategy.py strategy_helpers || rc=$?
+[ "$rc" -eq 3 ] && pass "same candidate returns 3" || fail "same candidate rc=$rc (want 3)"
+[ "$(grep -c '^pr create ' "$gh_log")" -eq 1 ] && pass "same candidate does not duplicate PR" || fail "duplicate PR created"
+
+# 5) 新しい採用結果は同じ専用branchを更新するが、mainは依然不変。
+printf 'v3-improved\n' > "$runtime/strategy.py"
+rc=0; persist_strategy_improve "eloop Improve v3" strategy.py strategy_helpers || rc=$?
+[ "$rc" -eq 0 ] && pass "updated candidate returns 0" || fail "updated candidate rc=$rc (want 0)"
+main_value="$(git --git-dir="$origin" show main:strategy.py)"
+[ "$main_value" = "v1" ] && pass "origin/main still unchanged after update" || fail "origin/main changed after candidate update"
+candidate_value="$(git --git-dir="$origin" show runtime/eloop-improve:strategy.py)"
+[ "$candidate_value" = "v3-improved" ] && pass "candidate branch updates to latest adopted strategy" || fail "updated candidate='$candidate_value'"
+[ "$(grep -c '^pr create ' "$gh_log")" -eq 1 ] && pass "updated candidate reuses open PR" || fail "updated candidate duplicated PR"
 
 echo "ALL PASS"
