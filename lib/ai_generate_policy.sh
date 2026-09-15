@@ -67,6 +67,69 @@ _ai_failure_backoff_remaining() {
 	printf '%s\n' "$rem"
 }
 
+_ai_family_backoff_dir() {
+	if [ -n "${AI_FAMILY_BACKOFF_DIR:-}" ]; then
+		printf '%s\n' "$AI_FAMILY_BACKOFF_DIR"
+	elif [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/ai_family_backoff\n' "$ELOOP_LIB_DIR"
+	else
+		printf 'tmp/state/ai_family_backoff\n'
+	fi
+}
+
+_ai_family_backoff_file() {
+	local family="$1"
+	printf '%s/%s\n' "$(_ai_family_backoff_dir)" "$(_ai_lock_sanitize_key "$family")"
+}
+
+_ai_family_backoff_check() {
+	local family="$1" bf_file now bf_until
+	bf_file=$(_ai_family_backoff_file "$family")
+	[ -f "$bf_file" ] || return 0
+	now=$(date +%s)
+	bf_until=$(cat "$bf_file" 2>/dev/null || echo 0)
+	case "$bf_until" in ''|*[!0-9]*) bf_until=0 ;; esac
+	if [ "$now" -lt "$bf_until" ]; then
+		return 1
+	fi
+	rm -f "$bf_file" 2>/dev/null || true
+	return 0
+}
+
+_ai_family_backoff_set() {
+	local family="$1" backoff_sec="$2" bf_file bf_until
+	bf_file=$(_ai_family_backoff_file "$family")
+	mkdir -p "$(dirname "$bf_file")" 2>/dev/null || true
+	bf_until=$(( $(date +%s) + backoff_sec ))
+	printf '%s\n' "$bf_until" >"$bf_file" 2>/dev/null || true
+}
+
+_ai_family_backoff_remaining() {
+	local family="$1" bf_file now bf_until rem
+	bf_file=$(_ai_family_backoff_file "$family")
+	[ -f "$bf_file" ] || { printf '0\n'; return; }
+	now=$(date +%s)
+	bf_until=$(cat "$bf_file" 2>/dev/null || echo 0)
+	case "$bf_until" in ''|*[!0-9]*) bf_until=0 ;; esac
+	rem=$((bf_until - now))
+	[ "$rem" -lt 0 ] && rem=0
+	printf '%s\n' "$rem"
+}
+
+_ai_family_backoff_sec() {
+	local family="$1" value=60
+	case "$family" in
+	vercel) value="${AI_VERCEL_FAMILY_BACKOFF_SEC:-60}" ;;
+	esac
+	case "$value" in ''|*[!0-9]*) value=60 ;; esac
+	[ "$value" -lt 1 ] && value=60
+	# Family suppression is deliberately short; agent-level quota backoff keeps
+	# its existing longer duration. Do not let a config typo turn this into a
+	# multi-hour provider outage.
+	[ "$value" -gt 300 ] && value=300
+	printf '%s\n' "$value"
+}
+
 _ai_failure_streak_file() {
 	local label="$1" agent="$2" scope key
 	scope=$(_ai_failure_backoff_scope "$label")
@@ -153,6 +216,7 @@ ai_generate_list() {
 	IFS="$_IFS_save"
 
 	local skipped_rate_backoff=()
+	local skipped_family_backoff=()
 	local skipped_failure_backoff=()
 
 	for agent in "${agents[@]}"; do
@@ -163,6 +227,21 @@ ai_generate_list() {
 			log "[${label}] invalid agent spec skipped: ${agent}" >&2
 			continue
 		fi
+
+		# A single Vercel 429 remains agent-scoped. Only a previous chain that
+		# proved >=2 distinct Vercel 429s, or this chain after its second distinct
+		# Vercel 429, activates the short provider-family breaker. Non-Vercel
+		# candidates are never suppressed by this check.
+		case "$agent" in
+		vercel:*)
+			if ! _ai_family_backoff_check "vercel"; then
+				_rem=$(_ai_family_backoff_remaining "vercel")
+				log "[${label}] Vercel family rate-limit backoff skip: ${agent} (${_rem}s remaining)" >&2
+				skipped_family_backoff+=("$agent")
+				continue
+			fi
+			;;
+		esac
 
 		# 明示的 429/quota backoff は用途を跨いで共有する。
 		if ! _ai_backoff_check "$agent"; then
@@ -225,6 +304,12 @@ ai_generate_list() {
 					[ "$_vercel_agent" = "$agent" ] && _vercel_seen=1 && break
 				done
 				[ "$_vercel_seen" -eq 1 ] || vercel_rate_limit_agents+=("$agent")
+				if [ "${#vercel_rate_limit_agents[@]}" -ge 2 ]; then
+					local family_backoff_sec
+					family_backoff_sec=$(_ai_family_backoff_sec "vercel")
+					_ai_family_backoff_set "vercel" "$family_backoff_sec"
+					log "[${label}] multiple distinct Vercel rate limits in one chain → family backoff ${family_backoff_sec}s" >&2
+				fi
 				;;
 			esac
 			local agent_backoff_sec
@@ -253,8 +338,8 @@ ai_generate_list() {
 		fi
 	done
 
-	if [ "$attempted_count" -eq 0 ] && [ ${#skipped_rate_backoff[@]} -gt 0 ]; then
-		log "[${label}] all available agents include explicit rate-limit backoff; retry later" >&2
+	if [ "$attempted_count" -eq 0 ] && { [ ${#skipped_rate_backoff[@]} -gt 0 ] || [ ${#skipped_family_backoff[@]} -gt 0 ]; }; then
+		log "[${label}] all available agents include explicit rate-limit or family backoff; retry later" >&2
 		saw_rate_limit=1
 	elif [ "$attempted_count" -eq 0 ] && [ ${#skipped_failure_backoff[@]} -gt 0 ]; then
 		log "[${label}] all agents are in scoped provider-failure backoff; retry later" >&2
