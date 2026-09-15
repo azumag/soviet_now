@@ -151,6 +151,8 @@ export function gateObservation(state, calibration, now = Date.now()) {
   const queue = stabilizeQueue(detectedQueue, previous, transition);
   const next = queue[0] || state.next || null;
   const gapMs = previous ? now - previous.at : null;
+  const temporalNextUsed = queue.slice(1).some(piece =>
+    piece?.temporalSource === 'shifted' || piece?.temporalSource === 'same-turn');
 
   const current = {
     ...state,
@@ -163,6 +165,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
   };
 
   let reason = null;
+  let slowAdvanceUsed = false;
   if (!next || next.fallback || !(next.confidence >= 0.58)) reason = 'unknown-current';
   else if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
@@ -173,10 +176,10 @@ export function gateObservation(state, calibration, now = Date.now()) {
     // proves that a turn advanced and that much real time has elapsed, waiting
     // for a second full remote screenshot only halves APM without adding useful
     // settling evidence. Local/fast paths retain the strict two-frame check.
-    const slowAdvance = transition === 'advanced'
+    slowAdvanceUsed = transition === 'advanced'
       && slowCadenceFastPathEnabled()
       && gapMs >= singleFrameAdvanceMs();
-    if (slowAdvance) {
+    if (slowAdvanceUsed) {
       current.stableFrames = 2;
     } else if (previewType(previous.next) !== previewType(next)) {
       reason = 'preview-changed';
@@ -208,6 +211,9 @@ export function gateObservation(state, calibration, now = Date.now()) {
     && !previous.hold.fallback;
   const holdKnownEmpty = !holdEverSeen && emptyHoldFrames >= 2;
 
+  let stableReason = slowAdvanceUsed ? 'stable-slow-advance' : 'stable';
+  if (temporalNextUsed) stableReason += '-temporal-next';
+
   observations.set(calibration, current);
   return {
     ...state,
@@ -218,8 +224,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
     state: reason ? 'DROP' : 'MOVE',
     perception: {
       ready: !reason,
-      reason: reason || (transition === 'advanced' && gapMs >= singleFrameAdvanceMs()
-        && slowCadenceFastPathEnabled() ? 'stable-slow-advance' : 'stable'),
+      reason: reason || stableReason,
       stableFrames: current.stableFrames,
       queueTransition: transition,
       frameGapMs: gapMs,
