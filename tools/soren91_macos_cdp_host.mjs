@@ -94,13 +94,12 @@ export function defaults(env = process.env) {
     // own (often quiet) level. Boost it before the AAC/SRT hop so the Soren91
     // corner is audible next to the comment voice. 1.0 = unchanged.
     audioGain: Number(env.SOREN91_LOCAL_AUDIO_GAIN || 1.0),
-    // Captured game audio is often very quiet (measured ~-31 dBFS peaks at
-    // unity on the production VM), so normalise it to broadcast loudness by
-    // default (EBU R128). Override with any ffmpeg -af chain, or set it empty
-    // to disable normalisation and use audioGain instead.
-    audioFilter: String(
-      env.SOREN91_LOCAL_AUDIO_FILTER ?? 'loudnorm=I=-16:TP=-1.5:LRA=11',
-    ).trim(),
+    // ゲーム音は原則そのまま（Mac tap のネイティブ音量）で配信する。
+    // 2026-09-15: 以前 loudnorm を既定で掛けていたが、声（SAY_PLAY_VOLUME_LINEAR）
+    // とのバランスでゲームが大きすぎたため、既定は無補正に戻した。
+    // 必要なら SOREN91_LOCAL_AUDIO_FILTER で明示的に掛ける（例:
+    // 'loudnorm=I=-20:TP=-1.5:LRA=11'）か、SOREN91_LOCAL_AUDIO_GAIN を使う。
+    audioFilter: String(env.SOREN91_LOCAL_AUDIO_FILTER || '').trim(),
     captureHelperBin: env.SOREN91_LOCAL_CAPTURE_HELPER_BIN
       || path.join(here, 'macos', 'bin', 'soren91_window_capture'),
     audioTapBin: env.SOREN91_LOCAL_AUDIO_TAP_BIN
