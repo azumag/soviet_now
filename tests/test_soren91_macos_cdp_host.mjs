@@ -12,8 +12,11 @@ import {
   isExactGameTargetUrl,
   normalizeRemoteAddress,
   parseCanvasGeometry,
+  PROFILE_DIR_PREFIX,
+  reapStaleProfileDirs,
   resolveCanvasCropFrame,
   signalExitCode,
+  STALE_PROFILE_DIR_MS,
   startAudioTapWithRetry,
   validateOptions,
   waitForStableCanvasGeometry,
@@ -420,4 +423,37 @@ test('audio filter overrides the gain', () => {
   const idx = out.indexOf('-af');
   assert.notEqual(idx, -1);
   assert.equal(out[idx + 1], 'loudnorm=I=-16:TP=-1.5:LRA=11');
+});
+
+test('reapStaleProfileDirs removes only orphaned, stale, unused profile dirs', () => {
+  const now = 10_000_000;
+  const removed = [];
+  const entries = [
+    `${PROFILE_DIR_PREFIX}${now - STALE_PROFILE_DIR_MS - 1}`, // stale, idle -> reap
+    `${PROFILE_DIR_PREFIX}${now - STALE_PROFILE_DIR_MS + 1}`, // not stale yet -> keep
+    `${PROFILE_DIR_PREFIX}${now - STALE_PROFILE_DIR_MS - 1}-in-use-marker`, // stale but "in use" -> keep
+    'some-unrelated-tmp-dir', // not ours -> ignored
+    `${PROFILE_DIR_PREFIX}not-a-number`, // malformed name -> ignored
+  ];
+  const inUseDir = entries[2];
+  reapStaleProfileDirs({
+    tmpDir: '/tmp',
+    now: () => now,
+    listImpl: () => entries,
+    isInUse: (dir) => dir.endsWith(inUseDir),
+    rmImpl: (dir) => removed.push(dir),
+  });
+  assert.deepEqual(removed, [`/tmp/${entries[0]}`]);
+});
+
+test('reapStaleProfileDirs never throws when listing or removing fails', () => {
+  assert.doesNotThrow(() => reapStaleProfileDirs({
+    listImpl: () => { throw new Error('no such dir'); },
+  }));
+  assert.doesNotThrow(() => reapStaleProfileDirs({
+    listImpl: () => [`${PROFILE_DIR_PREFIX}0`],
+    now: () => STALE_PROFILE_DIR_MS + 1,
+    isInUse: () => false,
+    rmImpl: () => { throw new Error('permission denied'); },
+  }));
 });
