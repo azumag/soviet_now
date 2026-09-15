@@ -12,9 +12,10 @@ pass() { echo "ok - $1"; ok=$((ok + 1)); }
 not_ok() { echo "not ok - $1"; fail=$((fail + 1)); }
 
 # Isolated base functions: the policy must wrap, not replace, the established
-# generation and validation contracts.
+# generation, country-normalization and validation contracts.
 _append_comment_reply_contract() { printf '%s\n' 'BASE_CONTRACT' >>"$1"; }
 _is_valid_comment_talk() { return 0; }
+_comment_replace_country_references() { cat; }
 generate_comment_response() { printf '%s\n' "base:${1:-twitch}" >>"$TMP/generated"; }
 
 source broadcast/comment_runtime_policy.sh
@@ -34,15 +35,62 @@ if _is_valid_comment_talk '同志alice、ありがとうございます。'; the
 else
 	not_ok '同志alice address was rejected'
 fi
-if _is_valid_comment_talk 'aliceさん、ありがとうございます。'; then
-	not_ok 'plain -san viewer address was accepted'
-else
-	pass 'plain -san viewer address is rejected for regeneration'
-fi
+for honorific in さん 様 くん ちゃん; do
+	if _is_valid_comment_talk "alice${honorific}、ありがとうございます。"; then
+		not_ok "plain ${honorific} viewer address was accepted"
+	else
+		pass "plain ${honorific} viewer address is rejected when unresolved"
+	fi
+done
 if _is_valid_comment_talk 'みなさん、ありがとうございます。'; then
 	pass 'generic audience phrase is not mistaken for individual address'
 else
 	not_ok 'generic audience phrase was rejected'
+fi
+
+# Known viewer addresses are repaired deterministically before validation, so a
+# local honorific mistake does not spend another LLM generation attempt.
+comment_batch_file="$TMP/comment_batch.txt"
+cat >"$comment_batch_file" <<'EOF'
+alice: こんにちは
+takaさん: こんばんは
+dociai: carol が【カードA】赤いカードを獲得しました
+EOF
+repair_input=$'aliceさん、ありがとう。\n\ntakaさん、こんばんは。\n\ncarol様、カードおめでとう。'
+repair_output=$(printf '%s' "$repair_input" | _comment_replace_country_references)
+if printf '%s' "$repair_output" | grep -qF '同志alice、ありがとう。'; then
+	pass 'known viewer -san address is repaired without regeneration'
+else
+	not_ok 'known viewer -san address was not repaired'
+fi
+if printf '%s' "$repair_output" | grep -qF '同志takaさん、こんばんは。'; then
+	pass 'viewer name that already ends in さん is preserved exactly'
+else
+	not_ok 'viewer name ending in さん was truncated or changed'
+fi
+if printf '%s' "$repair_output" | grep -qF '同志carol、カードおめでとう。'; then
+	pass 'card recipient address is repaired instead of bot poster name'
+else
+	not_ok 'card recipient address was not repaired'
+fi
+if _is_valid_comment_talk "$repair_output"; then
+	pass 'locally repaired reply passes final validator'
+else
+	not_ok 'locally repaired reply still triggers full regeneration'
+fi
+
+# Exact known names and @mentions at paragraph start also need 同志; repair them
+# locally even when the model omitted an honorific entirely.
+plain_output=$(printf '%s' $'alice、了解です。\n\n@alice：ありがとう。' | _comment_replace_country_references)
+[ "$(printf '%s' "$plain_output" | grep -c '同志alice')" -eq 2 ] && pass 'plain known-name addresses are locally prefixed with 同志' || not_ok 'plain known-name repair failed'
+
+# Unknown honorific addresses are not guessed. They remain unchanged and the
+# validator preserves the existing full-regeneration fallback.
+unknown_output=$(printf '%s' 'bob様、こんにちは。' | _comment_replace_country_references)
+if [ "$unknown_output" = 'bob様、こんにちは。' ] && ! _is_valid_comment_talk "$unknown_output"; then
+	pass 'unknown honorific address stays fail-closed for regeneration'
+else
+	not_ok 'unknown honorific address was guessed or accepted'
 fi
 
 # Test the debounce algorithm without wall-clock sleeps/network. The fake

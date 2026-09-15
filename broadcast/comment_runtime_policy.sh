@@ -23,6 +23,10 @@ _comment_runtime_policy_capture \
 	_comment_runtime_policy_base_is_valid_comment_talk \
 	'_comment_runtime_policy_base_is_valid_comment_talk' || true
 _comment_runtime_policy_capture \
+	_comment_replace_country_references \
+	_comment_runtime_policy_base_replace_country_references \
+	'_comment_runtime_policy_base_replace_country_references' || true
+_comment_runtime_policy_capture \
 	generate_comment_response \
 	_comment_runtime_policy_base_generate_comment_response \
 	'_comment_runtime_policy_base_generate_comment_response' || true
@@ -40,20 +44,115 @@ _append_comment_reply_contract() {
 COMMENTRUNTIMEPOLICY
 }
 
+_comment_runtime_policy_repair_viewer_addresses() {
+	local batch_file="${1:-}"
+	[ -s "$batch_file" ] || {
+		cat
+		return 0
+	}
+	python3 -c '
+import re, sys
+
+batch_path = sys.argv[1]
+text = sys.stdin.read()
+
+try:
+    with open(batch_path, "r", encoding="utf-8", errors="replace") as f:
+        batch_lines = f.read().replace("\r\n", "\n").replace("\r", "\n").splitlines()
+except OSError:
+    raise SystemExit(2)
+
+names = set()
+
+def add_name(value):
+    value = value.strip()
+    if value.startswith("@"):
+        value = value[1:].strip()
+    if not value or len(value) > 64:
+        return
+    if any(ch in value for ch in "\r\n\t"):
+        return
+    names.add(value)
+
+for raw in batch_lines:
+    line = raw.strip()
+    if not line:
+        continue
+    body = line
+    if ": " in line:
+        head, body = line.split(": ", 1)
+        add_name(head)
+    # Card-gacha posts are often emitted by a bot; the actual viewer is the
+    # person before "が【...】...を獲得しました", not the posting account.
+    for match in re.finditer(r"(?:^|\s)(.{1,64}?)\s*が\s*【[^】]{1,80}】.{0,320}?を獲得しました", body):
+        candidate = match.group(1).strip()
+        if candidate and not any(ch in candidate for ch in "、。！？!?：:【】"):
+            add_name(candidate)
+
+if not names:
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+honorifics = ("さん", "様", "くん", "ちゃん")
+punctuation = ("、", ",", "：", ":")
+ordered_names = sorted(names, key=len, reverse=True)
+parts = re.split(r"(\n\s*\n+)", text.replace("\r\n", "\n").replace("\r", "\n"))
+
+for i, para in enumerate(parts):
+    if not para or re.fullmatch(r"\n\s*\n+", para):
+        continue
+    leading_len = len(para) - len(para.lstrip())
+    leading = para[:leading_len]
+    body = para[leading_len:]
+    if not body or body.startswith(("同志", "みなさん", "皆さん")):
+        continue
+    repaired = None
+    for name in ordered_names:
+        for mention in (name, "@" + name):
+            candidates = (mention,) + tuple(mention + suffix for suffix in honorifics)
+            for candidate in candidates:
+                if not body.startswith(candidate):
+                    continue
+                tail = body[len(candidate):]
+                if tail.startswith(punctuation):
+                    repaired = "同志" + name + tail
+                    break
+            if repaired is not None:
+                break
+        if repaired is not None:
+            break
+    if repaired is not None:
+        parts[i] = leading + repaired
+
+sys.stdout.write("".join(parts))
+' "$batch_file"
+}
+
+_comment_replace_country_references() {
+	local normalized batch_file="${comment_batch_file:-}"
+	normalized=$(_comment_runtime_policy_base_replace_country_references) || return 1
+	if [ -n "$batch_file" ] && [ -s "$batch_file" ]; then
+		printf '%s' "$normalized" | _comment_runtime_policy_repair_viewer_addresses "$batch_file"
+		return $?
+	fi
+	printf '%s' "$normalized"
+}
+
 _comment_runtime_policy_has_plain_honorific_address() {
 	python3 -c '
 import re, sys
 text = sys.stdin.read().replace("\r\n", "\n").replace("\r", "\n")
 # Only inspect paragraph starts, where the reply contract places viewer
-# addresses. Generic audience phrases are not individual-name addresses.
-allowed = ("みなさん", "皆さん")
+# addresses. Generic audience phrases and already-repaired 同志 addresses are
+# not ordinary-honorific regressions.
+allowed = ("同志", "みなさん", "皆さん")
 for para in re.split(r"\n\s*\n+", text):
     head = para.lstrip()
     if not head:
         continue
     if head.startswith(allowed):
         continue
-    if re.match(r"^@?[^\s、。！？!?：:,]{1,48}さん[、,：:]", head):
+    if re.match(r"^@?[^\s、。！？!?：:,]{1,48}(?:さん|様|くん|ちゃん)[、,：:]", head):
         raise SystemExit(0)
 raise SystemExit(1)
 '
@@ -62,8 +161,9 @@ raise SystemExit(1)
 _is_valid_comment_talk() {
 	local talk="$1"
 	_comment_runtime_policy_base_is_valid_comment_talk "$talk" || return 1
-	# Do not silently accept a regression back to ordinary -san viewer address.
-	# The generator will retry using the final prompt contract above.
+	# Known viewer names are repaired deterministically before this validator.
+	# Any ordinary honorific that remains unresolved is unsafe/ambiguous and
+	# keeps the existing full-regeneration fallback rather than guessing.
 	if printf '%s' "$talk" | _comment_runtime_policy_has_plain_honorific_address; then
 		return 1
 	fi
