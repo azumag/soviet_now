@@ -29,6 +29,7 @@ source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
+[ -f "$ELOOP_LIB_DIR/strategy/persist.sh" ] && source "$ELOOP_LIB_DIR/strategy/persist.sh"
 # Live improve_state is ephemeral by design. Wrap the writer after the base
 # implementation is loaded so terminal failed_no_apply classifications survive
 # later recovery/new-run state writes without changing the existing state schema.

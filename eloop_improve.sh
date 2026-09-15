@@ -592,9 +592,7 @@ PY
 	# Commit immediately after applying the winner so the new strategy.py is preserved
 	# even if eloop_improve.sh is killed before reaching the main git_commit phase.
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$baseline_hash" ]; then
-		git add strategy.py 2>/dev/null || true
-		git commit -m "eloop Improve [param-parallel] adopt ${winner_job:-winner} after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-		git push 2>/dev/null || true
+		persist_strategy_improve "eloop Improve [param-parallel] adopt ${winner_job:-winner} after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>/dev/null || true
 	fi
 	_post_improve_import_result_stats "$result_file" "$HASH_AFTER"
 	_wildcard_parallel_cleanup_sessions
@@ -1602,9 +1600,7 @@ PY
 		# Commit immediately after applying the winner so strategy.py is preserved
 		# even if the process is killed before reaching the git_commit phase below.
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
-			git add strategy.py 2>/dev/null || true
-			git commit -m "eloop Improve [wildcard] adopt parallel winner after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-			git push 2>/dev/null || true
+			persist_strategy_improve "eloop Improve [wildcard] adopt parallel winner after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>/dev/null || true
 		fi
 		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
 		wildcard_parallel_cleanup_sessions
@@ -1715,9 +1711,7 @@ except Exception:
 " 2>/dev/null || true
 		fi
 		_improve_progress "git_commit" "90" "wildcard_parallel_commit"
-		git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
-		git commit -m "eloop Improve [wildcard] parallel trial after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-		git push 2>/dev/null || true
+		persist_strategy_improve "eloop Improve [wildcard] parallel trial after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
 		_improve_progress "done" "100" "wildcard_parallel_complete"
 		log "[WILDCARD] parallel cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 		wildcard_parallel_restore_once
@@ -1875,9 +1869,7 @@ except Exception:
 	fi
 	# git commit
 	_improve_progress "git_commit" "90" "wildcard_commit"
-	git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
-	git commit -m "eloop Improve [wildcard] perturbation after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-	git push 2>/dev/null || true
+	persist_strategy_improve "eloop Improve [wildcard] perturbation after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
 	_improve_progress "done" "100" "wildcard_complete"
 	log "[WILDCARD] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 	exit 0
@@ -2276,9 +2268,7 @@ PY
 		echo "$archive_restart_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'- selected {d[\"hash\"]}: comp={d[\"comp\"]:.1f} p50={d[\"p50\"]:.1f} p25={d[\"p25\"]:.1f} n={d[\"n\"]} russia={d.get(\"russia_count\",0)} soviet={d.get(\"soviet_count\",0)} best_type={d.get(\"best_max_type\",0)} anchor={d.get(\"anchor_hash\",\"\")[:8]} comp={d.get(\"anchor_comp\",0):.1f}')" 2>/dev/null
 	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
 	_improve_progress "git_commit" "90" "archive_restart_commit"
-	git add strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
-	git commit -m "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-	git push 2>/dev/null || true
+	persist_strategy_improve "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>/dev/null || true
 	_improve_progress "done" "100" "archive_restart_complete"
 	log "[ARCHIVE-RESTART] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER} source=${archive_restart_hash}"
 	_improve_flow_notify \
@@ -4150,26 +4140,19 @@ PY
 		"$phylo_improve_summary" ""
 	refresh_phyrogenetic_tree --pending-edge improve "$HASH_BEFORE" "$HASH_AFTER" >/dev/null 2>&1 || true
 	_improve_progress "git_commit" "90" "commit_changes"
-	# 改善区切りでまとめてコミット: 戦略本体 + 試合アーカイブ + スコア履歴 + 系統樹
-	git add \
-		strategy.py strategy_helpers/ \
+	# 改善区切りでまとめて永続化: 戦略本体 + 試合アーカイブ + スコア履歴 + 系統樹
+	if [ "$NUM_GAMES" -eq 1 ]; then
+		_persist_message="eloop Improve after game #${GAME_NUM_SNAPSHOT}"
+	else
+		_persist_message="eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})"
+	fi
+	if persist_strategy_improve "$_persist_message" \
+		strategy.py strategy_helpers \
 		"$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" \
 		game_count.txt score_history.txt eval_score_history.txt \
 		best_score.txt score_dashboard.html game_state.json \
-		game_history/ strategy_versions/ strategy_versions_archive/ \
-		2>/dev/null || true
-	if [ "$NUM_GAMES" -eq 1 ]; then
-		if git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null; then
-			if git push 2>/dev/null; then
-				phylo_push_ok=true
-			fi
-		fi
-	else
-		if git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null; then
-			if git push 2>/dev/null; then
-				phylo_push_ok=true
-			fi
-		fi
+		game_history strategy_versions strategy_versions_archive; then
+		phylo_push_ok=true
 	fi
 	if [ "$phylo_push_ok" = true ]; then
 		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"
