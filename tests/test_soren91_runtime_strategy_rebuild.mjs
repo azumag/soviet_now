@@ -43,9 +43,10 @@ test('remote slow-cadence queue shift can confirm a new turn in one observation'
     nextPieces: [piece(2), null, piece(4)],
   }), c, 6500);
   assert.equal(next.state, 'MOVE', JSON.stringify(next.perception));
-  assert.equal(next.perception.reason, 'stable-slow-advance');
+  assert.equal(next.perception.reason, 'stable-slow-advance-temporal-next-hold-empty');
   assert.equal(next.nextPieces[1].type, 3);
   assert.equal(next.nextPieces[1].temporalSource, 'shifted');
+  assert.equal(next.holdKnownEmpty, true);
 }));
 
 test('local fast cadence still requires stable board confirmation', () => {
@@ -68,6 +69,7 @@ test('two trustworthy empty HOLD observations enable the first HOLD', () => {
   assert.equal(gateObservation(b, c, 1000).holdKnownEmpty, false);
   const stable = gateObservation(b, c, 1300);
   assert.equal(stable.holdKnownEmpty, true);
+  assert.match(stable.perception.reason, /hold-empty/);
   assert.equal(decide(stable).hold, true);
 });
 
@@ -95,6 +97,7 @@ test('same-turn NEXT miss reuses only a previously observed slot', () => {
   const stable = gateObservation(board([], q[0], { nextPieces: [q[0], null, q[2]] }), c, 1300);
   assert.equal(stable.nextPieces[1].type, 2);
   assert.equal(stable.nextPieces[1].temporalSource, 'same-turn');
+  assert.match(stable.perception.reason, /temporal-next/);
 });
 
 test('beam-v2 keeps multiple future branches instead of one greedy continuation', () => {
