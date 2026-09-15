@@ -34,7 +34,8 @@ import sys
 text = sys.stdin.read()
 compact = re.sub(r"\s+", "", text)
 japanese = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
-if len(compact) < 3 or not japanese.search(text) or not re.search(r"[。！？!?]", text):
+terminal = re.compile(r"[。！？!?][」』】）》）)\]\"\047”’]*\s*\Z")
+if len(compact) < 3 or not japanese.search(text) or not terminal.search(text):
     raise SystemExit(1)
 for sentence in re.split(r"(?<=[。！？!?])", text):
     if not japanese.search(sentence):
