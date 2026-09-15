@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import pathlib
 import tempfile
@@ -72,8 +73,32 @@ class RuntimeMetricsTest(unittest.TestCase):
             self.assertIsNotNone(third)
             third.close()
 
-    def test_log_read_is_hard_bounded(self):
+    def test_log_read_is_hard_bounded_in_bytes_and_discards_whole_oversized_line(self):
         self.assertEqual(MODULE.MAX_LOG_LINE_BYTES, 64 * 1024)
+        oversized = ("[game] Decision: x=0.00, reason=" + "あ" * 30000 + "\n").encode("utf-8")
+        valid = b"[game] Decision: x=1.00, reason=structured-stack\n"
+        handle = io.BytesIO(oversized + valid)
+
+        line, dropping = MODULE.read_bounded_record(handle)
+        self.assertIsNone(line)
+        self.assertTrue(dropping)
+        self.assertLessEqual(handle.tell(), MODULE.MAX_LOG_LINE_BYTES)
+
+        line, dropping = MODULE.read_bounded_record(handle, dropping)
+        self.assertIsNone(line)
+        self.assertFalse(dropping)
+
+        line, dropping = MODULE.read_bounded_record(handle, dropping)
+        self.assertEqual(line, valid.decode("utf-8"))
+        self.assertFalse(dropping)
+
+    def test_incomplete_log_tail_is_rewound_until_newline_arrives(self):
+        raw = b"[game] Decision: x=0.00, reason=partial"
+        handle = io.BytesIO(raw)
+        line, dropping = MODULE.read_bounded_record(handle)
+        self.assertIsNone(line)
+        self.assertFalse(dropping)
+        self.assertEqual(handle.tell(), 0)
 
 
 if __name__ == "__main__":

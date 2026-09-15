@@ -188,6 +188,33 @@ def acquire_single_instance(output_path: Path):
     return handle
 
 
+def read_bounded_record(handle, dropping_oversized: bool = False) -> tuple[str | None, bool]:
+    """Read at most MAX_LOG_LINE_BYTES and return only a complete logical line.
+
+    The log is opened in binary mode so the limit is a byte limit rather than a
+    Unicode-character limit. A logical line that reaches the cap before its
+    newline is discarded in bounded chunks; none of its fragments are parsed.
+    A short unterminated tail is rewound so it can be retried once the writer
+    appends the newline.
+    """
+    start = handle.tell()
+    raw = handle.readline(MAX_LOG_LINE_BYTES)
+    if not raw:
+        return None, dropping_oversized
+
+    if dropping_oversized:
+        return None, not raw.endswith(b"\n")
+
+    if len(raw) == MAX_LOG_LINE_BYTES and not raw.endswith(b"\n"):
+        return None, True
+
+    if not raw.endswith(b"\n"):
+        handle.seek(start)
+        return None, False
+
+    return raw.decode("utf-8", errors="replace"), False
+
+
 def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> bool:
     instance_lock = acquire_single_instance(output_path)
     if instance_lock is None:
@@ -206,20 +233,22 @@ def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> bool:
 
     handle = None
     inode = None
+    dropping_oversized = False
     try:
         while not stopping:
             if handle is None:
                 try:
-                    handle = log_path.open("r", encoding="utf-8", errors="replace")
+                    handle = log_path.open("rb")
                     stat = os.fstat(handle.fileno())
                     inode = (stat.st_dev, stat.st_ino)
                     handle.seek(0, os.SEEK_END)
+                    dropping_oversized = False
                 except FileNotFoundError:
                     time.sleep(poll_sec)
                     continue
 
-            line = handle.readline(MAX_LOG_LINE_BYTES)
-            if line:
+            line, dropping_oversized = read_bounded_record(handle, dropping_oversized)
+            if line is not None:
                 if state.record(line):
                     atomic_write(output_path, state.payload())
                 continue
@@ -231,11 +260,13 @@ def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> bool:
                     handle.close()
                     handle = None
                     inode = None
+                    dropping_oversized = False
                     continue
             except FileNotFoundError:
                 handle.close()
                 handle = None
                 inode = None
+                dropping_oversized = False
             time.sleep(poll_sec)
     finally:
         if handle is not None:
