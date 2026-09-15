@@ -67,6 +67,20 @@ else
 	not_ok 'fallback accepts long Japanese prose with breathing commas'
 fi
 
+ending_bad='最初の文です。最後の文には句点がありません'
+if _is_valid_comment_talk "$ending_bad"; then
+	not_ok 'fallback requires punctuation at the actual end of the reply'
+else
+	pass 'fallback requires punctuation at the actual end of the reply'
+fi
+
+quoted_good='「そうですね。」'
+if _is_valid_comment_talk "$quoted_good"; then
+	pass 'fallback accepts terminal punctuation before a closing quote'
+else
+	not_ok 'fallback accepts terminal punctuation before a closing quote'
+fi
+
 if grep -q '一文が30文字を超える場合' "$ROOT/prompts/speech_vocabulary_rule.md" && \
    grep -q '読点から次の読点・文末までが30文字を超えない' "$ROOT/prompts/speech_vocabulary_rule.md"; then
 	pass 'generation prompt contains the punctuation contract'
