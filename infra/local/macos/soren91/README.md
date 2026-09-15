@@ -30,6 +30,19 @@ default (opt out with `SOREN91_LOCAL_AUDIO_TAP=0`; the helper build is still
 required — see "Audio" below). Still not soaked for 30 minutes,
 not connected to the production broadcast.**
 
+**Incident (2026-09-15): the daily 18:00 JST corner had no video for a full
+240s readiness window because the Mac agent was left running in `cdp-host`
+mode from earlier development while the OCI-side bot (which `cdp-host`
+depends on to navigate Chrome to the game page) was `agent.enabled=false` in
+production — confirmed from the agent's own log:
+`[cdp-host] page_count=1` never advanced across 3 separate attempts that
+day. `session` mode needs no OCI bot and was switched to on the spot, then
+re-verified with a real local SRT round-trip (a temporary Tailscale-bound
+listener + `POST /v1/start`): h264/aac, 960x540, 30fps, readiness probe
+`pass:true` (measured 494.7 fps headroom, hardware renderer, WebGL2,
+`physicalOverlap:false`). See "Local agent / backend selector" below for the
+operational rule this incident established.**
+
 ## Offscreen virtual display (default, Issue #303)
 
 ScreenCaptureKit captures a window by identity even when that window is
@@ -200,6 +213,19 @@ the shared HTTP agent `tools/soren91_local_agent.mjs` (platform-generic:
 `win32` → `local-windows` / `soren91_windows_session.mjs`, same Bearer-token
 contract as PR #131 — the two implementations are meant to converge into
 this one file when PR #131 merges).
+
+**Operational default: `session` mode (no `SOREN91_LOCAL_SESSION_MODE` /
+`SOREN91_LOCAL_CDP_HOST` set) for the daily corner.** `cdp-host` mode only
+holds a virtual display + remote-debuggable Chrome and waits for an
+external bot to drive it via CDP to the game page — it depends on the
+OCI-side bot being enabled (`agent.enabled=true` + `bot_path` in the OCI
+game config), which is not the case in production today. Starting the
+agent with a stale `SOREN91_LOCAL_SESSION_MODE=cdp-host` left over from
+`cdp-host` development is exactly what caused the 2026-09-15 no-video
+incident above. Before relying on a long-running agent process for a
+scheduled corner, confirm its mode with `GET /v1/status` (`mode` field) —
+don't assume a process left running from an earlier session is in the
+right mode.
 
 Start the agent (token from a secret store — never commit it, never pass it
 via argv, never log it):
