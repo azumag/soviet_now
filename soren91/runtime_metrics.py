@@ -8,6 +8,7 @@ never copied to the output.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from pathlib import Path
 TURN_RE = re.compile(r"\[game\] Turn \d+: .*?reason=([A-Za-z0-9_-]+)")
 DECISION_RE = re.compile(r"\[game\] Decision: .*?reason=(.*)$")
 SUMMARY_RE = re.compile(r"\[game\] Summary: turns=(\d+), rank=([^,\s]+)")
+MAX_LOG_LINE_BYTES = 64 * 1024
 
 
 def _percentile(values: list[int], q: float) -> int | None:
@@ -63,8 +65,6 @@ class MetricsState:
                 self.temporal_next_observations += 1
             if "hold-empty" in raw_reason:
                 self.hold_empty_observations += 1
-            # Fixed/bounded reason taxonomy. Telemetry suffixes do not create
-            # unbounded keys in the public metrics document.
             if raw_reason.startswith("stable-slow-advance"):
                 reason = "stable-slow-advance"
             elif raw_reason.startswith("stable"):
@@ -103,7 +103,6 @@ class MetricsState:
             if rank is not None:
                 self.last_rank = rank
                 self.rank_samples.append(rank)
-            # Do not count the between-round idle period as a decision interval.
             self.last_decision_at = None
             return True
 
@@ -175,7 +174,25 @@ def atomic_write(path: Path, payload: dict) -> None:
             pass
 
 
-def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> None:
+def acquire_single_instance(output_path: Path):
+    """Hold a non-blocking advisory lock next to the aggregate output."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = output_path.with_name(output_path.name + ".lock")
+    handle = lock_path.open("a+", encoding="ascii")
+    os.chmod(lock_path, 0o600)
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    return handle
+
+
+def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> bool:
+    instance_lock = acquire_single_instance(output_path)
+    if instance_lock is None:
+        return False
+
     state = MetricsState()
     atomic_write(output_path, state.payload())
     stopping = False
@@ -201,7 +218,7 @@ def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> None:
                     time.sleep(poll_sec)
                     continue
 
-            line = handle.readline()
+            line = handle.readline(MAX_LOG_LINE_BYTES)
             if line:
                 if state.record(line):
                     atomic_write(output_path, state.payload())
@@ -224,6 +241,8 @@ def follow(log_path: Path, output_path: Path, poll_sec: float = 0.10) -> None:
         if handle is not None:
             handle.close()
         atomic_write(output_path, state.payload())
+        instance_lock.close()
+    return True
 
 
 def main() -> int:
@@ -234,6 +253,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.follow:
         parser.error("--follow is required")
+    # A duplicate collector is benign: it exits without touching the output.
     follow(Path(args.log), Path(args.output))
     return 0
 
