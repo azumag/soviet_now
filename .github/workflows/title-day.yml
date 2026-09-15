@@ -1,10 +1,10 @@
 name: Title day update
 on:
   pull_request:
-    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'deploy/title-day/**', '.github/workflows/title-day.yml']
   push:
     branches: [main]
-    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'deploy/title-day/**', '.github/workflows/title-day.yml']
 permissions:
   contents: read
 jobs:
@@ -15,4 +15,5 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_title_day
-      - run: bash -n update_stream_title_day.sh
+      - run: bash tests/test_update_stream_game.sh
+      - run: bash -n update_stream_title_day.sh update_stream_game.sh tests/test_update_stream_game.sh

@@ -6,8 +6,8 @@
 #   ./update_stream_game.sh --game robots --strategy "v wholesale..."
 #
 # 配信タイトルは handoff 由来 (prompts/ops_brief.md の1件目=直近の作業) を既定の
-# activity とし、ゲーム・戦略の進捗を --strategy で乗せる。既存の "day N" 維持のうえ
-# 先頭に [twitch].title_prefix を付ける (例: "[Robots] day176 ...")。
+# activity とし、ゲーム・戦略の進捗を --strategy で乗せる。先頭は常に "[dayN]" とし、
+# ゲーム名はタイトルの [] へ入れない。ゲームは Twitch カテゴリーで表現する。
 # カテゴリーは Twitch (IGDB) の game_id を Helix PATCH /helix/channels で更新する。
 # game_id の選定は --resolve/--verify で IGDB 照合する (docs/twitch_game_sync.md)。
 #
@@ -23,8 +23,9 @@
 #   [twitch]
 #   category_id = "11585"
 #   category_name = "Robots"      # Twitch上の正式名 (verify用)
-#   title_prefix = "[Robots]"     # 配信タイトル先頭
+#   title_prefix = "[Robots]"     # 互換用。現在はタイトル生成では無視する
 # --toml PATH / --category-id ID などで上書き・単独指定も可。
+# --title-prefix は後方互換のため受理するが、タイトル生成では使用しない。
 #
 # 必要な環境変数 (.env):
 #   TWITCH_CLIENT_ID / TWITCH_BROADCASTER_ID (既存と共通)
@@ -41,7 +42,7 @@
 #            4=API エラー, 5=verify 不一致
 cd "$(dirname "$0")"
 
-# Shared with game switches so a daily update cannot restore an old game prefix.
+# Shared with the daily title updater so concurrent PATCHes cannot overwrite each other.
 if command -v flock >/dev/null 2>&1; then
     mkdir -p tmp/state
     exec 9>tmp/state/stream_title_update.lock
@@ -195,7 +196,7 @@ if [ -z "$CAT_ID" ]; then
 	exit 1
 fi
 if [ "$TITLE_ONLY" != "1" ]; then
-	_log "target game=${GAME:-?} category_id=$CAT_ID category_name=${CAT_NAME:-?} prefix=${PREFIX:-?}"
+	_log "target game=${GAME:-?} category_id=$CAT_ID category_name=${CAT_NAME:-?}"
 fi
 
 # --- --verify: toml と Twitch 実登録の照合のみ (書込なし) ---
@@ -264,14 +265,11 @@ else
 fi
 STRATEGY="${STRATEGY_ARG:-${STREAM_GAME_STRATEGY:-}}"
 
-# --- 目標タイトルを組成 (Twitch 上限 140字。prefix+day を優先保持) ---
-NEW_TITLE="$(python3 - "$PREFIX" "$N" "$ACTIVITY" "$STRATEGY" <<'PY'
+# --- 目標タイトルを組成 (Twitch 上限 140字。[dayN] を優先保持) ---
+NEW_TITLE="$(python3 - "$N" "$ACTIVITY" "$STRATEGY" <<'PY'
 import sys
-prefix, n, activity, strategy = (a.strip() for a in sys.argv[1:5])
-parts = []
-if prefix:
-    parts.append(prefix)
-parts.append(f"day{n}")
+n, activity, strategy = (a.strip() for a in sys.argv[1:4])
+parts = [f"[day{n}]"]
 def short(s, limit):
     s = " ".join(s.split())
     return s if len(s) <= limit else s[:max(0, limit - 1)].rstrip() + "…"

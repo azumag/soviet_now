@@ -1,9 +1,11 @@
 #!/bin/bash
 # update_stream_title_day.sh - 配信タイトルのDAYと運用メモ由来の本文を更新する。
 #
-# 「day N」の N を、基準日 (day 1) からの経過日数で毎日算出し、
+# "[dayN]" の N を、基準日 (day 1) からの経過日数で毎日算出し、
 # Twitch チャンネルタイトルを Helix API (PATCH /helix/channels) で更新する。
 # 日付ベースで再計算するため、実行漏れ・二重実行があっても自己修復する (冪等)。
+# 旧形式 "[Game] dayN ..." / "day N" や day 表記が欠落したタイトルも
+# "[dayN] ..." に正規化するため、タイトル変更で day カウントが止まらない。
 #
 # Usage:
 #   ./update_stream_title_day.sh            → 当日の N に更新 (変化が無ければ何もしない)
@@ -20,11 +22,11 @@
 #   STREAM_DAY_EPOCH        : day 1 の日付 (YYYY-MM-DD)。既定 2026-03-14
 #   STREAM_DAY_TZ           : 日付判定のタイムゾーン。既定 Asia/Tokyo
 #
-# 終了コード: 0=更新済/変化なし, 2=タイトルに "day N" が無く更新スキップ,
-#            3=トークン/スコープ不足, 4=API エラー, 1=設定不足
+# 終了コード: 0=更新済/変化なし, 3=トークン/スコープ不足,
+#            4=API エラー, 1=設定不足
 cd "$(dirname "$0")"
 
-# Shared with game switches so a daily update cannot restore an old game prefix.
+# Shared with game switches so a daily update cannot race a game/title update.
 if command -v flock >/dev/null 2>&1; then
     mkdir -p tmp/state
     exec 9>tmp/state/stream_title_update.lock
@@ -121,30 +123,43 @@ if [ -z "$CUR_TITLE" ]; then
 fi
 _log "current title: $CUR_TITLE"
 
-# --- DAYと本文を更新。ゲームprefixは保持し、本文はゲーム切替と同じ運用メモを使う。 ---
+# --- [dayN] と本文を更新。旧ゲームprefix/day表記も正規形へ移行する。 ---
 NEW_TITLE="$(python3 - "$CUR_TITLE" "$N" "${OPS_BRIEF_FILE:-prompts/ops_brief.md}" <<'PY'
 import sys, re
 from pathlib import Path
 cur, n, memo = sys.argv[1:4]
-match = re.search(r'(?i)(day\s*)(\d+)', cur)
-if not match:
-    print("__NO_DAY_PATTERN__")
+try:
+    activity = next((line.strip()[2:].strip() for line in Path(memo).read_text(encoding="utf-8").splitlines()
+                     if line.strip().startswith("- ") and line.strip()[2:].strip()), "")
+except (OSError, UnicodeError):
+    activity = ""
+
+body = cur.strip()
+# Current canonical form: [day187] body
+match = re.match(r'(?i)^\s*\[\s*day\s*\d+\s*\]\s*', body)
+if match:
+    body = body[match.end():].strip()
 else:
-    prefix = cur[:match.start()] + match.group(1) + n
-    try:
-        activity = next((line.strip()[2:].strip() for line in Path(memo).read_text(encoding="utf-8").splitlines()
-                         if line.strip().startswith("- ") and line.strip()[2:].strip()), "")
-    except (OSError, UnicodeError):
-        activity = ""
-    # Missing/empty memo cannot erase an existing title body.
-    suffix = " " + " ".join(activity.split()) if activity else cur[match.end():]
-    print((prefix + suffix)[:140])
+    # Legacy game-prefix form: [Robots] day176 body
+    match = re.match(r'(?i)^\s*\[[^\]]+\]\s*day\s*\d+\b\s*', body)
+    if match:
+        body = body[match.end():].strip()
+    else:
+        # Older free-form titles may contain DAY 177 in the middle.
+        match = re.search(r'(?i)\bday\s*\d+\b', body)
+        if match:
+            body = (body[:match.start()] + " " + body[match.end():]).strip()
+            body = " ".join(body.split())
+
+# Missing/empty memo cannot erase an existing title body. If the day marker was
+# missing entirely, prefixing it here self-heals instead of skipping forever.
+suffix = " ".join((activity or body).split())
+title = f"[day{n}]"
+if suffix:
+    title += " " + suffix
+print(title[:140])
 PY
 )"
-if [ "$NEW_TITLE" = "__NO_DAY_PATTERN__" ]; then
-	_log "WARN: current title has no 'day N' pattern; skip (タイトルを上書きしません)"
-	exit 2
-fi
 
 if [ "$MODE" = "show" ]; then
 	_log "show only: would set -> $NEW_TITLE"
