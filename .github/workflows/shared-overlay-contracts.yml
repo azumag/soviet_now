@@ -1,0 +1,54 @@
+name: Shared overlay contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shared-overlay-contracts.yml'
+      - 'start_shared_overlay_service.sh'
+      - 'shared_overlay.mjs'
+      - 'lib/shared_overlay.mjs'
+      - 'game_lifecycle_control.sh'
+      - 'deploy/soren-shared-overlay/**'
+      - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_shared_overlay_service.sh'
+      - 'tests/test_game_lifecycle.sh'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/shared-overlay-contracts.yml'
+      - 'start_shared_overlay_service.sh'
+      - 'shared_overlay.mjs'
+      - 'lib/shared_overlay.mjs'
+      - 'game_lifecycle_control.sh'
+      - 'deploy/soren-shared-overlay/**'
+      - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_shared_overlay_service.sh'
+      - 'tests/test_game_lifecycle.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Install Node dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax check the shared overlay service surface
+        run: |
+          bash -n start_shared_overlay_service.sh
+          bash -n game_lifecycle_control.sh
+          bash -n tests/test_shared_overlay_service.sh
+          node --check shared_overlay.mjs
+          node --check lib/shared_overlay.mjs
+      - name: Run shared overlay regression
+        run: node --test tests/test_shared_overlay.mjs
+      - name: Run shared overlay service lifecycle regression
+        run: bash tests/test_shared_overlay_service.sh
+      - name: Run game lifecycle shell regression
+        run: bash tests/test_game_lifecycle.sh

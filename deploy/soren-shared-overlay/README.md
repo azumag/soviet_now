@@ -3,48 +3,75 @@
 独立した共通配信オーバーレイ（通知・ステータス枠）と、その `/healthz`
 readiness gate を提供する `systemd` unit。
 
-## 使い方（Option A: ゲーム専用モード時のみ起動）
+## 役割
 
-この overlay は **boot では起動しない**。メイン SorenGame 表示中に起動すると、
-overlay の不透明な blank stage（`lib/shared_overlay.mjs` が
-`background:#000` / `stageMode:blank` を設定）が全画面でゲームを覆ってしまう。
+- ゲームから独立した共通レールを描く（ゲームの起動/停止に連動しない）。
+- ゲーム切替の不可逆な停止前に bridge が確認する `/healthz`
+  readiness gate（既定 `http://127.0.0.1:8092/healthz`）を提供する。
+- ゲーム専用モード（docich のゲーム切替中、docich が presenter を出している間）
+  に、共通レールと presenter を合成して配信に出す。
 
-overlay が必要なのは **ゲーム専用モード**（docich のゲーム切替中）だけ:
+## 配置（スタッキング契約）
 
-- ゲーム専用モードでは、overlay が共通の通知/ステータス枠を出し、
-  さらに bridge が不可逆なゲーム停止の前後に参照する `/healthz`
-  readiness gate を提供する。
-- そのため `game_lifecycle_control.sh` がライフサイクルに合わせて
-  `soren-shared-overlay.service` を start/stop する:
-  - `stop-after-boundary` … ゲーム停止前に overlay を startし `/healthz` ready を待つ
-  - `fresh-start` / `cancel` … メインゲーム復帰後に overlay を stop
+overlay は 1280x720 の fullscreen Chromium ウィンドウで、**X スタックの最下層**
+に固定する。ゲームのウィンドウはその上に載る。
 
-`SOREN_GAME_LIFECYCLE_SHARED_OVERLAY=1`（`.env`）でこの連携が有効。
+- ゲーム専用モード: presenter（`docich-present-*`）はゲーム矩形
+  `(0, 90, 960, 540)` ちょうどのサイズなので、周囲の共通レールが overlay から、
+  ゲーム領域が presenter から見える。
+- メインゲーム表示中: ゲームページ（1280x720）が overlay を完全に覆う。
+  メインのレールはゲームページ側が描くため、見た目は変わらない。
 
-## インストール
+`start_shared_overlay_service.sh` が overlay ウィンドウへ `_NET_WM_STATE_BELOW` を
+付け、`docich-present-*` を `above` に保つ（5 秒ごとに再表明）。
+
+**重要（2026-09-15 の障害）**: 以前はこの unit をゲーム専用モードの開始時に
+start していた。fullscreen ウィンドウは「後から map された方が上」なので、
+すでに表示中のゲームウィンドウの上に overlay が載り、配信が**4分間まっくら**
+になった（レール＋空のゲーム領域だけ）。overlay を常時起動して最下層に固定
+することで、この経路自体を無くしている。
+
+## 使い方（常時起動）
+
+overlay は **boot から常時起動**する。ゲーム切替やコーナーのために
+start/stop しない（`game_lifecycle_control.sh` も toggle しない）。
 
 ```bash
 sudo cp deploy/soren-shared-overlay/soren-shared-overlay.service \
         /etc/systemd/system/
 sudo systemctl daemon-reload
-# 重要: enable しない（boot 起動させない）。起動/停止は game_lifecycle_control.sh が行う。
-sudo systemctl disable soren-shared-overlay.service 2>/dev/null || true
+sudo systemctl enable --now soren-shared-overlay.service
 ```
+
+`enable` を忘れないこと。`disable` のままにすると起動せず、bridge の
+readiness gate が fail-open（`unsupported`）になり、不可逆な停止は行われない
+（旧ゲームが継続するだけで、配信は壊れない）。
+
+`SOREN_SHARED_OVERLAY_DISPLAY`（既定 `:99`）と
+`SOREN_SHARED_OVERLAY_ATTACH=1` で、配信 X ディスプレイ上に描画する。
 
 ## 確認
 
 ```bash
-systemctl is-enabled soren-shared-overlay.service   # disabled
-systemctl is-active  soren-shared-overlay.service   # inactive (main モード)
-curl -fsS http://127.0.0.1:8092/healthz             # ゲーム専用モード中のみ 200
+systemctl is-enabled soren-shared-overlay.service   # enabled
+systemctl is-active  soren-shared-overlay.service   # active
+curl -fsS http://127.0.0.1:8092/healthz             # ok/ready/browserReady/layoutReady/overlayReady
+```
+
+スタッキングの実測（ゲーム表示中でも overlay が最下層であること）:
+
+```bash
+DISPLAY=:99 xdotool search --name "^Shared overlay"   # overlay の window id
+DISPLAY=:99 wmctrl -l -G                              # ゲーム/presenter が overlay より上
 ```
 
 ## 注意
 
-- メイン配信中の通知/ステータス枠は bridge 側の overlay
-  （`generate_soren_overlay.sh`）が描くため、この service が止まっていても
-  枠は表示される。
-- この service をメインゲーム表示中に起動するとゲームが黒く覆われる。
-  手動で `systemctl start` しないこと。
-- 過去に「メモリ回収のための定期再起動」を試したが、再起動時に
-  overlay が black stage を再インストールしてゲームを覆うため廃止した。
+- この service はゲームプロセスを探索・停止しない。逆にゲームの停止・再起動は
+  この service に波及しない（通知枠・ステータス枠・配信エンコーダ・共通音声と
+  同様、ゲームから独立した共通基盤）。
+- 配信エンコーダや X server は再起動しない。overlay の再起動でエンコーダ PID は
+  変わらない。
+- overlay のウィンドウを最前面に上げないこと（ゲームを覆う）。
+  再起動直後は `start_shared_overlay_service.sh` の stacking ループが
+  自動で `below` を再表明する。
