@@ -81,6 +81,23 @@ _ab_gate_candidate_ready_since() {
 
 # root(A) と bundle (strategy.py [+ strategy_helpers/]) の A/B を次試合から開始する (tools/ab_ctl.sh start と共通)。
 _ab_start_from_bundle() {
+	# Serialize state creation with worker spawning. Automatic candidates also
+	# block spawns while pending; this mutex covers direct/manual AB starts.
+	local rc=0
+	if command -v _acquire_spawn_lock >/dev/null 2>&1; then
+		_acquire_spawn_lock || return 75
+		if _improve_spawn_state_blocks_start; then
+			_release_spawn_lock
+			return 75
+		fi
+		_ab_start_from_bundle_locked "$@" || rc=$?
+		_release_spawn_lock
+		return "$rc"
+	fi
+	_ab_start_from_bundle_locked "$@"
+}
+
+_ab_start_from_bundle_locked() {
 	local dir="$1" pattern="${2:-ABBA}" src a b helpers_src="" pause_pre=0 reg_before
 	src="$dir/strategy.py"
 	[ -f "$src" ] || { log "[AB] 候補ファイルがない: $src"; return 1; }
@@ -120,22 +137,87 @@ _ab_start_from_bundle() {
 	reg_before=$(_ab_env_value REGRESSION_DISABLED)
 	# issue #132 Phase 2: decide hash だけでは helper/解析器/runner/モードの違いを捉えられない。
 	# 腕ごとの policy bundle hash を state に残し、実験の再現性を担保する。
-	local bundle_a bundle_b
+	local bundle_a bundle_b primary primary_sd looks maxb fut
 	bundle_a=$(python3 tools/policy_bundle.py --strategy "${STRATEGY_FILE:-strategy.py}" 2>/dev/null || echo "")
 	bundle_b=$(python3 tools/policy_bundle.py --strategy "$src" 2>/dev/null || echo "")
+	# 実験の正準指標と判定規則を開始時に固定する。途中の .env 変更で事前登録を
+	# 書き換えない。旧 state は tools/ab_decide.py が legacy としてそのまま再生する。
+	primary=$(_ab_env_value AB_GATE_PRIMARY)
+	[ -n "$primary" ] || primary="eval"
+	primary_sd=$(_ab_env_value AB_GATE_SD)
+	looks=$(_ab_env_value AB_GATE_LOOKS)
+	[ -n "$looks" ] || looks="19,37"
+	maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
+	[ -n "$maxb" ] || maxb="37"
+	fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
+	[ -n "$fut" ] || fut="150"
 	rm -f "$AB_ABORT_FILE"
 	: >"$AB_GAMES_FILE"
 	AB_A_BUNDLE="$bundle_a" AB_B_BUNDLE="$bundle_b" \
-		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" <<'PY' || return 1
+		python3 - "$AB_STATE_FILE" "$a" "$b" "$pattern" "$src" "${GAME_COUNT_FILE:-game_count.txt}" "$pause_pre" "${reg_before:-0}" "$([ -n "$helpers_src" ] && echo 1 || echo 0)" "$primary" "$primary_sd" "$looks" "$maxb" "$fut" <<'PY' || return 1
 import json, os, sys, time
+
 def _count(p):
     try:
         return int(open(p).read().strip())
     except Exception:
         return None
+
+def _num(v):
+    try:
+        n = float(v)
+        return n if n > 0 else None
+    except Exception:
+        return None
+
+def _int(v, default):
+    try:
+        n = int(v)
+        return n if n > 0 else default
+    except Exception:
+        return default
+
+def _float(v, default):
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+def _looks(v):
+    try:
+        out = [int(x.strip()) for x in str(v).split(",") if x.strip()]
+        return out or [19, 37]
+    except Exception:
+        return [19, 37]
+
+# 2026-08-31 の合成 A/A 較正: 旧 k>=6/UCB90 は帰無でも score 37.5%、
+# merges_per_turn 41.2% を誤停止。新規 A/B は k>=10/UCB99 に固定する。
+decision_rule = {
+    "version": 2,
+    "looks": _looks(sys.argv[12] if len(sys.argv) > 12 else "19,37"),
+    "max_blocks": _int(sys.argv[13] if len(sys.argv) > 13 else "37", 37),
+    "min_blocks": 6,
+    "min_blocks_adopt": 8,
+    "min_n_per_arm": 30,
+    "alpha": 0.05,
+    "harm_min_blocks": 10,
+    "harm_z": 2.3263,
+    # 無益停止は従来 UCB90 を別境界として維持する。
+    "futility_k": 12,
+    "futility_z": 1.2816,
+    "futility_delta": _float(sys.argv[14] if len(sys.argv) > 14 else "150", 150.0),
+    "max_tainted": 2,
+    "dead_eval_threshold": 400.0,
+    "instadeath_alpha": 0.01,
+    "instadeath_min_blocks": 4,
+}
 st = {"a_hash": sys.argv[2], "b_hash": sys.argv[3], "pattern": sys.argv[4], "alt_source": sys.argv[5],
       "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "games_recorded": 0, "game_num_start": _count(sys.argv[6]),
       "pause_preexisting": int(sys.argv[7]), "regression_disabled_before": sys.argv[8], "alt_helpers": int(sys.argv[9]),
+      # 判定・表示が使う正準指標 (eval | score) と per-game SD。全ツールがこれを読む。
+      "primary": (sys.argv[10] if len(sys.argv) > 10 else "") or "eval",
+      "primary_sd": _num(sys.argv[11] if len(sys.argv) > 11 else ""),
+      "decision_rule_version": 2, "decision_rule": decision_rule,
       # 腕ごとの追加環境変数 ("KEY=VALUE KEY2=VALUE2"、既定は空)。解析器モード等の A/B に使う。
       "a_env": os.environ.get("AB_A_ENV", ""), "b_env": os.environ.get("AB_B_ENV", ""),
       # 着手を決める一式 (戦略 + 到達 helper + 解析器 + runner + モード) の hash
@@ -145,13 +227,57 @@ PY
 	./set_toggle.sh REGRESSION_DISABLED=1 >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_ALT_STRATEGY=$AB_ALT_FILE" >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_PATTERN=$pattern" >/dev/null 2>&1 || { log "[AB] set_toggle 失敗"; return 1; }
-	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?}"
+	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?} rule=v2:k10/UCB99"
 	return 0
+}
+
+# A/B の決着を change_log に残す (採用・棄却の両方)。
+#
+# 改善プロンプトは CHANGE_LOG_FILE を「同じ方針の焼き直し防止のため最初に読め」
+# として読む (eloop_improve.sh)。ところが A/B ゲート有効時は
+#   * improve 時点の追記が `AB_GATE_EMITTED != true` で抑止され
+#   * 採用時の追記は $AB_CANDIDATE_DIR を見ていたが、その dir は A/B 開始時に
+#     tmp/history へ move 済みなので常に空振りし
+#   * 棄却時は何も書かれない (hash だけ rejected_hashes.txt へ)
+# ため、change_log に A/B の結果が 1 件も入らなかった。2026-09-10 の本番実測でも
+# change_log 200 行に ab-gate 由来 0 件・REJECT 0 件。結果として「A/B で棄却された
+# 方針」が改善側に一切伝わらず、同じ方針が何度でも再提案されうる状態だった。
+#
+# 5番目の引数には A 側のスナップショットを指定できる。B 採用時は root apply 成功後に
+# ADOPTED を確定するため、apply 前に保存した A を渡して A→B diff を維持する。
+_ab_append_change_log() {
+	local winner="$1" reason="$2" a="$3" b="$4" base_file="${5:-${STRATEGY_FILE:-strategy.py}}" verdict lines target
+	# 追記先は自前で解決する。CHANGE_LOG_FILE_HOST / CHANGE_LOG_FILE は
+	# eloop_improve.sh (改善プロセス) でしか定義されず、_ab_finish を呼ぶのは
+	# eloop.sh (ゲームループ、別プロセス) なので、あの変数に依存すると本番では
+	# 常に未設定で空振りする。2026-09-10 に VM 実測で確認:
+	#   source ./eloop_lib.sh 後も CHANGE_LOG_FILE / _HOST とも未設定
+	# 既定値は eloop_improve.sh:17 の CHANGE_LOG_FILE と同じ相対パスに合わせる。
+	target="${CHANGE_LOG_FILE_HOST:-${CHANGE_LOG_FILE:-logs/change_log.txt}}"
+	[ -f "$base_file" ] && [ -f "$AB_ALT_FILE" ] || return 0
+	mkdir -p "$(dirname "$target")" 2>/dev/null || true
+	lines="${AB_CHANGE_LOG_DIFF_LINES:-40}"
+	if [ "$winner" = "B" ]; then verdict="ADOPTED"; else verdict="REJECTED"; fi
+	{
+		echo
+		echo "=== $(date '+%Y-%m-%d %H:%M') A/B $verdict base=${a:0:12} cand=${b:0:12} ==="
+		echo "# verdict: ${reason:-(no reason)}"
+		if [ "$verdict" = "REJECTED" ]; then
+			echo "# この方針は A/B で棄却された。同じ方針の焼き直しを避けること。"
+		fi
+		echo "# A (base) → B (candidate) の差分 (先頭 ${lines} 行):"
+		diff -u "$base_file" "$AB_ALT_FILE" 2>/dev/null | tail -n +3 | head -n "$lines"
+	} >>"$target" 2>/dev/null || true
+	# 既存の追記側 (eloop_improve.sh) と同じ 200 行キャップを維持する。
+	if [ -f "$target" ] && [ "$(wc -l <"$target")" -gt 200 ]; then
+		tail -200 "$target" >"$target.tmp" 2>/dev/null &&
+			mv "$target.tmp" "$target"
+	fi
 }
 
 # A/B を終了し、勝者を root にする (B) か棄却する (A)。記録は tmp/history へ移動。
 _ab_finish() {
-	local winner="$1" reason="${2:-}" a b ts win_hash root_after
+	local winner="$1" reason="${2:-}" a b ts win_hash root_after change_log_base=""
 	[ "$winner" = "A" ] || [ "$winner" = "B" ] || { log "[AB] finish: winner は A|B"; return 1; }
 	[ -f "$AB_STATE_FILE" ] || { log "[AB] finish: 状態なし"; return 1; }
 	a=$(_ab_state_get a_hash)
@@ -166,8 +292,15 @@ _ab_finish() {
 			reason="${reason};alt_hash_mismatch"
 		fi
 	fi
+	# A 棄却は root が A のままなので直ちに確定できる。B 採用は apply / hash 検証に
+	# 成功してから ADOPTED を確定し、失敗実行を「採用済み」と誤記録しない。
+	if [ "$winner" = "A" ]; then
+		_ab_append_change_log "$winner" "$reason" "$a" "$b"
+	fi
 	if [ "$winner" = "B" ]; then
-		cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null || true
+		if cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null; then
+			change_log_base="tmp/revert_strategy.py"
+		fi
 		# helper は additive-only: strategy より先に配置する (import 先が無い瞬間を作らない)
 		if [ -d "$AB_ALT_HELPERS_DIR" ]; then
 			cp -R "$AB_ALT_HELPERS_DIR/." strategy_helpers/ 2>/dev/null || true
@@ -179,10 +312,15 @@ _ab_finish() {
 		fi
 		root_after=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 		[ "$root_after" = "$b" ] || { log "[AB] 差し替え後 hash 不一致 ($root_after != $b)"; return 1; }
-		command -v _archive_strategy_snapshot_by_hash >/dev/null 2>&1 && _archive_strategy_snapshot_by_hash "${STRATEGY_FILE:-strategy.py}" >/dev/null 2>&1 || true
-		if [ -s "$AB_CANDIDATE_DIR/change_log.txt" ] && [ -n "${CHANGE_LOG_FILE_HOST:-}" ]; then
-			cat "$AB_CANDIDATE_DIR/change_log.txt" >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
+		if [ -n "$change_log_base" ]; then
+			_ab_append_change_log "$winner" "$reason" "$a" "$b" "$change_log_base"
+		else
+			log "[AB] finish B: A スナップショット取得失敗 → ADOPTED change_log 追記を安全側で省略"
 		fi
+		command -v _archive_strategy_snapshot_by_hash >/dev/null 2>&1 && _archive_strategy_snapshot_by_hash "${STRATEGY_FILE:-strategy.py}" >/dev/null 2>&1 || true
+		# ここにあった $AB_CANDIDATE_DIR/change_log.txt の追記は削除した。この dir は
+		# _ab_gate_before_game が A/B 開始時に tmp/history へ move するので finish
+		# 時点では常に存在せず、空振りしていた。記録は _ab_append_change_log が行う。
 		command -v _clear_active_branch >/dev/null 2>&1 && _clear_active_branch >/dev/null 2>&1 || true
 		win_hash="$b"
 		command -v append_phyrogenetic_event >/dev/null 2>&1 && append_phyrogenetic_event "improve" "$a" "$b" "$(cat "${GAME_COUNT_FILE:-game_count.txt}" 2>/dev/null || echo 0)" "" "ab-gate adopt: $reason" "" >/dev/null 2>&1 || true
@@ -196,7 +334,22 @@ _ab_finish() {
 		fi
 		log "[AB] finish: A 維持 (B=${b:0:12} 棄却) reason=$reason"
 	fi
-	command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data >/dev/null 2>&1 || true
+	if [ "$winner" = "B" ]; then
+		# A's deferred batch is not evidence for the newly adopted B. Archive
+		# metadata before clearing the old cycle; game histories remain intact.
+		local batch label
+		for label in accumulated lock retry; do
+			case "$label" in
+				accumulated) batch="${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}" ;;
+				lock) batch="${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ;;
+				retry) batch="${IMPROVE_RETRY_BATCH_FILE:-tmp/state/improve_retry_batch.json}" ;;
+			esac
+			if [ -e "$batch" ]; then
+				mv "$batch" "$AB_HISTORY_DIR/ab_${ts}_batch_${label}.json" || return 1
+			fi
+		done
+		command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data >/dev/null 2>&1 || true
+	fi
 	command -v _seed_current_strategy_run_from_rolling >/dev/null 2>&1 && _seed_current_strategy_run_from_rolling "$win_hash" >/dev/null 2>&1 || true
 	command -v _promote_current_strategy_to_anchor >/dev/null 2>&1 && _promote_current_strategy_to_anchor "$win_hash" >/dev/null 2>&1 || true
 	command -v _refresh_best_strategy_anchor >/dev/null 2>&1 && _refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
@@ -216,9 +369,11 @@ st.update({"winner": sys.argv[3], "reason": sys.argv[4], "finished_at": time.str
 with open(sys.argv[5], "a", encoding="utf-8") as fh:
     fh.write(json.dumps(st, ensure_ascii=False) + "\n")
 PY
-	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" 2>/dev/null || rm -f "$AB_STATE_FILE"
-	mv "$AB_GAMES_FILE" "$AB_HISTORY_DIR/ab_${ts}_games.jsonl" 2>/dev/null || rm -f "$AB_GAMES_FILE"
-	rm -rf "$AB_CANDIDATE_DIR" 2>/dev/null || true
+	# A queued candidate belongs to the next cycle; never delete it here.
+	# Retire state last: its presence blocks improvement until cleanup is done.
+	mv "$AB_GAMES_FILE" "$AB_HISTORY_DIR/ab_${ts}_games.jsonl" || return 1
+	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/corner_boundary.py" "$TMP_STATE_DIR" improvement || true
 	log "[AB] finish 完了: winner=$winner root=$(_ab_hash "${STRATEGY_FILE:-strategy.py}") 記録 $AB_HISTORY_DIR/ab_${ts}_*"
 	return 0
 }
@@ -261,6 +416,11 @@ PY
 		mkdir -p "$AB_HISTORY_DIR"
 		mv "$AB_CANDIDATE_DIR" "$AB_HISTORY_DIR/ab_candidate_$(date +%Y%m%d_%H%M%S)" 2>/dev/null || rm -rf "$AB_CANDIDATE_DIR"
 	else
+		local start_rc=$?
+		if [ "$start_rc" -eq 75 ]; then
+			log "[AB-GATE] 改善起動と競合中 → 候補を保持して次の境界へ延期"
+			return 0
+		fi
 		log "[AB-GATE] A/B 開始失敗 → 候補を破棄"
 		rm -rf "$AB_CANDIDATE_DIR"
 	fi
@@ -276,16 +436,26 @@ _ab_gate_after_game() {
 		_ab_finish A "abort:$(_ab_state_get abort_reason)" || true
 		return 0
 	fi
-	local looks maxb fut out verdict k m ucb
-	looks=$(_ab_env_value AB_GATE_LOOKS)
-	maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
-	fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
-	out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json ${looks:+--looks "$looks"} ${maxb:+--max-blocks "$maxb"} ${fut:+--futility-delta "$fut"} 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	local looks maxb fut rulev out verdict k m harm harm_z fut_ucb fut_z
+	rulev=$(_ab_state_get decision_rule_version)
+	# versioned state は開始時に固定した decision_rule だけを使う。既に走っている
+	# legacy state は旧挙動を変えないため、従来どおり現在の env override を渡す。
+	if [ -n "$rulev" ] && [ "$rulev" -ge 2 ] 2>/dev/null; then
+		out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	else
+		looks=$(_ab_env_value AB_GATE_LOOKS)
+		maxb=$(_ab_env_value AB_GATE_MAX_BLOCKS)
+		fut=$(_ab_env_value AB_GATE_FUTILITY_UCB_DELTA)
+		out=$(python3 tools/ab_decide.py --games "$AB_GAMES_FILE" --state "$AB_STATE_FILE" --json ${looks:+--looks "$looks"} ${maxb:+--max-blocks "$maxb"} ${fut:+--futility-delta "$fut"} 2>/dev/null) || { log "[AB-GATE] ab_decide 失敗"; return 0; }
+	fi
 	verdict=$(printf '%s' "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict',''))" 2>/dev/null)
 	k=$(printf '%s' "$out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('k',0))" 2>/dev/null)
 	m=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('mean_diff'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
-	ucb=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('ucb90'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
-	log "[AB-GATE] k=$k mean(B-A)=$m ucb90=$ucb verdict=$verdict"
+	harm=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('harm_ucb'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
+	harm_z=$(printf '%s' "$out" | python3 -c "import sys,json; print('%.4f'%json.load(sys.stdin).get('harm_z',0))" 2>/dev/null)
+	fut_ucb=$(printf '%s' "$out" | python3 -c "import sys,json; v=json.load(sys.stdin).get('futility_ucb'); print('-' if v is None else '%.0f'%v)" 2>/dev/null)
+	fut_z=$(printf '%s' "$out" | python3 -c "import sys,json; print('%.4f'%json.load(sys.stdin).get('futility_z',0))" 2>/dev/null)
+	log "[AB-GATE] k=$k mean(B-A)=$m harm_ucb(z=$harm_z)=$harm futility_ucb(z=$fut_z)=$fut_ucb verdict=$verdict"
 	case "$verdict" in
 	ADOPT)
 		if _ab_gate_dry_run; then
@@ -298,7 +468,7 @@ _ab_gate_after_game() {
 		if _ab_gate_dry_run; then
 			log "[AB-GATE] (dry-run) would finish A ($verdict)"
 		else
-			_ab_finish A "$verdict k=$k mean=$m" || true
+			_ab_finish A "$verdict k=$k mean=$m harm_ucb=$harm futility_ucb=$fut_ucb" || true
 		fi
 		;;
 	*) : ;;

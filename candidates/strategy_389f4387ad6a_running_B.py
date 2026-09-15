@@ -54,7 +54,6 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
-import os
 
 from strategy_helpers import board_stats
 
@@ -79,16 +78,7 @@ _V763_BASE_BONUS = 260.0
 
 def _v763_weight():
     """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
-    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
-    if raw in ("", "0", "false", "no", "off"):
-        return 0.0
-    try:
-        w = float(raw)
-    except (TypeError, ValueError):
-        return 0.0
-    if w != w or w < 0.0:
-        return 0.0
-    return min(w, 8.0)
+    return 0.0
 
 
 def _v763_open_by_type(pieces):
@@ -145,6 +135,9 @@ FAST_DROP_DEADLINE_CONTACT = True
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # Change History
+# v734x: LOW_DROP_HIGH_LANE_COVER_AVOIDの保護対象をT9〜T11からT9〜T12へ拡張（対象段階: 第二T14経路のT12+T12露出温存）。他ゲート不変の条件1件置換。
+# Fixes rollback failure mode: 小駒の非併合手が盤面上で合成されたtype12の開いた上端を覆いT12+T12→T13→第二T14経路を埋没させる (H1)
+# refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md, data/mandatory_themes.txt, advice.md
 # v727: manual-game feedback (docs/manual_challenge_20260825_insights.md).
 # POST_FIRST_RUSSIA_LANE_COVER_AVOID: stop aborting the whole selector when an
 # ineligible-but-normal candidate (deadline crossing, true floor landing)
@@ -1862,7 +1855,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
             if not isinstance(_lp, dict):
                 continue
             _lt = _lp.get("type")
-            if not isinstance(_lt, int) or _lt < 9 or _lt > 11:
+            if not isinstance(_lt, int) or _lt < 9 or _lt > 12:  # v734拡張: 盤面上で合成されたtype12の開いた上端も保護 (H1: 小駒被覆でT12+T12→T13→第二T14経路が埋没)
                 continue
             if _lt - 1 == next_type:  # next=T8 で開いた T9 は「乗せて縦積み」候補なので罰しない
                 continue
@@ -3339,117 +3332,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         return out
     except Exception:
         return base
-
-
-def _merge_route_geometry(game_state):
-    """Use the analyzer's rotated piece extents for both cap and gap checks."""
-    from analyze_board import piece_deadline_extents, UNITY_PREFAB_DEADLINE_RADII
-
-    def bounds(piece):
-        ext = piece_deadline_extents(piece, UNITY_PREFAB_DEADLINE_RADII)
-        x, y = float(piece['x']), float(piece['y'])
-        h, top, bottom = (float(ext[k]) for k in ('horiz', 'top', 'bottom'))
-        if not all(math.isfinite(v) for v in (x, y, h, top, bottom)) or min(h, top, bottom) <= 0:
-            raise ValueError('invalid piece geometry')
-        return (piece['type'], x, y, h, y + top, y - bottom)
-
-    pieces = [bounds(p) for p in game_state['pieces']]
-    drop = dict(game_state['next'], x=0, y=0)
-    return pieces, bounds(drop)
-
-
-def merge_opportunity_alternatives(game_state, analysis, decision):
-    """Rank route-preserving alternatives AFTER the runtime's final safety choice.
-
-    This is a policy hook, not a safety exemption. The runner must validate each
-    proposed x through its complete safety pass and reject redirected choices.
-    Small board pairs remain eligible for vibration play; only type >= 8 pairs
-    are protected. Existing DIRECT/NEAR moves and emergency choices are kept.
-    """
-    if not isinstance(game_state, dict) or not isinstance(analysis, dict) or not isinstance(decision, dict):
-        return []
-    try:
-        results = analysis.get('results') or []
-        if not results:
-            return []
-        x = float(decision['x'])
-        chosen = min(results, key=lambda q: abs(float(q['x']) - x))
-        # Do not infer the footprint of an off-grid correction from another x.
-        if abs(float(chosen['x']) - x) > 1e-6:
-            return []
-        if chosen.get('merge_grade') in ('DIRECT', 'NEAR'):
-            return []
-        if game_state.get('deadline_crossed') or (analysis.get('reactor') or {}).get('deadline_crossed'):
-            return []
-        pieces, drop = _merge_route_geometry(game_state)
-        nt, _, _, dh, dt, db = drop
-        nn = (game_state.get('nextNext') or {}).get('type')
-        if not isinstance(nt, int) or not 1 <= nt <= 11:
-            return []
-        current_risk = float(chosen['risk_top_y_after_drop'])
-        if not math.isfinite(current_risk):
-            return []
-
-        def above(block, target):
-            return (block[2] > target[2] and block[5] >= target[4] - 0.25
-                    and abs(block[1] - target[1]) < target[3] + 0.6 * block[3])
-
-        targets = [p for i, p in enumerate(pieces) if p[0] == nn and nt != nn
-                   and not any(above(o, p) for j, o in enumerate(pieces) if j != i)]
-        pairs = []
-        for i, left in enumerate(pieces):
-            for j in range(i + 1, len(pieces)):
-                right = pieces[j]
-                if left[0] != right[0] or left[0] < 8 or nt >= left[0]:
-                    continue
-                lo, hi = sorted((left[1], right[1]))
-                bottom, top = max(left[5], right[5]), min(left[4], right[4])
-                if hi - lo <= 0 or hi - lo > left[3] + right[3] + 2 * dh or bottom >= top:
-                    continue
-                # An already occupied gap is not a currently available route.
-                if any(lo < p[1] < hi and p[5] < top and p[4] > bottom
-                       for k, p in enumerate(pieces) if k not in (i, j)):
-                    continue
-                pairs.append((lo, hi, bottom, top))
-
-        def losses(q):
-            px, py = float(q['x']), float(q['landing_y'])
-            placed = (nt, px, py, dh, py + dt, py - db)
-            cap = int(bool(targets) and all(above(placed, p) for p in targets))
-            gaps = sum(lo < px < hi and placed[5] < top and placed[4] > bottom
-                       for lo, hi, bottom, top in pairs)
-            return gaps, cap
-
-        old_losses = losses(chosen)
-        reason = str(decision.get('reason', ''))
-        keep_contact = ('OPEN_TWIN_MERGE' in reason and 'RUNTIME_DEADLINE_SAFETY_OVERRIDE' not in reason)
-        alternatives = []
-        for q in results:
-            qx, qy, risk = (float(q[k]) for k in ('x', 'landing_y', 'risk_top_y_after_drop'))
-            deadline = float(q['deadline_y'])
-            if not all(math.isfinite(v) for v in (qx, qy, risk, deadline)) or not -3 <= qx <= 3:
-                continue
-            if any(q.get(k, False) for k in ('crosses_deadline', 'merge_result_crosses_deadline', 'wall_rotation_risk')):
-                continue
-            if risk > deadline - 0.5:
-                continue
-            direct = nt >= 8 and q.get('merge_grade') == 'DIRECT'
-            new_losses = losses(q)
-            if not direct:
-                if keep_contact:
-                    continue
-                if q.get('merge_grade') != 'NO' or risk > current_risk + 0.35:
-                    continue
-                if not all(a <= b for a, b in zip(new_losses, old_losses)) or new_losses == old_losses:
-                    continue
-            tag = 'LARGE_DIRECT' if direct else 'KEEP_ROUTES'
-            alternatives.append(((not direct, sum(new_losses), risk, abs(qx - x), qx),
-                                 {'x': qx, 'reason': 'MERGE_OPPORTUNITY_' + tag}))
-        return [proposal for _, proposal in sorted(alternatives, key=lambda item: item[0])]
-    except (KeyError, TypeError, ValueError, OverflowError):
-        # Missing geometry cannot establish a safe improvement.
-        return []
-
 
 if __name__ == "__main__":
     import json

@@ -11,6 +11,7 @@ cd "$ELOOP_LIB_DIR"
 
 # Layer 0: 定数・初期化
 source "$ELOOP_LIB_DIR/core/config.sh"
+source "$ELOOP_LIB_DIR/core/radio_timeout_guard.sh"
 source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"
 source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
 # Layer 1: コアヘルパー
@@ -19,6 +20,7 @@ source "$ELOOP_LIB_DIR/core/game_state.sh"
 source "$ELOOP_LIB_DIR/core/strategy_runtime.sh"
 # Layer 1.5: AI共通ディスパッチ (helpers.sh に依存)
 source "$ELOOP_LIB_DIR/lib/ai_generate.sh"
+source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"
 # Layer 2: 戦略インフラ
 source "$ELOOP_LIB_DIR/strategy/ai.sh"
 source "$ELOOP_LIB_DIR/strategy/sandbox.sh"
@@ -26,7 +28,17 @@ source "$ELOOP_LIB_DIR/core/version.sh"
 source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
+[ -f "$ELOOP_LIB_DIR/strategy/ab_integrity.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_integrity.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
+[ -f "$ELOOP_LIB_DIR/strategy/persist.sh" ] && source "$ELOOP_LIB_DIR/strategy/persist.sh"
+# Live improve_state is ephemeral by design. Wrap the writer after the base
+# implementation is loaded so terminal failed_no_apply classifications survive
+# later recovery/new-run state writes without changing the existing state schema.
+[ -f "$ELOOP_LIB_DIR/strategy/improve_failure.sh" ] && source "$ELOOP_LIB_DIR/strategy/improve_failure.sh"
+# Game-only handover broker.  It never owns the common overlay/audio/stream
+# processes; sourcing it here also makes a newly sourced eloop.sh observe a
+# pending request without restarting the long-lived loop shell.
+[ -f "$ELOOP_LIB_DIR/lib/game_lifecycle.sh" ] && source "$ELOOP_LIB_DIR/lib/game_lifecycle.sh"
 source "$ELOOP_LIB_DIR/strategy/regression.sh"
 # Layer 3: 放送系（配信モードのみ。探索モードでは source しない）
 # 探索モードでは配信系関数は core/streaming_shim.sh の no-op 定義で代替される。
@@ -34,8 +46,13 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/radio_state.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
+	# docich canonical bridge overrides only the host-mode predicate so
+	# pre-commit candidate runtimes never change viewer-facing persona/voice.
+	source "$ELOOP_LIB_DIR/broadcast/docich_soren91_host_mode.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_news_context.sh"
+	source "$ELOOP_LIB_DIR/broadcast/radio_news_priority.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"

@@ -107,7 +107,9 @@ echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
 _start_pid_heartbeat() {
 	(
-		while true; do
+		# $$ remains the daemon parent PID in this subshell. Stop after parent death
+		# so the supervisor cannot adopt an orphan that publishes a stale PID.
+		while kill -0 "$$" 2>/dev/null; do
 			echo $$ > "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true
 			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
 		done
