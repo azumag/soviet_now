@@ -1394,14 +1394,9 @@ PREPASS_APPEND
 		rm -rf "$parse_dir"
 		[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
-		if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-			local news_source attribution
-			news_source=$(_extract_news_source_name "$selected_news")
-			if [ -n "$news_source" ]; then
-				attribution="出典は${news_source}です。"
-				talk_body=$(printf '%s\n' "$talk_body" | awk -v attribution="$attribution" 'NR==1 { print; print attribution; next } { print }')
-			fi
-		fi
+		# ニュースの出典・媒体名は読み上げない。帰属表示は字幕・チャット側
+		# (_build_cc_attribution_text) だけで行い、旧仕様で本文へ混入した
+		# 話し言葉の出典行は再生直前の _strip_spoken_news_attribution_file が除去する。
 
 		talk_body_parsed="$talk_body"
 		if _contains_provider_error_text "$talk" || _contains_provider_error_text "$talk_body_parsed"; then
@@ -1476,10 +1471,10 @@ PREPASS_APPEND
 			return 1
 		fi
 
-		# 品質チェック（中国語/非日本語/無限ループ/文字化け）
+		# 品質チェック（中国語/非日本語/無限ループ/文字化け/素材の丸読み）
 		if [ "${RADIO_QUALITY_CHECK_ENABLED:-1}" = "1" ]; then
 			local _qr
-			_qr=$(_radio_quality_check "$talk_body" "$corner_name")
+			_qr=$(_radio_quality_check "$talk_body" "$corner_name" "${RADIO_QUALITY_SOURCE_MATERIAL:-}")
 			if [ "$_qr" = "OK" ]; then
 				_quality_ok=true
 				break

@@ -544,23 +544,10 @@ blocks.sort(key=block_priority)
 
 out_blocks = []
 for block in blocks:
-    title = block_title(block)
-    source_name = block_source_name(block)
-    item_meta = meta.get(title, {})
-    lang = item_meta.get("lang", "ja")
-    published_at = (item_meta.get("published_at") or "").strip()
-    lang_tag = lang_labels.get(lang, f" [{lang}]") if lang != "ja" else ""
-    source_key = block_source_key(block)
-    if source_key == "globalvoices":
-        attribution = [block[0], f"出典: {source_name}{lang_tag}"]
-        if published_at:
-            attribution.append(f"公開日時: {published_at}")
-        out_blocks.append("\n".join([*attribution, *block[1:]]).rstrip())
-    else:
-        context = [block[0]]
-        if published_at:
-            context.append(f"公開日時: {published_at}")
-        out_blocks.append("\n".join([*context, *block[1:]]).rstrip())
+    # 出典・公開日時のメタ行は生成プロンプトへ出さない。見出しと要約だけを
+    # 「再構成の参考素材」として渡し、読み上げ原稿として扱わせない。
+    # 帰属表示（ライセンス）は字幕・チャット側の _build_cc_attribution_text が担う。
+    out_blocks.append("\n".join(block).rstrip())
 
 print("\n\n".join(out_blocks))
 PY

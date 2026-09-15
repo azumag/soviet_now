@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ニュースの出典表示は Global Voices 系列だけに限定されることを検証する。
+# ニュースの出典は読み上げず、帰属表示は字幕・チャット側だけで行うことを検証する。
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,31 +42,25 @@ JSON
 blocks=$'■ 国内政策ニュース\nRSS概要です。\n\n■ 海外の市民社会ニュース\nRSS summary.'
 prepared="$(_prepare_news_prompt_blocks "$blocks")"
 
-if printf '%s' "$prepared" | grep -q '出典: Google News'; then
-	not_ok 'Google News source is hidden from the generation prompt'
+if printf '%s' "$prepared" | grep -q '出典:'; then
+	not_ok 'no source line is exposed to the generation prompt'
 else
-	ok 'Google News source is hidden from the generation prompt'
+	ok 'no source line is exposed to the generation prompt'
 fi
-if printf '%s' "$prepared" | grep -q '出典: Global Voices(EN) \[英語\]'; then
-	ok 'Global Voices source remains in the generation prompt'
+if printf '%s' "$prepared" | grep -q '公開日時:'; then
+	not_ok 'no published-at line is exposed to the generation prompt'
 else
-	not_ok 'Global Voices source remains in the generation prompt'
+	ok 'no published-at line is exposed to the generation prompt'
 fi
 if printf '%s' "$prepared" | grep -q '国内政策ニュース' && printf '%s' "$prepared" | grep -q 'RSS概要です。'; then
 	ok 'non-attribution news material remains available for reconstruction'
 else
 	not_ok 'non-attribution news material remains available for reconstruction'
 fi
-
-if [ -z "$(_extract_news_source_name '国内政策ニュース')" ]; then
-	ok 'spoken attribution is empty for non-Global Voices news'
+if printf '%s' "$prepared" | grep -q '海外の市民社会ニュース' && printf '%s' "$prepared" | grep -q 'RSS summary.'; then
+	ok 'Global Voices material remains available for reconstruction'
 else
-	not_ok 'spoken attribution is empty for non-Global Voices news'
-fi
-if [ "$(_extract_news_source_name '海外の市民社会ニュース')" = 'Global Voices(EN)' ]; then
-	ok 'spoken attribution remains for Global Voices news'
-else
-	not_ok 'spoken attribution remains for Global Voices news'
+	not_ok 'Global Voices material remains available for reconstruction'
 fi
 
 if [ -z "$(_build_cc_attribution_text '国内政策ニュース')" ]; then
@@ -86,11 +80,11 @@ cat >"$non_gv_talk" <<'EOF'
 出典はGoogle News 日本政治です。
 本文は再構成されています。
 EOF
-if _strip_non_globalvoices_attribution_file "$non_gv_talk" '国内政策ニュース' &&
+if _strip_spoken_news_attribution_file "$non_gv_talk" &&
 	! grep -q '^出典' "$non_gv_talk" && grep -q '本文は再構成されています。' "$non_gv_talk"; then
-	ok 'playback guard removes legacy non-Global Voices attribution only'
+	ok 'playback guard removes non-Global Voices spoken attribution'
 else
-	not_ok 'playback guard removes legacy non-Global Voices attribution only'
+	not_ok 'playback guard removes non-Global Voices spoken attribution'
 fi
 
 gv_talk="$TMP/gv_talk.txt"
@@ -99,17 +93,17 @@ cat >"$gv_talk" <<'EOF'
 出典はGlobal Voices(EN)です。
 本文です。
 EOF
-if ! _strip_non_globalvoices_attribution_file "$gv_talk" '海外の市民社会ニュース' &&
-	grep -q '^出典はGlobal Voices(EN)です。$' "$gv_talk"; then
-	ok 'playback guard preserves Global Voices attribution'
+if _strip_spoken_news_attribution_file "$gv_talk" &&
+	! grep -q '^出典' "$gv_talk" && grep -q '本文です。' "$gv_talk"; then
+	ok 'playback guard removes Global Voices spoken attribution too'
 else
-	not_ok 'playback guard preserves Global Voices attribution'
+	not_ok 'playback guard removes Global Voices spoken attribution too'
 fi
 
-if [ "$(grep -c '出典名を読み上げるのはGlobal Voicesの記事を扱う場合だけ' "$ROOT/broadcast/radio_corners.sh")" -ge 2 ]; then
-	ok 'generated and self-searched news prompts enforce the same policy'
+if [ "$(grep -c '出典名・媒体名・配信元・URL・公開日時は一切読み上げないこと' "$ROOT/broadcast/radio_corners.sh")" -ge 2 ]; then
+	ok 'generated and self-searched news prompts enforce the same no-source policy'
 else
-	not_ok 'generated and self-searched news prompts enforce the same policy'
+	not_ok 'generated and self-searched news prompts enforce the same no-source policy'
 fi
 
 exit "$FAIL"

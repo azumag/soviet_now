@@ -66,6 +66,21 @@ class NewsBodyReconstructionTest(unittest.TestCase):
         # 見出しだけでも再構成することを導入文でも明示する
         self.assertIn("本文が短い・見出しだけ・未取得の場合は", corners)
 
+    def test_news_corner_prompt_forbids_reading_material_verbatim(self):
+        corners = RADIO_CORNERS.read_text(encoding="utf-8")
+        # 素材は朗読原稿ではなく再構成の参考資料として渡す
+        self.assertIn("素材の見出し・本文・要約をそのまま読み上げないこと", corners)
+        self.assertIn("見出しの文言をそのまま音読せず", corners)
+        self.assertIn("出典名・媒体名・配信元・URL・公開日時は一切読み上げないこと", corners)
+        # 旧来の「見出しを読み上げる」指示が残っていないこと
+        self.assertNotIn("ニュースタイトルを日本語で1文だけ読み上げること", corners)
+        self.assertNotIn("ニュース本文に入る前に", corners)
+
+    def test_news_corner_does_not_inject_spoken_attribution(self):
+        engine = RADIO_ENGINE.read_text(encoding="utf-8")
+        self.assertNotIn('attribution="出典は${news_source}です。"', engine)
+        self.assertNotIn("_extract_news_source_name", engine)
+
     def test_jiji_prompt_forbids_body_unavailable_meta(self):
         jiji = JIJI_PROMPT.read_text(encoding="utf-8")
         self.assertIn("本文が確認できない", jiji)
