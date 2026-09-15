@@ -45,6 +45,7 @@ source "$ELOOP_LIB_DIR/strategy/regression.sh"
 if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/radio_state.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
+	source "$ELOOP_LIB_DIR/broadcast/comment_quality.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
 	# docich canonical bridge overrides only the host-mode predicate so
 	# pre-commit candidate runtimes never change viewer-facing persona/voice.
