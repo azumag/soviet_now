@@ -24,9 +24,8 @@ function finiteInt(value, fallback = null) {
   return Number.isInteger(n) ? n : fallback;
 }
 
-function finiteNumber(value, fallback = null) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+function summaryInt(value) {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
 }
 
 function gameToken(game) {
@@ -105,9 +104,9 @@ function readSummary(runtimeDir, game) {
       ok: true,
       path,
       raw,
-      rank: finiteInt(raw?.rank),
-      turns: finiteInt(raw?.turns),
-      piecesAtEnd: finiteInt(raw?.piecesAtEnd),
+      rank: summaryInt(raw?.rank),
+      turns: summaryInt(raw?.turns),
+      piecesAtEnd: summaryInt(raw?.piecesAtEnd),
       strategyHash: typeof raw?.strategyHash === 'string' ? raw.strategyHash : null,
       resultScreenOcr: Array.isArray(raw?.resultScreenOcr?.lines)
         ? raw.resultScreenOcr.lines.filter(line => typeof line === 'string').slice(0, 8)
@@ -248,9 +247,9 @@ export function buildDailyEvidence(runtimeDir, lastConsumedGame = 0, { maxShotsP
     focus,
     metrics: {
       games: entries.length,
-      meanRank: mean(entries.map(entry => finiteNumber(entry.rank))),
-      medianRank: median(entries.map(entry => finiteNumber(entry.rank))),
-      meanTurns: mean(entries.map(entry => finiteNumber(entry.turns))),
+      meanRank: mean(entries.map(entry => entry.rank)),
+      medianRank: median(entries.map(entry => entry.rank)),
+      meanTurns: mean(entries.map(entry => entry.turns)),
     },
     warnings,
   };
