@@ -11,7 +11,9 @@
 # (default :98). It never kills processes discovered by name or display number —
 # a display-scoped cleanup would kill the production Xvfb (:99, owned by the
 # streaming runtime) when pointed at the stream display (2026-09-05 near-miss).
-# Restart cleanup only touches the pids recorded in our own pidfile.
+# systemd owns service restart cleanup through KillMode=control-group.  A stale
+# pidfile is metadata only: never signal a PID read from a previous invocation,
+# because the kernel may already have reused that PID for an unrelated process.
 set -u
 cd /home/ubuntu/soren || exit 1
 
@@ -43,17 +45,13 @@ WM_PID=""
 
 # ATTACH=1: render on an already-running foreign display (e.g. the stream
 # display :99). Never starts Xvfb or a window manager there, and never
-# kills anything discovered by name/display — cleanup stays pidfile-scoped.
+# kills anything discovered by name/display.
 ATTACH="${SOREN_SHARED_OVERLAY_ATTACH:-0}"
 
-# Restart cleanup: only the pids our previous instance recorded.
-if [ -f "$PIDFILE" ]; then
-	while read -r p _; do
-		case "$p" in ''|*[!0-9]*) continue ;; esac
-		kill -9 "$p" 2>/dev/null || true
-	done <"$PIDFILE"
-	rm -f "$PIDFILE"
-fi
+# Never trust PIDs left by an older invocation.  systemd tears down the prior
+# service cgroup before starting us; if a pidfile survived a crash, its numeric
+# PIDs may now belong to unrelated processes.  Remove metadata only.
+rm -f "$PIDFILE"
 
 if [ "$ATTACH" = "1" ]; then
 	if [ ! -e "/tmp/.X11-unix/X${DISP#:}" ]; then
@@ -111,6 +109,7 @@ cleanup() {
 		case "$pid" in ''|*[!0-9]*) continue ;; esac
 		kill -9 "$pid" 2>/dev/null || true
 	done
+	rm -f "$PIDFILE"
 }
 trap cleanup TERM INT EXIT
 wait "$NODE_PID"
