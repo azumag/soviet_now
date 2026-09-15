@@ -18,3 +18,8 @@ test('opencode text fallback uses util-linux script -c contract', () => {
     /execFile\('script', \['-q', rawFile, 'bash', '-lc', command\]/,
   );
 });
+
+test('opencode non-zero exit rejects even when partial output exists', () => {
+  assert.match(source, /if \(err\) return reject\(err\);/);
+  assert.doesNotMatch(source, /if \(err && !cleaned\) return reject\(err\);/);
+});
