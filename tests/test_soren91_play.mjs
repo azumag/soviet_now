@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { decide, landingAt, simulateDrop, TYPE_RADII } from '../soren91/strategy.mjs';
 import { TYPE_RADII as IMAGE_RADII, detectPieces, detectNextPieces, measureGarbage, analyzeScreenshot } from '../soren91/screenshot_analyzer.mjs';
-import { gateObservation, usableCalibration } from '../soren91/observation_guard.mjs';
+import { DEFAULT_MAX_STALE_MS, gateObservation, maxStaleMs, usableCalibration } from '../soren91/observation_guard.mjs';
 const sharp = createRequire(new URL('../soren91/package.json', import.meta.url))('sharp');
 const piece = (type, x = 0, y = -5 + TYPE_RADII[type], extra = {}) => ({ type, r: TYPE_RADII[type], x, y, confidence: 0.9, ...extra });
 const board = (pieces = [], next = piece(1), extra = {}) => ({ state: 'MOVE', pieces, next, nextPieces: [next], garbage: { ratio: 0, height: -5, gauge: 0 }, ...extra });
@@ -192,6 +192,27 @@ test('gate: real WAITING clears history; new round reconfirms', () => {
   assert.equal(gateObservation(b, c, 1800).state, 'DROP');
 });
 test('gate: cached geometry for a different resolution is unusable', () => assert.equal(usableCalibration(cal(), 640, 360), false));
+test('gate: a slow remote-CDP loop period still confirms MOVE', () => {
+  // 2026-09-16: the cdp-host (SOREN91_SHARED_BROWSER) loop measured ~5-6s per
+  // iteration, so the old hard-coded 5s freshness window rejected every frame
+  // and the bot never left DROP (no drops, no play, no comments).
+  const c = cal(), b = board([piece(1)]);
+  assert.equal(gateObservation(b, c, 1000).state, 'DROP');
+  assert.equal(gateObservation(b, c, 7000).state, 'MOVE');
+  assert.equal(gateObservation(b, c, 13000).state, 'MOVE');
+});
+test('gate: stale window is bounded and configurable', () => {
+  assert.equal(DEFAULT_MAX_STALE_MS, 15_000);
+  assert.equal(maxStaleMs({}), 15_000);
+  assert.equal(maxStaleMs({ SOREN91_OBSERVATION_MAX_STALE_MS: '30000' }), 30_000);
+  assert.equal(maxStaleMs({ SOREN91_OBSERVATION_MAX_STALE_MS: '0' }), 15_000);
+  assert.equal(maxStaleMs({ SOREN91_OBSERVATION_MAX_STALE_MS: 'nope' }), 15_000);
+  const c = cal(), b = board([piece(1)]);
+  assert.equal(gateObservation(b, c, 1000).state, 'DROP');
+  // Older than the window -> one more confirmation frame, never a stale MOVE.
+  assert.equal(gateObservation(b, c, 1000 + DEFAULT_MAX_STALE_MS + 1).state, 'DROP');
+  assert.equal(gateObservation(b, c, 1000 + DEFAULT_MAX_STALE_MS + 2).state, 'MOVE');
+});
 test('Sharp decode → recognition → gate → real strategy contract', async () => {
   const im = image(), c = cal(); disc(im, 730, 50, 14); disc(im, 600, 550, 10.35);
   const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();

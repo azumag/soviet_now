@@ -1,6 +1,23 @@
 /** Temporal state is kept outside the hot-reloaded analyzer, per calibration. */
 const observations = new WeakMap();
 
+// How old the previous observation may be and still confirm a MOVE frame.
+//
+// The confirmation needs two consecutive stable frames, so this window must be
+// comfortably larger than one loop iteration. The loop period is dominated by
+// the screenshot path: a local browser iterates in well under a second, but the
+// remote-CDP cdp-host (SOREN91_SHARED_BROWSER=1) measured ~5-6s per iteration
+// (2026-09-16: 76 frames over ~8 minutes). With the old hard-coded 5000ms every
+// frame arrived "too old", gateObservation returned `confirm-frame` -> DROP on
+// every iteration, and the bot never reached MOVE, so it never dropped a piece
+// (no play, no game history, no comments). 15s keeps a >2x margin over the
+// measured remote period while still rejecting a genuinely stalled loop.
+export const DEFAULT_MAX_STALE_MS = 15_000;
+export function maxStaleMs(env = process.env) {
+  const raw = Number(env?.SOREN91_OBSERVATION_MAX_STALE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_STALE_MS;
+}
+
 export function usableCalibration(cal, width, height) {
   const b = cal?.board;
   return !!b && !cal.provisional && !cal.isFallback && (cal.confidence ?? 0) >= 0.6
@@ -28,7 +45,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
   if (!state.next || state.next.fallback || !(state.next.confidence >= 0.58)) reason = 'unknown-current';
   else if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
-  else if (!previous || !previous.usable || previous.geometry !== geometry || now - previous.at > 5000 || now < previous.at) reason = 'confirm-frame';
+  else if (!previous || !previous.usable || previous.geometry !== geometry || now - previous.at > maxStaleMs() || now < previous.at) reason = 'confirm-frame';
   else if (previous.next?.type !== state.next.type) reason = 'preview-changed';
   else {
     const unmatched = previous.pieces.map(p => ({ ...p }));
