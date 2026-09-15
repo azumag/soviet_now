@@ -245,6 +245,8 @@ export function createServer(options, { platform = process.platform, spawnImpl =
   const spawnArgs = buildSessionArgs(platform, here, sessionMode);
   let child = null;
   let lastExit = null;
+  let cdpDriverState = 'idle';
+  let cdpStdoutTail = '';
 
   const currentStatus = () => ({
     ok: true,
@@ -253,6 +255,7 @@ export function createServer(options, { platform = process.platform, spawnImpl =
     running: Boolean(child && child.exitCode == null),
     pid: child?.pid || null,
     lastExit,
+    ...(sessionMode === 'cdp-host' ? { driverState: cdpDriverState } : {}),
   });
 
   const server = http.createServer(async (req, res) => {
@@ -285,13 +288,28 @@ export function createServer(options, { platform = process.platform, spawnImpl =
       // Both spawn targets take all configuration from the child env
       // (SOREN91_LOCAL_SRT_URL for the srtUrl override above; SOREN91_CDP_*
       // etc. flow through process.env untouched), never from argv.
+      if (sessionMode === 'cdp-host') {
+        cdpDriverState = 'waiting';
+        cdpStdoutTail = '';
+      }
       child = spawnImpl(process.execPath, spawnArgs, {
         env: childEnv,
-        stdio: ['ignore', 'inherit', 'inherit'],
+        stdio: ['ignore', sessionMode === 'cdp-host' ? 'pipe' : 'inherit', 'inherit'],
         windowsHide: platform === 'win32' ? false : undefined,
       });
+      if (sessionMode === 'cdp-host' && child?.stdout?.on) {
+        child.stdout.on('data', (chunk) => {
+          try { process.stdout.write(chunk); } catch {}
+          cdpStdoutTail = (cdpStdoutTail + String(chunk)).slice(-512);
+          if (cdpStdoutTail.includes('SOREN91_CDP_HOST_GAME_FOUND=1')) cdpDriverState = 'ready';
+        });
+      }
       child.once('exit', (code, signal) => {
         lastExit = { code, signal, at: new Date().toISOString() };
+        if (sessionMode === 'cdp-host') {
+          cdpDriverState = (!signal && code !== 0) ? 'failure' : 'idle';
+          cdpStdoutTail = '';
+        }
         child = null;
       });
       return json(res, 202, { ok: true, started: true, pid: child.pid });

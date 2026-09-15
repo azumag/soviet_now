@@ -6,6 +6,7 @@ import {
   buildCanvasVideoFilter,
   buildChromeArgs,
   canvasSamplesMatch,
+  computeDriverDeadline,
   evaluateGeometryDrift,
   findGameTarget,
   isAllowedCdpPeer,
@@ -91,6 +92,18 @@ test('SRT validation rejects credentials and preserves caller/Tailscale contract
     () => validateOptions(validOptions({ srtUrl: 'srt://203.0.113.10:9000?mode=caller' }), 'darwin'),
     /Tailscale IPv4/,
   );
+});
+
+test('cdp-host driver wait has an independent bounded deadline', () => {
+  const validated = validateOptions(validOptions({ driverWaitSec: 45 }), 'darwin');
+  assert.equal(validated.driverWaitSec, 45);
+  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 4 }), 'darwin'), /5..120/);
+  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 121 }), 'darwin'), /5..120/);
+  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 10.5 }), 'darwin'), /5..120/);
+  const startedAt = 100_000;
+  const waitStartedAt = 130_000;
+  assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 1500, 45), 175_000);
+  assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 60, 45), 160_000);
 });
 
 test('Chrome is physically muted whenever audio tap is disabled', () => {

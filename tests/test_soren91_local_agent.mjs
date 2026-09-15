@@ -337,6 +337,7 @@ test('HTTP: cdp-host mode spawns the CDP host script and reports its mode', asyn
     assert.equal(status.status, 200);
     assert.deepEqual(await status.json(), {
       ok: true, backend: 'local-macos', mode: 'cdp-host', running: false, pid: null, lastExit: null,
+      driverState: 'idle',
     });
     const started = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
     assert.equal(started.status, 202);
@@ -344,6 +345,42 @@ test('HTTP: cdp-host mode spawns the CDP host script and reports its mode', asyn
     assert.match(seen[0].args[0], /soren91_macos_cdp_host\.mjs$/);
     assert.deepEqual(seen[0].args.slice(1), ['--execute']);
   }, 'cdp-host');
+});
+
+test('HTTP: cdp-host status exposes only fixed driver lifecycle states', async () => {
+  let exitHandler = null;
+  let stdoutHandler = null;
+  const child = {
+    pid: 525252, exitCode: null,
+    stdout: { on(event, fn) { if (event === 'data') stdoutHandler = fn; return this; } },
+    once(event, fn) { if (event === 'exit') exitHandler = fn; },
+    kill() { return true; },
+  };
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const { server } = createServer(options, { platform: 'darwin', mode: 'cdp-host', spawnImpl: () => child });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { authorization: `Bearer ${LONG_TOKEN}` };
+  try {
+    let status = await (await fetch(`${base}/v1/status`, { headers })).json();
+    assert.equal(status.driverState, 'idle');
+    assert.deepEqual(Object.keys(status).sort(), ['backend', 'driverState', 'lastExit', 'mode', 'ok', 'pid', 'running'].sort());
+    const started = await fetch(`${base}/v1/start`, { method: 'POST', headers });
+    assert.equal(started.status, 202);
+    status = await (await fetch(`${base}/v1/status`, { headers })).json();
+    assert.equal(status.driverState, 'waiting');
+    stdoutHandler?.(Buffer.from('SOREN91_CDP_HOST_GAME_FOUND=1\n'));
+    status = await (await fetch(`${base}/v1/status`, { headers })).json();
+    assert.equal(status.driverState, 'ready');
+    child.exitCode = 2;
+    exitHandler?.(2, null);
+    status = await (await fetch(`${base}/v1/status`, { headers })).json();
+    assert.equal(status.driverState, 'failure');
+    assert.equal(status.running, false);
+    assert.equal(status.lastExit.code, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('HTTP: cdp-host mode propagates the srtUrl body to the child env', async () => {

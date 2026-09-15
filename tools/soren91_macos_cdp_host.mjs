@@ -84,6 +84,10 @@ export function defaults(env = process.env) {
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
     sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
+    // Bound the external-driver handshake separately from the full session.
+    // A missing OCI driver must never hold the broadcast readiness path for
+    // the entire game session (the 2026-09-15 incident waited 240 seconds).
+    driverWaitSec: Number(env.SOREN91_CDP_HOST_DRIVER_WAIT_SEC || 45),
     pollMs: Number(env.SOREN91_CDP_HOST_POLL_MS || 2000),
     audioTap: envFlag(env, 'SOREN91_LOCAL_AUDIO_TAP', true),
     // Issue #303: the AudioService utility process may not exist yet when the
@@ -163,6 +167,10 @@ export function validateOptions(options, platform = process.platform) {
     }
   }
   if (!(options.videoMbps > 0 && options.videoMbps <= 8)) throw new Error('videoMbps must be >0 and <=8');
+  if (options.driverWaitSec == null) options.driverWaitSec = 45;
+  if (!Number.isInteger(options.driverWaitSec) || options.driverWaitSec < 5 || options.driverWaitSec > 120) {
+    throw new Error('driverWaitSec must be an integer 5..120');
+  }
   if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;
   if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {
     throw new Error('audioTapWaitSec must be an integer 5..600');
@@ -235,6 +243,13 @@ export function findGameTarget(targets) {
   const list = Array.isArray(targets) ? targets : [];
   return list.find((t) => t?.type === 'page'
     && typeof t?.url === 'string' && isExactGameTargetUrl(t.url)) || null;
+}
+
+export function computeDriverDeadline(startedAt, waitStartedAt, sessionSec, driverWaitSec) {
+  return Math.min(
+    Number(startedAt) + Number(sessionSec) * 1000,
+    Number(waitStartedAt) + Number(driverWaitSec) * 1000,
+  );
 }
 
 export function normalizeRemoteAddress(value) {
@@ -741,10 +756,16 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     });
     console.log(`SOREN91_CDP_HOST_PROXY_READY=${options.bindIp}:${options.proxyPort}`);
 
-    // Wait for the OCI bot to navigate to the exact game origin.
-    const deadline = startedAt + options.sessionSec * 1000;
+    // Wait only a short, independent window for the OCI driver. The
+    // full session deadline is still an upper bound, but a missing driver
+    // now fails before the production broadcast can sit black for minutes.
+    const waitStartedAt = Date.now();
+    const driverDeadline = computeDriverDeadline(
+      startedAt, waitStartedAt, options.sessionSec, options.driverWaitSec,
+    );
+    console.log('SOREN91_CDP_HOST_DRIVER_WAITING=1');
     let game = null;
-    while (Date.now() < deadline) {
+    while (Date.now() < driverDeadline) {
       if (chrome.exitCode != null) throw new Error(`chrome exited while waiting (code=${chrome.exitCode})`);
       let targets = [];
       try { targets = await fetchJsonList(options.cdpPort); } catch (e) {
@@ -756,7 +777,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       if (game) break;
       await sleep(options.pollMs);
     }
-    if (!game) throw new Error('no exact https://play.unityroom.com target appeared before session deadline');
+    if (!game) {
+      throw new Error('cdp-host driver did not reach the reviewed game origin before driver wait deadline');
+    }
     console.log('SOREN91_CDP_HOST_GAME_FOUND=1');
 
     // Local calibration via CDP (best-effort only): try to size the real
