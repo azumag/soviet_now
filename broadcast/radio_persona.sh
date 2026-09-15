@@ -236,13 +236,17 @@ _broadcast_expected_mode_matches() {
 _radio_voicevox_speaker_override() {
 	local corner="${1:-}"
 	# capitalism は台本どおりメリケンAIの話者を使う。
-	# その他のラジオは空を返し、従来どおりメイン話者
-	# （tmp/voicevox_voice.txt=東北イタコ 109）へ委ねる。
 	case "$corner" in
 	capitalism)
 		printf '%s' "${RADIO_CAPITALISM_VOICEVOX_SPEAKER:-${SOREN91_VOICEVOX_SPEAKER:-46}}"
+		return
 		;;
 	esac
+	# soren91(メリケンAI) モード中は、コーナー種別によらずラジオも
+	# メリケンの声で統一する (news/themes 等が中華声になるのを防ぐ)。
+	if [ "$(_radio_host_mode)" = "soren91" ]; then
+		printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}"
+	fi
 }
 
 _radio_topic_needs_runtime_evidence() {
