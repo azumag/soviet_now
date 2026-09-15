@@ -49,10 +49,12 @@ _is_valid_comment_talk() {
 
 	docich_bin=$(_comment_quality_docich_bin 2>/dev/null || true)
 	if [ -n "$docich_bin" ]; then
-		printf '%s' "$talk" | "$docich_bin" speech-quality --profile comment >/dev/null 2>&1
-		rc=$?
+		if printf '%s' "$talk" | "$docich_bin" speech-quality --profile comment >/dev/null 2>&1; then
+			return 0
+		else
+			rc=$?
+		fi
 		case "$rc" in
-		0) return 0 ;;
 		1) return 1 ;;
 		# rc=2 (old docich: unknown command) and execution failures fall back
 		# instead of turning a rolling deployment into a total reply outage.
