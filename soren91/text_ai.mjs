@@ -29,6 +29,30 @@ const DEFAULT_CCOGENT_TIMEOUT_MS = 120000;
 const DEFAULT_GEMINI_TIMEOUT_MS = 30000;
 // 通常設定 (core/config.sh: RADIO_OPENCODE_TIMEOUT=180) に合わせる。
 const DEFAULT_OPENCODE_TIMEOUT_MS = 180000;
+// Per-model cap inside the opencode chain. One hanging provider must not eat
+// the whole budget: 2026-09-16 on the VM `opencode/muse-spark-1.3-contributor-free`
+// (and ...-1.2-contributor-free) hung until the full 180s timeout, so every
+// beat/midgame comment died before reaching the opencode-go entries that answer
+// in seconds. A cap makes the chain fall through quickly.
+export const DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS = 45000;
+
+export function resolvePerModelTimeoutMs(timeoutMs, requestedMs) {
+  const total = Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_OPENCODE_TIMEOUT_MS;
+  const requested = Number(requestedMs) > 0 ? Number(requestedMs) : DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS;
+  return Math.max(5000, Math.min(requested, total));
+}
+
+// A model that hits the per-attempt timeout is almost always rate limited /
+// unreachable, not slow-but-working. Remember it for this process so every
+// later comment does not pay the same timeout again.
+export const OPENCODE_TIMEOUT_COOLDOWN_MS = 10 * 60 * 1000;
+const hungOpencodeModels = new Map();
+
+export function isOpencodeTimeout(err) {
+  if (!err) return false;
+  if (err.killed === true || err.signal === 'SIGTERM') return true;
+  return /timed?\s*out|ETIMEDOUT/i.test(String(err.message || ''));
+}
 const DEFAULT_OPENCODE_PERMISSION = '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
 
 function readRuntimeConfig() {
@@ -151,6 +175,13 @@ export function resolveTextAiConfig() {
         || process.env.RADIO_OPENCODE_TIMEOUT
         || textConfig.opencodeTimeoutSec,
       DEFAULT_OPENCODE_TIMEOUT_MS,
+    ),
+    // 1モデルあたりの上限 (秒)。opencode chain 内のハングを早期に切って
+    // 次のモデルへ落とすためのもの。
+    opencodePerModelTimeoutMs: parseTimeoutMs(
+      process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT
+        || process.env.SOREN91_COMMENT_OPENCODE_MODEL_TIMEOUT,
+      DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS,
     ),
     // opencode CLI に投げるモデルチェーン。既定は通常チェーン AI_COMMON_AGENTS。
     opencodeModels: parseOpencodeModels(process.env.AI_COMMON_AGENTS || process.env.RADIO_AGENTS),
@@ -344,18 +375,30 @@ export async function runOpencodeText(tag, promptText, options = {}) {
     throw makeProviderError('no opencode models configured');
   }
   const timeoutMs = options.timeoutMs || config.opencodeTimeoutMs;
+  const perModelTimeoutMs = resolvePerModelTimeoutMs(
+    timeoutMs,
+    options.perModelTimeoutMs || config.opencodePerModelTimeoutMs,
+  );
   const permission = options.opencodePermission || config.opencodePermission;
 
   let lastErr = null;
   for (const model of models) {
+    const cooldownUntil = hungOpencodeModels.get(model) || 0;
+    if (cooldownUntil > Date.now()) {
+      console.error(`[${tag}] opencode model skipped (timed out recently): ${model}`);
+      continue;
+    }
     try {
       const text = await runOpencodeOnce({
-        model, promptText, timeoutMs, permission,
+        model, promptText, timeoutMs: perModelTimeoutMs, permission,
         extraEnv: options.extraEnv, parseOutput: options.parseOutput,
       });
       if (text) return text;
     } catch (err) {
       lastErr = err;
+      if (isOpencodeTimeout(err)) {
+        hungOpencodeModels.set(model, Date.now() + OPENCODE_TIMEOUT_COOLDOWN_MS);
+      }
       console.error(`[${tag}] opencode model failed (${model}): ${err?.message || err}`);
     }
   }
