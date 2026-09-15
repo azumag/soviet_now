@@ -5,39 +5,38 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 source ./eloop_lib.sh
 
-# --- shared overlay lifecycle (Issue #303 / option A) ------------------------
-# The independent shared overlay (soren-shared-overlay.service) is NOT started
-# at boot: while the main SorenGame is displayed its opaque blank stage covers
-# the game. It is only needed during game-only mode, where it provides the
-# common rails and the /healthz readiness gate the bridge requires before an
-# irreversible game stop. So it is started here when game-only mode begins and
-# stopped again when the main game returns.
-SOREN_SHARED_OVERLAY_UNIT="${SOREN_SHARED_OVERLAY_UNIT:-soren-shared-overlay.service}"
+# --- common rails (soren-shared-overlay.service) -----------------------------
+# The independent common overlay is ALWAYS ON (enabled at boot, never toggled
+# from this control surface).  It renders the shared rails and serves the
+# /healthz readiness gate the bridge checks before an irreversible game stop.
+#
+# Earlier this surface started the overlay on stop-after-boundary and stopped
+# it when the main game returned (Issue #303 option A).  That ordering is not
+# safe: the overlay is a fullscreen window, so starting it while the main game
+# window is already mapped covers the live game.  On 2026-09-15 the scheduled
+# soren91 corner blacked out the broadcast for four minutes that way.
+# start_shared_overlay_service.sh keeps the overlay window below the game
+# windows, so staying up costs nothing while the main game is displayed.
+#
+# Readiness is still verified rather than assumed: an overlay that is down
+# leaves the bridge free to answer `unsupported` and keep the old game
+# (fail-open), which is the recovery path the lifecycle already documents.
 SOREN_SHARED_OVERLAY_HEALTH_URL="${SOREN_SHARED_OVERLAY_HEALTH_URL:-http://127.0.0.1:8092/healthz}"
 
-_shared_overlay_enabled() {
-	case "${SOREN_SHARED_OVERLAY_ENABLED:-${SOREN_GAME_LIFECYCLE_SHARED_OVERLAY:-}}" in
-	1 | true | yes | on | TRUE | True | YES | Yes | ON | On) return 0 ;;
-	esac
-	return 1
+shared_overlay_ready() {
+	curl -fsS --max-time 2 "$SOREN_SHARED_OVERLAY_HEALTH_URL" >/dev/null 2>&1
 }
 
-shared_overlay_start() {
-	_shared_overlay_enabled || return 0
-	curl -fsS --max-time 2 "$SOREN_SHARED_OVERLAY_HEALTH_URL" >/dev/null 2>&1 && return 0
-	sudo -n systemctl start "$SOREN_SHARED_OVERLAY_UNIT" >/dev/null 2>&1 || true
+# Wait out a service restart window before handing the request to the bridge.
+# The overlay is expected to be ready already; this never starts the unit.
+shared_overlay_wait_ready() {
+	shared_overlay_ready && return 0
 	local i
 	for i in $(seq 1 40); do
-		curl -fsS --max-time 2 "$SOREN_SHARED_OVERLAY_HEALTH_URL" >/dev/null 2>&1 && return 0
+		shared_overlay_ready && return 0
 		sleep 0.5
 	done
 	return 1
-}
-
-shared_overlay_stop() {
-	_shared_overlay_enabled || return 0
-	sudo -n systemctl stop "$SOREN_SHARED_OVERLAY_UNIT" >/dev/null 2>&1 || true
-	return 0
 }
 
 case "${1:-}" in
@@ -46,17 +45,14 @@ stop-after-boundary)
 	[ -n "$request_id" ] || exit 4
 	[ "$(game_lifecycle_request_id 2>/dev/null || true)" = "$request_id" ] || exit 3
 	# The bridge refuses the irreversible game stop unless the shared overlay
-	# gate is ready, so bring the overlay up first (game-only mode begins).
-	shared_overlay_start || true
+	# gate is ready.
+	shared_overlay_wait_ready || true
 	game_lifecycle_stop_after_boundary
 	;;
 fresh-start)
 	request_id="${2:-}"
 	[ -n "$request_id" ] || exit 4
-	if python3 ./lib/game_lifecycle.py --root "$ROOT" fresh-start --request-id "$request_id"; then
-		# Main game is back: the shared overlay would cover it, so stop it.
-		shared_overlay_stop
-	fi
+	python3 ./lib/game_lifecycle.py --root "$ROOT" fresh-start --request-id "$request_id"
 	;;
 cancel)
 	request_id="${2:-}"
@@ -71,7 +67,6 @@ cancel)
 	game_lifecycle_restore_predictions
 	game_lifecycle_restore_improvements
 	game_lifecycle_restore_loop
-	shared_overlay_stop
 	python3 ./lib/game_lifecycle.py --root "$ROOT" status
 	;;
 status)
