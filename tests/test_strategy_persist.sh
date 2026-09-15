@@ -16,8 +16,6 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
-export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 
 seed="$tmp/seed"
 origin="$tmp/origin.git"
@@ -26,6 +24,8 @@ runtime="$tmp/runtime"
 mkdir -p "$seed" "$runtime" "$seed/strategy_helpers" "$runtime/strategy_helpers"
 
 git init -q "$seed"
+git -C "$seed" config user.name t
+git -C "$seed" config user.email t@example.invalid
 printf 'v1\n' > "$seed/strategy.py"
 printf 'h1\n' > "$seed/strategy_helpers/a.sh"
 git -C "$seed" add -A
