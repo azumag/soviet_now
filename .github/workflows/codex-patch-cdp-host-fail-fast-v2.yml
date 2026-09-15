@@ -1,0 +1,93 @@
+name: Codex patch cdp-host fail-fast v2
+
+on:
+  push:
+    branches:
+      - codex/cdp-host-driver-fail-fast
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: codex/cdp-host-driver-fail-fast
+          fetch-depth: 1
+      - name: Apply scoped patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, got {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          cdp = 'tools/soren91_macos_cdp_host.mjs'
+          replace_once(cdp,
+          "    sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),\n    pollMs: Number(env.SOREN91_CDP_HOST_POLL_MS || 2000),",
+          "    sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),\n    // Bound the external-driver handshake separately from the full session.\n    // A missing OCI driver must never hold the broadcast readiness path for\n    // the entire game session (the 2026-09-15 incident waited 240 seconds).\n    driverWaitSec: Number(env.SOREN91_CDP_HOST_DRIVER_WAIT_SEC || 45),\n    pollMs: Number(env.SOREN91_CDP_HOST_POLL_MS || 2000),")
+          replace_once(cdp,
+          "  if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;\n  if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {",
+          "  if (options.driverWaitSec == null) options.driverWaitSec = 45;\n  if (!Number.isInteger(options.driverWaitSec) || options.driverWaitSec < 5 || options.driverWaitSec > 120) {\n    throw new Error('driverWaitSec must be an integer 5..120');\n  }\n  if (options.audioTapWaitSec == null) options.audioTapWaitSec = 120;\n  if (!Number.isInteger(options.audioTapWaitSec) || options.audioTapWaitSec < 5 || options.audioTapWaitSec > 600) {")
+          replace_once(cdp,
+          "export function findGameTarget(targets) {\n  const list = Array.isArray(targets) ? targets : [];\n  return list.find((t) => t?.type === 'page'\n    && typeof t?.url === 'string' && isExactGameTargetUrl(t.url)) || null;\n}\n",
+          "export function findGameTarget(targets) {\n  const list = Array.isArray(targets) ? targets : [];\n  return list.find((t) => t?.type === 'page'\n    && typeof t?.url === 'string' && isExactGameTargetUrl(t.url)) || null;\n}\n\nexport function computeDriverDeadline(startedAt, waitStartedAt, sessionSec, driverWaitSec) {\n  return Math.min(\n    Number(startedAt) + Number(sessionSec) * 1000,\n    Number(waitStartedAt) + Number(driverWaitSec) * 1000,\n  );\n}\n")
+          replace_once(cdp,
+          "    // Wait for the OCI bot to navigate to the exact game origin.\n    const deadline = startedAt + options.sessionSec * 1000;\n    let game = null;\n    while (Date.now() < deadline) {",
+          "    // Wait only a short, independent window for the OCI driver. The\n    // full session deadline is still an upper bound, but a missing driver\n    // now fails before the production broadcast can sit black for minutes.\n    const waitStartedAt = Date.now();\n    const driverDeadline = computeDriverDeadline(\n      startedAt, waitStartedAt, options.sessionSec, options.driverWaitSec,\n    );\n    console.log('SOREN91_CDP_HOST_DRIVER_WAITING=1');\n    let game = null;\n    while (Date.now() < driverDeadline) {")
+          replace_once(cdp,
+          "    if (!game) throw new Error('no exact https://play.unityroom.com target appeared before session deadline');\n    console.log('SOREN91_CDP_HOST_GAME_FOUND=1');",
+          "    if (!game) {\n      throw new Error('cdp-host driver did not reach the reviewed game origin before driver wait deadline');\n    }\n    console.log('SOREN91_CDP_HOST_GAME_FOUND=1');")
+
+          agent = 'tools/soren91_local_agent.mjs'
+          replace_once(agent,
+          "  let child = null;\n  let lastExit = null;\n\n  const currentStatus = () => ({",
+          "  let child = null;\n  let lastExit = null;\n  let cdpDriverState = 'idle';\n  let cdpStdoutTail = '';\n\n  const currentStatus = () => ({")
+          replace_once(agent,
+          "    pid: child?.pid || null,\n    lastExit,\n  });",
+          "    pid: child?.pid || null,\n    lastExit,\n    ...(sessionMode === 'cdp-host' ? { driverState: cdpDriverState } : {}),\n  });")
+          replace_once(agent,
+          "      child = spawnImpl(process.execPath, spawnArgs, {\n        env: childEnv,\n        stdio: ['ignore', 'inherit', 'inherit'],\n        windowsHide: platform === 'win32' ? false : undefined,\n      });\n      child.once('exit', (code, signal) => {\n        lastExit = { code, signal, at: new Date().toISOString() };\n        child = null;\n      });",
+          "      if (sessionMode === 'cdp-host') {\n        cdpDriverState = 'waiting';\n        cdpStdoutTail = '';\n      }\n      child = spawnImpl(process.execPath, spawnArgs, {\n        env: childEnv,\n        stdio: ['ignore', sessionMode === 'cdp-host' ? 'pipe' : 'inherit', 'inherit'],\n        windowsHide: platform === 'win32' ? false : undefined,\n      });\n      if (sessionMode === 'cdp-host' && child?.stdout?.on) {\n        child.stdout.on('data', (chunk) => {\n          try { process.stdout.write(chunk); } catch {}\n          cdpStdoutTail = (cdpStdoutTail + String(chunk)).slice(-512);\n          if (cdpStdoutTail.includes('SOREN91_CDP_HOST_GAME_FOUND=1')) cdpDriverState = 'ready';\n        });\n      }\n      child.once('exit', (code, signal) => {\n        lastExit = { code, signal, at: new Date().toISOString() };\n        if (sessionMode === 'cdp-host') {\n          cdpDriverState = (!signal && code !== 0) ? 'failure' : 'idle';\n          cdpStdoutTail = '';\n        }\n        child = null;\n      });")
+
+          test_cdp = 'tests/test_soren91_macos_cdp_host.mjs'
+          replace_once(test_cdp,
+          "  canvasSamplesMatch,\n  evaluateGeometryDrift,",
+          "  canvasSamplesMatch,\n  computeDriverDeadline,\n  evaluateGeometryDrift,")
+          replace_once(test_cdp,
+          "test('Chrome is physically muted whenever audio tap is disabled', () => {",
+          "test('cdp-host driver wait has an independent bounded deadline', () => {\n  const validated = validateOptions(validOptions({ driverWaitSec: 45 }), 'darwin');\n  assert.equal(validated.driverWaitSec, 45);\n  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 4 }), 'darwin'), /5..120/);\n  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 121 }), 'darwin'), /5..120/);\n  assert.throws(() => validateOptions(validOptions({ driverWaitSec: 10.5 }), 'darwin'), /5..120/);\n  const startedAt = 100_000;\n  const waitStartedAt = 130_000;\n  assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 1500, 45), 175_000);\n  assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 60, 45), 160_000);\n});\n\ntest('Chrome is physically muted whenever audio tap is disabled', () => {")
+
+          test_agent = 'tests/test_soren91_local_agent.mjs'
+          replace_once(test_agent,
+          "      ok: true, backend: 'local-macos', mode: 'cdp-host', running: false, pid: null, lastExit: null,\n    });",
+          "      ok: true, backend: 'local-macos', mode: 'cdp-host', running: false, pid: null, lastExit: null,\n      driverState: 'idle',\n    });")
+          replace_once(test_agent,
+          "test('HTTP: cdp-host mode propagates the srtUrl body to the child env', async () => {",
+          "test('HTTP: cdp-host status exposes only fixed driver lifecycle states', async () => {\n  let exitHandler = null;\n  let stdoutHandler = null;\n  const child = {\n    pid: 525252, exitCode: null,\n    stdout: { on(event, fn) { if (event === 'data') stdoutHandler = fn; return this; } },\n    once(event, fn) { if (event === 'exit') exitHandler = fn; },\n    kill() { return true; },\n  };\n  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };\n  const { server } = createServer(options, { platform: 'darwin', mode: 'cdp-host', spawnImpl: () => child });\n  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));\n  const base = `http://127.0.0.1:${server.address().port}`;\n  const headers = { authorization: `Bearer ${LONG_TOKEN}` };\n  try {\n    let status = await (await fetch(`${base}/v1/status`, { headers })).json();\n    assert.equal(status.driverState, 'idle');\n    assert.deepEqual(Object.keys(status).sort(), ['backend', 'driverState', 'lastExit', 'mode', 'ok', 'pid', 'running'].sort());\n    const started = await fetch(`${base}/v1/start`, { method: 'POST', headers });\n    assert.equal(started.status, 202);\n    status = await (await fetch(`${base}/v1/status`, { headers })).json();\n    assert.equal(status.driverState, 'waiting');\n    stdoutHandler?.(Buffer.from('SOREN91_CDP_HOST_GAME_FOUND=1\\n'));\n    status = await (await fetch(`${base}/v1/status`, { headers })).json();\n    assert.equal(status.driverState, 'ready');\n    child.exitCode = 2;\n    exitHandler?.(2, null);\n    status = await (await fetch(`${base}/v1/status`, { headers })).json();\n    assert.equal(status.driverState, 'failure');\n    assert.equal(status.running, false);\n    assert.equal(status.lastExit.code, 2);\n  } finally {\n    await new Promise((resolve) => server.close(resolve));\n  }\n});\n\ntest('HTTP: cdp-host mode propagates the srtUrl body to the child env', async () => {")
+
+          Path('.github/workflows/codex-patch-cdp-host-fail-fast-v2.yml').unlink()
+          PY
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+      - name: Targeted regression tests
+        run: node --test tests/test_soren91_local_agent.mjs tests/test_soren91_macos_cdp_host.mjs
+      - name: Commit scoped implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/soren91_local_agent.mjs tools/soren91_macos_cdp_host.mjs tests/test_soren91_local_agent.mjs tests/test_soren91_macos_cdp_host.mjs .github/workflows/codex-patch-cdp-host-fail-fast-v2.yml
+          git commit -m 'fix(soren91): fail fast when cdp driver is absent'
+          git push origin HEAD:codex/cdp-host-driver-fail-fast
