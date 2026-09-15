@@ -1054,6 +1054,11 @@ PY
 }
 
 _normalize_radio_tone() {
+	# 定型の「注目」導入句を1トークにつき許す回数 (0で全削除)。不正値は既定の1へ。
+	local framing_lead_max="${RADIO_FRAMING_LEAD_MAX:-1}"
+	case "$framing_lead_max" in
+	'' | *[!0-9]*) framing_lead_max=1 ;;
+	esac
 	python3 -c "
 import re
 import sys
@@ -1080,6 +1085,29 @@ rules = [
 ]
 for pat, repl in rules:
     out = re.sub(pat, repl, out)
+
+# 定型の「注目」導入句を1トークにつき RADIO_FRAMING_LEAD_MAX 回までに抑える。
+# 「ここで注目なのは、〜」が連発され、しかも大した内容でないことが多いため、
+# 上限を超えた分は句だけを外して本文を残す (例: 「ここで注目なのは、Aです」→「Aです」)。
+# 明示的に禁止している「ここで面白いのは」は文頭から全て外す (個人の価値判断の押し付け回避)。
+out = re.sub(
+    r'(?:^|(?<=[。！？\\n、]))[ \\t\\u3000]*ここで面白いのは[、,：:\\s]*',
+    '', out,
+)
+
+lead_max = ${framing_lead_max}
+if lead_max >= 0:
+    lead_re = re.compile(
+        r'(?:^|(?<=[。！？\\n、]))[ \\t\\u3000]*'
+        r'(ここで注目なのは|ここで注目すべきは|ここで注目したいのは|'
+        r'注目すべきなのは|注目したいのは|ポイントになるのは|'
+        r'見ておきたいのは|ここで重要なのは|ここで見ておきたいのは)'
+        r'[、,：:\\s]*'
+    )
+    lead_matches = list(lead_re.finditer(out))
+    if len(lead_matches) > lead_max:
+        for _lm in reversed(lead_matches[lead_max:]):
+            out = out[:_lm.start()] + out[_lm.end():]
 sys.stdout.write(out)
 		"
 }
