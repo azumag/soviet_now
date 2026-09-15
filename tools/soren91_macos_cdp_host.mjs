@@ -22,6 +22,7 @@
 // stops everything. Capture helper + audio tap binaries must be built
 // (tools/macos/bin/). ffmpeg needs libsrt (e.g. ffmpeg-full); pass
 // SOREN91_LOCAL_FFMPEG_BIN explicitly when the default ffmpeg lacks SRT.
+import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -564,6 +565,47 @@ async function waitExit(child, timeoutMs = 10_000) {
   });
 }
 
+export const PROFILE_DIR_PREFIX = 'soren91-cdp-host-';
+// Well past sessionSec's default (1500s) and any sane override, so a sweep
+// never races a still-running session for the rare case its own cleanup
+// didn't reach `profileDir` (see reapStaleProfileDirs below).
+export const STALE_PROFILE_DIR_MS = 2 * 60 * 60 * 1000;
+
+// A host that is SIGKILLed (OOM, an external force-kill, or the local
+// agent's stopProcessTree() escalation after a 5s SIGTERM grace period)
+// cannot run any JS cleanup at all, so its `profileDir` (~100-150MB of
+// Chrome profile data per session) is orphaned in os.tmpdir() forever.
+// Sweep those orphans on every launch, before creating this run's own
+// profileDir, so a killed session doesn't accumulate disk usage
+// indefinitely. `isInUse` guards against reaping a directory some other
+// still-running instance legitimately owns despite the age check.
+export function reapStaleProfileDirs({
+  tmpDir = os.tmpdir(),
+  prefix = PROFILE_DIR_PREFIX,
+  staleMs = STALE_PROFILE_DIR_MS,
+  now = () => Date.now(),
+  listImpl = () => fs.readdirSync(tmpDir),
+  isInUse = (dir) => spawnSync('pgrep', ['-f', dir], { stdio: 'ignore' }).status === 0,
+  rmImpl = (dir) => fs.rmSync(dir, { recursive: true, force: true }),
+} = {}) {
+  let entries;
+  try {
+    entries = listImpl();
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith(prefix)) continue;
+    const createdAt = Number(name.slice(prefix.length));
+    if (!Number.isFinite(createdAt) || now() - createdAt < staleMs) continue;
+    const dir = path.join(tmpDir, name);
+    try {
+      if (isInUse(dir)) continue;
+      rmImpl(dir);
+    } catch {}
+  }
+}
+
 // Issue #303: the tap helper fails closed when none of the given PIDs has an
 // audio process object yet (the AudioService utility process appears only
 // once the game actually plays audio). Retry, re-resolving the Chrome
@@ -625,7 +667,6 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   console.log(JSON.stringify(plan, null, 2));
   if (!options.execute) return plan;
 
-  const fs = await import('node:fs');
   let vdisplay = null;
   let chrome = null;
   let proxy = null;
@@ -644,6 +685,11 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // every process still bound to OUR temp profile dir so nothing leaks.
     if (profileDir) {
       try { spawnSync('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
+      // Best-effort, same as the pkill above: Chrome may still hold files in
+      // profileDir open for a moment, but unlinking underneath it is safe on
+      // POSIX and this is our only chance to reclaim it on a signal-driven
+      // shutdown (shutdown() below exits immediately after cleanup()).
+      try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch {}
     }
     try { ffmpeg?.stdin?.destroy?.(); } catch {}
     try { capture?.stdout?.destroy?.(); } catch {}
@@ -666,7 +712,8 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     console.log(`SOREN91_CDP_HOST_VDISPLAY_READY=${JSON.stringify(held.status)}`);
     const { placementFor: place } = { placementFor };
     const placement = place(held.status.bounds);
-    profileDir = path.join(os.tmpdir(), `soren91-cdp-host-${Date.now()}`);
+    reapStaleProfileDirs();
+    profileDir = path.join(os.tmpdir(), `${PROFILE_DIR_PREFIX}${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
     // `--remote-allow-origins=*` is safe only behind the source-locked Tailscale
     // proxy above; Chrome itself remains bound to 127.0.0.1.
