@@ -8,6 +8,8 @@ on:
       - 'prompts/analyze_strategy.md'
       - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
+      - 'strategy/persist.sh'
+      - 'tests/test_strategy_persist.sh'
       - 'tests/test_improve_*.py'
       - '.github/workflows/improve-command.yml'
   push:
@@ -19,6 +21,8 @@ on:
       - 'prompts/analyze_strategy.md'
       - 'tests/test_analysis*.py'
       - 'eloop_improve.sh'
+      - 'strategy/persist.sh'
+      - 'tests/test_strategy_persist.sh'
       - 'tests/test_improve_*.py'
       - '.github/workflows/improve-command.yml'
 permissions:
@@ -37,4 +41,5 @@ jobs:
           tests.test_improve_stage_budget tests.test_improve_retry_reliability
           tests.test_analysis_evidence_contract tests.test_analysis_prose_counter tests.test_analysis_gate_wiring tests.test_founding_policy_contract
           tests.test_shadow_validation_retry tests.test_spawn_guard_lease
-      - run: bash -n strategy/ai.sh eloop_improve.sh
+      - run: bash -n strategy/ai.sh eloop_improve.sh strategy/persist.sh
+      - run: bash tests/test_strategy_persist.sh
