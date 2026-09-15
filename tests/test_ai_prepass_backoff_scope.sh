@@ -12,11 +12,13 @@ source "$ROOT/lib/ai_generate_policy.sh"
 
 export AI_BACKOFF_DIR="$TMP/rate_backoff"
 export AI_FAILURE_BACKOFF_DIR="$TMP/failure_backoff"
+export AI_FAMILY_BACKOFF_DIR="$TMP/family_backoff"
 export AI_FAIL_STREAK_DIR="$TMP/fail_streak"
 export AI_STATS_DIR="$TMP/stats"
 export AI_BACKOFF_FAILURE_SEC=300
 export AI_FAILURE_STREAK_MAX_BACKOFF_SEC=3600
-export VERCEL_FREE_AGENTS="vercel:minimax/minimax-m3-free vercel:poolside/laguna-s-2.1-free"
+export AI_VERCEL_FAMILY_BACKOFF_SEC=60
+export VERCEL_FREE_AGENTS="vercel:minimax/minimax-m3-free vercel:poolside/laguna-s-2.1-free vercel:third/provider-free"
 export ATTEMPT_LOG="$TMP/attempts.log"
 
 prompt="$TMP/prompt.txt"
@@ -27,8 +29,8 @@ fail=0
 pass() { printf 'ok - %s\n' "$1"; ok=$((ok + 1)); }
 fail_case() { printf 'not ok - %s\n' "$1" >&2; fail=$((fail + 1)); }
 reset_state() {
-	rm -rf "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
-	mkdir -p "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
+	rm -rf "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAMILY_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
+	mkdir -p "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAMILY_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
 	: >"$ATTEMPT_LOG"
 }
 
@@ -73,6 +75,25 @@ _ai_dispatch() {
 		case "$agent" in
 		vercel:minimax/minimax-m3-free|vercel:poolside/laguna-s-2.1-free) return "$AI_RATE_LIMIT_RC" ;;
 		esac
+		return 1
+		;;
+	chain_two_vercel_then_third_then_amd)
+		case "$agent" in
+		vercel:minimax/minimax-m3-free|vercel:poolside/laguna-s-2.1-free) return "$AI_RATE_LIMIT_RC" ;;
+		vercel:third/provider-free) printf 'family breaker failed'; return 0 ;;
+		amd:DeepSeek-V4-Flash) printf 'fallback ok'; return 0 ;;
+		esac
+		return 1
+		;;
+	chain_two_vercel_generic_then_amd)
+		case "$agent" in
+		vercel:minimax/minimax-m3-free|vercel:poolside/laguna-s-2.1-free) return 1 ;;
+		amd:DeepSeek-V4-Flash) printf 'generic fallback ok'; return 0 ;;
+		esac
+		return 1
+		;;
+	chain_vercel_ok)
+		case "$agent" in vercel:*) printf 'vercel ok'; return 0 ;; esac
 		return 1
 		;;
 	always_fail) return 1 ;;
@@ -169,7 +190,71 @@ else
 	fail_case "all-failed chain preserves multi-Vercel rate-limit evidence: ${chain_line:-missing}"
 fi
 
-# 8. runtime shim が policy layer を ai_generate.sh の直後に読むことを固定する。
+# 8. Vercel A=429, B=success では family breaker を発火しない。
+reset_state
+TEST_MODE=chain_one_vercel_then_vercel
+chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free' 2>/dev/null || true)
+family_file=$(_ai_family_backoff_file vercel)
+if [ "$chain_out" = 'vercel recovered' ] && [ ! -f "$family_file" ]; then
+	pass 'single Vercel 429 does not trip provider-family breaker'
+else
+	fail_case 'single Vercel 429 does not trip provider-family breaker'
+fi
+
+# 9. 同一chainで異なる2 agentが429なら短いfamily breakerを発火し、
+# 後続Vercel候補だけを飛ばして非Vercel fallbackへ進む。
+reset_state
+TEST_MODE=chain_two_vercel_then_third_then_amd
+chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:third/provider-free,amd:DeepSeek-V4-Flash' 2>/dev/null || true)
+family_file=$(_ai_family_backoff_file vercel)
+if [ "$chain_out" = 'fallback ok' ] 	&& [ -f "$family_file" ] 	&& [ "$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')" -eq 3 ] 	&& ! grep -Fq 'vercel:third/provider-free' "$ATTEMPT_LOG" 	&& grep -Fq 'amd:DeepSeek-V4-Flash' "$ATTEMPT_LOG"; then
+	pass 'two distinct Vercel 429s suppress later Vercel but preserve non-Vercel fallback'
+else
+	fail_case 'two distinct Vercel 429s suppress later Vercel but preserve non-Vercel fallback'
+fi
+
+# 10. breaker は短時間だけ全chainで共有し、その間も非Vercelは止めない。
+: >"$ATTEMPT_LOG"
+TEST_MODE=chain_two_vercel_then_third_then_amd
+chain_out=$(ai_generate_list 'COMMENT' "$prompt" 'vercel:third/provider-free,amd:DeepSeek-V4-Flash' 2>/dev/null || true)
+if [ "$chain_out" = 'fallback ok' ] 	&& [ "$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')" -eq 1 ] 	&& grep -Fq 'amd:DeepSeek-V4-Flash' "$ATTEMPT_LOG"; then
+	pass 'active Vercel family breaker is shared but does not block non-Vercel candidates'
+else
+	fail_case 'active Vercel family breaker is shared but does not block non-Vercel candidates'
+fi
+
+# 11. expiry後は、個別429を受けていないVercel候補を再試行できる。
+printf '0\n' >"$family_file"
+: >"$ATTEMPT_LOG"
+TEST_MODE=chain_vercel_ok
+chain_out=$(ai_generate_list 'COMMENT' "$prompt" 'vercel:third/provider-free' 2>/dev/null || true)
+if [ "$chain_out" = 'vercel ok' ] 	&& [ "$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')" -eq 1 ] 	&& [ ! -f "$family_file" ]; then
+	pass 'expired Vercel family breaker permits retry and cleans its state'
+else
+	fail_case 'expired Vercel family breaker permits retry and cleans its state'
+fi
+
+# 12. generic provider failure はfamily breaker条件に数えない。
+reset_state
+TEST_MODE=chain_two_vercel_generic_then_amd
+chain_out=$(ai_generate_list 'RADIO:news' "$prompt" 'vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,amd:DeepSeek-V4-Flash' 2>/dev/null || true)
+family_file=$(_ai_family_backoff_file vercel)
+if [ "$chain_out" = 'generic fallback ok' ] && [ ! -f "$family_file" ]; then
+	pass 'generic Vercel failures do not trip provider-family rate-limit breaker'
+else
+	fail_case 'generic Vercel failures do not trip provider-family rate-limit breaker'
+fi
+
+# 13. 上限は5分に固定し、設定typoでprovider全体を長時間止めない。
+AI_VERCEL_FAMILY_BACKOFF_SEC=99999
+if [ "$(_ai_family_backoff_sec vercel)" = '300' ]; then
+	pass 'Vercel family breaker duration is capped at five minutes'
+else
+	fail_case 'Vercel family breaker duration is capped at five minutes'
+fi
+AI_VERCEL_FAMILY_BACKOFF_SEC=60
+
+# 14. runtime shim が policy layer を ai_generate.sh の直後に読むことを固定する。
 if grep -Fq 'source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"' "$ROOT/eloop_lib.sh"; then
 	pass 'runtime shim loads scoped backoff policy'
 else
