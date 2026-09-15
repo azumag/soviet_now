@@ -21,6 +21,7 @@ import {
   ensureLineageInitialized,
   recordImprovementTransition,
 } from './lineage.mjs';
+import { runOpencodeText } from './text_ai.mjs';
 
 const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
@@ -654,6 +655,24 @@ async function callGemini(promptText, screenshots = [], tag = 'improve') {
 }
 
 async function callStrategyModelWithFallback(promptText, screenshots = [], tag = 'improve') {
+  // External daily improvement runs where only the opencode CLI exists
+  // (no gemini/claude CLIs). Try opencode first (text-only: screenshots are
+  // omitted from this path), then the legacy gemini -> claude chain.
+  const opencodeAgent = process.env.SOREN91_IMPROVE_OPENCODE_AGENT || undefined;
+  const opencodeTimeoutMs = Number.parseInt(
+    process.env.SOREN91_IMPROVE_OPENCODE_TIMEOUT || '', 10,
+  );
+  try {
+    const text = await runOpencodeText(tag, promptText, {
+      ...(opencodeAgent ? { opencodeAgent } : {}),
+      ...(Number.isFinite(opencodeTimeoutMs) && opencodeTimeoutMs > 0 ? { timeoutMs: opencodeTimeoutMs } : {}),
+      parseOutput: raw => extractStrategyFromResponse(raw),
+    });
+    if (text) return text;
+    throw makeProviderError('opencode returned no strategy code');
+  } catch (err) {
+    console.warn(`[${tag}] opencode failed -> legacy gemini/claude chain (${err.message})`);
+  }
   try {
     const result = await callGemini(promptText, screenshots, tag);
     if (result) return result;
@@ -1132,3 +1151,22 @@ if (args[0] === '--standalone') {
     .then(() => process.exit(0))
     .catch(e => { console.error(e); process.exit(1); });
 }
+
+// Reused by the external daily improvement runner (soren91/improve_daily.mjs).
+// The bot-side improvement is disabled (SOREN91_EXTERNAL_IMPROVE=1); the daily
+// job imports these to build prompts and validate candidates outside the VM.
+export {
+  buildPromptText,
+  callClaudeToFix,
+  callStrategyModelWithFallback,
+  extractStrategyFromResponse,
+  formatRankLabel,
+  formatRankToken,
+  generateAggregateSummary,
+  generateSummary,
+  isBetterGameSummary,
+  isWorseGameSummary,
+  readSummaryMeta,
+  readViewerAdvice,
+  validateStrategy,
+};

@@ -7,11 +7,28 @@ import { tmpdir } from 'os';
 const RUNTIME_CONFIG_PATH = join(import.meta.dirname || '.', 'runtime_config.json');
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_OPENCODE_AGENT = 'glmflash';
+// opencode CLI に渡す既定のモデルチェーン。運用では AI_COMMON_AGENTS
+// (core/config.sh) をそのまま使い、opencode/opencode-go の項目だけを採る。
+const DEFAULT_OPENCODE_MODELS = 'opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash';
+
+export function parseOpencodeModels(raw) {
+  const list = String(raw || '').split(',').map(part => part.trim()).filter(Boolean);
+  const models = list.filter(spec => spec.startsWith('opencode:') || spec.startsWith('opencode-go:'));
+  return models.length > 0 ? models : DEFAULT_OPENCODE_MODELS.split(',');
+}
+
+// `opencode:<model>` -> `opencode/<model>` (opencode CLI の --model 形式)。
+export function resolveOpencodeModel(spec) {
+  const value = String(spec || '').trim();
+  const index = value.indexOf(':');
+  return index < 0 ? value : `${value.slice(0, index)}/${value.slice(index + 1)}`;
+}
 const DEFAULT_OLLAMA_BASE_URL = 'http://192.168.11.13:11434';
 const DEFAULT_CLAUDE_TIMEOUT_MS = 30000;
 const DEFAULT_CCOGENT_TIMEOUT_MS = 120000;
 const DEFAULT_GEMINI_TIMEOUT_MS = 30000;
-const DEFAULT_OPENCODE_TIMEOUT_MS = 30000;
+// 通常設定 (core/config.sh: RADIO_OPENCODE_TIMEOUT=180) に合わせる。
+const DEFAULT_OPENCODE_TIMEOUT_MS = 180000;
 const DEFAULT_OPENCODE_PERMISSION = '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
 
 function readRuntimeConfig() {
@@ -131,9 +148,12 @@ export function resolveTextAiConfig() {
       process.env.SOREN91_TEXT_OPENCODE_TIMEOUT
         || process.env.SOREN91_COMMENT_OPENCODE_TIMEOUT
         || process.env.COMMENT_OPENCODE_TIMEOUT
+        || process.env.RADIO_OPENCODE_TIMEOUT
         || textConfig.opencodeTimeoutSec,
       DEFAULT_OPENCODE_TIMEOUT_MS,
     ),
+    // opencode CLI に投げるモデルチェーン。既定は通常チェーン AI_COMMON_AGENTS。
+    opencodeModels: parseOpencodeModels(process.env.AI_COMMON_AGENTS || process.env.RADIO_AGENTS),
     opencodePermission: process.env.SOREN91_TEXT_OPENCODE_PERMISSION
       || process.env.SOREN91_COMMENT_OPENCODE_PERMISSION
       || process.env.COMMENT_OPENCODE_PERMISSION
@@ -276,42 +296,31 @@ export function runGeminiText(tag, promptText, options = {}) {
   });
 }
 
-export function runOpencodeText(tag, promptText, options = {}) {
-  const config = resolveTextAiConfig();
-  const agent = options.opencodeAgent || config.opencodeAgent;
-  const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_text_'));
-  const promptFile = join(tempDir, 'prompt.txt');
-  const rawFile = join(tempDir, 'raw.txt');
-  writeFileSync(promptFile, promptText, 'utf-8');
-
+function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, parseOutput }) {
   return new Promise((resolve, reject) => {
-    const command = `LC_ALL=en_US.UTF-8 opencode run --agent ${shellSingleQuote(agent)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
+    const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_text_'));
+    const promptFile = join(tempDir, 'prompt.txt');
+    const rawFile = join(tempDir, 'raw.txt');
+    writeFileSync(promptFile, promptText, 'utf-8');
+    const command = `LC_ALL=en_US.UTF-8 opencode run --model ${shellSingleQuote(model)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
     // util-linux の script は `script -q -e -c '<cmd>' <file>` が正しい。
-    // 旧来の `script -q <file> bash -lc '<cmd>'` はこのVMで exit=1・出力空になり、
-    // opencode フォールバックが常に失敗していた (2026-09-15 実測)。
+    // 旧 `script -q <file> bash -lc '<cmd>'` はこのVMで exit=1・出力空だった (2026-09-15 実測)。
     const scriptCommand = `bash -lc ${shellSingleQuote(command)}`;
     execFile('script', ['-q', '-e', '-c', scriptCommand, rawFile], {
       encoding: 'utf-8',
-      timeout: options.timeoutMs || config.opencodeTimeoutMs,
-      env: {
-        ...process.env,
-        OPENCODE_PERMISSION: options.opencodePermission || config.opencodePermission,
-        ...(options.extraEnv || {}),
-      },
+      timeout: timeoutMs,
+      env: { ...process.env, OPENCODE_PERMISSION: permission, ...(extraEnv || {}) },
       maxBuffer: 2 * 1024 * 1024,
     }, (err) => {
       try {
         const raw = existsSync(rawFile) ? readFileSync(rawFile, 'utf-8') : '';
         const cleaned = cleanOpencodeOutput(raw);
         if (containsProviderErrorText(cleaned)) {
-          return reject(makeProviderError(`opencode provider failure (${agent})`, cleaned.slice(0, 300)));
+          return reject(makeProviderError(`opencode provider failure (${model})`, cleaned.slice(0, 300)));
         }
-        if (err) {
-          if (cleaned) console.error(`[${tag}] opencode raw:`, cleaned.slice(0, 500));
-          return reject(err);
-        }
+        if (err && !cleaned) return reject(err);
         try {
-          resolve(parseOutputOrThrow(cleaned, options.parseOutput));
+          resolve(parseOutputOrThrow(cleaned, parseOutput));
         } catch (parseErr) {
           reject(parseErr);
         }
@@ -322,6 +331,35 @@ export function runOpencodeText(tag, promptText, options = {}) {
       }
     });
   });
+}
+
+// 通常チェーン (AI_COMMON_AGENTS) を順に試す。opencode CLI の --model は
+// `opencode/<model>` 形式。timeout は通常設定 (RADIO_OPENCODE_TIMEOUT) を流用。
+export async function runOpencodeText(tag, promptText, options = {}) {
+  const config = resolveTextAiConfig();
+  const models = options.opencodeAgent
+    ? [resolveOpencodeModel(options.opencodeAgent)]
+    : (config.opencodeModels || []).map(resolveOpencodeModel).filter(Boolean);
+  if (models.length === 0) {
+    throw makeProviderError('no opencode models configured');
+  }
+  const timeoutMs = options.timeoutMs || config.opencodeTimeoutMs;
+  const permission = options.opencodePermission || config.opencodePermission;
+
+  let lastErr = null;
+  for (const model of models) {
+    try {
+      const text = await runOpencodeOnce({
+        model, promptText, timeoutMs, permission,
+        extraEnv: options.extraEnv, parseOutput: options.parseOutput,
+      });
+      if (text) return text;
+    } catch (err) {
+      lastErr = err;
+      console.error(`[${tag}] opencode model failed (${model}): ${err?.message || err}`);
+    }
+  }
+  throw lastErr || makeProviderError('opencode returned no text for any model');
 }
 
 export async function generateTextWithFallbacks(tag, promptText, options = {}) {

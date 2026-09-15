@@ -1264,6 +1264,19 @@ async function main() {
     writeFileSync(SOREN91_READY_FILE, new Date().toISOString() + '\n');
     console.log('[main] Soren91 ready marker written');
 
+    // 保持ポリシー: コーナー起動時に、直近 N 日 (既定3日) より古い試合ログ/スクショを
+    // 掃除する。改善フローの成否に依存せずディスクを有界にするための安全弁。
+    try {
+      const { cleanupRetention } = await import(new URL('./cleanup_retention.mjs', import.meta.url).href);
+      cleanupRetention({
+        runtimeDir: process.cwd(),
+        days: Number.parseInt(process.env.SOREN91_RETENTION_DAYS || '3', 10),
+        log: (msg) => console.log(`[main] ${msg}`),
+      });
+    } catch (err) {
+      console.log(`[main] retention cleanup skipped: ${err.message}`);
+    }
+
     // ゲームボード表示を待ってからキャリブレーション
     // 最初は仮キャリブレーション (全画面) で待機→ボード検出後に再キャリブレーション
     const calMod = await loadModule('./calibration.mjs');
