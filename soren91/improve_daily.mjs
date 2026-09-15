@@ -28,10 +28,11 @@
  */
 
 import 'dotenv/config';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { buildDailyEvidence, formatEvidenceForPrompt } from './daily_evidence.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -121,6 +122,14 @@ export function pendingRange(runtimeDir, lastConsumedGame) {
   return { games, from, to, fresh, hasFresh: fresh.length > 0 };
 }
 
+/**
+ * 自動改善が安全に消費できる連続試合と証拠だけを返す。
+ * 欠番や壊れたsummary/historyは buildDailyEvidence 側で fail-closed にする。
+ */
+export function planImprovementEvidence(runtimeDir, lastConsumedGame) {
+  return buildDailyEvidence(runtimeDir, lastConsumedGame);
+}
+
 export function formatPrMarker(fromGame, toGame) {
   return `<!-- improve-daily: from=${fromGame} to=${toGame} -->`;
 }
@@ -141,6 +150,10 @@ function saveState(opts, state) {
   writeJson(opts.state, state);
 }
 
+function gameToken(game) {
+  return String(game).padStart(4, '0');
+}
+
 // ------------------------------- propose ------------------------------------
 
 async function propose(opts) {
@@ -151,14 +164,23 @@ async function propose(opts) {
     return 0;
   }
 
-  const pending = pendingRange(opts.runtimeDir, state.lastConsumedGame);
-  if (!pending.hasFresh) {
-    log(`新しい試合がありません (lastConsumed=${state.lastConsumedGame}, to=${pending.to ?? '-'})。`);
+  const evidence = planImprovementEvidence(opts.runtimeDir, state.lastConsumedGame);
+  if (evidence.status === 'no-data') {
+    log(`新しい連続試合がありません (lastConsumed=${state.lastConsumedGame})。`);
     return 0;
   }
-  const fromGame = state.lastConsumedGame + 1;
-  const toGame = pending.to;
-  log(`改善対象: game #${fromGame}..#${toGame} (${pending.fresh.length} 試合)`);
+  if (evidence.status !== 'ready') {
+    const warning = evidence.warnings?.join('; ') || 'evidence incomplete';
+    log(`改善証拠が不完全なため fail-closed で保留します: ${warning}`);
+    return 1;
+  }
+
+  const fromGame = evidence.range.games[0];
+  const toGame = evidence.range.games.at(-1);
+  log(`改善対象: game #${fromGame}..#${toGame} (${evidence.range.games.length} 試合)`);
+  if (evidence.range.deferredGames?.length) {
+    log(`ミラー欠番以降の game は次回へ延期: ${evidence.range.deferredGames.join(',')}`);
+  }
 
   const marker = formatPrMarker(fromGame, toGame);
 
@@ -176,24 +198,30 @@ async function propose(opts) {
   try {
     const imp = await import(new URL('./improve.mjs', import.meta.url).href);
     const summariesDir = join(opts.runtimeDir, 'tmp', 'summaries');
-    const historyDir = join(opts.runtimeDir, 'game_history');
-    // 最新試合を代表にしてプロンプトを組む (standalone と同じ要領の簡略版)。
-    const bestGame = toGame;
-    const bestHistory = join(historyDir, `game_${String(bestGame).padStart(4, '0')}.jsonl`);
-    const bestSummaryPath = join(summariesDir, `game_${String(bestGame).padStart(4, '0')}.json`);
-    if (!existsSync(bestHistory) || !existsSync(bestSummaryPath)) {
-      log(`代表試合 #${bestGame} の history/summary が見つかりません。同期を確認してください。`);
-      return 1;
-    }
     const currentStrategy = readFileSync(join(opts.runtimeDir, 'strategy.mjs'), 'utf-8');
     const aggregate = imp.generateAggregateSummary(fromGame - 1, toGame);
-    const gameSummary = imp.generateSummary(bestHistory, bestSummaryPath);
+    const evidenceText = formatEvidenceForPrompt(evidence);
+    const focusDetails = [];
+    for (const game of evidence.focus.games) {
+      const entry = evidence.entries.find(item => item.game === game);
+      const historyPath = entry?.history ? join(opts.runtimeDir, entry.history) : null;
+      const summaryPath = join(summariesDir, `game_${gameToken(game)}.json`);
+      if (!historyPath || !existsSync(historyPath) || !existsSync(summaryPath)) {
+        log(`focus game #${game} の history/summary が見つかりません。同期を確認してください。`);
+        return 1;
+      }
+      const roles = [];
+      if (game === evidence.focus.worst) roles.push('worst');
+      if (game === evidence.focus.best) roles.push('best');
+      if (game === evidence.focus.latest) roles.push('latest');
+      focusDetails.push(`## Focus Game #${game} (${roles.join(', ')})\n${imp.generateSummary(historyPath, summaryPath)}`);
+    }
     const viewerAdvice = imp.readViewerAdvice(
       process.env.SOREN91_STRATEGY_ADVICE_FILE || join(opts.runtimeDir, '..', 'advice91.md'),
       80,
     );
     const promptText = imp.buildPromptText(
-      `${aggregate}\n\n## Latest Game Details\n${gameSummary}`,
+      `${evidenceText}\n\n${aggregate}\n\n${focusDetails.join('\n\n')}`,
       currentStrategy,
       '',
       [],
