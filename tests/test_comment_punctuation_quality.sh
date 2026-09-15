@@ -39,6 +39,17 @@ else
 	pass 'docich quality rejection blocks otherwise valid reply'
 fi
 
+# Live workers re-source eloop_lib.sh. Simulate its relevant source order:
+# radio_engine replaces the function, then comment_quality must wrap it again.
+source "$ROOT/broadcast/radio_engine.sh"
+source "$ROOT/broadcast/comment_quality.sh"
+export FAKE_DOCICH_RC=1
+if _is_valid_comment_talk 'これは通常の返信です。'; then
+	not_ok 'docich quality guard survives worker reload'
+else
+	pass 'docich quality guard survives worker reload'
+fi
+
 # rc=2 represents an older docich that does not yet expose speech-quality.
 # The bridge must fall back instead of treating every reply as invalid.
 export FAKE_DOCICH_RC=2
