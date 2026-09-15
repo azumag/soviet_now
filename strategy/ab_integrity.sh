@@ -7,8 +7,8 @@
 # Strategy Comparison の current(root) と A/B の A が食い違って見える。
 #
 # この層は _ab_active() の既存 fail-closed 判定を保ったまま、root(A) または alt(B) の
-# hash drift を検出した実験を「勝敗なしの stale」として退役させる。root は変更せず、
-# B を rejected にも入れない。証跡は tmp/history へ保存する。
+# hash drift と、継続不能な state/candidate 欠損を検出した実験を「勝敗なしの stale」として
+# 退役させる。root は変更せず、B を rejected にも入れない。証跡は tmp/history へ保存する。
 
 _ab_integrity_retire_stale() {
 	local kind="$1" observed="$2" expected="$3"
@@ -71,8 +71,8 @@ PY
 	return 0
 }
 
-# ab_interleave.sh の判定を包み、hash drift のときだけ lifecycle を閉じる。
-# その他の一時的な inactive 条件 (pause/lock/toggle 等) は従来挙動を変えない。
+# ab_interleave.sh の判定を包み、実体整合性が壊れたときだけ lifecycle を閉じる。
+# pause/lock/toggle 等の一時的な inactive 条件だけなら従来挙動を変えない。
 unset -f _ab_active_without_integrity 2>/dev/null || true
 if declare -F _ab_active >/dev/null 2>&1; then
 	eval "$(declare -f _ab_active | sed '1s/^_ab_active /_ab_active_without_integrity /')"
@@ -90,17 +90,34 @@ _ab_active() {
 	local a b ha hb
 	a=$(_ab_state_get a_hash)
 	b=$(_ab_state_get b_hash)
+
+	# state が lifecycle lock なのに期待 hash が欠けている場合、その実験は安全に再開できない。
+	# 一方、実体側 hash の一時的な計算失敗 (ha/hb が空) は証拠を消さず従来どおり fail-closed に留める。
+	if [ -z "$a" ]; then
+		_ab_integrity_retire_stale "stale_state_a_hash_missing" "" "a_hash" || true
+		return "$rc"
+	fi
+	if [ -z "$b" ]; then
+		_ab_integrity_retire_stale "stale_state_b_hash_missing" "" "b_hash" || true
+		return "$rc"
+	fi
+
 	ha=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
-	if [ -n "$a" ] && [ -n "$ha" ] && [ "$ha" != "$a" ]; then
+	if [ -n "$ha" ] && [ "$ha" != "$a" ]; then
 		_ab_integrity_retire_stale "stale_base" "$ha" "$a" || true
 		return "$rc"
 	fi
 
-	if [ -f "$AB_ALT_FILE" ]; then
-		hb=$(_ab_hash "$AB_ALT_FILE")
-		if [ -n "$b" ] && [ -n "$hb" ] && [ "$hb" != "$b" ]; then
-			_ab_integrity_retire_stale "stale_candidate" "$hb" "$b" || true
-		fi
+	# state が残っているのに candidate が消えているのは継続不能。部分退役が途中で止まった場合も
+	# 次回判定で state を最後まで閉じられるよう stale として扱う。
+	if [ ! -f "$AB_ALT_FILE" ]; then
+		_ab_integrity_retire_stale "stale_candidate_missing" "missing" "$b" || true
+		return "$rc"
+	fi
+
+	hb=$(_ab_hash "$AB_ALT_FILE")
+	if [ -n "$hb" ] && [ "$hb" != "$b" ]; then
+		_ab_integrity_retire_stale "stale_candidate" "$hb" "$b" || true
 	fi
 	return "$rc"
 }
