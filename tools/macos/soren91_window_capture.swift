@@ -256,10 +256,11 @@ struct Soren91WindowCapture {
     config.height = Int(options.height)
     config.scalesToFit = true
     config.showsCursor = false
-    if #available(macOS 14.0, *) {
-      config.ignoreShadowsSingleWindow = true
-      config.ignoreGlobalClipSingleWindow = true
-    }
+    // Capture ONLY the window content: without these, ScreenCaptureKit adds the
+    // window's drop shadow / clip padding, which shows up as an extra border
+    // ("枠") around the game and scales the content inside the requested size.
+    config.ignoreShadowsSingleWindow = true
+    config.ignoreGlobalClipSingleWindow = true
     config.capturesAudio = false
     config.pixelFormat = kCVPixelFormatType_32BGRA
     config.minimumFrameInterval = CMTime(value: 1, timescale: options.fps)

@@ -7,6 +7,14 @@
 #   ai_generate "RADIO" "$prompt_file" "$primary_agent" "$fallback_agent"
 #   output は stdout に返る。呼び出し元がファイルに書くかキューに積むか判断する。
 
+# writer exclusion gate for opencode session DB retention (ADR 0002 / #389).
+# Sourced here so every consumer of ai_generate.sh (including tests) gets it.
+_ai_generate_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_ai_generate_dir/opencode_db_retention.sh" ]; then
+	source "$_ai_generate_dir/opencode_db_retention.sh"
+fi
+unset _ai_generate_dir
+
 _ai_guard_model_output() {
 	local guard_root="${ELOOP_LIB_DIR:-.}"
 	# C4 (common_parts_chat_c4.md C-S2): 出力ガードの正典は docich 側。
@@ -846,11 +854,11 @@ _ai_call_opencode_unqueued() {
 		_oc_start=$(date +%s)
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
-			python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
+			_opencode_rotation_gate_run python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
 				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?

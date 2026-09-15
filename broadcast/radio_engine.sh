@@ -52,7 +52,7 @@ _run_opencode_radio_unqueued() {
 	mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
 	_opencode_sync_auth_to_xdg
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
-	XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+	_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		opencode run "${model_args[@]}" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
@@ -151,7 +151,7 @@ _run_opencode_comment_unqueued() {
 	_opencode_sync_auth_to_xdg
 	(
 		cd "$sandbox_dir" || exit 1
-		XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
+		_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 			timeout "$timeout_sec" \
 			opencode run --agent "$agent" "$(cat tmp/comment_prompt.txt)"
 	) >"$raw_file" 2>&1
@@ -616,7 +616,10 @@ _is_valid_comment_talk() {
 	local talk="$1"
 	local compact
 	compact=$(printf '%s' "$talk" | tr -d '[:space:]')
-	[ ${#compact} -ge 24 ] || return 1
+	# Short factual answers and corrections are valid spoken replies.
+	# Keep the Japanese/content guards; length is not a quality proxy.
+	[ ${#compact} -ge 3 ] || return 1
+	printf '%s' "$talk" | python3 -c 'import re, sys; sys.exit(0 if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", sys.stdin.read()) else 1)' || return 1
 	printf '%s' "$talk" | grep -Eq '[。！？]' || return 1
 	if printf '%s' "$talk" | grep -Eiq 'tool_call|tool_result|assistant_response|^analysis$|^final$|^assistant$|^provider[[:space:]]*[:=]|^model[[:space:]]*[:=]|^agent[[:space:]]*[:=]'; then
 		return 1
@@ -636,10 +639,8 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eiq '(WebFetch|WebSearch)|(^|[[:space:]])[✗✕×][[:space:]]*(webfetch|websearch)[[:space:]]+failed\b'; then
 		return 1
 	fi
-	# 「検索できない」「データがない」系の拒否応答を検出 → 無効にしてfallbackさせる
-	if printf '%s' "$talk" | grep -Eq '(リアルタイム|最新).*(データ|情報).*(持って|ありません|ございません|取得できません|アクセスできません|提供できません|確認できません)|検索(機能|ツール).*(ありません|ございません|持って|できません)|インターネット.*(アクセス|接続).*(できません|ありません)|データフィード.*(ありません|ございません)|外部.*(アクセス|接続).*(できません|ありません)|正直に申し上げ|申し訳ありませんが'; then
-		return 1
-	fi
+	# Missing evidence or unavailable search is not a provider error. Allow an
+	# honest limitation instead of retrying until a model invents an answer.
 	# ツール使用・汎用対話メタ応答の検出 (ollama モデルが返す場合がある)
 	if printf '%s' "$talk" | grep -Eiq 'I can use the .* tool|WebFetch tool|Before I can proceed|grant permission|Would you like me to proceed'; then
 		return 1

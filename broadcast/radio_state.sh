@@ -379,6 +379,11 @@ _enqueue_deferred_radio_talk() {
 	cp "$talk_file" "$deferred_file" 2>/dev/null || return 1
 	_radio_copy_generation_meta "$talk_file" "$deferred_file" 2>/dev/null || true
 	_broadcast_mark_expected_mode "$deferred_file" "$expected_mode" 2>/dev/null || true
+	# 生成時のモードが soren91(メリケンAI) なら、その声を項目に固定する。
+	# 再生時にモードが main へ戻っていても中華声にならないようにする。
+	if [ "$expected_mode" = "soren91" ]; then
+		printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-14}" >"${deferred_file%.txt}.voice" 2>/dev/null || true
+	fi
 	[ -n "$history_line" ] && _radio_store_spoken_history_line "$deferred_file" "$history_line" 2>/dev/null || true
 	echo "$deferred_file"
 }

@@ -1,0 +1,56 @@
+name: Soren91 play contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/strategy.mjs'
+      - 'soren91/strategy_contract.mjs'
+      - 'soren91/screenshot_analyzer.mjs'
+      - 'soren91/observation_guard.mjs'
+      - 'soren91/calibration.mjs'
+      - 'soren91/improve.mjs'
+      - 'soren91/daily_evidence.mjs'
+      - 'tests/test_soren91_*.mjs'
+      - 'package*.json'
+      - 'soren91/package*.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/strategy.mjs'
+      - 'soren91/strategy_contract.mjs'
+      - 'soren91/screenshot_analyzer.mjs'
+      - 'soren91/observation_guard.mjs'
+      - 'soren91/calibration.mjs'
+      - 'soren91/improve.mjs'
+      - 'soren91/daily_evidence.mjs'
+      - 'tests/test_soren91_*.mjs'
+      - 'package*.json'
+      - 'soren91/package*.json'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax check player decision modules
+        run: |
+          node --version
+          node --check soren91/strategy.mjs
+          node --check soren91/strategy_contract.mjs
+          node --check soren91/screenshot_analyzer.mjs
+          node --check soren91/observation_guard.mjs
+          node --check soren91/improve.mjs
+          node --check soren91/daily_evidence.mjs
+      - name: Run play and existing Soren91 regressions
+        run: node --test tests/test_soren91_*.mjs

@@ -29,6 +29,16 @@ async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
   return await import(url + '?t=' + Date.now());
 }
+// comment.mjs は実行中に変化しないので、ビート判定用に一度だけ読み込んで使い回す
+// (loadModule は ?t= で毎回再評価するため、毎ターンの使用には向かない)。
+let commentModulePromise = null;
+function loadCommentModule() {
+  if (!commentModulePromise) {
+    const url = new URL('./comment.mjs', `file://${process.cwd()}/`).href;
+    commentModulePromise = import(url).catch(err => { commentModulePromise = null; throw err; });
+  }
+  return commentModulePromise;
+}
 // strategy.mjs は毎ターン動的にロード (AI改善で更新されるため)
 async function loadStrategy(strategyPath = './strategy.mjs') {
   const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
@@ -104,7 +114,23 @@ function positiveIntEnv(name, fallback) {
 
 const VIEWPORT_WIDTH = positiveIntEnv('SOREN91_VIEWPORT_WIDTH', DEFAULT_VIEWPORT_WIDTH);
 const VIEWPORT_HEIGHT = positiveIntEnv('SOREN91_VIEWPORT_HEIGHT', DEFAULT_VIEWPORT_HEIGHT);
-const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(process.env, process.platform);
+// Remote-Mac capture (SOREN91_REMOTE_CDP_URL) feeds ONLY the game screen to
+// the VM, which draws the notification/status rails itself. If the dashboard
+// stage (rails) or the live broadcast overlay were installed into the remote
+// page, they would be baked into the SRT capture and then shown again by the
+// VM overlay — the doubled-rail artifact (Issue #303). Force the game-only
+// (fullscreen) layout in that mode; the local direct-stream path is unchanged.
+const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
+  remoteBrowserOwnsViewport()
+    ? {
+        ...process.env,
+        SOREN_DIRECT_STAGE_LAYOUT: 'fullscreen',
+        SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED: '0',
+        SOREN_DIRECT_TWICA_OVERLAY_ENABLED: '0',
+      }
+    : process.env,
+  process.platform,
+);
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
 
@@ -1224,14 +1250,32 @@ async function main() {
       drawBufferWidth: VIEWPORT_WIDTH,
       drawBufferHeight: VIEWPORT_HEIGHT,
     });
-    await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
-    await startInlineBroadcastState(gamePage);
+    if (!remoteBrowserOwnsViewport()) {
+      // Remote-Mac capture must stay game-only (see DIRECT_OVERLAY_CONFIG):
+      // the VM owns the rails, so never inline the live broadcast overlay
+      // into the page the Mac streams.
+      await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+      await startInlineBroadcastState(gamePage);
+    }
     console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
 
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);
     writeFileSync(SOREN91_READY_FILE, new Date().toISOString() + '\n');
     console.log('[main] Soren91 ready marker written');
+
+    // 保持ポリシー: コーナー起動時に、直近 N 日 (既定3日) より古い試合ログ/スクショを
+    // 掃除する。改善フローの成否に依存せずディスクを有界にするための安全弁。
+    try {
+      const { cleanupRetention } = await import(new URL('./cleanup_retention.mjs', import.meta.url).href);
+      cleanupRetention({
+        runtimeDir: process.cwd(),
+        days: Number.parseInt(process.env.SOREN91_RETENTION_DAYS || '3', 10),
+        log: (msg) => console.log(`[main] ${msg}`),
+      });
+    } catch (err) {
+      console.log(`[main] retention cleanup skipped: ${err.message}`);
+    }
 
     // ゲームボード表示を待ってからキャリブレーション
     // 最初は仮キャリブレーション (全画面) で待機→ボード検出後に再キャリブレーション
@@ -1426,6 +1470,8 @@ async function gameLoop(page, calibration, gameNumber) {
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
+  let startBeatSent = false;
+  let pinchBeatSent = false;
   let awaitingFreshRoundAfterResult = false;
   let interRoundWaitingSeen = false;
 
@@ -1433,6 +1479,10 @@ async function gameLoop(page, calibration, gameNumber) {
   console.log('[game] Game loop started');
   try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
   console.log(`[game] Round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
+
+  // C: ビート実況 (開始/ピンチ) 用に comment.mjs を一度だけ読み込む
+  let commentMod = null;
+  try { commentMod = await loadCommentModule(); } catch (err) { console.log(`[game] comment module load failed: ${err.message}`); }
 
   while (true) {
     try {
@@ -1515,6 +1565,8 @@ async function gameLoop(page, calibration, gameNumber) {
             waitingLogged = false;
             holdUsedThisTurn = false;
             midgameCommentSent = false;
+            startBeatSent = false;
+            pinchBeatSent = false;
             await sleep(1000);
             continue;
           }
@@ -1603,6 +1655,8 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
+          startBeatSent = false;
+          pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
           interRoundWaitingSeen = false;
 
@@ -1801,6 +1855,38 @@ async function gameLoop(page, calibration, gameNumber) {
             console.log(`[game] Midgame comment error: ${err.message}`);
           }
         })();
+      }
+
+      // C: 試合開始のひとこと (1試合1回、最初にピースが見えた時点)
+      if (commentMod && !startBeatSent && turn >= 1 && boardState.pieces.length >= 1) {
+        startBeatSent = true;
+        (async () => {
+          try {
+            await commentMod.generateBeatComment(gameNumber, 'start', `第${gameNumber}試合が始まりました。`);
+          } catch (err) {
+            console.log(`[game] start beat error: ${err.message}`);
+          }
+        })();
+      }
+
+      // C: ピンチのひとこと (1試合1回、危険域に初到達したら。開始直後は避ける)
+      if (commentMod && !pinchBeatSent && startBeatSent && turn >= 5) {
+        try {
+          const danger = commentMod.computeBoardDanger(boardState);
+          if (['危険が迫っている', 'かなり危険', '瀕死'].includes(danger.dangerLevel)) {
+            pinchBeatSent = true;
+            const dangerLevel = danger.dangerLevel;
+            (async () => {
+              try {
+                await commentMod.generateBeatComment(gameNumber, 'pinch', `ターン${turn}、積み上がりの危険度は「${dangerLevel}」です。`);
+              } catch (err) {
+                console.log(`[game] pinch beat error: ${err.message}`);
+              }
+            })();
+          }
+        } catch (err) {
+          console.log(`[game] pinch beat check error: ${err.message}`);
+        }
       }
 
     } catch (err) {
