@@ -12,6 +12,16 @@ RETRY_DELAY_SEC="${SOREN91_RESTART_DELAY_SEC:-3}"
 RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
 CHILD_MAIN_PID=""
 
+# Remote CDP already pays a multi-second round trip for each canvas observation.
+# main.mjs also has a post-drop ranking probe (up to 16 extra screenshots over
+# 1.2s) after turn 10. That probe duplicates the normal WAITING/ranking
+# transition detection and dominated the measured ~5-6s loop cadence. Disable
+# it by default only for remote CDP; an operator can explicitly set
+# SOREN91_RANK_POSTDROP_PROBE=1 to opt back in for diagnostics.
+if [ -n "${SOREN91_REMOTE_CDP_URL:-}" ] && [ -z "${SOREN91_RANK_POSTDROP_PROBE+x}" ]; then
+	export SOREN91_RANK_POSTDROP_PROBE=0
+fi
+
 mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null || true
 
 _pid_alive() {
