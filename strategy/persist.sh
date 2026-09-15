@@ -39,6 +39,13 @@ persist_strategy_improve() {
 	[ -d "$repo/.git" ] || return 0
 	[ -n "$message" ] || return 1
 
+	# A fresh clone may have no committer identity; without this the commit fails
+	# and the loop would silently drop the improvement (as it did before).
+	if ! git -C "$repo" config user.email >/dev/null 2>&1; then
+		git -C "$repo" config user.name "${SOREN_PERSIST_USER_NAME:-docich-vm}" >/dev/null 2>&1 || true
+		git -C "$repo" config user.email "${SOREN_PERSIST_USER_EMAIL:-9018513+azumag@users.noreply.github.com}" >/dev/null 2>&1 || true
+	fi
+
 	if command -v flock >/dev/null 2>&1; then
 		(
 			exec 9>>"$repo/.git/persist.lock" || exit 1
