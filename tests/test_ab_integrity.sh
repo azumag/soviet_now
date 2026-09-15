@@ -109,5 +109,28 @@ assert st.get('retired_reason')=='stale_candidate', st
 assert 'winner' not in st, st
 PY
 
+# 4) state が残ったまま B 実体が消えた部分退役/破損も、active 表示を残さず閉じる。
+prepare
+rm -f tmp/state/ab_alt_strategy.py
+run_active_capture >/dev/null 2>&1; rc=$?; out=$(cat ab_active.out)
+[ "$rc" -ne 0 ] && echo "$out" | grep -q "stale_candidate_missing" && ok || ng "missing candidate was not retired ($rc: $out)"
+[ ! -f tmp/state/ab_state.json ] && ok || ng "missing candidate left active state"
+ls tmp/history/ab_*_state_stale.json >/dev/null 2>&1 && ok || ng "missing candidate state archive missing"
+
+# 5) lifecycle lock である state に期待 hash が欠けている場合は再開不能なので stale とする。
+prepare
+state "$A" ""
+run_active_capture >/dev/null 2>&1; rc=$?; out=$(cat ab_active.out)
+[ "$rc" -ne 0 ] && echo "$out" | grep -q "stale_state_b_hash_missing" && ok || ng "missing state hash was not retired ($rc: $out)"
+[ ! -f tmp/state/ab_state.json ] && ok || ng "malformed state remained active"
+
+# 6) 実体 hash 計算失敗は一時的な I/O/parse failure の可能性があるため、証拠を消さず fail-closed のままにする。
+prepare
+chmod 000 strategy.py
+run_active_capture >/dev/null 2>&1; rc=$?; out=$(cat ab_active.out)
+chmod 644 strategy.py
+[ "$rc" -ne 0 ] && ok || ng "unhashable root unexpectedly active"
+[ -f tmp/state/ab_state.json ] && ok || ng "transient root hash failure retired evidence"
+
 echo "test_ab_integrity: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
