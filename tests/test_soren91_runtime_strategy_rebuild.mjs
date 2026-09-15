@@ -81,6 +81,13 @@ test('after a real HOLD has been seen, recognition misses never become known-emp
   assert.equal(gateObservation(miss, c, 1900).holdKnownEmpty, false);
 });
 
+test('uncertain HOLD evidence is not reclassified as known-empty', () => {
+  const c = cal();
+  const uncertain = board([], piece(1), { hold: piece(3, 0, 0, { confidence: 0.5, fallback: true }) });
+  assert.equal(gateObservation(uncertain, c, 1000).holdKnownEmpty, false);
+  assert.equal(gateObservation(uncertain, c, 1300).holdKnownEmpty, false);
+});
+
 test('same-turn NEXT miss reuses only a previously observed slot', () => {
   const c = cal();
   const q = [piece(1), piece(2), piece(3)];

@@ -192,11 +192,14 @@ export function gateObservation(state, calibration, now = Date.now()) {
   // HOLD: two trustworthy empty observations establish an empty slot. Once a
   // non-empty HOLD has ever been seen in this round, later misses are treated as
   // recognition misses rather than as an empty slot, preventing false swaps.
-  const rawHoldKnown = state.hold && !state.hold.fallback && state.hold.confidence >= 0.6;
+  const rawHoldPresent = Boolean(state.hold);
+  const rawHoldKnown = rawHoldPresent && !state.hold.fallback && state.hold.confidence >= 0.6;
   const holdEverSeen = Boolean(previous?.holdEverSeen || rawHoldKnown);
   let emptyHoldFrames = 0;
   if (rawHoldKnown) emptyHoldFrames = 0;
-  else if (!holdEverSeen && current.usable) emptyHoldFrames = (previous?.emptyHoldFrames || 0) + 1;
+  else if (!holdEverSeen && !rawHoldPresent && current.usable) {
+    emptyHoldFrames = (previous?.emptyHoldFrames || 0) + 1;
+  }
   current.holdEverSeen = holdEverSeen;
   current.emptyHoldFrames = emptyHoldFrames;
 
