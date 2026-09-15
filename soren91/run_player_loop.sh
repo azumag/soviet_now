@@ -8,9 +8,11 @@ STOP_FILE="$SCRIPT_DIR/tmp/stop"
 PID_FILE="$SCRIPT_DIR/tmp/soren91.pid"
 MAIN_PID_FILE="$SCRIPT_DIR/tmp/main.pid"
 RUNNER_LOCK_DIR="$SCRIPT_DIR/tmp/.runner.lock"
+METRICS_FILE="$SCRIPT_DIR/tmp/state/soren91_runtime_metrics.json"
 RETRY_DELAY_SEC="${SOREN91_RESTART_DELAY_SEC:-3}"
 RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
 CHILD_MAIN_PID=""
+METRICS_PID=""
 
 # Remote CDP already pays a multi-second round trip for each canvas observation.
 # main.mjs also has a post-drop ranking probe (up to 16 extra screenshots over
@@ -22,12 +24,33 @@ if [ -n "${SOREN91_REMOTE_CDP_URL:-}" ] && [ -z "${SOREN91_RANK_POSTDROP_PROBE+x
 	export SOREN91_RANK_POSTDROP_PROBE=0
 fi
 
-mkdir -p "$SCRIPT_DIR/tmp" 2>/dev/null || true
+mkdir -p "$SCRIPT_DIR/tmp" "$SCRIPT_DIR/tmp/state" 2>/dev/null || true
 
 _pid_alive() {
 	local pid="$1"
 	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
 	kill -0 "$pid" 2>/dev/null
+}
+
+_stop_metrics() {
+	local pid="$METRICS_PID"
+	if _pid_alive "$pid"; then
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+	METRICS_PID=""
+}
+
+_ensure_metrics() {
+	if _pid_alive "$METRICS_PID"; then
+		return 0
+	fi
+	METRICS_PID=""
+	command -v python3 >/dev/null 2>&1 || return 0
+	[ -r "$SCRIPT_DIR/runtime_metrics.py" ] || return 0
+	python3 "$SCRIPT_DIR/runtime_metrics.py" --follow --log "$LOG_FILE" --output "$METRICS_FILE" \
+		>/dev/null 2>&1 &
+	METRICS_PID=$!
 }
 
 _cleanup_lock() {
@@ -85,12 +108,14 @@ _on_signal() {
 	local sig="$1"
 	printf '[%s] [runner] received %s; stopping child and exiting\n' "$(date '+%H:%M:%S')" "$sig" >>"$LOG_FILE" 2>/dev/null || true
 	_stop_child_main
+	_stop_metrics
 	_cleanup_lock
 	exit 0
 }
 
 _on_exit() {
 	local rc=$?
+	_stop_metrics
 	printf '[%s] [runner] exit rc=%s\n' "$(date '+%H:%M:%S')" "$rc" >>"$LOG_FILE" 2>/dev/null || true
 	_cleanup_lock
 }
@@ -124,6 +149,7 @@ trap '' HUP
 trap '_on_exit' EXIT
 _acquire_runner_lock
 echo "$$" >"$PID_FILE" 2>/dev/null || true
+_ensure_metrics
 
 # rc=0-即時終了は「今は走るべきでない」(共有Chrome attach失敗等を main().catch が
 # 握り潰して rc=0 終了する) を意味する。3s固定で再試行すると、共有Chrome不安定時に
@@ -142,6 +168,7 @@ while true; do
 			"$(date '+%H:%M:%S')" >>"$LOG_FILE" 2>/dev/null || true
 		exit 0
 	fi
+	_ensure_metrics
 
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
