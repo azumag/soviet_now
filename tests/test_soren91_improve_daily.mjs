@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -92,4 +92,11 @@ test('PR marker round-trips', () => {
   const marker = formatPrMarker(12, 34);
   assert.deepEqual(parsePrMarker(`body\n${marker}\nmore`), { fromGame: 12, toGame: 34 });
   assert.equal(parsePrMarker('no marker'), null);
+});
+
+test('--no-pr never marks evidence consumed before a merged PR exists', () => {
+  const source = readFileSync(new URL('../soren91/improve_daily.mjs', import.meta.url), 'utf8');
+  const block = source.match(/if \(opts\.noPr\) \{([\s\S]*?)\n  \}/)?.[1] || '';
+  assert.ok(block, 'expected --no-pr guard');
+  assert.doesNotMatch(block, /lastConsumedGame|saveState/);
 });
