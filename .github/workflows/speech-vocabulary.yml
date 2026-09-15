@@ -1,0 +1,48 @@
+name: Speech vocabulary rule
+
+on:
+  pull_request:
+    paths:
+      - 'prompts/speech_vocabulary_rule.md'
+      - 'prompts/celebration.md'
+      - 'broadcast/radio_persona.sh'
+      - 'broadcast/radio_celebration.sh'
+      - 'broadcast/comment.sh'
+      - 'workers/poll_worker.sh'
+      - 'batch_commentary.sh'
+      - 'soren91/comment.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_speech_vocabulary_rule.sh'
+      - '.github/workflows/speech-vocabulary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'prompts/speech_vocabulary_rule.md'
+      - 'prompts/celebration.md'
+      - 'broadcast/radio_persona.sh'
+      - 'broadcast/radio_celebration.sh'
+      - 'broadcast/comment.sh'
+      - 'workers/poll_worker.sh'
+      - 'batch_commentary.sh'
+      - 'soren91/comment.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_speech_vocabulary_rule.sh'
+      - '.github/workflows/speech-vocabulary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Shell syntax
+        run: |
+          bash -n broadcast/radio_persona.sh broadcast/radio_celebration.sh broadcast/comment.sh
+          bash -n workers/poll_worker.sh batch_commentary.sh soren91_control.sh
+      - name: Speech vocabulary rule reaches every spoken prompt
+        run: bash tests/test_speech_vocabulary_rule.sh

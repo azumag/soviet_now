@@ -56,6 +56,16 @@ test('computeBoardDanger maps board height to danger levels', () => {
   );
 });
 
+test('spoken comment prompts carry the shared speech vocabulary rule', async () => {
+  // 「腹がすく」「食う」のような丁寧でない言い回しを抑える共通ルールが、
+  // soren91の読み上げコメントプロンプトへ実際に注入されることを確認する。
+  const { buildRankingTextPrompt } = await import('../soren91/comment.mjs');
+  const { promptText } = await buildRankingTextPrompt(null, 3);
+  assert.match(promptText, /語彙・言い回しの共通ルール/);
+  assert.match(promptText, /お腹が空く/);
+  assert.match(promptText, /食べる/);
+});
+
 test('readLastRankingRank returns the last logged ranking rank', () => {
   mkdirSync(join(dir, 'tmp'), { recursive: true });
   writeFileSync(

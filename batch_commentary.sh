@@ -197,6 +197,12 @@ cat >"$prompt_file" <<PROMPT
 ${summary_context}
 PROMPT
 
+# 語彙ルールの正本 (prompts/speech_vocabulary_rule.md) を解説プロンプトへ注入する。
+if [ -n "${ELOOP_LIB_DIR:-}" ] && [ -f "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" ]; then
+  printf '\n' >>"$prompt_file"
+  cat "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" >>"$prompt_file"
+fi
+
 _batch_commentary_valid() {
   local value="${1:-}" length
   length=${#value}
