@@ -4,6 +4,7 @@ on:
     paths:
       - 'broadcast/comment.sh'
       - 'broadcast/comment_quality.sh'
+      - 'broadcast/comment_runtime_policy.sh'
       - 'broadcast/radio_engine.sh'
       - 'core/helpers.sh'
       - 'eloop_lib.sh'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'broadcast/comment.sh'
       - 'broadcast/comment_quality.sh'
+      - 'broadcast/comment_runtime_policy.sh'
       - 'broadcast/radio_engine.sh'
       - 'core/helpers.sh'
       - 'eloop_lib.sh'
@@ -43,7 +45,7 @@ jobs:
         run: python3 -m unittest tests.test_raid_research tests.test_country_stage_names
       - name: Shell syntax and comment delivery contracts
         run: |
-          bash -n broadcast/comment.sh broadcast/comment_quality.sh broadcast/radio_engine.sh
-          for test in tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh; do
+          bash -n broadcast/comment.sh broadcast/comment_quality.sh broadcast/comment_runtime_policy.sh broadcast/radio_engine.sh
+          for test in tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_runtime_policy.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh; do
             bash "$test"
           done
