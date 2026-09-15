@@ -143,8 +143,9 @@ _comment_runtime_policy_has_plain_honorific_address() {
 import re, sys
 text = sys.stdin.read().replace("\r\n", "\n").replace("\r", "\n")
 # Only inspect paragraph starts, where the reply contract places viewer
-# addresses. Generic audience phrases are not individual-name addresses.
-allowed = ("みなさん", "皆さん")
+# addresses. Generic audience phrases and already-repaired 同志 addresses are
+# not ordinary-honorific regressions.
+allowed = ("同志", "みなさん", "皆さん")
 for para in re.split(r"\n\s*\n+", text):
     head = para.lstrip()
     if not head:
