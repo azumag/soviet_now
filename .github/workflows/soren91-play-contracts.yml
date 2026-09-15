@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/run_player_loop.sh'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -18,6 +19,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/run_player_loop.sh'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -46,6 +48,7 @@ jobs:
       - name: Syntax check player decision modules
         run: |
           node --version
+          bash -n soren91/run_player_loop.sh
           node --check soren91/strategy.mjs
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
