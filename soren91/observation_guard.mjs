@@ -18,8 +18,6 @@ export function slowCadenceFastPathEnabled(env = process.env) {
   const explicit = String(env?.SOREN91_SINGLE_FRAME_ADVANCE || '').trim().toLowerCase();
   if (['0', 'false', 'no', 'off'].includes(explicit)) return false;
   if (['1', 'true', 'yes', 'on'].includes(explicit)) return true;
-  // The measured 5-6s cadence is specifically the remote-CDP path. Keep the
-  // stricter two-frame rule for the normal local loop unless explicitly opted in.
   return !!String(env?.SOREN91_REMOTE_CDP_URL || '').trim();
 }
 
@@ -62,7 +60,6 @@ function classifyQueueTransition(previousQueue, currentQueue) {
   if (!previousQueue || previousQueue.length === 0) return 'unknown';
   const p = previousQueue;
   const c = currentQueue;
-
   let advanceEvidence = 0;
   let advanceConflict = 0;
   if (previewType(p[1]) != null && previewType(c[0]) != null) {
@@ -77,7 +74,6 @@ function classifyQueueTransition(previousQueue, currentQueue) {
     advanceEvidence += 1;
   }
   if (advanceEvidence >= 2 && advanceConflict === 0) return 'advanced';
-
   let sameEvidence = 0;
   let sameConflict = 0;
   for (let i = 0; i < 3; i++) {
@@ -95,8 +91,6 @@ function stabilizeQueue(currentQueue, previous, transition) {
   const out = currentQueue.map(p => copyPreview(p, 'detected'));
   const previousQueue = previous?.nextPieces || [];
   if (transition === 'advanced') {
-    // Previous [current, next1, next2] becomes [next1, next2, unknown].
-    // Reuse only an actually observed preview; never invent a type.
     if (!out[0] && knownPreview(previousQueue[1])) out[0] = copyPreview(previousQueue[1], 'shifted');
     if (!out[1] && knownPreview(previousQueue[2])) out[1] = copyPreview(previousQueue[2], 'shifted');
   } else if (transition === 'same') {
@@ -172,10 +166,6 @@ export function gateObservation(state, calibration, now = Date.now()) {
   else if (!previous || !previous.usable || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
   else if (gapMs > maxStaleMs()) reason = 'confirm-frame';
   else {
-    // Remote CDP spends ~5-6s obtaining one observation. When the preview queue
-    // proves that a turn advanced and that much real time has elapsed, waiting
-    // for a second full remote screenshot only halves APM without adding useful
-    // settling evidence. Local/fast paths retain the strict two-frame check.
     slowAdvanceUsed = transition === 'advanced'
       && slowCadenceFastPathEnabled()
       && gapMs >= singleFrameAdvanceMs();
@@ -192,9 +182,6 @@ export function gateObservation(state, calibration, now = Date.now()) {
 
   current.usable = !['unknown-current', 'uncalibrated', 'invalid-board'].includes(reason);
 
-  // HOLD: two trustworthy empty observations establish an empty slot. Once a
-  // non-empty HOLD has ever been seen in this round, later misses are treated as
-  // recognition misses rather than as an empty slot, preventing false swaps.
   const rawHoldPresent = Boolean(state.hold);
   const rawHoldKnown = rawHoldPresent && !state.hold.fallback && state.hold.confidence >= 0.6;
   const holdEverSeen = Boolean(previous?.holdEverSeen || rawHoldKnown);
@@ -213,6 +200,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
 
   let stableReason = slowAdvanceUsed ? 'stable-slow-advance' : 'stable';
   if (temporalNextUsed) stableReason += '-temporal-next';
+  if (holdKnownEmpty) stableReason += '-hold-empty';
 
   observations.set(calibration, current);
   return {
