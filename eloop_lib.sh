@@ -59,6 +59,9 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
 	source "$ELOOP_LIB_DIR/broadcast/comment.sh"
+	# Viewer-facing comment policy must layer after comment.sh so it can wrap
+	# the concrete generation/output contracts without weakening shared guards.
+	source "$ELOOP_LIB_DIR/broadcast/comment_runtime_policy.sh"
 	source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
 	source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
 fi
