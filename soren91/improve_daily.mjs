@@ -250,8 +250,7 @@ async function propose(opts) {
   log(`strategy.mjs を更新しました (backup: ${backup})`);
 
   if (opts.noPr) {
-    log('--no-pr のため PR は作成しません。');
-    saveState(opts, { ...state, pendingPr: null, lastConsumedGame: toGame, note: 'no-pr' });
+    log('--no-pr のため PR は作成しません。消費済み状態も進めません。');
     return 0;
   }
 
