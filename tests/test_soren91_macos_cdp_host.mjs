@@ -7,6 +7,7 @@ import {
   buildChromeArgs,
   canvasSamplesMatch,
   computeDriverDeadline,
+  computeSessionDeadline,
   evaluateGeometryDrift,
   findGameTarget,
   isAllowedCdpPeer,
@@ -104,6 +105,20 @@ test('cdp-host driver wait has an independent bounded deadline', () => {
   const waitStartedAt = 130_000;
   assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 1500, 45), 175_000);
   assert.equal(computeDriverDeadline(startedAt, waitStartedAt, 60, 45), 160_000);
+});
+
+test('cdp-host session deadline stays the full session, not the driver wait', () => {
+  const startedAt = 100_000;
+  const waitStartedAt = 130_000;
+  // 1500s session: the 45s driver window bounds only the wait for the driver;
+  // once the driver is present the host must still stream for the session.
+  assert.equal(computeSessionDeadline(startedAt, 1500), 1_600_000);
+  assert.equal(computeSessionDeadline(startedAt, 60), 160_000);
+  // driverWaitSec never shortens (or lengthens) the session deadline.
+  assert.ok(computeDriverDeadline(startedAt, waitStartedAt, 1500, 45)
+    < computeSessionDeadline(startedAt, 1500));
+  assert.equal(computeDriverDeadline(startedAt, 100_000, 10, 120), 110_000);
+  assert.equal(computeSessionDeadline(startedAt, 10), 110_000);
 });
 
 test('Chrome is physically muted whenever audio tap is disabled', () => {

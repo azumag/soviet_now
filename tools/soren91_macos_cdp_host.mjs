@@ -245,9 +245,18 @@ export function findGameTarget(targets) {
     && typeof t?.url === 'string' && isExactGameTargetUrl(t.url)) || null;
 }
 
+// The full session deadline is the outer bound on how long the host keeps
+// streaming after the driver handshake. It is independent of the short
+// `computeDriverDeadline` window that only bounds the *wait for the driver*
+// (a missing OCI driver must fail fast instead of holding the broadcast
+// readiness path, but a present driver must still get the whole session).
+export function computeSessionDeadline(startedAt, sessionSec) {
+  return Number(startedAt) + Number(sessionSec) * 1000;
+}
+
 export function computeDriverDeadline(startedAt, waitStartedAt, sessionSec, driverWaitSec) {
   return Math.min(
-    Number(startedAt) + Number(sessionSec) * 1000,
+    computeSessionDeadline(startedAt, sessionSec),
     Number(waitStartedAt) + Number(driverWaitSec) * 1000,
   );
 }
@@ -756,9 +765,11 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     });
     console.log(`SOREN91_CDP_HOST_PROXY_READY=${options.bindIp}:${options.proxyPort}`);
 
-    // Wait only a short, independent window for the OCI driver. The
-    // full session deadline is still an upper bound, but a missing driver
-    // now fails before the production broadcast can sit black for minutes.
+    // Wait only a short, independent window for the OCI driver. A missing
+    // driver now fails fast instead of holding the broadcast readiness path.
+    // The full session deadline below is the upper bound once the driver has
+    // been observed: it must never be collapsed into the driver wait.
+    const sessionDeadline = computeSessionDeadline(startedAt, options.sessionSec);
     const waitStartedAt = Date.now();
     const driverDeadline = computeDriverDeadline(
       startedAt, waitStartedAt, options.sessionSec, options.driverWaitSec,
@@ -1035,7 +1046,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       }
     }, OFFSCREEN_WATCH_MS);
     geometryWatch.unref?.();
-    await sleep(Math.max(0, deadline - Date.now()));
+    await sleep(Math.max(0, sessionDeadline - Date.now()));
     console.log('SOREN91_CDP_HOST_END=deadline');
     return { ok: true };
   } finally {
