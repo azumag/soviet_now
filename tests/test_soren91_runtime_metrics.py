@@ -55,6 +55,26 @@ class RuntimeMetricsTest(unittest.TestCase):
             self.assertEqual(data["decisions"], 1)
             self.assertLess(len(raw), 4096)
 
+    def test_single_instance_lock_rejects_duplicate_collector(self):
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "metrics.json"
+            first = MODULE.acquire_single_instance(output)
+            self.assertIsNotNone(first)
+            try:
+                second = MODULE.acquire_single_instance(output)
+                self.assertIsNone(second)
+                lock = output.with_name(output.name + ".lock")
+                self.assertTrue(lock.exists())
+                self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+            finally:
+                first.close()
+            third = MODULE.acquire_single_instance(output)
+            self.assertIsNotNone(third)
+            third.close()
+
+    def test_log_read_is_hard_bounded(self):
+        self.assertEqual(MODULE.MAX_LOG_LINE_BYTES, 64 * 1024)
+
 
 if __name__ == "__main__":
     unittest.main()
