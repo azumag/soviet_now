@@ -14,7 +14,8 @@ function remoteDefaultBlock() {
 
 function evalBlock(env = {}) {
   const block = remoteDefaultBlock();
-  return execFileSync('bash', ['-c', `${block}\nprintf '%s' "${SOREN91_RANK_POSTDROP_PROBE-unset}"`], {
+  const command = block + '\n' + 'printf \'%s\' "${SOREN91_RANK_POSTDROP_PROBE-unset}"';
+  return execFileSync('bash', ['-c', command], {
     encoding: 'utf8',
     env: { PATH: process.env.PATH, ...env },
   });
