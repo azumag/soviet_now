@@ -10,6 +10,7 @@ on:
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
 
 permissions:
@@ -41,9 +43,12 @@ jobs:
         run: |
           bash -n start_shared_overlay_service.sh
           bash -n game_lifecycle_control.sh
+          bash -n tests/test_shared_overlay_service.sh
           node --check shared_overlay.mjs
           node --check lib/shared_overlay.mjs
       - name: Run shared overlay regression
         run: node --test tests/test_shared_overlay.mjs
+      - name: Run shared overlay service lifecycle regression
+        run: bash tests/test_shared_overlay_service.sh
       - name: Run game lifecycle shell regression
         run: bash tests/test_game_lifecycle.sh
