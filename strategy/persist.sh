@@ -10,6 +10,8 @@
 #   - clone 未整備や VM 以外では何もせず 0 を返す (runtime を変更しない)。
 #   - 戻り値: 0 = candidate branch/PR を作成または更新 / 3 = 変更なし / 1 = 失敗。
 #   - origin/main は fetch/reset の基準として読むだけで、絶対に push/force-push しない。
+#     (soviet_now main は ruleset で pull_request 必須 + non_fast_forward + deletion 禁止。
+#      直接 push は GitHub 側でも "Changes must be made through a pull request." で拒否される。)
 #   - 専用 branch の更新だけ、取得済み remote HEAD に対する --force-with-lease を許す。
 #   - 同時実行は clone 内の flock で直列化する。
 
