@@ -26,6 +26,13 @@ _celebration_is_valid_candidate() {
 	_is_valid_radio_talk "$sanitized"
 }
 
+# 語彙ルールの正本 (prompts/speech_vocabulary_rule.md) を建国祝賀プロンプトへ注入する。
+_celebration_vocabulary_rule() {
+	if [ -n "${ELOOP_LIB_DIR:-}" ] && [ -f "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" ]; then
+		cat "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md"
+	fi
+}
+
 _celebration_generate_talk() {
 	local tag="$1" prompt_file="$2"
 	local last_agent_file talk provider_used
@@ -134,6 +141,7 @@ generate_russia_celebration() {
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ます」「〜でしょう」「〜ですけど」で統一
 - 「ね」で終わる文末は禁止。「〜ですね」「〜ますね」「〜ですけどね」「〜でしょうね」は使わない
+$(_celebration_vocabulary_rule)
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
@@ -226,6 +234,7 @@ generate_soviet_celebration() {
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ます」「〜でしょう」「〜ですけど」で統一
 - 「ね」で終わる文末は禁止。「〜ですね」「〜ますね」「〜ですけどね」「〜でしょうね」は使わない
+$(_celebration_vocabulary_rule)
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT

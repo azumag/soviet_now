@@ -26,10 +26,24 @@ function loadPrompt(filename, vars = {}) {
   for (const [key, value] of Object.entries(vars)) {
     text = text.replaceAll(`{{${key}}}`, String(value ?? ''));
   }
+  // 読み上げるコメントの語彙ルールは正本ファイルから全プロンプトへ共通注入する。
+  // プロセス再起動なしで編集を反映できるよう、毎回読み直す（生成は1試合に数回）。
+  const vocabularyRule = loadSpeechVocabularyRule();
+  if (vocabularyRule) text += `\n\n${vocabularyRule}\n`;
   return text;
 }
 
 const PARENT_DIR = join(import.meta.dirname || '.', '..');
+const SPEECH_VOCABULARY_RULE_PATH = join(PARENT_DIR, 'prompts', 'speech_vocabulary_rule.md');
+
+// 語彙ルールの正本 (prompts/speech_vocabulary_rule.md)。親プロジェクトと共有する。
+function loadSpeechVocabularyRule() {
+  try {
+    return readFileSync(SPEECH_VOCABULARY_RULE_PATH, 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');

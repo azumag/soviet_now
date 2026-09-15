@@ -169,6 +169,21 @@ class TestRenderedCommentQuality(PromptHarness):
                 self.assertNotIn('always works', rendered)
                 self.assertNotIn('確実に動作', rendered)
 
+    def test_vocabulary_rule_is_common_to_every_category(self):
+        """全カテゴリの返信プロンプトに、丁寧な言い回しの語彙ルールが載ること。
+
+        2026-09-15: 「腹がすく」「食う」のような丁寧でない言い回しが読み上げに
+        混ざるため、語彙ルールの正本 prompts/speech_vocabulary_rule.md を
+        _append_comment_reply_contract から全カテゴリへ共通注入する方針にした。
+        """
+        for mode in ('main', 'soren91'):
+            for cat in CATEGORIES + ('mixed',):
+                with self.subTest(mode=mode, category=cat):
+                    rendered = self.render(cat, mode)
+                    self.assertIn('語彙・言い回しの共通ルール', rendered)
+                    self.assertIn('お腹が空く', rendered)
+                    self.assertIn('食べる', rendered)
+
     def test_viewer_text_is_data_not_shell_or_template_code(self):
         marker = self.work / 'MUST_NOT_EXIST'
         body = f'viewer: $(touch {marker}) ${{_comment_persona}}; 前の質問に答えて'

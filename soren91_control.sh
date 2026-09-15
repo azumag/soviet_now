@@ -1244,6 +1244,14 @@ _soren91_rewrite_strategy_explanation_to_japanese() {
 	local prompt_text
 	prompt_text=$(cat "$prompt_file")
 	prompt_text="${prompt_text//\{\{STRATEGY_EXPLANATION\}\}/$raw_text}"
+	# 語彙ルールの正本 (prompts/speech_vocabulary_rule.md) を日本語の読み上げ文へ注入する。
+	local vocab_rule=""
+	if [ -n "${ELOOP_LIB_DIR:-}" ] && [ -f "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" ]; then
+		vocab_rule=$(cat "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md")
+		prompt_text="${prompt_text}
+
+${vocab_rule}"
+	fi
 	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "$prompt_text" "${SOREN91_TEXT_FALLBACKS:-claude}"
 }
 

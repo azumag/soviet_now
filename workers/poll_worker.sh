@@ -120,6 +120,15 @@ _poll_draft_validator() {
 	return "$rc"
 }
 
+# 語彙ルールの正本 (prompts/speech_vocabulary_rule.md) をアンケート文面プロンプトへ注入する。
+_append_poll_vocabulary_rule() {
+	local prompt_file="$1"
+	[ -n "${ELOOP_LIB_DIR:-}" ] || return 0
+	[ -f "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" ] || return 0
+	printf '\n' >>"$prompt_file"
+	cat "$ELOOP_LIB_DIR/prompts/speech_vocabulary_rule.md" >>"$prompt_file"
+}
+
 _generate_poll() {
 	local prompt draft raw
 	prompt=$(mktemp "tmp/.poll_prompt.XXXXXXXX") || return 1
@@ -141,6 +150,7 @@ _generate_poll() {
 - Markdownや説明を付けず、次のJSONだけを返す
 {"title":"質問","choices":["選択肢1","選択肢2"]}
 EOF
+	_append_poll_vocabulary_rule "$prompt"
 	raw=$(ai_generate_list "RADIO_POLL_QUESTION" "$prompt" "${TWITCH_POLL_AGENTS:-$RADIO_AGENTS}" "${TWITCH_POLL_AI_TIMEOUT:-120}" _poll_draft_validator) || {
 		rm -f "$prompt" "$draft"
 		return 1
@@ -255,6 +265,7 @@ print("- Markdown、見出し、箇条書き、説明、前置き、英語の作
 print("質問: " + str(p.get("title", "")))
 for c in p.get("choices", []): print(f"- {c.get('title','')}: {int(c.get('votes',0) or 0)}票")
 PY
+	_append_poll_vocabulary_rule "$prompt"
 	raw=$(ai_generate_list "RADIO_POLL_RESULT" "$prompt" "${TWITCH_POLL_AGENTS:-$RADIO_AGENTS}" "${TWITCH_POLL_AI_TIMEOUT:-120}" _poll_result_comment_validator) || true
 	rm -f "$prompt"
 	raw=$(printf '%s' "$raw" | _ai_guard_model_output | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')
