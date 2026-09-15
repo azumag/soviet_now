@@ -96,10 +96,11 @@ pass=0 fail=0
 ok() { pass=$((pass + 1)); printf 'ok %d - %s\n' "$pass" "$1"; }
 not_ok() { fail=$((fail + 1)); printf 'not ok - %s\n' "$1"; }
 
-# 1. dry-run: prefix + day + activity + strategy の組成
+# 1. dry-run: [dayN] + activity + strategy の組成。ゲーム prefix は無視する。
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
 out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" --dry-run 2>"$TMP/e1")"
-echo "$out" | grep -q '^\[Robots\] day[0-9]* 直近の作業メモ root継続$' && ok "compose title" || not_ok "compose title: $out"
+echo "$out" | grep -q '^\[day[0-9]*\] 直近の作業メモ root継続$' && ok "compose title" || not_ok "compose title: $out"
+echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
 [ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
 
 # 2. 実PATCH: body に title+game_id が入る
@@ -110,7 +111,8 @@ python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "PATCH body" || not_ok "PAT
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["game_id"] == "11585", d
-assert d["title"].startswith("[Robots] day"), d
+assert d["title"].startswith("[day"), d
+assert "[Robots]" not in d["title"], d
 PY
 
 # 3. 冪等: 同一 title+game なら PATCH しない (exit 0)
@@ -157,7 +159,7 @@ out="$("$BIN" --resolve "Robots" 2>/dev/null)"
 echo "$out" | grep -q '11585 | Robots' && ok "resolve list" || not_ok "resolve list: $out"
 [ ! -f "$STUB_PATCH_COUNT" ] && ok "resolve no PATCH" || not_ok "resolve PATCHed"
 
-# 9. --title-only は game_id を維持する
+# 9. --title-only は game_id を維持し、タイトルは [dayN] のまま
 rm -f "$STUB_PATCH_OUT"
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"999","game_name":"Keep"}]}'
 "$BIN" --game robots --games-dir "$TMP/games" --title-only >/dev/null 2>&1
@@ -165,11 +167,16 @@ python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "title-only keeps game" || 
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["game_id"] == "999", d
-assert d["title"].startswith("[Robots] day"), d
+assert d["title"].startswith("[day"), d
+assert "[Robots]" not in d["title"], d
 PY
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
 
-# 10. 140字制限
+# 10. --title-prefix は互換のため受理するが表示には使わない
+out="$("$BIN" --game robots --games-dir "$TMP/games" --title-prefix '[LegacyGame]' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\]' && ! echo "$out" | grep -q '\[LegacyGame\]' && ok "legacy title-prefix ignored" || not_ok "legacy title-prefix leaked: $out"
+
+# 11. 140字制限
 WORDS="$(python3 -c "print('あ' * 200)")"
 out="$("$BIN" --game robots --games-dir "$TMP/games" --activity "$WORDS" --strategy "$WORDS" --dry-run 2>/dev/null)"
 [ "${#out}" -le 140 ] && ok "title <= 140" || not_ok "title too long: ${#out}"
