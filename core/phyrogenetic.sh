@@ -211,28 +211,6 @@ with path.open("a", encoding="utf-8") as f:
 PY
 }
 
-_extract_news_source_name() {
-	local title="$1"
-	[ -f "tmp/news_meta.json" ] || return 0
-	python3 - "$title" <<'PY'
-import json
-import sys
-
-title = sys.argv[1] if len(sys.argv) > 1 else ""
-try:
-    with open("tmp/news_meta.json", encoding="utf-8") as f:
-        meta = json.load(f)
-except Exception:
-    raise SystemExit(0)
-
-item = meta.get(title, {})
-source = (item.get("source") or "").strip()
-source_key = (item.get("source_key") or "").strip()
-if source_key.startswith("globalvoices") or source.startswith("Global Voices"):
-    print(source)
-PY
-}
-
 _build_cc_attribution_text() {
 	local title="$1"
 	local meta_path="${2:-tmp/news_meta.json}"
@@ -284,11 +262,12 @@ print(" | ".join(parts))
 PY
 }
 
-_strip_non_globalvoices_attribution_file() {
-	local talk_file="$1" title="$2" source_name=""
+# 音声化の直前に、話し言葉の出典行を本文から除去する。
+# 出典・媒体名は読み上げない。帰属表示は字幕・チャット側 (ニュースは
+# _build_cc_attribution_text) だけで行う。
+_strip_spoken_news_attribution_file() {
+	local talk_file="$1"
 	[ -f "$talk_file" ] || return 1
-	source_name=$(_extract_news_source_name "$title")
-	[ -z "$source_name" ] || return 1
 	python3 - "$talk_file" <<'PY'
 import pathlib
 import re

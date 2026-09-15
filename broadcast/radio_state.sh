@@ -761,16 +761,14 @@ _play_deferred_radio_queue_once() {
 		[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
 	fi
 	# 反映前に生成を始めた子プロセスが旧ルールの出典行を付けた場合も、
-	# 音声合成・字幕生成の直前で現行ポリシーを必ず適用する。
+	# 音声合成・字幕生成の直前で現行ポリシー（出典は読み上げない）を必ず適用する。
 	if [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
-		local deferred_news_title_for_policy
-		deferred_news_title_for_policy=$(cat "$news_title_file" 2>/dev/null)
-		if _strip_non_globalvoices_attribution_file "$qf" "$deferred_news_title_for_policy"; then
+		if _strip_spoken_news_attribution_file "$qf"; then
 			local stale_ready_wav
 			stale_ready_wav=$(_radio_ready_wav_path "$qf")
 			rm -f "$stale_ready_wav" "$(_radio_render_meta_path "$qf")" 2>/dev/null || true
 			rm -rf "${stale_ready_wav}.bundle" 2>/dev/null || true
-			log "[RADIO:deferred] 非Global Voicesニュースの旧出典行を再生前に除去: $(basename "$qf")"
+			log "[RADIO:deferred] ニュースの旧出典行を再生前に除去: $(basename "$qf")"
 		fi
 	fi
 	local radio_vo_speaker=""

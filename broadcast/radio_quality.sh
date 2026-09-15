@@ -1,14 +1,14 @@
 #!/bin/bash
 # broadcast/radio_quality.sh - ラジオ生成テキストの品質チェック
 #
-# 中国語出力・非日本語・無限ループ・文字化けを検出し、
+# 中国語出力・非日本語・無限ループ・文字化け・ニュース素材の丸読みを検出し、
 # リライト用プロンプトを生成するユーティリティ。
 
-# _radio_quality_check <talk_text> [corner_name]
-#   stdout: "OK" / "FAIL:chinese_text" / "FAIL:wrong_language" / "FAIL:repetition_loop" / "FAIL:garbled"
+# _radio_quality_check <talk_text> [corner_name] [source_material]
+#   stdout: "OK" / "FAIL:chinese_text" / "FAIL:wrong_language" / "FAIL:repetition_loop" / "FAIL:garbled" / "FAIL:verbatim_source"
 #   return: 0=OK, 1=failed
 _radio_quality_check() {
-	local talk_text="$1" corner_name="${2:-}"
+	local talk_text="$1" corner_name="${2:-}" source_material="${3:-}"
 
 	[ "${RADIO_QUALITY_CHECK_ENABLED:-1}" != "1" ] && echo "OK" && return 0
 
@@ -28,15 +28,19 @@ _radio_quality_check() {
 		"$_qc_txt" \
 		"${RADIO_QUALITY_MIN_JAPANESE_RATIO:-0.10}" \
 		"${RADIO_QUALITY_MAX_REPETITIONS:-3}" \
-		"$corner_name" <<'PY'
+		"$corner_name" \
+		"$source_material" <<'PY'
 import sys
 import re
+import os
+import unicodedata
 from collections import Counter
 
 text_file = sys.argv[1]
 min_ratio = float(sys.argv[2])
 max_reps = int(sys.argv[3])
 corner = sys.argv[4] if len(sys.argv) > 4 else ""
+source_material = sys.argv[5] if len(sys.argv) > 5 else ""
 with open(text_file, 'r', encoding='utf-8', errors='replace') as f:
     text = f.read()
 
@@ -96,6 +100,29 @@ if ansi_count + ctrl_count > 10:
     print("FAIL:garbled")
     sys.exit(0)
 
+# 5. ニュース素材の丸読み検出（ニュースコーナー限定）
+#    見出し・RSS要約をそのまま読み上げていないか、正規化した長い連続一致で見る。
+#    素材は「朗読原稿」ではなく再構成の参考資料であり、原文コピーは再生成させる。
+def _normalize(s: str) -> str:
+    return re.sub(r'[\s\u3000]+', '', unicodedata.normalize('NFKC', s or ''))
+
+if corner == "news" and source_material.strip():
+    try:
+        min_verbatim = max(12, int(os.environ.get("RADIO_QUALITY_VERBATIM_MIN_CHARS", "40")))
+    except ValueError:
+        min_verbatim = 40
+    material_norm = _normalize(source_material)
+    body_norm = _normalize(text)
+    if len(material_norm) >= min_verbatim and len(body_norm) >= min_verbatim:
+        material_windows = {
+            material_norm[i:i + min_verbatim]
+            for i in range(0, len(material_norm) - min_verbatim + 1)
+        }
+        for i in range(0, len(body_norm) - min_verbatim + 1):
+            if body_norm[i:i + min_verbatim] in material_windows:
+                print("FAIL:verbatim_source")
+                sys.exit(0)
+
 print("OK")
 PY
 	)
@@ -122,7 +149,26 @@ _radio_build_rewrite_prompt() {
 		*wrong_language*) reason_msg="前回の出力が日本語ではありませんでした" ;;
 		*repetition_loop*) reason_msg="前回の出力で同じ文が繰り返される無限ループ状態になっていました" ;;
 		*garbled*)        reason_msg="前回の出力が文字化けや制御文字を含んでいました" ;;
+		*verbatim_source*) reason_msg="前回の出力がニュース素材（見出し・RSS要約）の文面をそのまま読み上げていました" ;;
 		*)                reason_msg="前回の出力に品質問題がありました (${fail_reason})" ;;
+	esac
+
+	case "$fail_reason" in
+	*verbatim_source*)
+		cat >> "$rewrite_prompt_file" <<REWRITE_INST
+
+---
+【再生成指示 - 必ず従うこと】
+${reason_msg}。素材は朗読用の原稿ではなく、内容を再構成するための参考資料です。
+前回の出力で素材の文・言い回しをそのまま使った箇所は全て捨て、事実関係だけを保ったまま、見出しも本文もあなた自身の言葉で書き直してください。
+- 見出しの文言をそのまま音読せず、「要するに何が起きたのか」を自分の言葉で1-2文に言い換えること
+- 素材に書かれた語順・文・言い回しをコピーしないこと
+- 出典名・媒体名・URL・公開日時は読み上げないこと
+前回の失敗出力（参考・使用禁止）: 「${failed_snippet:0:100}」
+REWRITE_INST
+		printf '%s' "$rewrite_prompt_file"
+		return 0
+		;;
 	esac
 
 	cat >> "$rewrite_prompt_file" <<REWRITE_INST
