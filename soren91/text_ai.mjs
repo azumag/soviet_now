@@ -318,7 +318,7 @@ function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, p
         if (containsProviderErrorText(cleaned)) {
           return reject(makeProviderError(`opencode provider failure (${model})`, cleaned.slice(0, 300)));
         }
-        if (err && !cleaned) return reject(err);
+        if (err) return reject(err);
         try {
           resolve(parseOutputOrThrow(cleaned, parseOutput));
         } catch (parseErr) {
