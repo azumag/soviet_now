@@ -57,6 +57,13 @@ prepare() {
 	touch tmp/state/improve_daemon.paused
 	printf '{"idx":0,"arm":"A","hash":"%s","tainted":false}\n' "$A" > tmp/state/ab_games.jsonl
 }
+run_active_capture() {
+	local rc
+	_ab_active > ab_active.out 2>&1
+	rc=$?
+	cat ab_active.out
+	return "$rc"
+}
 
 # 1) 正常な A/B は退役させない。
 prepare
@@ -66,7 +73,7 @@ _ab_active >/dev/null 2>&1 && ok || ng "healthy experiment unexpectedly inactive
 # 2) root(A) が deploy/restore 等で変わったら勝敗を付けず stale として即退役する。
 prepare
 cp newroot.py strategy.py
-out=$(_ab_active 2>&1); rc=$?
+run_active_capture >/dev/null 2>&1; rc=$?; out=$(cat ab_active.out)
 [ "$rc" -ne 0 ] && echo "$out" | grep -q "stale experiment retired" && ok || ng "root drift was not retired ($rc: $out)"
 [ ! -f tmp/state/ab_state.json ] && ok || ng "stale base state still active"
 [ ! -f tmp/state/ab_games.jsonl ] && ok || ng "stale games still active"
@@ -90,7 +97,7 @@ cp "$ROOT/strategy.py" strategy.py
 A=$(python3 extract_decide_hash.py strategy.py)
 prepare
 cp newroot.py tmp/state/ab_alt_strategy.py
-out=$(_ab_active 2>&1); rc=$?
+run_active_capture >/dev/null 2>&1; rc=$?; out=$(cat ab_active.out)
 [ "$rc" -ne 0 ] && echo "$out" | grep -q "stale_candidate" && ok || ng "candidate drift was not retired ($rc: $out)"
 [ ! -f tmp/state/ab_state.json ] && ok || ng "stale candidate state still active"
 [ ! -e tmp/state/rejected_hashes.txt ] && ok || ng "invalid experiment must not reject B"
