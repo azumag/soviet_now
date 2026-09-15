@@ -39,6 +39,7 @@ radio_rules=$(ELOOP_LIB_DIR="$ROOT" bash -c \
 	_ "$ROOT/broadcast/radio_persona.sh" 2>/dev/null || true)
 check 'printf "%s" "$radio_rules" | grep -qF "語彙・言い回しの共通ルール"' 'ラジオ出力ルールに語彙ルールが載る'
 check 'printf "%s" "$radio_rules" | grep -qF "お腹が空く"' 'ラジオ出力ルールに具体例が載る'
+check 'printf "%s" "$radio_rules" | grep -qF "アルファベットを使わずカタカナで表記すること"' 'ラジオ出力ルールが外国語のカタカナ表記を規定する'
 
 # --- 3. 建国祝賀: ヘルパーが正本を返し、プロンプトが参照する ---
 celeb_rule=$(ELOOP_LIB_DIR="$ROOT" bash -c \

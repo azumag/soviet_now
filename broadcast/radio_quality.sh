@@ -5,7 +5,7 @@
 # リライト用プロンプトを生成するユーティリティ。
 
 # _radio_quality_check <talk_text> [corner_name] [source_material]
-#   stdout: "OK" / "FAIL:chinese_text" / "FAIL:wrong_language" / "FAIL:repetition_loop" / "FAIL:garbled" / "FAIL:verbatim_source"
+#   stdout: "OK" / "FAIL:chinese_text" / "FAIL:wrong_language" / "FAIL:mixed_language" / "FAIL:repetition_loop" / "FAIL:garbled" / "FAIL:verbatim_source"
 #   return: 0=OK, 1=failed
 _radio_quality_check() {
 	local talk_text="$1" corner_name="${2:-}" source_material="${3:-}"
@@ -83,6 +83,29 @@ if len(text) > 200:
             print("FAIL:wrong_language")
             sys.exit(0)
 
+# 2b. 外国語混入検出（英語・簡体字中国語）
+# 日本語の話し言葉に英文・英単語がそのまま混ざると、日本語TTS（VOICEVOX等）が
+# 日本語の音素で誤読し、聞き取れない読み上げになる。簡体字中国語も日本語の
+# 漢字として誤読される。単発の固有名詞（NATO等）は許容し、英文・英単語の
+# 多用と、日本語では使わない簡体字だけを検出して再生成させる。
+english_run = re.search(
+    r"(?<![A-Za-z])[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*){4,}(?![A-Za-z])",
+    text,
+)
+lower_words = [
+    w for w in re.findall(r"[A-Za-z][A-Za-z'\-]+", text)
+    if w[0].islower() and len(w) >= 3
+]
+simplified_chars = re.findall(
+    r"[这们时说过还边续么纸论题单东车见话请谢让认识记该谁吗呢"
+    r"关问间样为从发书标极级约结给统经员运达违远连进选适现应务动员华亲爱儿丽举习乡买"
+    r"长头电听门无类团图药难义术击处备复组织济产业严饭开观觉实际]",
+    text,
+)
+if english_run or len(lower_words) >= 8 or simplified_chars:
+    print("FAIL:mixed_language")
+    sys.exit(0)
+
 # 3. 無限ループ/繰り返し検出
 # 10文字以上の文が max_reps 回以上繰り返される場合
 sentences = re.split(r'[。！？\n]', text)
@@ -147,6 +170,7 @@ _radio_build_rewrite_prompt() {
 	case "$fail_reason" in
 		*chinese_text*)   reason_msg="前回の出力が中国語になっていました" ;;
 		*wrong_language*) reason_msg="前回の出力が日本語ではありませんでした" ;;
+		*mixed_language*) reason_msg="前回の出力に英語・中国語などの外国語がそのまま混ざっていました" ;;
 		*repetition_loop*) reason_msg="前回の出力で同じ文が繰り返される無限ループ状態になっていました" ;;
 		*garbled*)        reason_msg="前回の出力が文字化けや制御文字を含んでいました" ;;
 		*verbatim_source*) reason_msg="前回の出力がニュース素材（見出し・RSS要約）の文面をそのまま読み上げていました" ;;
@@ -164,6 +188,20 @@ ${reason_msg}。素材は朗読用の原稿ではなく、内容を再構成す�
 - 見出しの文言をそのまま音読せず、「要するに何が起きたのか」を自分の言葉で1-2文に言い換えること
 - 素材に書かれた語順・文・言い回しをコピーしないこと
 - 出典名・媒体名・URL・公開日時は読み上げないこと
+前回の失敗出力（参考・使用禁止）: 「${failed_snippet:0:100}」
+REWRITE_INST
+		printf '%s' "$rewrite_prompt_file"
+		return 0
+		;;
+	*mixed_language*)
+		cat >> "$rewrite_prompt_file" <<REWRITE_INST
+
+---
+【再生成指示 - 必ず従うこと】
+${reason_msg}。前回の出力は絶対に使用せず、最初から完全に日本語で書き直してください。
+- 英単語・英文・中国語・その他の外国語の語句をそのまま書かないこと
+- 人名・地名・組織名・製品名・料理名などの固有名詞や外来語は、アルファベットを使わずカタカナで表記すること
+- ニュース素材などに外国語表記があっても、そのまま引用せず、意味が伝わる自然な日本語（カタカナ含む）に置き換えること
 前回の失敗出力（参考・使用禁止）: 「${failed_snippet:0:100}」
 REWRITE_INST
 		printf '%s' "$rewrite_prompt_file"
