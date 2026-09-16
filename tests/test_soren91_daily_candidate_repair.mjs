@@ -18,7 +18,7 @@ function withBaseline(fn) {
   const previous = process.cwd();
   writeFileSync(
     join(dir, 'strategy.mjs'),
-    'const helper = 1;\nexport function decide(boardState) { return { x: 0, reason: "baseline" }; }\n',
+    'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x, reason: "baseline" }; }\n',
   );
   process.chdir(dir);
   return Promise.resolve()
@@ -98,7 +98,7 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
         }
         assert.equal(
           candidate,
-          'const helper = 1;\nexport function decide(boardState) { const x = helper - 0.75; return { x, reason: "repaired" }; }\n',
+          'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); const x = normal.x + helper - 1.75; return { x, reason: "repaired" }; }\n',
         );
         return { valid: true, error: null };
       },
@@ -106,13 +106,13 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
         repairPrompt = prompt;
         assert.deepEqual(screenshots, []);
         assert.equal(tag, 'improve_daily_fix');
-        return 'export function decide(boardState) { const x = helper - 0.75; return { x, reason: "repaired" }; }';
+        return 'export function decide(boardState) { const normal = search(boardState); const x = normal.x + helper - 1.75; return { x, reason: "repaired" }; }';
       },
     };
 
     const result = await validateAndRepairCandidate(
       improveModule,
-      'const brokenCandidate = true;\nexport function decide(boardState) { return { x: 0, reason: "bad" }} }',
+      'const brokenCandidate = true;\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x, reason: "bad" }} }',
     );
 
     assert.equal(result.repairs, 1);
@@ -131,7 +131,7 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
 
 test('syntax repair may return a full module but only its single decide is adopted', async () => {
   await withBaseline(async () => {
-    const expected = 'const helper = 1;\nexport function decide(boardState) { const x = helper - 0.75; return { x, reason: `safe-${x}` }; }\n';
+    const expected = 'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); const x = normal.x + helper - 1.75; return { x, reason: `safe-${x}` }; }\n';
     let validationCalls = 0;
     const improveModule = {
       async validateStrategy(candidate) {
@@ -147,13 +147,13 @@ test('syntax repair may return a full module but only its single decide is adopt
         return [
           'import fs from "node:fs";',
           'const modelOwnedHelper = 999;',
-          'export function decide(boardState) { const x = helper - 0.75; return { x, reason: `safe-${x}` }; }',
+          'export function decide(boardState) { const normal = search(boardState); const x = normal.x + helper - 1.75; return { x, reason: `safe-${x}` }; }',
           'const sideEffect = fs.readFileSync("/etc/passwd", "utf8");',
         ].join('\n');
       },
     };
 
-    const result = await validateAndRepairCandidate(improveModule, 'export function decide(boardState) { return { x: 0 } } }');
+    const result = await validateAndRepairCandidate(improveModule, 'export function decide(boardState) { const normal = search(boardState); return { x: normal.x } } }');
     assert.equal(result.candidate, expected);
     assert.deepEqual(result.validation, { valid: true, error: null });
     assert.equal(result.repairs, 1);
@@ -252,10 +252,10 @@ test('behaviorally empty valid candidate uses the same single repair budget', as
       async callStrategyModelWithFallback(prompt) {
         fixes += 1;
         repairPrompt = prompt;
-        return 'const helper = 1;\nexport function decide(boardState) { return { x: 0.25, reason: "actual-change" }; }\n';
+        return 'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x + 0.25, reason: "actual-change" }; }\n';
       },
     };
-    const initial = 'export function decide(boardState) { return { x: 0, reason: "different words only" }; }';
+    const initial = 'function search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x, reason: "different words only" }; }';
     const result = await validateAndRepairCandidate(improveModule, initial);
 
     assert.equal(result.initialCategory, 'behavior_contract');
