@@ -41,6 +41,10 @@ test('critical turns take priority over the old early/middle/late sample', () =>
     selectCriticalSnapshotNames(makeTurnNames(9), 3, [8, 2, 6]),
     ['turn_0002.png', 'turn_0006.png', 'turn_0008.png'],
   );
+  assert.deepEqual(
+    selectCriticalSnapshotNames(makeTurnNames(5), 3, []),
+    ['turn_0002.png', 'turn_0003.png', 'turn_0005.png'],
+  );
 });
 
 test('completed-game archive copies frames nearest the critical history turns', () => {
