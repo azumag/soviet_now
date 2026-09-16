@@ -6,6 +6,13 @@ const REPAIR_OPENCODE_TIMEOUT_SEC = 420;
 const DECIDE_SIGNATURE = 'export function decide(boardState)';
 const MAX_REPAIR_SOURCE_BYTES = 65536;
 const MAX_DECIDE_REPAIR_BYTES = 12000;
+const BEHAVIOR_X_DELTA = 0.02;
+const MIN_BEHAVIOR_PROBES = 6;
+const PROBE_RADII = Object.freeze({
+  1: 0.207, 2: 0.259, 3: 0.316, 4: 0.380, 5: 0.414, 6: 0.470,
+  7: 0.559, 8: 0.660, 9: 0.746, 10: 0.846, 11: 0.982, 12: 1.068,
+  13: 1.207, 14: 1.385, 15: 1.600,
+});
 
 function classifyCodeError(text) {
   if (!text.includes('code error')) return null;
@@ -149,19 +156,137 @@ export function spliceReviewedDecide(baselineStrategy, replacement) {
   return `${baseline.slice(0, first)}${decide}\n`;
 }
 
+function probePiece(type, x, y, confidence = 1) {
+  return { type, x, y, r: PROBE_RADII[type], confidence };
+}
+
+export function buildBehaviorReplayProbes() {
+  const probes = [];
+  for (let i = 0; i < 12; i += 1) {
+    const pieces = [];
+    const count = 3 + (i % 5);
+    for (let j = 0; j < count; j += 1) {
+      const type = 1 + ((i + j * 2) % 7);
+      const column = j % 4;
+      const row = Math.floor(j / 4);
+      pieces.push(probePiece(
+        type,
+        -2.35 + column * 1.55 + ((i % 3) - 1) * 0.07,
+        -4.55 + row * 0.88 + (j % 2) * 0.06,
+        j === count - 1 && i % 4 === 0 ? 0.58 : 0.92,
+      ));
+    }
+    const nextType = 1 + ((i * 3) % 6);
+    const secondType = 1 + ((i * 3 + 2) % 6);
+    const thirdType = 1 + ((i * 3 + 4) % 6);
+    const holdType = 1 + ((i + 3) % 6);
+    const hasHold = i % 3 !== 1;
+    probes.push({
+      pieces,
+      next: { type: nextType, r: PROBE_RADII[nextType], confidence: 0.95 },
+      nextPieces: [
+        { type: nextType, r: PROBE_RADII[nextType], confidence: 0.95 },
+        { type: secondType, r: PROBE_RADII[secondType], confidence: 0.9 },
+        { type: thirdType, r: PROBE_RADII[thirdType], confidence: 0.9 },
+      ],
+      hold: hasHold ? { type: holdType, r: PROBE_RADII[holdType], confidence: 0.95 } : null,
+      holdKnownEmpty: !hasHold,
+      canHold: i % 4 !== 3,
+      score: i * 250,
+      confidence: 0.9,
+      garbage: {
+        ratio: [0, 0.08, 0.2, 0.42][i % 4],
+        height: [-5, -3.4, -1.8, -0.4][i % 4],
+        pixelCount: i * 17,
+        gauge: [0, 0.25, 0.62, 0.9][(i + 1) % 4],
+        columns: i % 3 === 0
+          ? [{ left: -0.45, right: 0.35, top: -4.25 + (i % 4) * 0.35 }]
+          : [],
+      },
+    });
+  }
+  return probes;
+}
+
+function cloneProbe(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function actionFromDecision(value) {
+  if (!value || typeof value !== 'object' || !Number.isFinite(value.x)) return null;
+  return { x: Number(value.x), hold: value.hold === true };
+}
+
+async function importReplayStrategy(source, label) {
+  const text = String(source || '');
+  if (!text.includes(DECIDE_SIGNATURE)) return null;
+  const encoded = Buffer.from(text, 'utf8').toString('base64');
+  return import(`data:text/javascript;base64,${encoded}#${label}-${Date.now()}-${Math.random()}`);
+}
+
+export async function compareCandidateBehavior(baselineStrategy, candidateStrategy, {
+  minXDelta = BEHAVIOR_X_DELTA,
+} = {}) {
+  if (!(Number.isFinite(minXDelta) && minXDelta > 0 && minXDelta <= 0.5)) {
+    throw new Error('candidate_behavior_delta_invalid');
+  }
+  const baseline = await importReplayStrategy(baselineStrategy, 'baseline');
+  const candidate = await importReplayStrategy(candidateStrategy, 'candidate');
+  if (typeof baseline?.decide !== 'function' || typeof candidate?.decide !== 'function') {
+    return { changed: false, compared: 0, changedCount: 0, candidateFailures: 1 };
+  }
+
+  let compared = 0;
+  let changedCount = 0;
+  let candidateFailures = 0;
+  for (const probe of buildBehaviorReplayProbes()) {
+    let baselineDecision;
+    try {
+      baselineDecision = actionFromDecision(baseline.decide(cloneProbe(probe)));
+    } catch {
+      continue;
+    }
+    if (!baselineDecision) continue;
+
+    let candidateDecision;
+    try {
+      candidateDecision = actionFromDecision(candidate.decide(cloneProbe(probe)));
+    } catch {
+      candidateFailures += 1;
+      continue;
+    }
+    if (!candidateDecision) {
+      candidateFailures += 1;
+      continue;
+    }
+
+    compared += 1;
+    if (baselineDecision.hold !== candidateDecision.hold
+        || Math.abs(baselineDecision.x - candidateDecision.x) >= minXDelta) {
+      changedCount += 1;
+    }
+  }
+  return {
+    changed: changedCount > 0,
+    compared,
+    changedCount,
+    candidateFailures,
+  };
+}
+
 export function buildDailyCandidateRepairPrompt(failedCode, validationError, baselineStrategy) {
   const failed = String(failedCode || '');
   const baseline = String(baselineStrategy || '');
   const category = classifyCandidateValidation(validationError);
 
   if (useDecideOnlyRepair(category)) {
-    return `The proposed Soren91 strategy failed JavaScript syntax validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. If you do, the runner will discard every part except the single decide() function.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Prefer quoted strings plus concatenation for reason text rather than complex template literals.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
+    return `The proposed Soren91 strategy failed JavaScript syntax validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. If you do, the runner will discard every part except the single decide() function.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Prefer quoted strings plus concatenation for reason text rather than complex template literals.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- The repaired candidate must make at least one real gameplay decision change: a meaningfully different x (>= ${BEHAVIOR_X_DELTA}) or a different HOLD choice on a plausible board state. Formatting, comments, reason text, or diagnostics alone are not an improvement.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
   }
 
   const codeErrorRules = category.startsWith('code_error_')
     ? `\n## Code-error-specific repair rules\n- The reviewed baseline below is known-good source structure and is authoritative. Reproduce its complete module structure first, then apply only the smallest local evidence-backed strategy change.\n- Treat the failed candidate only as a non-authoritative hint about intended logic. Do NOT copy broken/truncated structure from it.\n- Do not duplicate helper names, constants, exports, or top-level declarations that already exist in the baseline.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Do not add imports or references to packages/modules.\n- Do not execute board-state-dependent logic at module top level; boardState and derived state belong inside decide/helpers only.\n- Preserve the complete tail of the reviewed baseline; never stop after the changed helper or decide().\n- Before answering, mentally parse the whole module from first to last line and verify it is valid ESM.\n`
     : '';
-  return `The proposed Soren91 strategy failed validation. Repair it once, conservatively, using the reviewed current strategy as the complete-module baseline.\n\n## Validation category\n${category}\n${codeErrorRules}\n## Mandatory output contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- That one block MUST be the COMPLETE replacement strategy.mjs module, not a patch, snippet, helper, or explanation.\n- It MUST contain the literal signature: export function decide(boardState)\n- preserve every helper/export from the reviewed baseline unless the improvement intentionally and safely replaces it.\n- preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- no imports, async/await, fetch, fs, subprocesses, network, or side effects.\n- If the failed candidate is partial or cannot be safely integrated, start from the reviewed baseline and make the smallest evidence-based change needed.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative hint only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; DO NOT copy truncation ...' : ''}\n\`\`\`\n\nReturn the complete corrected strategy.mjs now.`;
+  return `The proposed Soren91 strategy failed validation. Repair it once, conservatively, using the reviewed current strategy as the complete-module baseline.\n\n## Validation category\n${category}\n${codeErrorRules}\n## Mandatory output contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- That one block MUST be the COMPLETE replacement strategy.mjs module, not a patch, snippet, helper, or explanation.\n- It MUST contain the literal signature: export function decide(boardState)\n- preserve every helper/export from the reviewed baseline unless the improvement intentionally and safely replaces it.\n- preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- no imports, async/await, fetch, fs, subprocesses, network, or side effects.\n- The repaired candidate must make at least one real gameplay decision change: a meaningfully different x (>= ${BEHAVIOR_X_DELTA}) or a different HOLD choice on a plausible board state. Formatting, comments, reason text, or diagnostics alone do not satisfy the improvement contract.\n- If the failed candidate is partial or cannot be safely integrated, start from the reviewed baseline and make the smallest evidence-based change needed.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative hint only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; DO NOT copy truncation ...' : ''}\n\`\`\`\n\nReturn the complete corrected strategy.mjs now.`;
 }
 
 function readReviewedBaseline() {
@@ -185,6 +310,34 @@ async function callRepairModel(improveModule, prompt) {
   }
 }
 
+async function validateWithBehaviorNovelty(improveModule, candidate, baseline) {
+  const validation = await improveModule.validateStrategy(candidate);
+  if (!validation.valid || !baseline.includes(DECIDE_SIGNATURE) || !String(candidate || '').includes(DECIDE_SIGNATURE)) {
+    return validation;
+  }
+
+  const replay = await compareCandidateBehavior(baseline, candidate);
+  if (replay.candidateFailures > 0) {
+    return {
+      valid: false,
+      error: 'Strategy contract: behavior replay failed for candidate on deterministic probe',
+    };
+  }
+  if (replay.compared < MIN_BEHAVIOR_PROBES) {
+    return {
+      valid: false,
+      error: 'Strategy contract: behavior replay coverage was insufficient',
+    };
+  }
+  if (!replay.changed) {
+    return {
+      valid: false,
+      error: 'Strategy contract: behavior no-op; candidate does not change x/hold on deterministic replay probes',
+    };
+  }
+  return validation;
+}
+
 export async function validateAndRepairCandidate(improveModule, initialCandidate, {
   maxRepairs = DEFAULT_MAX_REPAIRS,
 } = {}) {
@@ -198,14 +351,14 @@ export async function validateAndRepairCandidate(improveModule, initialCandidate
     throw new Error('candidate_repair_budget_invalid');
   }
 
+  const baseline = readReviewedBaseline();
   let candidate = initialCandidate;
-  let validation = await improveModule.validateStrategy(candidate);
+  let validation = await validateWithBehaviorNovelty(improveModule, candidate, baseline);
   const initialCategory = validation.valid ? null : classifyCandidateValidation(validation.error);
   let repairs = 0;
 
   while (!validation.valid && repairs < maxRepairs) {
     repairs += 1;
-    const baseline = readReviewedBaseline();
     if (!baseline.includes(DECIDE_SIGNATURE)) break;
     const category = classifyCandidateValidation(validation.error);
     const prompt = buildDailyCandidateRepairPrompt(candidate, validation.error, baseline);
@@ -219,7 +372,7 @@ export async function validateAndRepairCandidate(improveModule, initialCandidate
     } else {
       candidate = repaired;
     }
-    validation = await improveModule.validateStrategy(candidate);
+    validation = await validateWithBehaviorNovelty(improveModule, candidate, baseline);
   }
 
   return {
