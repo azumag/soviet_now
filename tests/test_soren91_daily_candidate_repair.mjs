@@ -121,13 +121,47 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
     assert.doesNotMatch(result.candidate, /brokenCandidate/);
     assert.match(repairPrompt, /replace ONLY its final decide\(\) function/);
     assert.match(repairPrompt, /MUST contain ONLY one complete function/);
-    assert.match(repairPrompt, /Do NOT return the rest of strategy\.mjs/);
-    assert.match(repairPrompt, /Do NOT use template literals\/backticks/);
+    assert.match(repairPrompt, /discard every part except the single decide\(\) function/);
+    assert.match(repairPrompt, /Prefer quoted strings plus concatenation/);
   });
 });
 
-test('decide-only reconstruction rejects extra module surface before validation', () => {
+test('syntax repair may return a full module but only its single decide is adopted', async () => {
+  await withBaseline(async () => {
+    const expected = 'const helper = 1;\nexport function decide(boardState) { const x = helper - 1; return { x, reason: `safe-${x}` }; }\n';
+    let validationCalls = 0;
+    const improveModule = {
+      async validateStrategy(candidate) {
+        validationCalls += 1;
+        if (validationCalls === 1) {
+          return { valid: false, error: "Code error: SyntaxError: Unexpected token '}'" };
+        }
+        assert.equal(candidate, expected);
+        assert.doesNotMatch(candidate, /modelOwnedHelper|sideEffect|node:fs/);
+        return { valid: true, error: null };
+      },
+      async callStrategyModelWithFallback() {
+        return [
+          'import fs from "node:fs";',
+          'const modelOwnedHelper = 999;',
+          'export function decide(boardState) { const x = helper - 1; return { x, reason: `safe-${x}` }; }',
+          'const sideEffect = fs.readFileSync("/etc/passwd", "utf8");',
+        ].join('\n');
+      },
+    };
+
+    const result = await validateAndRepairCandidate(improveModule, 'export function decide(boardState) { return { x: 0 } } }');
+    assert.equal(result.candidate, expected);
+    assert.deepEqual(result.validation, { valid: true, error: null });
+    assert.equal(result.repairs, 1);
+    assert.equal(result.initialCategory, 'code_error_syntax');
+    assert.equal(result.finalCategory, null);
+  });
+});
+
+test('decide extraction discards outside module surface and rejects unsafe or ambiguous decide bodies', () => {
   const baseline = 'const helper = 1;\nexport function decide(boardState) { return { x: 0, reason: "baseline" }; }\n';
+
   assert.equal(
     spliceReviewedDecide(
       baseline,
@@ -135,13 +169,15 @@ test('decide-only reconstruction rejects extra module surface before validation'
     ),
     'const helper = 1;\nexport function decide(boardState) { return { x: helper, reason: "safe" }; }\n',
   );
+
   assert.equal(
     spliceReviewedDecide(
       baseline,
-      'export function decide(boardState) { return { x: 0, reason: `unsafe-template` }; }',
+      'const throwaway = 99;\nexport function decide(boardState) { const x = helper; return { x, reason: `safe-${x}` }; }\nconst discarded = throwaway;',
     ),
-    null,
+    'const helper = 1;\nexport function decide(boardState) { const x = helper; return { x, reason: `safe-${x}` }; }\n',
   );
+
   assert.equal(
     spliceReviewedDecide(
       baseline,
@@ -152,7 +188,14 @@ test('decide-only reconstruction rejects extra module surface before validation'
   assert.equal(
     spliceReviewedDecide(
       baseline,
-      'export function decide(boardState) { return { x: 0, reason: "safe" }; }\nconst sideEffect = 1;',
+      'export function decide(boardState) { return { x: process.pid, reason: "unsafe" }; }',
+    ),
+    null,
+  );
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { return { x: 0, reason: "one" }; }\nexport function decide(boardState) { return { x: 1, reason: "two" }; }',
     ),
     null,
   );
@@ -267,6 +310,7 @@ test('code errors use fixed subtypes and syntax failures get the narrow decide-o
   assert.match(prompt, /known-good and will be kept byte-for-byte before decide/);
   assert.match(prompt, /ONLY one complete function/);
   assert.match(prompt, /Call only helpers\/constants that already exist/);
+  assert.match(prompt, /discard every part except the single decide\(\) function/);
   assert.match(prompt, /non-authoritative evidence of intended change only/);
 });
 

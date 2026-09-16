@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const DEFAULT_MAX_REPAIRS = 1;
 const REPAIR_OPENCODE_TIMEOUT_SEC = 420;
 const DECIDE_SIGNATURE = 'export function decide(boardState)';
+const MAX_REPAIR_SOURCE_BYTES = 65536;
 const MAX_DECIDE_REPAIR_BYTES = 12000;
 
 function classifyCodeError(text) {
@@ -42,19 +43,17 @@ function useDecideOnlyRepair(category) {
 }
 
 function extractStrictDecideReplacement(source) {
-  const text = String(source || '').trim();
-  if (!text || text.length > MAX_DECIDE_REPAIR_BYTES) return null;
-  if (!text.startsWith(DECIDE_SIGNATURE)) return null;
-  if (text.includes('`')) return null;
+  const raw = String(source || '').trim();
+  if (!raw || raw.length > MAX_REPAIR_SOURCE_BYTES) return null;
 
+  // Models sometimes ignore the narrow-output instruction and return a whole
+  // module. That is safe to tolerate only by discarding everything except the
+  // single decide() function before validation/execution.
+  const start = raw.indexOf(DECIDE_SIGNATURE);
+  if (start < 0 || raw.indexOf(DECIDE_SIGNATURE, start + DECIDE_SIGNATURE.length) >= 0) return null;
+  const text = raw.slice(start);
   const braceStart = text.indexOf('{', DECIDE_SIGNATURE.length);
   if (braceStart < 0 || text.slice(DECIDE_SIGNATURE.length, braceStart).trim() !== '') return null;
-
-  // A syntax-repair response is deliberately narrower than a module: exactly
-  // one decide() function. Reject imports/secondary exports before dynamic
-  // import validation ever sees the reconstructed candidate.
-  const afterSignature = text.slice(DECIDE_SIGNATURE.length);
-  if (/\bimport\b/.test(afterSignature) || /\bexport\b/.test(afterSignature)) return null;
 
   let depth = 0;
   let state = 'code';
@@ -74,7 +73,7 @@ function extractStrictDecideReplacement(source) {
       }
       continue;
     }
-    if (state === 'single' || state === 'double') {
+    if (state === 'single' || state === 'double' || state === 'template') {
       if (escaped) {
         escaped = false;
         continue;
@@ -83,7 +82,9 @@ function extractStrictDecideReplacement(source) {
         escaped = true;
         continue;
       }
-      if ((state === 'single' && ch === "'") || (state === 'double' && ch === '"')) {
+      if ((state === 'single' && ch === "'")
+          || (state === 'double' && ch === '"')
+          || (state === 'template' && ch === '`')) {
         state = 'code';
       }
       continue;
@@ -107,6 +108,10 @@ function extractStrictDecideReplacement(source) {
       state = 'double';
       continue;
     }
+    if (ch === '`') {
+      state = 'template';
+      continue;
+    }
     if (ch === '{') {
       depth += 1;
       continue;
@@ -115,8 +120,18 @@ function extractStrictDecideReplacement(source) {
       depth -= 1;
       if (depth < 0) return null;
       if (depth === 0) {
-        if (text.slice(i + 1).trim() !== '') return null;
-        return text;
+        const decide = text.slice(0, i + 1).trim();
+        if (decide.length > MAX_DECIDE_REPAIR_BYTES) return null;
+        const body = decide.slice(DECIDE_SIGNATURE.length);
+        // Only this extracted function is ever spliced into the reviewed
+        // baseline. Keep obvious execution/escape surfaces out before the
+        // normal full-module validator dynamically imports it.
+        if (/\b(?:import|fetch|require|process|globalThis|eval)\b/.test(body)
+            || /\bFunction\s*\(/.test(body)
+            || /\bexport\b/.test(body)) {
+          return null;
+        }
+        return decide;
       }
     }
   }
@@ -140,7 +155,7 @@ export function buildDailyCandidateRepairPrompt(failedCode, validationError, bas
   const category = classifyCandidateValidation(validationError);
 
   if (useDecideOnlyRepair(category)) {
-    return `The proposed Soren91 strategy failed JavaScript syntax validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. The runner will splice this function onto the reviewed baseline.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Do NOT use template literals/backticks; use quoted strings plus concatenation for reason text.\n- Keep every brace, parenthesis, bracket, quote, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
+    return `The proposed Soren91 strategy failed JavaScript syntax validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. If you do, the runner will discard every part except the single decide() function.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Prefer quoted strings plus concatenation for reason text rather than complex template literals.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
   }
 
   const codeErrorRules = category.startsWith('code_error_')
