@@ -171,8 +171,9 @@ _ab_finish() {
 				if _ab_finish_without_envonly_promotion "$@"; then
 					log "[AB] env-only B 採用: ANALYZE_BOARD_MERGE_TOP_MODEL=$desired を本番設定へ昇格"
 					return 0
+				else
+					rc=$?
 				fi
-				rc=$?
 				./set_toggle.sh "ANALYZE_BOARD_MERGE_TOP_MODEL=$previous" >/dev/null 2>&1 || true
 				command -v reload_runtime_toggles_force >/dev/null 2>&1 && reload_runtime_toggles_force >/dev/null 2>&1 || true
 				log "[AB] env-only B 採用失敗: merge-top mode を ${previous:-default} へロールバック"
