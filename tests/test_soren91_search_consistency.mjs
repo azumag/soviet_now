@@ -194,6 +194,10 @@ test('daily improvement prompt preserves search/path consistency and piece posit
   const prompt = readFileSync(PROMPT, 'utf8');
   assert.match(prompt, /Search-consistency contract/);
   assert.match(prompt, /MUST NOT bypass a `search\(\)` result/);
+  assert.match(prompt, /reviewed `decide\(\)` control-flow skeleton as immutable for root selection/);
+  assert.match(prompt, /pick a lower\/safer immediate root/);
+  assert.match(prompt, /implement that inside `evaluate\(\)`, `compareMove\(\)`, `comparePath\(\)`, or `search\(\)` itself/);
+  assert.match(prompt, /must contain \*\*no calls to `candidates\(\)`, `evaluate\(\)`, `simulateDrop\(\)`, or `compareMove\(\)`\*\*/);
   assert.match(prompt, /SAME search path/);
   assert.match(prompt, /Never copy future metrics from one `search\(\)` root onto a different immediate root/);
   assert.match(prompt, /HOLD must be compared against the actual non-HOLD plan/);
