@@ -34,6 +34,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildDailyEvidence, formatEvidenceForPrompt } from './daily_evidence.mjs';
+import { validateAndRepairCandidate } from './daily_candidate_repair.mjs';
 import { calibrate } from './calibration.mjs';
 import { analyzeScreenshot } from './screenshot_analyzer.mjs';
 import {
@@ -62,6 +63,7 @@ const COMPAT_FILES = [
   'strategy.mjs',
   'strategy_contract.mjs',
   'daily_evidence.mjs',
+  'daily_candidate_repair.mjs',
   'daily_runtime_improve.mjs',
   'improve.mjs',
   'calibration.mjs',
@@ -535,8 +537,12 @@ export async function runDailyRuntimeImprovement(opts) {
       candidate = await imp.callStrategyModelWithFallback(textPrompt, [], 'improve_daily_runtime');
     }
     if (!candidate) throw new Error('model_no_candidate');
-    const validation = await imp.validateStrategy(candidate);
-    if (!validation.valid) throw new Error(`candidate_invalid:${validation.error}`);
+    const reviewedCandidate = await validateAndRepairCandidate(imp, candidate, { maxRepairs: 1 });
+    candidate = reviewedCandidate.candidate;
+    if (reviewedCandidate.repairs > 0) log(`candidate repair attempts=${reviewedCandidate.repairs}`);
+    if (!reviewedCandidate.validation.valid) {
+      throw new Error(`candidate_invalid:${reviewedCandidate.validation.error}`);
+    }
 
     process.chdir(previousCwd);
     const pr = createStrategyPr(repoDir, candidate, fromGame, toGame, reviewedStrategy, statePath, state, evidence);
