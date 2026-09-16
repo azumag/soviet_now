@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/main.mjs'
+      - 'soren91/realtime_io.mjs'
+      - 'soren91/loop_metrics.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
       - 'soren91/strategy.mjs'
@@ -21,6 +24,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/soren91-play-contracts.yml'
+      - 'soren91/main.mjs'
+      - 'soren91/realtime_io.mjs'
+      - 'soren91/loop_metrics.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
       - 'soren91/strategy.mjs'
@@ -55,6 +61,9 @@ jobs:
           python3 --version
           bash -n soren91/run_player_loop.sh
           python3 -m py_compile soren91/runtime_metrics.py
+          node --check soren91/main.mjs
+          node --check soren91/realtime_io.mjs
+          node --check soren91/loop_metrics.mjs
           node --check soren91/strategy.mjs
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
