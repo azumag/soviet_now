@@ -316,68 +316,67 @@ function reserveValue(piece, board) {
 }
 
 export function decide(boardState) {
-  if (!boardState || !Array.isArray(boardState.pieces) || boardState.pieces.length > 256) {
-    throw new TypeError('Unusable Soren91 board observation');
-  }
-  const pieces = boardState.pieces.map(p => normalizePiece(p, true));
-  const current = normalizePiece(boardState.next);
-  if (certainty(current) < 0.5) throw new TypeError('Uncertain Soren91 current piece');
-
-  const garbage = {
-    ratio: Number.isFinite(boardState.garbage?.ratio) ? boardState.garbage.ratio : 0,
-    gauge: Number.isFinite(boardState.garbage?.gauge) ? boardState.garbage.gauge : 0,
-    columns: Array.isArray(boardState.garbage?.columns) ? boardState.garbage.columns.slice(0, 64) : [],
-  };
-
-  const normal = search(pieces, current, knownQueue(boardState.nextPieces, 1), garbage);
-  let chosen = normal;
-  let hold = false;
-
-  if (boardState.canHold) {
-    const emptyHold = boardState.hold == null && boardState.holdKnownEmpty === true;
-    const alternative = boardState.hold || (emptyHold ? boardState.nextPieces?.[1] : null);
-    if (alternative && TYPE_RADII[alternative.type] && certainty(alternative) >= 0.6) {
-      const held = normalizePiece(alternative);
-      const result = search(
-        pieces,
-        held,
-        knownQueue(boardState.nextPieces, boardState.hold ? 1 : 2),
-        garbage,
-      );
-      // HOLD changes ordering, and the current piece becomes useful reserve
-      // material. Keep a meaningful hysteresis so tiny heuristic noise does not
-      // burn HOLD, while allowing it to escape a worse future risk tier.
-      const holdValue = result.value + reserveValue(current, pieces);
-      const normalValue = normal.value;
-      const betterRisk = result.pathRisk < normal.pathRisk
-        || (result.pathRisk === normal.pathRisk && result.minClearance > normal.minClearance + 0.18);
-      const betterPlan = result.pathRisk === normal.pathRisk && holdValue > normalValue + 14
-        && (result.pathRisk !== 2 || result.minClearance >= normal.minClearance);
-      if (held.type !== current.type && (betterRisk || betterPlan)) {
-        chosen = { ...result, value: holdValue };
-        hold = true;
-      }
-    }
-  }
-
-  return {
-    x: chosen.x,
-    hold,
-    reason: `${hold ? 'HOLD: ' : ''}${chosen.merges ? 'reachable-merge' : 'structured-stack'}; risk=${chosen.risk}; pathRisk=${chosen.pathRisk}; clearance=${chosen.clearance.toFixed(2)}; depth=${chosen.depth}`,
-    diagnostics: {
-      version: 'beam-v2',
-      risk: chosen.risk,
-      pathRisk: chosen.pathRisk,
-      clearance: chosen.clearance,
-      minFutureClearance: chosen.minClearance,
-      landingY: chosen.landingY,
-      merges: chosen.merges,
-      heuristicValue: chosen.value,
-      searchDepth: chosen.depth,
-      expandedNodes: chosen.expandedNodes,
-      pairPotential: chosen.structure.pairPotential,
-      roughness: chosen.structure.roughness,
-      pocketPenalty: chosen.structure.pocketPenalty,
-    },
-  };
+if (!boardState || !Array.isArray(boardState.pieces) || boardState.pieces.length > 256) {
+throw new TypeError('Unusable Soren91 board observation');
+}
+const pieces = boardState.pieces.map(p => normalizePiece(p, true));
+const current = normalizePiece(boardState.next);
+if (certainty(current) < 0.5) throw new TypeError('Uncertain Soren91 current piece');
+const garbage = {
+ratio: Number.isFinite(boardState.garbage?.ratio) ? boardState.garbage.ratio : 0,
+gauge: Number.isFinite(boardState.garbage?.gauge) ? boardState.garbage.gauge : 0,
+columns: Array.isArray(boardState.garbage?.columns) ? boardState.garbage.columns.slice(0, 64) : [],
+};
+const normal = search(pieces, current, knownQueue(boardState.nextPieces, 1), garbage);
+let chosen = normal;
+let hold = false;
+if (boardState.canHold) {
+const emptyHold = boardState.hold == null && boardState.holdKnownEmpty === true;
+const alternative = boardState.hold || (emptyHold ? boardState.nextPieces?.[1] : null);
+if (alternative && TYPE_RADII[alternative.type] && certainty(alternative) >= 0.6) {
+const held = normalizePiece(alternative);
+const result = search(
+pieces,
+held,
+knownQueue(boardState.nextPieces, boardState.hold ? 1 : 2),
+garbage,
+);
+const holdValue = result.value + reserveValue(current, pieces);
+const normalValue = normal.value;
+const betterRisk = result.pathRisk < normal.pathRisk
+|| (result.pathRisk === normal.pathRisk && result.minClearance > normal.minClearance + 0.18);
+const betterPlan = result.pathRisk === normal.pathRisk && holdValue > normalValue + 14
+&& (result.pathRisk !== 2 || result.minClearance >= normal.minClearance);
+if (held.type !== current.type && (betterRisk || betterPlan)) {
+chosen = { ...result, value: holdValue };
+hold = true;
+}
+}
+}
+const reason = (hold ? 'HOLD: ' : '')
++ (chosen.merges ? 'reachable-merge' : 'structured-stack')
++ '; risk=' + chosen.risk
++ '; pathRisk=' + chosen.pathRisk
++ '; clearance=' + chosen.clearance.toFixed(2)
++ '; depth=' + chosen.depth;
+return {
+x: chosen.x,
+hold,
+reason,
+diagnostics: {
+version: 'beam-v2',
+risk: chosen.risk,
+pathRisk: chosen.pathRisk,
+clearance: chosen.clearance,
+minFutureClearance: chosen.minClearance,
+landingY: chosen.landingY,
+merges: chosen.merges,
+heuristicValue: chosen.value,
+searchDepth: chosen.depth,
+expandedNodes: chosen.expandedNodes,
+pairPotential: chosen.structure.pairPotential,
+roughness: chosen.structure.roughness,
+pocketPenalty: chosen.structure.pocketPenalty,
+},
+};
 }
