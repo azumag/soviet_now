@@ -76,5 +76,22 @@ if [ -n "$stats_file" ]; then
 	check '[ "$(grep -c '"'"'"event":"queue_giveup_detail"'"'"' "$stats_file")" -eq 2 ]' 'successful acquisition emits no giveup detail'
 fi
 
+# Long-lived radio_worker sources eloop_lib.sh again after reviewed runtime files
+# change. Simulate ai_generate.sh replacing the wrapped queue function, then
+# re-source the observability shim and verify it delegates to the newly loaded
+# implementation instead of retaining a stale saved function.
+_ai_generation_queue_enter() {
+	printf 'v2\n' >"$TMP/reloaded_base_called"
+	return 0
+}
+rm -f "$TMP/reloaded_base_called"
+source "$ROOT/lib/ai_queue_observability.sh"
+_ai_generation_queue_enter "RADIO:reload" >/dev/null 2>&1
+check '[ "$(cat "$TMP/reloaded_base_called" 2>/dev/null)" = "v2" ]' 'runtime reload refreshes the saved queue base function'
+rm -f "$TMP/reloaded_base_called"
+source "$ROOT/lib/ai_queue_observability.sh"
+_ai_generation_queue_enter "RADIO:reload-again" >/dev/null 2>&1
+check '[ "$(cat "$TMP/reloaded_base_called" 2>/dev/null)" = "v2" ]' 're-sourcing observability alone does not wrap the wrapper recursively'
+
 printf '\n%d ok, %d not ok\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]
