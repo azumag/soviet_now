@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  analyzeHistoryText,
   buildDailyEvidence,
   contiguousFreshGames,
   selectFocusGames,
@@ -20,10 +21,13 @@ function fixture() {
   return dir;
 }
 
-function writeGame(dir, game, summary, { history = true, strategy = true, shots = 0 } = {}) {
+function writeGame(dir, game, summary, { history = true, historyRecords = null, strategy = true, shots = 0 } = {}) {
   const token = String(game).padStart(4, '0');
   writeFileSync(join(dir, 'tmp', 'summaries', `game_${token}.json`), JSON.stringify({ gameNumber: game, ...summary }));
-  if (history) writeFileSync(join(dir, 'game_history', `game_${token}.jsonl`), '{"turn":1}\n');
+  if (history) {
+    const records = historyRecords || [{ turn: 1 }];
+    writeFileSync(join(dir, 'game_history', `game_${token}.jsonl`), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+  }
   if (strategy) writeFileSync(join(dir, 'tmp', 'strategy_snapshots', `game_${token}_strategy.mjs`), 'export const version = 1;\n');
   if (shots > 0) {
     const shotDir = join(dir, 'tmp', 'game_screenshots', `game_${token}`);
@@ -68,6 +72,55 @@ test('snapshot selection samples early, middle and late frames', () => {
   }
 });
 
+test('history analysis surfaces low-confidence and dangerous turns', () => {
+  const history = [
+    { turn: 1, state: { confidence: 0.92, perception: { reason: 'stable' } }, decision: { hold: false, diagnostics: { risk: 0, pathRisk: 0, clearance: 1.4, minFutureClearance: 1.1, merges: 0 } } },
+    { turn: 2, state: { confidence: 0.42, perception: { reason: 'stable-temporal-next' } }, decision: { hold: false, diagnostics: { risk: 0, pathRisk: 0, clearance: 1.0, minFutureClearance: 0.9, merges: 0 } } },
+    { turn: 3, state: { confidence: 0.81, perception: { reason: 'stable' } }, decision: { hold: true, diagnostics: { risk: 1, pathRisk: 1, clearance: 0.38, minFutureClearance: 0.21, merges: 1 } } },
+    { turn: 4, state: { confidence: 0.88, perception: { reason: 'stable-hold-empty' } }, decision: { hold: false, diagnostics: { risk: 2, pathRisk: 2, clearance: 0.07, minFutureClearance: 0.03, merges: 0 } } },
+  ];
+  const analyzed = analyzeHistoryText(history.map(record => JSON.stringify(record)).join('\n'));
+  assert.equal(analyzed.ok, true);
+  assert.equal(analyzed.metrics.lowConfidenceTurns, 1);
+  assert.equal(analyzed.metrics.riskyDecisions, 2);
+  assert.equal(analyzed.metrics.fatalDecisions, 1);
+  assert.equal(analyzed.metrics.holdDecisions, 1);
+  assert.equal(analyzed.metrics.merges, 1);
+  assert.equal(analyzed.metrics.temporalNextObservations, 1);
+  assert.equal(analyzed.metrics.knownEmptyHoldObservations, 1);
+  assert.equal(analyzed.metrics.minConfidence, 0.42);
+  assert.equal(analyzed.metrics.minFutureClearance, 0.03);
+  assert.deepEqual(analyzed.criticalTurns, [4, 2]);
+});
+
+test('daily evidence prefers critical-turn screenshots and aggregates history metrics', () => {
+  const dir = fixture();
+  try {
+    const historyRecords = [
+      { turn: 1, state: { confidence: 0.92, perception: { reason: 'stable' } }, decision: { hold: false, diagnostics: { risk: 0, pathRisk: 0, clearance: 1.4, minFutureClearance: 1.1, merges: 0 } } },
+      { turn: 2, state: { confidence: 0.42, perception: { reason: 'stable-temporal-next' } }, decision: { hold: false, diagnostics: { risk: 0, pathRisk: 0, clearance: 1.0, minFutureClearance: 0.9, merges: 0 } } },
+      { turn: 3, state: { confidence: 0.81, perception: { reason: 'stable' } }, decision: { hold: true, diagnostics: { risk: 1, pathRisk: 1, clearance: 0.38, minFutureClearance: 0.21, merges: 1 } } },
+      { turn: 4, state: { confidence: 0.88, perception: { reason: 'stable-hold-empty' } }, decision: { hold: false, diagnostics: { risk: 2, pathRisk: 2, clearance: 0.07, minFutureClearance: 0.03, merges: 0 } } },
+      { turn: 5, state: { confidence: 0.91, perception: { reason: 'stable' } }, decision: { hold: false, diagnostics: { risk: 0, pathRisk: 0, clearance: 0.8, minFutureClearance: 0.6, merges: 0 } } },
+    ];
+    writeGame(dir, 1, { rank: 70, turns: 5 }, { historyRecords, shots: 6 });
+    const bundle = buildDailyEvidence(dir, 0);
+    const entry = bundle.entries[0];
+    assert.equal(bundle.status, 'ready');
+    assert.equal(bundle.schemaVersion, 2);
+    assert.equal(bundle.metrics.lowConfidenceTurns, 1);
+    assert.equal(bundle.metrics.riskyDecisions, 2);
+    assert.equal(bundle.metrics.fatalDecisions, 1);
+    assert.equal(bundle.metrics.minConfidence, 0.42);
+    assert.deepEqual(entry.criticalTurns, [4, 2, 5]);
+    const names = entry.screenshots.map(path => path.split('/').at(-1));
+    assert.ok(names.includes('turn_4.png'));
+    assert.ok(names.includes('turn_2.png'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('daily evidence exposes rank metrics and concrete visual evidence paths', () => {
   const dir = fixture();
   try {
@@ -99,6 +152,19 @@ test('missing history blocks automatic mutation but missing screenshots are warn
     assert.equal(bundle.status, 'blocked');
     assert.match(bundle.warnings.join('\n'), /missing histories: 1/);
     assert.match(bundle.warnings.join('\n'), /focus games without screenshots: 1/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('malformed history blocks automatic mutation instead of silently trusting existence', () => {
+  const dir = fixture();
+  try {
+    writeGame(dir, 1, { rank: 50, turns: 11 }, { shots: 1 });
+    writeFileSync(join(dir, 'game_history', 'game_0001.jsonl'), '{"turn":1}\nnot-json\n');
+    const bundle = buildDailyEvidence(dir, 0);
+    assert.equal(bundle.status, 'blocked');
+    assert.match(bundle.warnings.join('\n'), /invalid histories: 1/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
