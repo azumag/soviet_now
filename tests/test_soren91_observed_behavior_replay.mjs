@@ -111,8 +111,10 @@ test('candidate may be novel on retained match states even when synthetic probes
 
 test('synthetic-only novelty is rejected when completed retained match states exist', async () => {
   await withObservedFixture(async dir => {
-    const baseline = `export function decide(boardState) {
-      return { x: 0, hold: false, reason: 'baseline' };
+    const baseline = `function search() { return { x: 0 }; }
+export function decide(boardState) {
+      const normal = search(boardState);
+      return { x: normal.x, hold: false, reason: 'baseline' };
     }`;
     writeFileSync(join(dir, 'strategy.mjs'), baseline);
     writeCompletedGame(dir, 9, [
@@ -120,8 +122,10 @@ test('synthetic-only novelty is rejected when completed retained match states ex
       observedState({ score: 914, nextType: 2 }),
       observedState({ score: 915, x: 0.1 }),
     ]);
-    const syntheticOnly = `export function decide(boardState) {
-      return { x: boardState.score === 250 ? 0.3 : 0, hold: false, reason: 'synthetic-only' };
+    const syntheticOnly = `function search() { return { x: 0 }; }
+export function decide(boardState) {
+      const normal = search(boardState);
+      return { x: boardState.score === 250 ? normal.x + 0.3 : normal.x, hold: false, reason: 'synthetic-only' };
     }`;
     const improveModule = {
       async validateStrategy() { return { valid: true, error: null }; },
@@ -138,8 +142,10 @@ test('synthetic-only novelty is rejected when completed retained match states ex
 
 test('behavior-contract repair receives retained match targets and must change an observed action', async () => {
   await withObservedFixture(async dir => {
-    const baseline = `export function decide(boardState) {
-      return { x: 0, hold: false, reason: 'baseline' };
+    const baseline = `function search() { return { x: 0 }; }
+export function decide(boardState) {
+      const normal = search(boardState);
+      return { x: normal.x, hold: false, reason: 'baseline' };
     }`;
     writeFileSync(join(dir, 'strategy.mjs'), baseline);
     writeCompletedGame(dir, 9, [
@@ -157,13 +163,17 @@ test('behavior-contract repair receives retained match targets and must change a
         promptSeen = prompt;
         assert.deepEqual(screenshots, []);
         assert.equal(tag, 'improve_daily_fix');
-        return `export function decide(boardState) {
-          return { x: boardState.score === 914 ? 0.25 : 0, hold: false, reason: 'observed-change' };
+        return `function search() { return { x: 0 }; }
+export function decide(boardState) {
+          const normal = search(boardState);
+          return { x: boardState.score === 914 ? normal.x + 0.25 : normal.x, hold: false, reason: 'observed-change' };
         }`;
       },
     };
-    const noOp = `export function decide(boardState) {
-      return { x: 0, hold: false, reason: 'words-only' };
+    const noOp = `function search() { return { x: 0 }; }
+export function decide(boardState) {
+      const normal = search(boardState);
+      return { x: normal.x, hold: false, reason: 'words-only' };
     }`;
     const result = await validateAndRepairCandidate(improveModule, noOp);
 
