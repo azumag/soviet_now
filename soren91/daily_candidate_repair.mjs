@@ -13,6 +13,7 @@ const MAX_OBSERVED_GAMES = 3;
 const MAX_OBSERVED_PROBES = 64;
 const MAX_OBSERVED_HISTORY_LINES = 4096;
 const MAX_OBSERVED_STATE_BYTES = 256 * 1024;
+const DIRECT_SEARCH_BYPASS_RE = /\b(?:candidates|evaluate|simulateDrop|compareMove)\s*\(/;
 const PROBE_RADII = Object.freeze({
   1: 0.207, 2: 0.259, 3: 0.316, 4: 0.380, 5: 0.414, 6: 0.470,
   7: 0.559, 8: 0.660, 9: 0.746, 10: 0.846, 11: 0.982, 12: 1.068,
@@ -41,6 +42,8 @@ function classifyCodeError(text) {
 
 export function classifyCandidateValidation(error) {
   const text = String(error || '').toLowerCase();
+  if (text.includes('source search consistency')) return 'source_search_consistency';
+  if (text.includes('source unpositioned piece')) return 'source_unpositioned_piece';
   if (text.includes('no decide()') || text.includes('export function decide')) return 'missing_decide';
   if (text.includes('not exported as a function')) return 'decide_not_function';
   if (text.includes('invalid format')) return 'invalid_return';
@@ -53,7 +56,9 @@ export function classifyCandidateValidation(error) {
 function useDecideOnlyRepair(category) {
   return category === 'code_error_syntax'
     || category === 'code_error_truncated_or_unterminated'
-    || category === 'code_error_top_level_reference';
+    || category === 'code_error_top_level_reference'
+    || category === 'source_search_consistency'
+    || category === 'source_unpositioned_piece';
 }
 
 function extractStrictDecideReplacement(source) {
@@ -161,6 +166,144 @@ export function spliceReviewedDecide(baselineStrategy, replacement) {
   const decide = extractStrictDecideReplacement(replacement);
   if (!decide) return null;
   return `${baseline.slice(0, first)}${decide}\n`;
+}
+
+function sourceCodeOnly(source) {
+  let result = '';
+  let state = 'code';
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (state === 'line') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (ch === '\n') state = 'code';
+      continue;
+    }
+    if (state === 'block') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (ch === '*' && next === '/') {
+        result += ' ';
+        state = 'code';
+        i += 1;
+      }
+      continue;
+    }
+    if (state === 'single' || state === 'double' || state === 'template') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if ((state === 'single' && ch === "'")
+          || (state === 'double' && ch === '"')
+          || (state === 'template' && ch === '`')) state = 'code';
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      result += '  ';
+      state = 'line';
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      result += '  ';
+      state = 'block';
+      i += 1;
+      continue;
+    }
+    if (ch === "'") {
+      result += ' ';
+      state = 'single';
+      continue;
+    }
+    if (ch === '"') {
+      result += ' ';
+      state = 'double';
+      continue;
+    }
+    if (ch === '`') {
+      result += ' ';
+      state = 'template';
+      continue;
+    }
+    result += ch;
+  }
+  return result;
+}
+
+function startsFromUnpositionedInterface(expression) {
+  const text = String(expression || '').trim();
+  return /^boardState\s*(?:\?\.|\.)\s*(?:next|hold)\b/.test(text)
+    || /^boardState\s*(?:\?\.|\.)\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*(?:\?\.|\.)\s*(?:next|hold)\b/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*(?:\?\.|\.)\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text);
+}
+
+function findUnpositionedAliases(code) {
+  const aliases = new Set();
+  const assignments = [];
+  const assignmentRe = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g;
+  for (const match of code.matchAll(assignmentRe)) assignments.push({ name: match[1], expression: match[2] });
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { name, expression } of assignments) {
+      if (aliases.has(name)) continue;
+      const text = expression.trim();
+      const fromInterface = startsFromUnpositionedInterface(text);
+      const fromAlias = [...aliases].some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^(?:normalizePiece\\s*\\(\\s*)?${escaped}\\b`).test(text);
+      });
+      if (fromInterface || fromAlias) {
+        aliases.add(name);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
+}
+
+export function validateStrategySourceContracts(source) {
+  const raw = String(source || '');
+  const decide = extractStrictDecideReplacement(raw);
+  // Missing/malformed decide code is categorized by the normal validator. This
+  // source contract only adds architecture checks once a single decide body is
+  // safely extractable.
+  if (!decide) return { valid: true, error: null };
+
+  const code = sourceCodeOnly(decide);
+  if (!/\bsearch\s*\(/.test(code) || DIRECT_SEARCH_BYPASS_RE.test(code)) {
+    return {
+      valid: false,
+      error: 'Strategy contract: source search consistency; decide bypasses multi-ply search',
+    };
+  }
+
+  if (/\bboardState\s*(?:\?\.|\.)\s*(?:next|hold)\s*(?:\?\.|\.)\s*(?:x|y)\b/.test(code)
+      || /\bboardState\s*(?:\?\.|\.)\s*nextPieces\s*(?:\?\.)?\s*\[[^\]]+\]\s*(?:\?\.|\.)\s*(?:x|y)\b/.test(code)) {
+    return {
+      valid: false,
+      error: 'Strategy contract: source unpositioned piece; coordinate access is invalid',
+    };
+  }
+
+  for (const alias of findUnpositionedAliases(code)) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\s*(?:\\?\\.|\\.)\\s*(?:x|y)\\b`).test(code)) {
+      return {
+        valid: false,
+        error: 'Strategy contract: source unpositioned piece; coordinate access is invalid',
+      };
+    }
+  }
+  return { valid: true, error: null };
 }
 
 function probePiece(type, x, y, confidence = 1) {
@@ -399,10 +542,18 @@ export function buildDailyCandidateRepairPrompt(failedCode, validationError, bas
   const failed = String(failedCode || '');
   const baseline = String(baselineStrategy || '');
   const category = classifyCandidateValidation(validationError);
-  const observedContext = category === 'behavior_contract' ? formatObservedRepairContext(observedProbes) : '';
+  const sourceRepair = category === 'source_search_consistency' || category === 'source_unpositioned_piece';
+  const observedContext = (category === 'behavior_contract' || sourceRepair)
+    ? formatObservedRepairContext(observedProbes)
+    : '';
+  const sourceRules = category === 'source_search_consistency'
+    ? `\n## Search-consistency repair rules\n- Keep search() as the owner of multi-ply planning. In decide(), do NOT directly call candidates(), evaluate(), simulateDrop(), or compareMove().\n- Do not replace a search() winner with an immediate one-ply root and then copy pathRisk/minClearance/depth/value from another root.\n- Compare HOLD against the actual no-HOLD search plan that will be played.\n- Express the smallest useful behavior change using existing search() outputs and reviewed helpers only.\n`
+    : category === 'source_unpositioned_piece'
+      ? `\n## Unpositioned-piece repair rules\n- Only boardState.pieces[] has x/y. boardState.next, nextPieces[], hold, and aliases normalized from them are unpositioned.\n- Never read or infer x/y from current, held, alternative, next, queue entries, or any alias derived from those unpositioned pieces.\n- Use search() / evaluated placement results and positioned boardState.pieces[] for spatial decisions.\n`
+      : '';
 
   if (useDecideOnlyRepair(category)) {
-    return `The proposed Soren91 strategy failed JavaScript code validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. If you do, the runner will discard every part except the single decide() function.\n- The reviewed module prefix is immutable for this repair. All boardState/current-turn logic must stay inside decide(); never add top-level state references.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Prefer quoted strings plus concatenation for reason text rather than complex template literals.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- The repaired candidate must make at least one real gameplay decision change: a meaningfully different x (>= ${BEHAVIOR_X_DELTA}) or a different HOLD choice on a plausible board state. Formatting, comments, reason text, or diagnostics alone are not an improvement.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
+    return `The proposed Soren91 strategy failed JavaScript/source validation. Repair it once, conservatively. The reviewed baseline below is known-good and will be kept byte-for-byte before decide(); your response will replace ONLY its final decide() function.\n\n## Validation category\n${category}\n${observedContext}${sourceRules}\n## Mandatory narrow repair contract\n- Return EXACTLY ONE JavaScript code block and no prose.\n- The block MUST contain ONLY one complete function with the literal signature: export function decide(boardState)\n- Do NOT return the rest of strategy.mjs. If you do, the runner will discard every part except the single decide() function.\n- The reviewed module prefix is immutable for this repair. All boardState/current-turn logic must stay inside decide(); never add top-level state references.\n- Do NOT add imports, exports, top-level declarations, helper functions, async/await, fetch, fs, subprocesses, network, or side effects.\n- Call only helpers/constants that already exist in the reviewed baseline.\n- Prefer quoted strings plus concatenation for reason text rather than complex template literals.\n- Keep every brace, parenthesis, bracket, quote, template literal, and comment balanced and closed.\n- Preserve HOLD behavior and return { x: finite number in [-3, 3], reason: string, hold?: boolean }.\n- The failed candidate came from today's retained evidence. Preserve only the smallest useful intended strategy change that can be expressed safely inside decide() using existing baseline helpers.\n- The repaired candidate must make at least one real gameplay decision change: a meaningfully different x (>= ${BEHAVIOR_X_DELTA}) or a different HOLD choice on a plausible board state. Formatting, comments, reason text, or diagnostics alone are not an improvement.\n- If retained-match replay targets are shown above, the repaired candidate MUST change x/HOLD on at least one of those actual retained states.\n- If the failed candidate's structure is malformed, ignore its structure and use the reviewed baseline decide() as the skeleton.\n\n## Reviewed current strategy.mjs baseline\n\`\`\`javascript\n${baseline}\n\`\`\`\n\n## Failed candidate (non-authoritative evidence of intended change only)\n\`\`\`javascript\n${failed.slice(0, 8000)}${failed.length > 8000 ? '\n// ... failed candidate truncated; do not copy truncation ...' : ''}\n\`\`\`\n\nReturn only the complete replacement decide() function now.`;
   }
 
   const codeErrorRules = category.startsWith('code_error_')
@@ -433,6 +584,9 @@ async function callRepairModel(improveModule, prompt) {
 }
 
 async function validateWithBehaviorNovelty(improveModule, candidate, baseline, observedProbes) {
+  const sourceValidation = validateStrategySourceContracts(candidate);
+  if (!sourceValidation.valid) return sourceValidation;
+
   const validation = await improveModule.validateStrategy(candidate);
   if (!validation.valid || !baseline.includes(DECIDE_SIGNATURE) || !String(candidate || '').includes(DECIDE_SIGNATURE)) {
     return validation;
