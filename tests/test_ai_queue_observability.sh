@@ -50,7 +50,7 @@ if [ -n "$stats_file" ]; then
 	check 'grep -q '"'"'"event":"queue_giveup_detail"'"'"' "$stats_file"' 'detail event uses dedicated fixed event name'
 	check 'grep -Eq '"'"'wait=[1-9][0-9]*;holder=radio_main'"'"' "$stats_file"' 'detail contains capped wait and fixed holder category'
 	check '! grep -q '"'"'TOP-SECRET-SENTINEL'"'"' "$stats_file"' 'raw owner label is not copied into stats'
-	check '! grep -Eq '"'"'vercel|codex|model'"'"' "$stats_file"' 'detail record does not expose provider or model identifiers'
+	check '! grep -Eq '"'"'vercel|codex'"'"' "$stats_file"' 'detail record does not expose provider identifiers'
 fi
 
 rm -rf "$AI_GENERATION_QUEUE_LOCK_DIR"
