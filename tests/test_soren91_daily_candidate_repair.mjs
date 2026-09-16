@@ -30,6 +30,10 @@ test('daily candidate repair fixes one invalid candidate from the reviewed compl
   await withBaseline(async () => {
     const validations = [];
     const fixes = [];
+    const oldTotal = process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+    const oldPerModel = process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+    process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = '240';
+    process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = '240';
     const improveModule = {
       async validateStrategy(candidate) {
         validations.push(candidate);
@@ -38,27 +42,76 @@ test('daily candidate repair fixes one invalid candidate from the reviewed compl
           : { valid: false, error: 'no decide() function found in output. You must include "export function decide(boardState)" in the code.' };
       },
       async callStrategyModelWithFallback(prompt, screenshots, tag) {
-        fixes.push({ prompt, screenshots, tag });
+        fixes.push({
+          prompt,
+          screenshots,
+          tag,
+          totalTimeout: process.env.SOREN91_TEXT_OPENCODE_TIMEOUT,
+          perModelTimeout: process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT,
+        });
         return 'fixed';
       },
     };
 
-    const result = await validateAndRepairCandidate(improveModule, 'const helperOnly = true;');
+    try {
+      const result = await validateAndRepairCandidate(improveModule, 'const helperOnly = true;');
 
-    assert.equal(result.candidate, 'fixed');
-    assert.deepEqual(result.validation, { valid: true });
-    assert.equal(result.repairs, 1);
-    assert.equal(result.initialCategory, 'missing_decide');
-    assert.equal(result.finalCategory, null);
-    assert.deepEqual(validations, ['const helperOnly = true;', 'fixed']);
-    assert.equal(fixes.length, 1);
-    assert.equal(fixes[0].tag, 'improve_daily_fix');
-    assert.deepEqual(fixes[0].screenshots, []);
-    assert.match(fixes[0].prompt, /EXACTLY ONE JavaScript code block/);
-    assert.match(fixes[0].prompt, /COMPLETE replacement strategy\.mjs module/);
-    assert.match(fixes[0].prompt, /export function decide\(boardState\)/);
-    assert.match(fixes[0].prompt, /reason: "baseline"/);
-    assert.match(fixes[0].prompt, /helperOnly/);
+      assert.equal(result.candidate, 'fixed');
+      assert.deepEqual(result.validation, { valid: true });
+      assert.equal(result.repairs, 1);
+      assert.equal(result.initialCategory, 'missing_decide');
+      assert.equal(result.finalCategory, null);
+      assert.deepEqual(validations, ['const helperOnly = true;', 'fixed']);
+      assert.equal(fixes.length, 1);
+      assert.equal(fixes[0].tag, 'improve_daily_fix');
+      assert.deepEqual(fixes[0].screenshots, []);
+      assert.equal(fixes[0].totalTimeout, '420');
+      assert.equal(fixes[0].perModelTimeout, '420');
+      assert.match(fixes[0].prompt, /EXACTLY ONE JavaScript code block/);
+      assert.match(fixes[0].prompt, /COMPLETE replacement strategy\.mjs module/);
+      assert.match(fixes[0].prompt, /export function decide\(boardState\)/);
+      assert.match(fixes[0].prompt, /reason: "baseline"/);
+      assert.match(fixes[0].prompt, /helperOnly/);
+      assert.equal(process.env.SOREN91_TEXT_OPENCODE_TIMEOUT, '240');
+      assert.equal(process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT, '240');
+    } finally {
+      if (oldTotal == null) delete process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+      else process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = oldTotal;
+      if (oldPerModel == null) delete process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+      else process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = oldPerModel;
+    }
+  });
+});
+
+test('daily candidate repair restores timeout env even when repair model fails', async () => {
+  await withBaseline(async () => {
+    const oldTotal = process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+    const oldPerModel = process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+    process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = '240';
+    process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = '240';
+    const improveModule = {
+      async validateStrategy() {
+        return { valid: false, error: 'no decide() function found in output' };
+      },
+      async callStrategyModelWithFallback() {
+        assert.equal(process.env.SOREN91_TEXT_OPENCODE_TIMEOUT, '420');
+        assert.equal(process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT, '420');
+        throw new Error('fixed-private-failure');
+      },
+    };
+    try {
+      await assert.rejects(
+        validateAndRepairCandidate(improveModule, 'invalid'),
+        /fixed-private-failure/,
+      );
+      assert.equal(process.env.SOREN91_TEXT_OPENCODE_TIMEOUT, '240');
+      assert.equal(process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT, '240');
+    } finally {
+      if (oldTotal == null) delete process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+      else process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = oldTotal;
+      if (oldPerModel == null) delete process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+      else process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = oldPerModel;
+    }
   });
 });
 

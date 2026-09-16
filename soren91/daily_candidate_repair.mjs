@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const DEFAULT_MAX_REPAIRS = 1;
+const REPAIR_OPENCODE_TIMEOUT_SEC = 420;
 
 export function classifyCandidateValidation(error) {
   const text = String(error || '').toLowerCase();
@@ -27,6 +28,21 @@ function readReviewedBaseline() {
   return readFileSync(path, 'utf8');
 }
 
+async function callRepairModel(improveModule, prompt) {
+  const previousTotal = process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+  const previousPerModel = process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+  process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = String(REPAIR_OPENCODE_TIMEOUT_SEC);
+  process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = String(REPAIR_OPENCODE_TIMEOUT_SEC);
+  try {
+    return await improveModule.callStrategyModelWithFallback(prompt, [], 'improve_daily_fix');
+  } finally {
+    if (previousTotal == null) delete process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
+    else process.env.SOREN91_TEXT_OPENCODE_TIMEOUT = previousTotal;
+    if (previousPerModel == null) delete process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT;
+    else process.env.SOREN91_TEXT_OPENCODE_MODEL_TIMEOUT = previousPerModel;
+  }
+}
+
 export async function validateAndRepairCandidate(improveModule, initialCandidate, {
   maxRepairs = DEFAULT_MAX_REPAIRS,
 } = {}) {
@@ -50,7 +66,7 @@ export async function validateAndRepairCandidate(improveModule, initialCandidate
     const baseline = readReviewedBaseline();
     if (!baseline.includes('export function decide')) break;
     const prompt = buildDailyCandidateRepairPrompt(candidate, validation.error, baseline);
-    const repaired = await improveModule.callStrategyModelWithFallback(prompt, [], 'improve_daily_fix');
+    const repaired = await callRepairModel(improveModule, prompt);
     if (!repaired) break;
     candidate = repaired;
     validation = await improveModule.validateStrategy(candidate);
