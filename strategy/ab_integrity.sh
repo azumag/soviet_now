@@ -121,3 +121,66 @@ _ab_active() {
 	fi
 	return "$rc"
 }
+
+# env-only A/B は strategy hash が同一なので、従来の _ab_finish B だけでは B 側の
+# runtime mode が恒久設定へ昇格しない。現在必要な昇格対象は merge-top model のみとし、
+# 候補 hash が root と同一で、B 側 env が 0/1/2 の単一値を持つ場合に限って反映する。
+# 通常の strategy A/B (a_hash != b_hash) は一切変更しない。
+_ab_envonly_merge_top_value() {
+	local spec="$1"
+	python3 - "$spec" <<'PY' 2>/dev/null
+import shlex, sys
+try:
+    parts = shlex.split(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+vals = []
+for part in parts:
+    if part.startswith("ANALYZE_BOARD_MERGE_TOP_MODEL="):
+        vals.append(part.split("=", 1)[1])
+if len(vals) != 1 or vals[0] not in {"0", "1", "2"}:
+    raise SystemExit(1)
+print(vals[0])
+PY
+}
+
+unset -f _ab_finish_without_envonly_promotion 2>/dev/null || true
+if declare -F _ab_finish >/dev/null 2>&1; then
+	eval "$(declare -f _ab_finish | sed '1s/^_ab_finish /_ab_finish_without_envonly_promotion /')"
+fi
+
+_ab_finish() {
+	if ! declare -F _ab_finish_without_envonly_promotion >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local winner="$1" a b b_env desired previous rc
+	if [ "$winner" = "B" ] && [ -f "$AB_STATE_FILE" ]; then
+		a=$(_ab_state_get a_hash)
+		b=$(_ab_state_get b_hash)
+		if [ -n "$a" ] && [ "$a" = "$b" ]; then
+			b_env=$(_ab_state_get b_env)
+			desired=$(_ab_envonly_merge_top_value "$b_env" 2>/dev/null || true)
+			if [ -n "$desired" ]; then
+				previous=$(_ab_env_value ANALYZE_BOARD_MERGE_TOP_MODEL)
+				./set_toggle.sh "ANALYZE_BOARD_MERGE_TOP_MODEL=$desired" >/dev/null 2>&1 || {
+					log "[AB] env-only B 採用: ANALYZE_BOARD_MERGE_TOP_MODEL=$desired の恒久化に失敗"
+					return 1
+				}
+				command -v reload_runtime_toggles_force >/dev/null 2>&1 && reload_runtime_toggles_force >/dev/null 2>&1 || true
+				if _ab_finish_without_envonly_promotion "$@"; then
+					log "[AB] env-only B 採用: ANALYZE_BOARD_MERGE_TOP_MODEL=$desired を本番設定へ昇格"
+					return 0
+				else
+					rc=$?
+				fi
+				./set_toggle.sh "ANALYZE_BOARD_MERGE_TOP_MODEL=$previous" >/dev/null 2>&1 || true
+				command -v reload_runtime_toggles_force >/dev/null 2>&1 && reload_runtime_toggles_force >/dev/null 2>&1 || true
+				log "[AB] env-only B 採用失敗: merge-top mode を ${previous:-default} へロールバック"
+				return "$rc"
+			fi
+		fi
+	fi
+
+	_ab_finish_without_envonly_promotion "$@"
+}
