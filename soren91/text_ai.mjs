@@ -114,6 +114,49 @@ function cleanOpencodeOutput(raw) {
   return kept.filter(Boolean).join('\n').trim();
 }
 
+export function extractOpencodeJsonText(raw) {
+  const pieces = [];
+  for (const line of String(raw || '').split('\n')) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      throw new Error('opencode returned invalid JSON event');
+    }
+    if (!event || typeof event !== 'object' || event.error) {
+      throw new Error('opencode returned error event');
+    }
+    if (!['step_start', 'step_finish', 'text'].includes(event.type)) {
+      throw new Error(`opencode returned unexpected event type: ${String(event.type || '')}`);
+    }
+    const part = event.part ?? {};
+    if (!part || typeof part !== 'object' || part.error) {
+      throw new Error('opencode returned error part');
+    }
+    if (
+      ['tool-calls', 'tool_calls', 'error'].includes(part.reason)
+      || 'tool' in part
+      || 'toolCallID' in part
+      || 'tool_calls' in part
+    ) {
+      throw new Error('opencode returned tool/error event');
+    }
+    if (event.type === 'text') {
+      if (part.type != null && part.type !== 'text') {
+        throw new Error('opencode returned invalid text part');
+      }
+      if (typeof part.text !== 'string') {
+        throw new Error('opencode returned invalid text event');
+      }
+      pieces.push(part.text);
+    }
+  }
+  const text = pieces.join('').trim();
+  if (!text) throw new Error('opencode returned no text');
+  return text;
+}
+
 function makeProviderError(message, detail = '') {
   const err = new Error(detail ? `${message}: ${detail}` : message);
   err.providerFailure = true;
@@ -330,44 +373,33 @@ export function runGeminiText(tag, promptText, options = {}) {
 function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, parseOutput }) {
   return new Promise((resolve, reject) => {
     const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_text_'));
-    const promptFile = join(tempDir, 'prompt.txt');
-    const rawFile = join(tempDir, 'raw.txt');
-    writeFileSync(promptFile, promptText, 'utf-8');
-    // Feed the prompt on stdin instead of expanding it into one argv element.
-    // Daily improvement includes strategy source plus retained match evidence;
-    // a single argv value can exceed Linux MAX_ARG_STRLEN even when ARG_MAX is
-    // larger. OpenCode already supports stdin (the docich self-repair adapter
-    // uses this path in production), and keeping the prompt in the 0600 temp
-    // file also avoids shell-quoting the model input.
-    const command = `LC_ALL=C.UTF-8 opencode run --model ${shellSingleQuote(model)} < ${shellSingleQuote(promptFile)} 2>&1`;
-    // Preserve the caller PATH. `bash -lc` is a login shell and may rebuild PATH,
-    // hiding the snap-installed OpenCode that the production wrapper already
-    // resolved. util-linux script still supplies the TTY behavior used here.
-    const scriptCommand = `bash -c ${shellSingleQuote(command)}`;
-    execFile('script', ['-q', '-e', '-c', scriptCommand, rawFile], {
+    const child = execFile('opencode', ['run', '--format', 'json', '--model', model], {
       encoding: 'utf-8',
       timeout: timeoutMs,
+      cwd: tempDir,
       env: { ...process.env, OPENCODE_PERMISSION: permission, ...(extraEnv || {}) },
       maxBuffer: 2 * 1024 * 1024,
-    }, (err) => {
+    }, (err, stdout, stderr) => {
       try {
-        const raw = existsSync(rawFile) ? readFileSync(rawFile, 'utf-8') : '';
-        const cleaned = cleanOpencodeOutput(raw);
-        if (containsProviderErrorText(cleaned)) {
-          return reject(makeProviderError(`opencode provider failure (${model})`, cleaned.slice(0, 300)));
+        const combined = `${stdout || ''}\n${stderr || ''}`;
+        if (containsProviderErrorText(combined)) {
+          return reject(makeProviderError(`opencode provider failure (${model})`, combined.slice(0, 300)));
         }
         if (err) return reject(err);
+        const text = extractOpencodeJsonText(stdout);
+        const cleaned = cleanOpencodeOutput(text);
         try {
           resolve(parseOutputOrThrow(cleaned, parseOutput));
         } catch (parseErr) {
           reject(parseErr);
         }
       } finally {
-        try { unlinkSync(promptFile); } catch {}
-        try { unlinkSync(rawFile); } catch {}
         try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
       }
     });
+    child.stdin.on('error', () => {});
+    child.stdin.write(promptText);
+    child.stdin.end();
   });
 }
 
