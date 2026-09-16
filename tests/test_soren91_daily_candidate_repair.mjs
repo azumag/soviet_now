@@ -263,7 +263,7 @@ test('behaviorally empty valid candidate uses the same single repair budget', as
     assert.equal(fixes, 1);
     assert.equal(result.finalCategory, null);
     assert.equal(result.validation.valid, true);
-    assert.match(repairPrompt, /behavior no-op/);
+    assert.match(repairPrompt, /behavior_contract/);
     assert.match(repairPrompt, /real gameplay decision change/);
   });
 });
