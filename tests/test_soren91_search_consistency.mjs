@@ -102,6 +102,14 @@ function codeOnly(source) {
   return result;
 }
 
+function startsFromUnpositionedInterface(expression) {
+  const text = expression.trim();
+  return /^boardState\s*\.\s*(?:next|hold)\b/.test(text)
+    || /^boardState\s*\.\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*\.\s*(?:next|hold)\b/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*\.\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text);
+}
+
 function findUnpositionedAliases(decideCode) {
   const code = codeOnly(decideCode);
   const aliases = new Set();
@@ -114,8 +122,12 @@ function findUnpositionedAliases(decideCode) {
     changed = false;
     for (const { name, expression } of assignments) {
       if (aliases.has(name)) continue;
-      const fromInterface = /\bboardState\s*\.\s*(?:next|nextPieces|hold)\b/.test(expression);
-      const fromAlias = [...aliases].some(alias => new RegExp(`\\b${alias}\\b`).test(expression));
+      const text = expression.trim();
+      const fromInterface = startsFromUnpositionedInterface(text);
+      const fromAlias = [...aliases].some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^(?:normalizePiece\\s*\\(\\s*)?${escaped}\\b`).test(text);
+      });
       if (fromInterface || fromAlias) {
         aliases.add(name);
         changed = true;
@@ -154,12 +166,28 @@ test('decide never reads x/y from unpositioned next, queue, or HOLD pieces', () 
   );
 
   for (const alias of aliases) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     assert.doesNotMatch(
       code,
-      new RegExp(`\\b${alias}\\s*(?:\\?\\.)?\\s*(?:x|y)\\b`),
+      new RegExp(`\\b${escaped}\\s*(?:\\?\\.)?\\s*(?:x|y)\\b`),
       `${alias} is derived from an unpositioned next/HOLD/queue piece and must not use x/y`,
     );
   }
+});
+
+test('unpositioned alias tracking does not taint search results that merely consume queue data', () => {
+  const decide = `export function decide(boardState) {
+    const current = normalizePiece(boardState.next);
+    const alternative = boardState.hold || (boardState.holdKnownEmpty ? boardState.nextPieces?.[1] : null);
+    const held = normalizePiece(alternative);
+    const normal = search([], current, knownQueue(boardState.nextPieces, 1), {});
+    return { x: normal.x, reason: String(held.type) };
+  }`;
+  const { aliases } = findUnpositionedAliases(decide);
+  assert.equal(aliases.has('current'), true);
+  assert.equal(aliases.has('alternative'), true);
+  assert.equal(aliases.has('held'), true);
+  assert.equal(aliases.has('normal'), false);
 });
 
 test('daily improvement prompt preserves search/path consistency and piece positioning contract', () => {
