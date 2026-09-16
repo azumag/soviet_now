@@ -18,6 +18,7 @@ import {
   recordCompletedGame,
   snapshotCurrentStrategyForGame,
 } from './lineage.mjs';
+import { archiveCriticalTurnScreenshots } from './critical_turn_screenshots.mjs';
 import {
   installDirectGameStage,
   installInlineDirectBroadcastOverlay,
@@ -1962,24 +1963,20 @@ async function executeDrop(page, gameX, calibration) {
  * ラウンド制なのでリトライ不要（自動で次ラウンドが始まる）
  */
 async function handleGameOver(page, gameNumber, turns, finalState, historyFile, strategySnapshot) {
-  // ゲーム別スクリーンショットをアーカイブ (3枚: 序盤/中盤/終盤)
-  // 同期処理 — 次ラウンドのスクリーンショット上書き前に完了する
+  // ゲーム別スクリーンショットをアーカイブ (最大3枚)。
+  // PR #370 の criticalTurns を実画像に反映し、履歴が欠損/不正な場合だけ
+  // 従来の序盤/中盤/終盤サンプルへ安全にフォールバックする。
+  // 同期処理 — 次ラウンドのスクリーンショット上書き前に完了する。
   const gameScreenshotDir = join('tmp/game_screenshots', `game_${String(gameNumber).padStart(4, '0')}`);
   try {
-    mkdirSync(gameScreenshotDir, { recursive: true });
-    const ssFiles = readdirSync(SCREENSHOT_DIR)
-      .filter(f => f.startsWith('turn_') && f.endsWith('.png')).sort();
-    if (ssFiles.length > 0) {
-      const earlyIdx = Math.min(2, ssFiles.length - 1);
-      const midIdx = Math.floor(ssFiles.length / 2);
-      const lateIdx = ssFiles.length - 1;
-      for (const idx of [...new Set([earlyIdx, midIdx, lateIdx])]) {
-        copyFileSync(
-          join(SCREENSHOT_DIR, ssFiles[idx]),
-          join(gameScreenshotDir, ssFiles[idx])
-        );
-      }
-      console.log(`[game] Archived ${[...new Set([earlyIdx, midIdx, lateIdx])].length} screenshots to ${gameScreenshotDir}`);
+    const archived = archiveCriticalTurnScreenshots({
+      screenshotDir: SCREENSHOT_DIR,
+      outputDir: gameScreenshotDir,
+      historyFile,
+      maxShots: 3,
+    });
+    if (archived.archived > 0) {
+      console.log(`[game] Archived ${archived.archived} screenshots to ${gameScreenshotDir} (history=${archived.historyStatus}, criticalTurns=${archived.preferredTurns.join(',') || 'none'})`);
     }
   } catch (e) {
     console.log(`[game] Screenshot archive failed: ${e.message}`);
