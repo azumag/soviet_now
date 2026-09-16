@@ -62,6 +62,81 @@ function extractDecide(source) {
   assert.fail('decide body must close');
 }
 
+function codeOnly(source) {
+  let result = '';
+  let state = 'code';
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (state === 'line') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (ch === '\n') state = 'code';
+      continue;
+    }
+    if (state === 'block') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (ch === '*' && next === '/') {
+        result += ' ';
+        state = 'code';
+        i += 1;
+      }
+      continue;
+    }
+    if (state === 'single' || state === 'double' || state === 'template') {
+      result += ch === '\n' ? '\n' : ' ';
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if ((state === 'single' && ch === "'")
+          || (state === 'double' && ch === '"')
+          || (state === 'template' && ch === '`')) state = 'code';
+      continue;
+    }
+    if (ch === '/' && next === '/') { result += '  '; state = 'line'; i += 1; continue; }
+    if (ch === '/' && next === '*') { result += '  '; state = 'block'; i += 1; continue; }
+    if (ch === "'") { result += ' '; state = 'single'; continue; }
+    if (ch === '"') { result += ' '; state = 'double'; continue; }
+    if (ch === '`') { result += ' '; state = 'template'; continue; }
+    result += ch;
+  }
+  return result;
+}
+
+function startsFromUnpositionedInterface(expression) {
+  const text = expression.trim();
+  return /^boardState\s*\.\s*(?:next|hold)\b/.test(text)
+    || /^boardState\s*\.\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*\.\s*(?:next|hold)\b/.test(text)
+    || /^normalizePiece\s*\(\s*boardState\s*\.\s*nextPieces\s*(?:\?\.)?\s*\[/.test(text);
+}
+
+function findUnpositionedAliases(decideCode) {
+  const code = codeOnly(decideCode);
+  const aliases = new Set();
+  const assignments = [];
+  const assignmentRe = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g;
+  for (const match of code.matchAll(assignmentRe)) assignments.push({ name: match[1], expression: match[2] });
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { name, expression } of assignments) {
+      if (aliases.has(name)) continue;
+      const text = expression.trim();
+      const fromInterface = startsFromUnpositionedInterface(text);
+      const fromAlias = [...aliases].some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`^(?:normalizePiece\\s*\\(\\s*)?${escaped}\\b`).test(text);
+      });
+      if (fromInterface || fromAlias) {
+        aliases.add(name);
+        changed = true;
+      }
+    }
+  }
+  return { code, aliases };
+}
+
 test('decide keeps drop enumeration inside multi-ply search', () => {
   const source = readFileSync(STRATEGY, 'utf8');
   const decide = extractDecide(source);
@@ -74,7 +149,48 @@ test('decide keeps drop enumeration inside multi-ply search', () => {
   );
 });
 
-test('daily improvement prompt preserves search/path consistency', () => {
+test('decide never reads x/y from unpositioned next, queue, or HOLD pieces', () => {
+  const source = readFileSync(STRATEGY, 'utf8');
+  const decide = extractDecide(source);
+  const { code, aliases } = findUnpositionedAliases(decide);
+
+  assert.doesNotMatch(
+    code,
+    /\bboardState\s*\.\s*(?:next|hold)\s*(?:\?\.)?\s*(?:x|y)\b/,
+    'next/hold are unpositioned and have no usable x/y',
+  );
+  assert.doesNotMatch(
+    code,
+    /\bboardState\s*\.\s*nextPieces\s*(?:\?\.)?\s*\[[^\]]+\]\s*(?:\?\.)?\s*(?:x|y)\b/,
+    'nextPieces entries are unpositioned and have no usable x/y',
+  );
+
+  for (const alias of aliases) {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.doesNotMatch(
+      code,
+      new RegExp(`\\b${escaped}\\s*(?:\\?\\.)?\\s*(?:x|y)\\b`),
+      `${alias} is derived from an unpositioned next/HOLD/queue piece and must not use x/y`,
+    );
+  }
+});
+
+test('unpositioned alias tracking does not taint search results that merely consume queue data', () => {
+  const decide = `export function decide(boardState) {
+    const current = normalizePiece(boardState.next);
+    const alternative = boardState.hold || (boardState.holdKnownEmpty ? boardState.nextPieces?.[1] : null);
+    const held = normalizePiece(alternative);
+    const normal = search([], current, knownQueue(boardState.nextPieces, 1), {});
+    return { x: normal.x, reason: String(held.type) };
+  }`;
+  const { aliases } = findUnpositionedAliases(decide);
+  assert.equal(aliases.has('current'), true);
+  assert.equal(aliases.has('alternative'), true);
+  assert.equal(aliases.has('held'), true);
+  assert.equal(aliases.has('normal'), false);
+});
+
+test('daily improvement prompt preserves search/path consistency and piece positioning contract', () => {
   const prompt = readFileSync(PROMPT, 'utf8');
   assert.match(prompt, /Search-consistency contract/);
   assert.match(prompt, /MUST NOT bypass a `search\(\)` result/);
@@ -82,4 +198,9 @@ test('daily improvement prompt preserves search/path consistency', () => {
   assert.match(prompt, /Never copy future metrics from one `search\(\)` root onto a different immediate root/);
   assert.match(prompt, /HOLD must be compared against the actual non-HOLD plan/);
   assert.match(prompt, /Do not replace it with an immediate one-ply override/);
+  assert.match(prompt, /Positioned \/ unpositioned piece contract/);
+  assert.match(prompt, /Only `boardState\.pieces\[\]` is positioned/);
+  assert.match(prompt, /`boardState\.next`.*unpositioned/);
+  assert.match(prompt, /`current = normalizePiece\(boardState\.next\)` is still unpositioned/);
+  assert.match(prompt, /Do not invent a cursor X/);
 });

@@ -39,10 +39,10 @@ You are 同志AI — improving the strategy for a Suika-style (watermelon game /
 ```javascript
 export function decide(boardState) {
   // boardState: {
-  //   pieces: [{type, x, y, r}],   // 検出されたピース (国ピースのみ、おじゃまは除外)
-  //   next: {type, r},              // 次にドロップするピース (nextPieces[0] と同じ)
-  //   nextPieces: [{type, r}, ...], // 次の最大3ピース (1番目=next, 2番目, 3番目)
-  //   hold: {type, r} | null,       // HOLD領域のピース (null=空)
+  //   pieces: [{type, x, y, r}],   // 検出された配置済みピース。x/y を持つのはここだけ
+  //   next: {type, r},              // 未配置の次ピース。x/y は存在しない
+  //   nextPieces: [{type, r}, ...], // 未配置の予告ピース。x/y は存在しない
+  //   hold: {type, r} | null,       // 未配置のHOLDピース。x/y は存在しない
   //   canHold: boolean,             // このターンでHOLD使用可能か
   //   score: number,
   //   confidence: number,
@@ -54,6 +54,13 @@ export function decide(boardState) {
   // Returns: { x: number [-3.0, 3.0], reason: string, hold?: boolean }
 }
 ```
+
+## Positioned / unpositioned piece contract
+- **Only `boardState.pieces[]` is positioned and may be read for `x` / `y`.**
+- `boardState.next`, every `boardState.nextPieces[]` entry, and `boardState.hold` are unpositioned pieces. Their schema is type/radius/confidence only. Never read or infer `.x` or `.y` from them.
+- This rule also applies to aliases: `current = normalizePiece(boardState.next)` is still unpositioned, and `held = normalizePiece(alternative)` is still unpositioned. `current.x`, `current.y`, `held.x`, and `held.y` are invalid strategy inputs.
+- Do not invent a cursor X for the incoming piece. Its placement X is what `search()` is deciding.
+- If you need to know whether the current/held piece has a useful merge path, derive that from `search()` / evaluated placement results (for example the chosen plan's merge/risk/clearance information) or from positioned board pieces without pretending the incoming piece already has an X/Y coordinate.
 
 ## HOLD Mechanic
 - Right-click saves the current cursor piece to HOLD, or swaps with the held piece
@@ -119,6 +126,7 @@ small pieces (type 1〜4) は落下時の衝撃で周囲のピースを揺らす
 - The function signature `export function decide(boardState)` MUST be preserved
 - Return value MUST be `{ x: number, reason: string, hold?: boolean }` where x is in [-3.0, 3.0]
 - HOLD logic (checking boardState.hold and canHold) MUST be preserved
+- Never use x/y from next, nextPieces, hold, or aliases of those unpositioned pieces
 - Do NOT use async/await, fetch, fs, or any side effects - pure computation only
 - 時間がかかってもいいので端折ったりせず品質を優先すること。ゲーム分析・戦略コードの両方を丁寧に読み込み、根拠のある改善を行うこと
 - Final reminder: ONE code block, COMPLETE module, literal `export function decide(boardState)`, NO prose, NO partial snippets.
