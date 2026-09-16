@@ -154,6 +154,41 @@ test('daily repair prompt tells the model to reconstruct from baseline instead o
   assert.equal(classifyCandidateValidation('no decide() function found in output'), 'missing_decide');
 });
 
+test('code errors use a fixed subtype and syntax-safe baseline reconstruction rules', () => {
+  assert.equal(
+    classifyCandidateValidation('Code error: SyntaxError: Unexpected end of input'),
+    'code_error_truncated_or_unterminated',
+  );
+  assert.equal(
+    classifyCandidateValidation("Code error: SyntaxError: Identifier 'score' has already been declared"),
+    'code_error_duplicate_declaration',
+  );
+  assert.equal(
+    classifyCandidateValidation("Code error: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'foo'"),
+    'code_error_module_dependency',
+  );
+  assert.equal(
+    classifyCandidateValidation('Code error: ReferenceError: boardState is not defined'),
+    'code_error_top_level_reference',
+  );
+  assert.equal(
+    classifyCandidateValidation("Code error: SyntaxError: Unexpected token '}'"),
+    'code_error_syntax',
+  );
+
+  const prompt = buildDailyCandidateRepairPrompt(
+    'export function decide(boardState) { return { x: 0, reason: "bad" };',
+    'Code error: SyntaxError: Unexpected end of input',
+    'const helper = 1;\nexport function decide(boardState) { return { x: 0, reason: "safe" }; }',
+  );
+  assert.match(prompt, /code_error_truncated_or_unterminated/);
+  assert.match(prompt, /reviewed baseline below is known-good source structure and is authoritative/);
+  assert.match(prompt, /Do NOT copy broken\/truncated structure/);
+  assert.match(prompt, /Preserve the complete tail of the reviewed baseline/);
+  assert.match(prompt, /valid ESM/);
+  assert.match(prompt, /non-authoritative hint only/);
+});
+
 test('daily candidate repair refuses retry budgets above one', async () => {
   const improveModule = {
     async validateStrategy() { return { valid: true }; },
