@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  buildBehaviorReplayProbes,
   buildDailyCandidateRepairPrompt,
   classifyCandidateValidation,
+  compareCandidateBehavior,
   spliceReviewedDecide,
   validateAndRepairCandidate,
 } from '../soren91/daily_candidate_repair.mjs';
@@ -96,7 +98,7 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
         }
         assert.equal(
           candidate,
-          'const helper = 1;\nexport function decide(boardState) { const x = helper - 1; return { x, reason: "repaired" }; }\n',
+          'const helper = 1;\nexport function decide(boardState) { const x = helper - 0.75; return { x, reason: "repaired" }; }\n',
         );
         return { valid: true, error: null };
       },
@@ -104,7 +106,7 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
         repairPrompt = prompt;
         assert.deepEqual(screenshots, []);
         assert.equal(tag, 'improve_daily_fix');
-        return 'export function decide(boardState) { const x = helper - 1; return { x, reason: "repaired" }; }';
+        return 'export function decide(boardState) { const x = helper - 0.75; return { x, reason: "repaired" }; }';
       },
     };
 
@@ -123,12 +125,13 @@ test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decid
     assert.match(repairPrompt, /MUST contain ONLY one complete function/);
     assert.match(repairPrompt, /discard every part except the single decide\(\) function/);
     assert.match(repairPrompt, /Prefer quoted strings plus concatenation/);
+    assert.match(repairPrompt, /real gameplay decision change/);
   });
 });
 
 test('syntax repair may return a full module but only its single decide is adopted', async () => {
   await withBaseline(async () => {
-    const expected = 'const helper = 1;\nexport function decide(boardState) { const x = helper - 1; return { x, reason: `safe-${x}` }; }\n';
+    const expected = 'const helper = 1;\nexport function decide(boardState) { const x = helper - 0.75; return { x, reason: `safe-${x}` }; }\n';
     let validationCalls = 0;
     const improveModule = {
       async validateStrategy(candidate) {
@@ -144,7 +147,7 @@ test('syntax repair may return a full module but only its single decide is adopt
         return [
           'import fs from "node:fs";',
           'const modelOwnedHelper = 999;',
-          'export function decide(boardState) { const x = helper - 1; return { x, reason: `safe-${x}` }; }',
+          'export function decide(boardState) { const x = helper - 0.75; return { x, reason: `safe-${x}` }; }',
           'const sideEffect = fs.readFileSync("/etc/passwd", "utf8");',
         ].join('\n');
       },
@@ -206,6 +209,63 @@ test('decide extraction discards outside module surface and rejects unsafe or am
     ),
     null,
   );
+});
+
+test('behavior replay rejects formatting/reason-only changes and accepts x or HOLD changes', async () => {
+  assert.equal(buildBehaviorReplayProbes().length, 12);
+  const baseline = `export function decide(boardState) {
+    return { x: boardState.next.type === 1 ? 0 : 0.5, hold: false, reason: 'baseline' };
+  }`;
+  const cosmetic = `export function decide(boardState) {
+    const x = boardState.next.type === 1 ? 0 : 0.5;
+    return { x, hold: false, reason: 'cosmetic-only' };
+  }`;
+  const changed = `export function decide(boardState) {
+    return { x: boardState.next.type === 1 ? 0.25 : 0.5, hold: false, reason: 'changed' };
+  }`;
+  const holdChanged = `export function decide(boardState) {
+    return { x: boardState.next.type === 1 ? 0 : 0.5, hold: boardState.next.type === 1, reason: 'hold-change' };
+  }`;
+
+  const noOp = await compareCandidateBehavior(baseline, cosmetic);
+  assert.equal(noOp.changed, false);
+  assert.ok(noOp.compared >= 6);
+  assert.equal(noOp.candidateFailures, 0);
+
+  const xChange = await compareCandidateBehavior(baseline, changed);
+  assert.equal(xChange.changed, true);
+  assert.ok(xChange.changedCount > 0);
+
+  const holdChange = await compareCandidateBehavior(baseline, holdChanged);
+  assert.equal(holdChange.changed, true);
+  assert.ok(holdChange.changedCount > 0);
+});
+
+test('behaviorally empty valid candidate uses the same single repair budget', async () => {
+  await withBaseline(async () => {
+    let repairPrompt = '';
+    let fixes = 0;
+    const improveModule = {
+      async validateStrategy() {
+        return { valid: true, error: null };
+      },
+      async callStrategyModelWithFallback(prompt) {
+        fixes += 1;
+        repairPrompt = prompt;
+        return 'const helper = 1;\nexport function decide(boardState) { return { x: 0.25, reason: "actual-change" }; }\n';
+      },
+    };
+    const initial = 'export function decide(boardState) { return { x: 0, reason: "different words only" }; }';
+    const result = await validateAndRepairCandidate(improveModule, initial);
+
+    assert.equal(result.initialCategory, 'behavior_contract');
+    assert.equal(result.repairs, 1);
+    assert.equal(fixes, 1);
+    assert.equal(result.finalCategory, null);
+    assert.equal(result.validation.valid, true);
+    assert.match(repairPrompt, /behavior no-op/);
+    assert.match(repairPrompt, /real gameplay decision change/);
+  });
 });
 
 test('daily candidate repair restores timeout env even when repair model fails', async () => {
@@ -276,6 +336,7 @@ test('daily repair prompt tells the model to reconstruct from baseline instead o
   assert.match(prompt, /start from the reviewed baseline/);
   assert.match(prompt, /not a patch, snippet, helper, or explanation/);
   assert.match(prompt, /one block MUST be the COMPLETE replacement/);
+  assert.match(prompt, /real gameplay decision change/);
   assert.equal(classifyCandidateValidation('no decide() function found in output'), 'missing_decide');
 });
 
@@ -299,6 +360,10 @@ test('code errors use fixed subtypes and syntax failures get the narrow decide-o
   assert.equal(
     classifyCandidateValidation("Code error: SyntaxError: Unexpected token '}'"),
     'code_error_syntax',
+  );
+  assert.equal(
+    classifyCandidateValidation('Strategy contract: behavior no-op; candidate does not change x/hold'),
+    'behavior_contract',
   );
 
   const prompt = buildDailyCandidateRepairPrompt(
