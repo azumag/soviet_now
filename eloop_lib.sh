@@ -21,6 +21,7 @@ source "$ELOOP_LIB_DIR/core/strategy_runtime.sh"
 # Layer 1.5: AI共通ディスパッチ (helpers.sh に依存)
 source "$ELOOP_LIB_DIR/lib/ai_generate.sh"
 source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"
+source "$ELOOP_LIB_DIR/lib/ai_queue_observability.sh"
 # Layer 2: 戦略インフラ
 source "$ELOOP_LIB_DIR/strategy/ai.sh"
 source "$ELOOP_LIB_DIR/strategy/sandbox.sh"
