@@ -173,7 +173,7 @@ test('behavior-contract repair receives retained match targets and must change a
     assert.equal(result.validation.valid, true);
     assert.equal(result.finalCategory, null);
     assert.match(promptSeen, /Retained-match behavior replay targets/);
-    assert.match(promptSeen, /"score"/); // compact state context is private model input only
+    assert.match(promptSeen, /"garbageRatio"/); // compact state context is private model input only
     assert.match(promptSeen, /actual retained states/);
   });
 });
