@@ -333,10 +333,17 @@ function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, p
     const promptFile = join(tempDir, 'prompt.txt');
     const rawFile = join(tempDir, 'raw.txt');
     writeFileSync(promptFile, promptText, 'utf-8');
-    const command = `LC_ALL=en_US.UTF-8 opencode run --model ${shellSingleQuote(model)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
-    // util-linux の script は `script -q -e -c '<cmd>' <file>` が正しい。
-    // 旧 `script -q <file> bash -lc '<cmd>'` はこのVMで exit=1・出力空だった (2026-09-15 実測)。
-    const scriptCommand = `bash -lc ${shellSingleQuote(command)}`;
+    // Feed the prompt on stdin instead of expanding it into one argv element.
+    // Daily improvement includes strategy source plus retained match evidence;
+    // a single argv value can exceed Linux MAX_ARG_STRLEN even when ARG_MAX is
+    // larger. OpenCode already supports stdin (the docich self-repair adapter
+    // uses this path in production), and keeping the prompt in the 0600 temp
+    // file also avoids shell-quoting the model input.
+    const command = `LC_ALL=C.UTF-8 opencode run --model ${shellSingleQuote(model)} < ${shellSingleQuote(promptFile)} 2>&1`;
+    // Preserve the caller PATH. `bash -lc` is a login shell and may rebuild PATH,
+    // hiding the snap-installed OpenCode that the production wrapper already
+    // resolved. util-linux script still supplies the TTY behavior used here.
+    const scriptCommand = `bash -c ${shellSingleQuote(command)}`;
     execFile('script', ['-q', '-e', '-c', scriptCommand, rawFile], {
       encoding: 'utf-8',
       timeout: timeoutMs,
