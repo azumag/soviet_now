@@ -9,7 +9,7 @@ source "$ELOOP_LIB_DIR/eloop_lib.sh" 2>/dev/null || true
 MODEL="${COMMENT_CLASSIFIER_AGENT:-amd:DeepSeek-V4-Flash}"
 
 declare -A TEST_COMMENTS=(
-	["card_gacha"]="azumagbanjo: ユーザーがAを獲得しました"
+	["card_gacha"]="azumagbanjo: @もやしちゃん が [コモン] 一ルーブル札 を獲得しました"
 	["raid"]="nightbot: さんがレイジを迎えます！ from twitchuser123"
 	["subscription"]="Thanks for the subscription twitchfan!"
 	["bits"]="Kappa 100 bits"
