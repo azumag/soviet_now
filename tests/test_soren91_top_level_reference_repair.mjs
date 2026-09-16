@@ -11,7 +11,7 @@ function withBaseline(fn) {
   const previous = process.cwd();
   writeFileSync(
     join(dir, 'strategy.mjs'),
-    'const helper = 1;\nexport function decide(boardState) { return { x: 0, hold: false, reason: "baseline" }; }\n',
+    'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x, hold: false, reason: "baseline" }; }\n',
   );
   process.chdir(dir);
   return Promise.resolve()
@@ -27,7 +27,7 @@ test('top-level reference failure repairs only decide and preserves reviewed mod
     let validationCalls = 0;
     let repairCalls = 0;
     let repairPrompt = '';
-    const expected = 'const helper = 1;\nexport function decide(boardState) { return { x: 0.25, hold: false, reason: "repaired" }; }\n';
+    const expected = 'const helper = 1;\nfunction search() { return { x: 0 }; }\nexport function decide(boardState) { const normal = search(boardState); return { x: normal.x + 0.25, hold: false, reason: "repaired" }; }\n';
     const improveModule = {
       async validateStrategy(candidate) {
         validationCalls += 1;
@@ -47,15 +47,16 @@ test('top-level reference failure repairs only decide and preserves reviewed mod
         // module with a bad top-level reference, only decide() may be adopted.
         return [
           'const leaked = boardState.score;',
-          'export function decide(boardState) { return { x: 0.25, hold: false, reason: "repaired" }; }',
+          'export function decide(boardState) { const normal = search(boardState); return { x: normal.x + 0.25, hold: false, reason: "repaired" }; }',
         ].join('\n');
       },
     };
 
     const initial = [
       'const helper = 1;',
+      'function search() { return { x: 0 }; }',
       'const leaked = boardState.score;',
-      'export function decide(boardState) { return { x: 0.1, hold: false, reason: "bad" }; }',
+      'export function decide(boardState) { const normal = search(boardState); return { x: normal.x + 0.1, hold: false, reason: "bad" }; }',
     ].join('\n');
     const result = await validateAndRepairCandidate(improveModule, initial);
 
