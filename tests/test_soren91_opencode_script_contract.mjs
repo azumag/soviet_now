@@ -5,19 +5,21 @@ import { DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS, OPENCODE_TIMEOUT_COOLDOWN_MS, is
 
 const source = readFileSync(new URL('../soren91/text_ai.mjs', import.meta.url), 'utf8');
 
-test('opencode text fallback uses util-linux script -c contract', () => {
+test('opencode text fallback uses stdin and preserves caller PATH', () => {
   assert.match(
     source,
-    /const scriptCommand = `bash -lc \$\{shellSingleQuote\(command\)\}`;/,
+    /opencode run --model \$\{shellSingleQuote\(model\)\} < \$\{shellSingleQuote\(promptFile\)\} 2>&1/,
+  );
+  assert.match(
+    source,
+    /const scriptCommand = `bash -c \$\{shellSingleQuote\(command\)\}`;/,
   );
   assert.match(
     source,
     /execFile\('script', \['-q', '-e', '-c', scriptCommand, rawFile\]/,
   );
-  assert.doesNotMatch(
-    source,
-    /execFile\('script', \['-q', rawFile, 'bash', '-lc', command\]/,
-  );
+  assert.doesNotMatch(source, /"\$\(cat \$\{shellSingleQuote\(promptFile\)\}\)"/);
+  assert.doesNotMatch(source, /const scriptCommand = `bash -lc /);
 });
 
 test('opencode non-zero exit rejects even when partial output exists', () => {
