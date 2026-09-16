@@ -109,10 +109,14 @@ small pieces (type 1〜4) は落下時の衝撃で周囲のピースを揺らす
 
 ## Search-consistency contract
 - The reviewed strategy's `search()` is the owner of multi-ply drop planning. `decide()` may orchestrate `search()` results and HOLD, but MUST NOT bypass a `search()` result by directly enumerating or re-ranking immediate drops with `candidates()`, `evaluate()`, `simulateDrop()`, or `compareMove()`.
+- **Treat the reviewed `decide()` control-flow skeleton as immutable for root selection.** Keep the normal `search(...)` plan, the optional HOLD `search(...)` plan, and the final choice between those search plans. Do not insert any additional immediate-root selection loop into `decide()`.
+- **If retained evidence suggests “pick a lower/safer immediate root”, “height-first”, “prefer a merge root”, or any other root ranking change, implement that inside `evaluate()`, `compareMove()`, `comparePath()`, or `search()` itself.** The change must participate in the full beam path; never implement it after `search()` returns.
+- A search/scoring improvement may add fields to evaluated/search path state when necessary, but the selected root and its `pathRisk`, `minClearance`, `depth`, `expandedNodes`, and value must all describe that SAME path.
 - If you want to change root/drop scoring, change `evaluate()`, `compareMove()`, `comparePath()`, or `search()` so the selected root and its future `pathRisk`, `minClearance`, `depth`, and value all come from the SAME search path.
 - Never copy future metrics from one `search()` root onto a different immediate root.
 - HOLD must be compared against the actual non-HOLD plan that would be played. Do not score HOLD against one search result and then play a different non-HOLD root.
 - Preserve multi-ply look-ahead. Do not replace it with an immediate one-ply override merely because a local root score is higher.
+- Before returning code, inspect the final `decide()` body: outside the two reviewed `search()` plan calls and HOLD orchestration, it must contain **no calls to `candidates()`, `evaluate()`, `simulateDrop()`, or `compareMove()`**.
 
 ## Viewer Advice Handling
 - A soren91-specific viewer advice memo may be injected in the analysis section
