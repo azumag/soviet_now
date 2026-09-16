@@ -26,29 +26,12 @@ jobs:
 
           path = Path('soren91/main.mjs')
           text = path.read_text()
-          old = """  // ゲーム別スクリーンショットをアーカイブ (3枚: 序盤/中盤/終盤)
-          // 同期処理 — 次ラウンドのスクリーンショット上書き前に完了する
-          const gameScreenshotDir = join('tmp/game_screenshots', `game_${String(gameNumber).padStart(4, '0')}`);
-          try {
-            mkdirSync(gameScreenshotDir, { recursive: true });
-            const ssFiles = readdirSync(SCREENSHOT_DIR)
-              .filter(f => f.startsWith('turn_') && f.endsWith('.png')).sort();
-            if (ssFiles.length > 0) {
-              const earlyIdx = Math.min(2, ssFiles.length - 1);
-              const midIdx = Math.floor(ssFiles.length / 2);
-              const lateIdx = ssFiles.length - 1;
-              for (const idx of [...new Set([earlyIdx, midIdx, lateIdx])]) {
-                copyFileSync(
-                  join(SCREENSHOT_DIR, ssFiles[idx]),
-                  join(gameScreenshotDir, ssFiles[idx])
-                );
-              }
-              console.log(`[game] Archived ${[...new Set([earlyIdx, midIdx, lateIdx])].length} screenshots to ${gameScreenshotDir}`);
-            }
-          } catch (e) {
-            console.log(`[game] Screenshot archive failed: ${e.message}`);
-          }
-          """
+          start_marker = '  // ゲーム別スクリーンショットをアーカイブ (3枚: 序盤/中盤/終盤)\n'
+          end_marker = '  // 古いゲームスクリーンショット削除 (最新24ゲーム分のみ保持)\n'
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit('archive block markers are not unique')
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
           new = """  // ゲーム別スクリーンショットをアーカイブ (最大3枚)。
           // PR #370 の criticalTurns を実画像に反映し、履歴が欠損/不正な場合だけ
           // 従来の序盤/中盤/終盤サンプルへ安全にフォールバックする。
@@ -70,10 +53,9 @@ jobs:
           } catch (e) {
             console.log(`[game] Screenshot archive failed: ${e.message}`);
           }
+
           """
-          if text.count(old) != 1:
-              raise SystemExit(f'expected exactly one archive block, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text[:start] + new + text[end:])
           PY
       - name: Regression tests
         run: |
