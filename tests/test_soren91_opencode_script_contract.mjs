@@ -1,30 +1,47 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS, OPENCODE_TIMEOUT_COOLDOWN_MS, isOpencodeTimeout, resolvePerModelTimeoutMs } from '../soren91/text_ai.mjs';
+import {
+  DEFAULT_OPENCODE_PER_MODEL_TIMEOUT_MS,
+  OPENCODE_TIMEOUT_COOLDOWN_MS,
+  extractOpencodeJsonText,
+  isOpencodeTimeout,
+  resolvePerModelTimeoutMs,
+} from '../soren91/text_ai.mjs';
 
 const source = readFileSync(new URL('../soren91/text_ai.mjs', import.meta.url), 'utf8');
 
-test('opencode text fallback uses stdin and preserves caller PATH', () => {
+test('opencode text fallback uses direct stdin JSON transport without a TTY shell', () => {
   assert.match(
     source,
-    /opencode run --model \$\{shellSingleQuote\(model\)\} < \$\{shellSingleQuote\(promptFile\)\} 2>&1/,
+    /execFile\('opencode', \['run', '--format', 'json', '--model', model\]/,
   );
-  assert.match(
-    source,
-    /const scriptCommand = `bash -c \$\{shellSingleQuote\(command\)\}`;/,
+  assert.match(source, /child\.stdin\.write\(promptText\);/);
+  assert.doesNotMatch(source, /execFile\('script'/);
+  assert.doesNotMatch(source, /bash -[lc]/);
+  assert.doesNotMatch(source, /"\$\(cat /);
+});
+
+test('opencode JSON transport joins only text events and rejects tool lifecycle', () => {
+  const raw = [
+    JSON.stringify({ type: 'step_start', part: { type: 'step-start' } }),
+    JSON.stringify({ type: 'text', part: { type: 'text', text: 'hello ' } }),
+    JSON.stringify({ type: 'text', part: { type: 'text', text: 'world' } }),
+    JSON.stringify({ type: 'step_finish', part: { type: 'step-finish' } }),
+  ].join('\n');
+  assert.equal(extractOpencodeJsonText(raw), 'hello world');
+  assert.throws(
+    () => extractOpencodeJsonText(JSON.stringify({
+      type: 'step_finish',
+      part: { type: 'step-finish', reason: 'tool-calls', tool: 'read' },
+    })),
+    /tool\/error event/,
   );
-  assert.match(
-    source,
-    /execFile\('script', \['-q', '-e', '-c', scriptCommand, rawFile\]/,
-  );
-  assert.doesNotMatch(source, /"\$\(cat \$\{shellSingleQuote\(promptFile\)\}\)"/);
-  assert.doesNotMatch(source, /const scriptCommand = `bash -lc /);
+  assert.throws(() => extractOpencodeJsonText('not-json'), /invalid JSON event/);
 });
 
 test('opencode non-zero exit rejects even when partial output exists', () => {
   assert.match(source, /if \(err\) return reject\(err\);/);
-  assert.doesNotMatch(source, /if \(err && !cleaned\) return reject\(err\);/);
 });
 
 test('each opencode model attempt is bounded so a hang cannot eat the chain', () => {
