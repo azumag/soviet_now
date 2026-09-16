@@ -93,6 +93,15 @@ export function decide(boardState) {
   return { x: pick.x, hold: false, reason: 'bad-root-override' };
 }
 `;
+    const repaired = `
+function normalizePiece(piece) { return { ...piece }; }
+function search(board, piece, queue, garbage) { return { x: 0.25, pathRisk: 0, minClearance: 3, value: 1 }; }
+export function decide(boardState) {
+  const current = normalizePiece(boardState.next);
+  const normal = search(boardState.pieces, current, boardState.nextPieces, boardState.garbage);
+  return { x: normal.x, hold: false, reason: 'safe-search-change' };
+}
+`.trim() + '\n';
     const improveModule = {
       async validateStrategy() {
         normalValidationCalls += 1;
@@ -103,11 +112,7 @@ export function decide(boardState) {
         promptSeen = prompt;
         assert.deepEqual(screenshots, []);
         assert.equal(tag, 'improve_daily_fix');
-        return `export function decide(boardState) {
-          const current = normalizePiece(boardState.next);
-          const normal = search(boardState.pieces, current, boardState.nextPieces, boardState.garbage);
-          return { x: normal.x + 0.25, hold: false, reason: 'safe-search-change' };
-        }`;
+        return repaired;
       },
     };
 
@@ -120,9 +125,12 @@ export function decide(boardState) {
     assert.equal(normalValidationCalls, 1);
     assert.equal(result.validation.valid, true);
     assert.equal(result.finalCategory, null);
+    assert.equal(result.candidate, repaired);
     assert.match(promptSeen, /source_search_consistency/);
     assert.match(promptSeen, /Search-consistency repair rules/);
-    assert.match(promptSeen, /replace ONLY its final decide\(\) function/);
+    assert.match(promptSeen, /COMPLETE replacement strategy\.mjs module/);
+    assert.match(promptSeen, /implement it inside evaluate\(\), compareMove\(\), comparePath\(\), or search\(\)/);
+    assert.doesNotMatch(promptSeen, /replace ONLY its final decide\(\) function/);
     assert.deepEqual(validateStrategySourceContracts(result.candidate), { valid: true, error: null });
   });
 });
