@@ -35,13 +35,22 @@ _ai_queue_observability_wait_sec() {
 	printf '%s\n' "$elapsed"
 }
 
-# Keep one stable copy of the reviewed queue implementation.  The wrapper below
-# only observes its terminal rc and current owner file after a giveup; it does
-# not interpose on ownership changes or release logic.
-if declare -F _ai_generation_queue_enter >/dev/null 2>&1 \
-	&& ! declare -F _ai_generation_queue_enter_base >/dev/null 2>&1; then
-	eval "$(declare -f _ai_generation_queue_enter | sed '1s/_ai_generation_queue_enter/_ai_generation_queue_enter_base/')"
-fi
+# eloop_lib.sh can be sourced again in a long-lived radio worker when reviewed
+# runtime files change. ai_generate.sh is sourced immediately before this shim,
+# so at that point _ai_generation_queue_enter is the newly loaded base function.
+# Refresh the saved base on every such reload. If this shim alone is sourced a
+# second time, detect our wrapper and keep the existing base to avoid wrapping
+# the wrapper recursively.
+_ai_queue_observability_refresh_base() {
+	local current
+	declare -F _ai_generation_queue_enter >/dev/null 2>&1 || return 1
+	current=$(declare -f _ai_generation_queue_enter)
+	if printf '%s\n' "$current" | grep -q '_ai_generation_queue_enter_base'; then
+		return 0
+	fi
+	eval "$(printf '%s\n' "$current" | sed '1s/_ai_generation_queue_enter/_ai_generation_queue_enter_base/')"
+}
+_ai_queue_observability_refresh_base || return 1
 
 _ai_generation_queue_enter() {
 	local label="${1:-AI}" started finished rc lock_dir owner_label="" holder_category wait_sec
