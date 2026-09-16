@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   buildDailyCandidateRepairPrompt,
   classifyCandidateValidation,
+  spliceReviewedDecide,
   validateAndRepairCandidate,
 } from '../soren91/daily_candidate_repair.mjs';
 
@@ -83,6 +84,87 @@ test('daily candidate repair fixes one invalid candidate from the reviewed compl
   });
 });
 
+test('syntax repair keeps reviewed helpers byte-for-byte and replaces only decide', async () => {
+  await withBaseline(async () => {
+    const validations = [];
+    let repairPrompt = '';
+    const improveModule = {
+      async validateStrategy(candidate) {
+        validations.push(candidate);
+        if (validations.length === 1) {
+          return { valid: false, error: "Code error: SyntaxError: Unexpected token '}'" };
+        }
+        assert.equal(
+          candidate,
+          'const helper = 1;\nexport function decide(boardState) { const x = helper - 1; return { x, reason: "repaired" }; }\n',
+        );
+        return { valid: true, error: null };
+      },
+      async callStrategyModelWithFallback(prompt, screenshots, tag) {
+        repairPrompt = prompt;
+        assert.deepEqual(screenshots, []);
+        assert.equal(tag, 'improve_daily_fix');
+        return 'export function decide(boardState) { const x = helper - 1; return { x, reason: "repaired" }; }';
+      },
+    };
+
+    const result = await validateAndRepairCandidate(
+      improveModule,
+      'const brokenCandidate = true;\nexport function decide(boardState) { return { x: 0, reason: "bad" }} }',
+    );
+
+    assert.equal(result.repairs, 1);
+    assert.equal(result.initialCategory, 'code_error_syntax');
+    assert.equal(result.finalCategory, null);
+    assert.deepEqual(result.validation, { valid: true, error: null });
+    assert.equal(validations.length, 2);
+    assert.doesNotMatch(result.candidate, /brokenCandidate/);
+    assert.match(repairPrompt, /replace ONLY its final decide\(\) function/);
+    assert.match(repairPrompt, /MUST contain ONLY one complete function/);
+    assert.match(repairPrompt, /Do NOT return the rest of strategy\.mjs/);
+    assert.match(repairPrompt, /Do NOT use template literals\/backticks/);
+  });
+});
+
+test('decide-only reconstruction rejects extra module surface before validation', () => {
+  const baseline = 'const helper = 1;\nexport function decide(boardState) { return { x: 0, reason: "baseline" }; }\n';
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { return { x: helper, reason: "safe" }; }',
+    ),
+    'const helper = 1;\nexport function decide(boardState) { return { x: helper, reason: "safe" }; }\n',
+  );
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { return { x: 0, reason: `unsafe-template` }; }',
+    ),
+    null,
+  );
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { import("fs"); return { x: 0, reason: "unsafe" }; }',
+    ),
+    null,
+  );
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { return { x: 0, reason: "safe" }; }\nconst sideEffect = 1;',
+    ),
+    null,
+  );
+  assert.equal(
+    spliceReviewedDecide(
+      baseline,
+      'export function decide(boardState) { return { x: 0, reason: "unterminated" }; ',
+    ),
+    null,
+  );
+});
+
 test('daily candidate repair restores timeout env even when repair model fails', async () => {
   await withBaseline(async () => {
     const oldTotal = process.env.SOREN91_TEXT_OPENCODE_TIMEOUT;
@@ -154,7 +236,7 @@ test('daily repair prompt tells the model to reconstruct from baseline instead o
   assert.equal(classifyCandidateValidation('no decide() function found in output'), 'missing_decide');
 });
 
-test('code errors use a fixed subtype and syntax-safe baseline reconstruction rules', () => {
+test('code errors use fixed subtypes and syntax failures get the narrow decide-only contract', () => {
   assert.equal(
     classifyCandidateValidation('Code error: SyntaxError: Unexpected end of input'),
     'code_error_truncated_or_unterminated',
@@ -182,11 +264,10 @@ test('code errors use a fixed subtype and syntax-safe baseline reconstruction ru
     'const helper = 1;\nexport function decide(boardState) { return { x: 0, reason: "safe" }; }',
   );
   assert.match(prompt, /code_error_truncated_or_unterminated/);
-  assert.match(prompt, /reviewed baseline below is known-good source structure and is authoritative/);
-  assert.match(prompt, /Do NOT copy broken\/truncated structure/);
-  assert.match(prompt, /Preserve the complete tail of the reviewed baseline/);
-  assert.match(prompt, /valid ESM/);
-  assert.match(prompt, /non-authoritative hint only/);
+  assert.match(prompt, /known-good and will be kept byte-for-byte before decide/);
+  assert.match(prompt, /ONLY one complete function/);
+  assert.match(prompt, /Call only helpers\/constants that already exist/);
+  assert.match(prompt, /non-authoritative evidence of intended change only/);
 });
 
 test('daily candidate repair refuses retry budgets above one', async () => {
