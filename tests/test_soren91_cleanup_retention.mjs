@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -81,4 +81,13 @@ test('cleanupRetention ignores unknown files and never touches strategy/state', 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('global tmp cleanup does not bypass the Soren91 retention owner', () => {
+  const source = readFileSync(new URL('../infra/cleanup.sh', import.meta.url), 'utf8');
+  assert.doesNotMatch(
+    source,
+    /soren91\/tmp\/(?:summaries|screenshots|game_screenshots|strategy_snapshots)/,
+  );
+  assert.match(source, /soren91\/cleanup_retention\.mjs/);
 });
