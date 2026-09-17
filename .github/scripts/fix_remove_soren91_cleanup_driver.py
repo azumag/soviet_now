@@ -30,6 +30,15 @@ if old_env in text:
 elif new_env not in text:
     raise SystemExit('cleanup driver tmux env block not found')
 
+old_absence_test = '''    "test('runner invokes main directly without retired improvement env', () => {\\n  assert.match(source, /\\\\n\\\\tnode main\\\\.mjs >>\\\"\\\\$LOG_FILE\\\" 2>&1 &/);\\n  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES/);\\n});\\n",
+'''
+new_absence_test = '''    "test('runner invokes main directly without retired improvement env', () => {\\n  assert.match(source, /\\\\n\\\\tnode main\\\\.mjs >>\\\"\\\\$LOG_FILE\\\" 2>&1 &/);\\n  const retiredExternal = ['SOREN91', 'EXTERNAL', 'IMPROVE'].join('_');\\n  const retiredInterval = ['IMPROVEMENT', 'INTERVAL', 'GAMES'].join('_');\\n  assert.equal(source.includes(retiredExternal), false);\\n  assert.equal(source.includes(retiredInterval), false);\\n});\\n",
+'''
+if old_absence_test in text:
+    text = text.replace(old_absence_test, new_absence_test, 1)
+elif "assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES/)" in text:
+    raise SystemExit('unexpected cleanup driver absence-test formatting')
+
 path.write_text(text, encoding='utf-8')
 
 # The physical retirement deletes soren91/improve.mjs. Remove the one stale
