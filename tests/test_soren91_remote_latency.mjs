@@ -36,6 +36,7 @@ test('local player keeps the existing post-drop probe default untouched', () => 
   assert.equal(evalBlock({}), 'unset');
 });
 
-test('runner still leaves external improve default enabled and invokes main once per attempt', () => {
-  assert.match(source, /SOREN91_EXTERNAL_IMPROVE="\$\{SOREN91_EXTERNAL_IMPROVE:-1\}" node main\.mjs/);
+test('runner permanently hard-disables the retired Soren91 improvement path', () => {
+  assert.match(source, /SOREN91_EXTERNAL_IMPROVE=1 node main\.mjs/);
+  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE="\$\{SOREN91_EXTERNAL_IMPROVE:-1\}"/);
 });

@@ -174,7 +174,10 @@ while true; do
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
 
 	run_start=$(date +%s)
-	SOREN91_EXTERNAL_IMPROVE="${SOREN91_EXTERNAL_IMPROVE:-1}" node main.mjs >>"$LOG_FILE" 2>&1 &
+	# Soren91 automatic strategy improvement is permanently retired. Force the
+	# legacy main.mjs compatibility gate closed even if an old environment still
+	# carries SOREN91_EXTERNAL_IMPROVE=0.
+	SOREN91_EXTERNAL_IMPROVE=1 node main.mjs >>"$LOG_FILE" 2>&1 &
 	CHILD_MAIN_PID=$!
 	wait "$CHILD_MAIN_PID"
 	rc=$?
