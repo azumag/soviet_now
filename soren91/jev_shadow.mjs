@@ -2,7 +2,7 @@
 /**
  * TypeSafe Jev shadow evaluator for Soren91.
  *
- * This module is intentionally outside strategy.mjs.  It tails the existing
+ * This module is intentionally outside strategy.mjs. It tails the existing
  * turn ledger and evaluates decisions asynchronously, so network latency,
  * quota errors, or provider outages can never block gameplay.
  */
@@ -55,6 +55,8 @@ export function loadJevShadowConfig(env = process.env) {
     maxQueue: positiveInt(env.SOREN91_JEV_MAX_QUEUE, DEFAULT_MAX_QUEUE),
     maxInflight: positiveInt(env.SOREN91_JEV_MAX_INFLIGHT, DEFAULT_MAX_INFLIGHT),
     sampleRate: fraction(env.SOREN91_JEV_SAMPLE_RATE, 1),
+    // Backfill means "read the active latest_*.jsonl from offset zero on sidecar
+    // startup". Finalized historical games are never bulk-enqueued implicitly.
     backfill: boolEnv(env.SOREN91_JEV_BACKFILL, false),
     rateLimitCooldownMs: positiveInt(
       env.SOREN91_JEV_RATE_LIMIT_COOLDOWN_MS,
@@ -323,7 +325,7 @@ export function shouldSample(sampleRate, random = Math.random) {
 }
 
 function gameNumberFromHistoryFilename(filename) {
-  const match = filename.match(/^latest_(\d+)\.jsonl$/u);
+  const match = filename.match(/^latest_(\d+)\.jsonl$/u) || filename.match(/^game_(\d+)\.jsonl$/u);
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
@@ -332,6 +334,10 @@ function listActiveHistoryFiles(historyDir) {
   return readdirSync(historyDir)
     .filter(name => /^latest_\d+\.jsonl$/u.test(name))
     .sort();
+}
+
+function finalizedHistoryPath(historyDir, gameNumber) {
+  return join(historyDir, `game_${String(gameNumber).padStart(4, '0')}.jsonl`);
 }
 
 function readCompleteLines(path, offset) {
@@ -421,6 +427,17 @@ export class JevShadowQueue {
   }
 }
 
+function enqueueHistoryBatch({ path, gameNumber, offset, queue }) {
+  const batch = readCompleteLines(path, offset);
+  for (const line of batch.lines) {
+    let record;
+    try { record = JSON.parse(line); } catch { continue; }
+    if (!Number.isInteger(record?.turn) || !record?.state || !record?.decision) continue;
+    queue.enqueue({ gameNumber, record });
+  }
+  return batch.nextOffset;
+}
+
 export async function runJevShadowFollower({
   runtimeDir = HERE,
   config = loadJevShadowConfig(),
@@ -441,38 +458,72 @@ export async function runJevShadowFollower({
   const outputDir = join(runtimeDir, 'tmp', 'jev_shadow');
   mkdirSync(outputDir, { recursive: true });
   const queue = new JevShadowQueue({ config, outputDir, fetchImpl, log });
+  // Offset is keyed by game number, not filename, so a latest_ -> game_ rename
+  // can be drained without losing the final turns between polling intervals.
   const offsets = new Map();
-  const startupFiles = new Set(listActiveHistoryFiles(historyDir));
+  const trackedGames = new Set();
+  const finalizedGames = new Set();
+  const startupFiles = listActiveHistoryFiles(historyDir);
 
   for (const filename of startupFiles) {
+    const gameNumber = gameNumberFromHistoryFilename(filename);
+    if (!gameNumber) continue;
     const path = join(historyDir, filename);
     let size = 0;
     try { size = statSync(path).size; } catch {}
-    offsets.set(filename, config.backfill ? 0 : size);
+    trackedGames.add(gameNumber);
+    offsets.set(gameNumber, config.backfill ? 0 : size);
   }
 
   log(`[jev-shadow] started model=${config.model} sampleRate=${config.sampleRate} backfill=${config.backfill ? 1 : 0}`);
 
   while (!stopSignal()) {
+    const activeGames = new Set();
     for (const filename of listActiveHistoryFiles(historyDir)) {
       const gameNumber = gameNumberFromHistoryFilename(filename);
       if (!gameNumber) continue;
+      activeGames.add(gameNumber);
       const path = join(historyDir, filename);
-      if (!offsets.has(filename)) offsets.set(filename, 0); // new game created after follower start
-      let batch;
-      try {
-        batch = readCompleteLines(path, offsets.get(filename));
-      } catch {
-        continue;
+      if (!trackedGames.has(gameNumber)) {
+        // This game was created after the sidecar started, so its complete ledger
+        // belongs to this live shadow session and starts at offset zero.
+        trackedGames.add(gameNumber);
+        offsets.set(gameNumber, 0);
       }
-      offsets.set(filename, batch.nextOffset);
-      for (const line of batch.lines) {
-        let record;
-        try { record = JSON.parse(line); } catch { continue; }
-        if (!Number.isInteger(record?.turn) || !record?.state || !record?.decision) continue;
-        queue.enqueue({ gameNumber, record });
+      try {
+        offsets.set(gameNumber, enqueueHistoryBatch({
+          path,
+          gameNumber,
+          offset: offsets.get(gameNumber) ?? 0,
+          queue,
+        }));
+      } catch {
+        // History may be atomically renamed between readdir/stat/read. The
+        // finalized path below will drain it on this or the next poll.
       }
     }
+
+    // main.mjs atomically renames latest_XXXX.jsonl to game_XXXX.jsonl at round
+    // end. Drain the finalized file once for games we observed live so the last
+    // lines cannot disappear in the polling race. Untracked historical games
+    // are deliberately ignored to avoid surprise backfill/cost.
+    for (const gameNumber of [...trackedGames]) {
+      if (activeGames.has(gameNumber) || finalizedGames.has(gameNumber)) continue;
+      const finalPath = finalizedHistoryPath(historyDir, gameNumber);
+      if (!existsSync(finalPath)) continue;
+      try {
+        offsets.set(gameNumber, enqueueHistoryBatch({
+          path: finalPath,
+          gameNumber,
+          offset: offsets.get(gameNumber) ?? 0,
+          queue,
+        }));
+        finalizedGames.add(gameNumber);
+      } catch {
+        // Retry on next poll; gameplay is independent of this sidecar.
+      }
+    }
+
     await new Promise(resolvePromise => setTimeout(resolvePromise, config.pollMs));
   }
   return { status: 'stopped', dropped: queue.dropped };
