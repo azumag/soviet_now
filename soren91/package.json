@@ -4,8 +4,7 @@
   "type": "module",
   "description": "Automated player for 91-player Soren game on unityroom",
   "scripts": {
-    "start": "node main.mjs",
-    "improve": "node improve.mjs"
+    "start": "node main.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.0",
