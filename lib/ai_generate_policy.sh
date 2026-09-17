@@ -6,6 +6,10 @@
 # 分ける。特に optional RADIO:*:prepass の一過性障害が同一 tick の本文生成まで
 # 全候補を backoff skip することを防ぐ。
 
+if ! declare -F _ai_priority_prepend >/dev/null; then
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ai_priority_window.sh"
+fi
+
 _ai_failure_backoff_scope() {
 	local label="${1:-AI}" lower
 	lower="${label,,}"

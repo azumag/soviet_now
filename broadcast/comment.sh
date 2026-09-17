@@ -1,5 +1,9 @@
 # broadcast/comment.sh - コメント応答生成, コンテキスト構築, advice抽出
 
+if ! declare -F _ai_priority_prepend >/dev/null; then
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/ai_priority_window.sh"
+fi
+
 #=== コメント関連 ===
 
 _kill_comment_gen() {
