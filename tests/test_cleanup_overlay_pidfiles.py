@@ -49,6 +49,22 @@ class CleanupOverlayPidfilesTests(unittest.TestCase):
         self.assertEqual(result["skipped_alive"], 1)
         self.assertTrue(path.exists())
 
+    def test_symlinked_state_directory_is_never_followed(self) -> None:
+        outside = self.root / "outside-state"
+        outside.mkdir()
+        protected = outside / module.PIDFILE_NAMES[0]
+        protected.write_text("2147483647\n", encoding="ascii")
+        protected.chmod(0o600)
+        self.state.rmdir()
+        self.state.symlink_to(outside, target_is_directory=True)
+
+        with mock.patch.object(module, "_pid_is_alive", return_value=False):
+            result = module.cleanup_overlay_pidfiles(self.root)
+
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(result["skipped_unsafe"], len(module.PIDFILE_NAMES))
+        self.assertTrue(protected.exists())
+
     def test_symlink_and_hardlink_are_never_removed(self) -> None:
         outside = self.root / "outside.pid"
         outside.write_text("2147483647\n", encoding="ascii")
