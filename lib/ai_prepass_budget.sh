@@ -57,7 +57,8 @@ _ai_dispatch() {
 }
 
 ai_generate_list() {
-	local label="${1:-AI}" budget previous_deadline previous_deadline_set=0 rc
+	local label="${1:-AI}" budget previous_deadline previous_deadline_set=0
+	local previous_retry previous_retry_set=0 rc
 	case "${label,,}" in
 	radio:*:prepass*)
 		budget=$(_ai_prepass_total_budget_sec)
@@ -65,13 +66,32 @@ ai_generate_list() {
 			previous_deadline_set=1
 			previous_deadline="$AI_PREPASS_CHAIN_DEADLINE_EPOCH"
 		fi
+		if [ "${OPENCODE_ABORT_RETRY+x}" = x ]; then
+			previous_retry_set=1
+			previous_retry="$OPENCODE_ABORT_RETRY"
+		fi
+		# The OpenCode backend can normally retry the same provider once. That is
+		# useful for required generation, but two full timeout attempts would defeat
+		# a chain-level prepass budget. Optional research therefore uses one attempt
+		# per candidate; required main generation keeps the existing retry policy.
+		export OPENCODE_ABORT_RETRY=0
 		export AI_PREPASS_CHAIN_DEADLINE_EPOCH=$(( $(date +%s) + budget ))
-		_ai_generate_list_without_prepass_budget "$@"
-		rc=$?
+		# Capture a normal all-failed return without letting caller `set -e` skip
+		# restoration of the scoped environment values.
+		if _ai_generate_list_without_prepass_budget "$@"; then
+			rc=0
+		else
+			rc=$?
+		fi
 		if [ "$previous_deadline_set" -eq 1 ]; then
 			export AI_PREPASS_CHAIN_DEADLINE_EPOCH="$previous_deadline"
 		else
 			unset AI_PREPASS_CHAIN_DEADLINE_EPOCH
+		fi
+		if [ "$previous_retry_set" -eq 1 ]; then
+			export OPENCODE_ABORT_RETRY="$previous_retry"
+		else
+			unset OPENCODE_ABORT_RETRY
 		fi
 		return "$rc"
 		;;
