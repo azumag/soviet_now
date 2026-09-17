@@ -107,11 +107,13 @@ sub(
     r"\n\t# メリケンAIモード判定 .*?\n\t# 多重runner防止",
     "\n\t# 多重runner防止",
 )
-replace(
-    "soren91_control.sh",
-    " SOREN91_EXTERNAL_IMPROVE='${_ext_improve}' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}'",
-    "",
-)
+text = load("soren91_control.sh")
+for token in (
+    " SOREN91_EXTERNAL_IMPROVE='$_ext_improve'",
+    " IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}'",
+):
+    text = text.replace(token, "")
+save("soren91_control.sh", text)
 filter_lines("soren91_control.sh", [
     'SOREN91_EXTERNAL_IMPROVE="$_ext_improve"',
     'IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}"',
@@ -203,7 +205,7 @@ sub(
 replace(
     "tests/test_soren91_remote_latency.mjs",
     "test('runner permanently hard-disables the retired Soren91 improvement path', () => {\n  assert.match(source, /SOREN91_EXTERNAL_IMPROVE=1 node main\\.mjs/);\n  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE=\"\\$\\{SOREN91_EXTERNAL_IMPROVE:-1\\}\"/);\n});\n",
-    "test('runner invokes main directly without retired improvement env', () => {\n  assert.match(source, /\\n\\tnode main\\.mjs >>\"\\$LOG_FILE\" 2>&1 &/);\n  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES/);\n});\n",
+    "test('runner invokes main directly without retired improvement env', () => {\n  assert.match(source, /\\n\\tnode main\\.mjs >>\"\\$LOG_FILE\" 2>&1 &/);\n  const retiredExternal = ['SOREN91', 'EXTERNAL', 'IMPROVE'].join('_');\n  const retiredInterval = ['IMPROVEMENT', 'INTERVAL', 'GAMES'].join('_');\n  assert.equal(source.includes(retiredExternal), false);\n  assert.equal(source.includes(retiredInterval), false);\n});\n",
 )
 replace(
     "tests/test_escape_mechanisms.py",

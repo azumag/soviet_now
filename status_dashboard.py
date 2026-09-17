@@ -63,12 +63,6 @@ CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 ANNEALING_OBSERVE_FILE = "tmp/state/annealing_candidates.jsonl"
 WILDCARD_ATTEMPT_STATE_FILE = "tmp/state/wildcard_attempt_state.json"
 VIEWER_CHAT_MONITOR_FILE = os.getenv("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json")
-SOREN91_IMPROVE_LOCK_FILE = os.getenv("SOREN91_IMPROVE_LOCK", "soren91/tmp/soren91_improve.lock")
-SOREN91_IMPROVE_PID_FILE = os.getenv("SOREN91_IMPROVE_PID_FILE", "soren91/tmp/soren91_improve.pid")
-SOREN91_IMPROVE_HUNG_QUARANTINE_FILE = os.getenv(
-    "SOREN91_IMPROVE_HUNG_QUARANTINE_FILE",
-    "tmp/state/soren91_improve_hung_quarantine.jsonl",
-)
 ARCHIVE_RESTART_COOLDOWN_FILE = "tmp/state/archive_restart_cooldown.json"
 ARCHIVE_RESTART_COOLDOWN_SEC = 21600
 ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE = "tmp/state/.archive_restart_no_candidate"
@@ -1610,67 +1604,6 @@ def load_improve_backoff_status():
     }
 
 
-def load_soren91_improve_watchdog_status():
-    lock_path = Path(SOREN91_IMPROVE_LOCK_FILE)
-    pid_path = Path(SOREN91_IMPROVE_PID_FILE)
-    q_path = Path(SOREN91_IMPROVE_HUNG_QUARANTINE_FILE)
-    now = int(time.time())
-    status = None
-
-    if lock_path.exists():
-        try:
-            lock_age = max(0, now - int(lock_path.stat().st_mtime))
-        except Exception:
-            lock_age = 0
-        pid = ""
-        if pid_path.exists():
-            try:
-                pid = pid_path.read_text(encoding="utf-8", errors="ignore").strip()
-            except Exception:
-                pid = ""
-        status = {
-            "kind": "lock",
-            "label": f"lock {fmt_age(lock_age)} pid={pid or '?'}",
-            "age_sec": lock_age,
-        }
-
-    last = None
-    if q_path.exists():
-        try:
-            for raw in q_path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    row = json.loads(raw)
-                except Exception:
-                    continue
-                if isinstance(row, dict):
-                    last = row
-        except Exception:
-            last = None
-
-    if last:
-        try:
-            age = max(0, now - int(last.get("epoch", 0) or 0))
-        except Exception:
-            age = 0
-        reason = str(last.get("reason", "") or last.get("event", "") or "unknown")
-        pid = last.get("pid")
-        pid_text = "?" if pid in (None, "") else str(pid)
-        q_label = f"last {reason} {fmt_age(age)} pid={pid_text}"
-        if status:
-            status["last_label"] = q_label
-            return status
-        return {
-            "kind": "last",
-            "label": q_label,
-            "age_sec": age,
-        }
-
-    return status
-
-
 def load_latest_annealing_candidate():
     p = Path(ANNEALING_OBSERVE_FILE)
     if not p.exists():
@@ -2907,13 +2840,6 @@ def render_observer_status():
             f" {C_YELLOW}ImproveBackoff{RST} count={backoff.get('count', 0)} "
             f"rem={backoff.get('remaining', '')} wait={backoff.get('wait', '')}"
         )
-    soren91_watchdog = load_soren91_improve_watchdog_status()
-    if soren91_watchdog:
-        color = C_RED if soren91_watchdog.get("kind") == "lock" else C_YELLOW
-        detail = soren91_watchdog.get("label", "")
-        if soren91_watchdog.get("last_label"):
-            detail = f"{detail}; {soren91_watchdog.get('last_label')}"
-        lines.append(f" {color}S91Improve{RST} {detail}")
 
     anneal = load_latest_annealing_candidate()
     if anneal:

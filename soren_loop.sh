@@ -1064,7 +1064,6 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		else
 			log "[MERIKEN_TIME] 定時メリケンAIタイム無効のため、soren91を通常停止"
 			soren91_stop 2>/dev/null || true
-			soren91_improve 2>/dev/null || true
 		fi
 	fi
 

@@ -767,15 +767,6 @@ _improve_overlay_watch_start() {
 	echo $!
 }
 
-_post_improve_soren91_session_improve() {
-	local reason="${1:-normal}"
-	if [ "${POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0}" != "1" ]; then
-		log "[SOREN91] post-improve session improve skipped (reason=${reason}, POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED=0)"
-		return 0
-	fi
-	soren91_improve
-}
-
 #=== 改善ステート管理 ===
 
 _read_improve_state() {
@@ -1404,13 +1395,11 @@ json.dump(rs, open(rs_file, 'w'))
 			log "[IMPROVE][MANUAL] manual_meriken_mode=on のため、メリケンAI継続"
 		elif _scheduled_meriken_time_should_run; then
 			log "[IMPROVE][MANUAL] 20時台: メリケンAIタイムに移行 → soren91継続"
-			_post_improve_soren91_session_improve "manual_scheduled_meriken"
 			MERIKEN_TIME_PENDING=1
 			touch "tmp/state/meriken_time_pending"
 		else
 			soren91_stop
 			[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
-			_post_improve_soren91_session_improve "manual"
 		fi
 		return 0
 	fi
@@ -1753,7 +1742,7 @@ PY
 			fi
 			case "$prev_improve_reason" in
 			wildcard|archive_restart)
-				log "[WILDCARD] ${prev_improve_reason} 完了: 高速脱出のため soren91_stop/soren91_improve/handover/bridge再起動をスキップ"
+				log "[WILDCARD] ${prev_improve_reason} 完了: 高速脱出のため soren91_stop/handover/bridge再起動をスキップ"
 				_improve_overlay_hide_after "${IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC:-45}"
 				return 0
 				;;
@@ -1766,7 +1755,6 @@ PY
 			elif _scheduled_meriken_time_should_run; then
 				# 20時台: メリケンAIタイムに移行するため停止しない
 				log "[IMPROVE] 20時台: メリケンAIタイムに移行 → soren91継続"
-				_post_improve_soren91_session_improve "scheduled_meriken"
 				MERIKEN_TIME_PENDING=1
 				touch "tmp/state/meriken_time_pending"
 			else
@@ -1775,7 +1763,6 @@ PY
 				# 改善完了マーカ: 次の (カスケード) 改善ロックに即 PAUSE する前に
 				# soren_loop がメインゲームを最低1回走らせる窓を保証する
 				[ "${POST_IMPROVE_MAINPLAY_ENABLED:-1}" = "1" ] && touch "${POST_IMPROVE_MAINPLAY_MARKER:-$TMP_STATE_DIR/.post_improve_mainplay}" 2>/dev/null || true
-				_post_improve_soren91_session_improve "$prev_improve_reason"
 				# 読み上げ + Twitch チャットに戦略改善終了を通知 (1サイクル1回のみ)
 				local _handover_guard="$TMP_STATE_DIR/handover_announced"
 				if [ ! -f "$_handover_guard" ]; then

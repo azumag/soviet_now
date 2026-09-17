@@ -77,10 +77,8 @@ if [ "${EXPLORE_MODE:-0}" = "1" ]; then
 	soren91_stop() { return 0; }
 	soren91_cleanup() { return 0; }
 	soren91_is_running() { return 1; }
-	soren91_improve() { return 0; }
 	soren91_stop_in_progress() { return 1; }
 	soren91_handover() { return 0; }
-	soren91_harvest_hung_improve() { return 0; }
 	_soren91_enabled() { return 1; } # 定時メリケン枠を無効化
 	_soren91_switch_obs_layout() { return 0; }
 	_soren91_stop_in_progress() { return 1; }

@@ -12321,25 +12321,13 @@ _prune_expired_rejected_hashes
         self.assertIn('_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at" "$pid_birth_epoch" "$improve_reason"', improve)
         self.assertIn('reason in {"wildcard", "archive_restart"}', improve)
         self.assertIn("wildcard|archive_restart)", improve)
-        self.assertIn("soren91_stop/soren91_improve/handover/bridge再起動をスキップ", improve)
+        self.assertIn("soren91_stop/handover/bridge再起動をスキップ", improve)
         self.assertIn('_improve_overlay_hide_after "${IMPROVE_FAST_ESCAPE_OVERLAY_HOLD_SEC:-45}"', improve)
         self.assertIn("improve_overlay_hide_token", improve)
         self.assertIn("_live_improve_pid=", loop)
         self.assertIn("実改善PIDなし: soren91は起動せず回収待ち", loop)
         self.assertIn("wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)", loop)
         self.assertIn("手動改善待ちは実改善PIDがないため soren91 代打は起動しない", improve)
-
-    def test_post_improve_soren91_session_improve_is_opt_in(self):
-        config = (REPO_ROOT / "core/config.sh").read_text()
-        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
-
-        self.assertIn('POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED="${POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0}"', config)
-        self.assertIn("_post_improve_soren91_session_improve()", improve)
-        self.assertIn('POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED:-0', improve)
-        self.assertIn("post-improve session improve skipped", improve)
-        self.assertIn('_post_improve_soren91_session_improve "$prev_improve_reason"', improve)
-        self.assertIn('_post_improve_soren91_session_improve "manual"', improve)
-        self.assertIn('_post_improve_soren91_session_improve "scheduled_meriken"', improve)
 
     def test_improve_and_system_progress_are_queued_for_audio_worker(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -12385,7 +12373,7 @@ _prune_expired_rejected_hashes
         self.assertIn('${SYSTEM_PROGRESS_AUDIO_SPEAKER:-${SOREN91_VOICEVOX_SPEAKER:-46}}', system_report)
         self.assertIn("システム改善進捗", system_report)
 
-    def test_soren91_improve_hang_is_bounded_by_watchdog(self):
+    def test_improve_hang_is_bounded_by_watchdog(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         control = (REPO_ROOT / "soren91_control.sh").read_text()
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
@@ -12427,29 +12415,6 @@ _prune_expired_rejected_hashes
         self.assertIn("pid_alive=false", improve)
         self.assertIn("停止に失敗したためrunning扱いを維持", improve)
         self.assertIn("通常改善が無音で固まったため", improve)
-        self.assertIn("SOREN91_IMPROVE_HUNG_HARVEST_ENABLED", config)
-        self.assertIn("SOREN91_IMPROVE_HUNG_SEC", config)
-        self.assertIn("SOREN91_IMPROVE_HUNG_QUARANTINE_FILE", config)
-        self.assertIn("soren91_harvest_hung_improve()", control)
-        self.assertIn("soren91_harvest_hung_improve || true", control)
-        self.assertIn('if _soren91_is_improve_process "$imp_pid"; then', control)
-        self.assertIn("[ \"$lock_age\" -ge \"$threshold\" ]", control)
-        self.assertIn("[ \"$log_age\" -ge \"$threshold\" ]", control)
-        self.assertIn("[ \"$eval_age\" -lt \"$threshold\" ]", control)
-        self.assertIn("hung improve harvest defer", control)
-        self.assertIn('"eval_age": int(eval_age)', control)
-        self.assertIn("_soren91_is_improve_process \"$pid\"", control)
-        self.assertIn("_soren91_record_improve_stale_cleanup()", control)
-        self.assertIn("soren91_improve_stale_cleanup", control)
-        self.assertIn("invalid_pid", control)
-        self.assertIn("pid_not_alive_or_not_improve", control)
-        self.assertIn("log_tail", control)
-        self.assertIn("メリケンAI改善が途中終了したため", control)
-        self.assertIn("_stop_loop_descendants \"$pid\"", control)
-        self.assertIn("_stop_pid_with_fallback \"$pid\" \"soren91_improve_hung\"", control)
-        self.assertIn("soren91_improve_hung_quarantine", control)
-        self.assertIn("enqueue_audio_text \"メリケンAI改善が無音で固まったため", control)
-        self.assertIn("soren91_harvest_hung_improve || true", improve)
 
     def test_startup_validation_does_not_reset_current_run_hash(self):
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
@@ -13136,16 +13101,9 @@ PY
         self.assertIn("ChatObs", dashboard)
         self.assertIn("load_improve_backoff_status", dashboard)
         self.assertIn("ImproveBackoff", dashboard)
-        self.assertIn("SOREN91_IMPROVE_HUNG_QUARANTINE_FILE", dashboard)
-        self.assertIn("load_soren91_improve_watchdog_status", dashboard)
-        self.assertIn("S91Improve", dashboard)
-        self.assertIn("soren91_improve_hung_quarantine.jsonl", dashboard)
         self.assertIn("viewer_chat_monitor.sh", status)
         self.assertIn("viewer_chat_label", status)
         self.assertIn("ChatObs", status)
-        self.assertIn("soren91_improve_watchdog_label", status)
-        self.assertIn("S91Improve", status)
-        self.assertIn("soren91_improve_hung_quarantine.jsonl", status)
 
     def test_twitch_daemon_uses_complete_anonymous_handshake_and_logs_reconnects(self):
         daemon = (REPO_ROOT / "twitch_chat_daemon.sh").read_text()

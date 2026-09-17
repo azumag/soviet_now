@@ -1874,74 +1874,6 @@ PY
 )
 		fi
 
-		# --- soren91 改善 watchdog / quarantine 観測 ---
-		local soren91_improve_watchdog_label="none"
-		eval $(python3 - \
-			"${SOREN91_IMPROVE_LOCK:-soren91/tmp/soren91_improve.lock}" \
-			"${SOREN91_IMPROVE_PID_FILE:-soren91/tmp/soren91_improve.pid}" \
-			"${SOREN91_IMPROVE_HUNG_QUARANTINE_FILE:-tmp/state/soren91_improve_hung_quarantine.jsonl}" <<'PY' 2>/dev/null
-import json
-import os
-import shlex
-import sys
-import time
-
-lock_file, pid_file, quarantine_file = sys.argv[1:4]
-now = int(time.time())
-
-def fmt_age(seconds):
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    return f"{seconds // 3600}h"
-
-parts = []
-if os.path.exists(lock_file):
-    try:
-        age = now - int(os.path.getmtime(lock_file))
-    except Exception:
-        age = 0
-    pid = "?"
-    try:
-        if os.path.exists(pid_file):
-            pid = open(pid_file, encoding="utf-8", errors="ignore").read().strip() or "?"
-    except Exception:
-        pid = "?"
-    parts.append(f"lock {fmt_age(age)} pid={pid}")
-
-last = None
-if os.path.exists(quarantine_file):
-    try:
-        with open(quarantine_file, encoding="utf-8", errors="ignore") as f:
-            for raw in f:
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    row = json.loads(raw)
-                except Exception:
-                    continue
-                if isinstance(row, dict):
-                    last = row
-    except Exception:
-        last = None
-if isinstance(last, dict):
-    try:
-        age = now - int(last.get("epoch", 0) or 0)
-    except Exception:
-        age = 0
-    reason = str(last.get("reason") or last.get("event") or "unknown")
-    pid = last.get("pid")
-    pid_text = "?" if pid in (None, "") else str(pid)
-    parts.append(f"last {reason} {fmt_age(age)} pid={pid_text}")
-
-label = "; ".join(parts) if parts else "none"
-print("soren91_improve_watchdog_label=" + shlex.quote(label))
-PY
-)
-		soren91_improve_watchdog_label=$(_truncate_display_width_keep_tail "$soren91_improve_watchdog_label" 48)
 
 		# --- 最低試合ゲート ---
 		local min_games="${MIN_GAMES_BEFORE_IMPROVE_ENV:-$(_config_int_default MIN_GAMES_BEFORE_IMPROVE 12)}"
@@ -2852,9 +2784,6 @@ PY
 			fi
 			if [[ "$improve_backoff_label" != "none" ]]; then
 				printf "    ${C_YELLOW}▸${C_RESET} ImproveBack ${C_YELLOW}%s${C_RESET}\n" "$improve_backoff_label"
-			fi
-			if [[ "$soren91_improve_watchdog_label" != "none" ]]; then
-				printf "    ${C_YELLOW}▸${C_RESET} S91Improve  ${C_YELLOW}%s${C_RESET}\n" "$soren91_improve_watchdog_label"
 			fi
 
 			echo ""

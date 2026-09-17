@@ -16,7 +16,7 @@ Soren91 自身が LLM を呼び、試合後・一定試合数ごと・日次ス�
 - retained evidence からの無人candidate/PR生成
 - 環境変数で旧自動改善を再有効化する経路の追加
 
-`improve.mjs` は旧呼び出し元との互換のための no-op tombstone であり、LLM呼び出し・戦略変更・PR作成をしてはならない。
+旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも残さない。Soren91 runtimeに自動改善を起動する実行モジュールを再導入してはならない。
 
 ## 実行
 ```bash
@@ -36,7 +36,6 @@ strategy_contract.mjs    # 戦略契約
 critical_turn_screenshots.mjs # 重要局面の証拠選別
 daily_evidence.mjs       # 保存履歴の解析helper。自動triggerではない
 cleanup_retention.mjs    # evidenceのage-based retention
-improve.mjs              # 廃止済み自動改善の互換no-op
 
 game_history/            # JSONL試合履歴
 tmp/summaries/           # summary
