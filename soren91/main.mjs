@@ -131,9 +131,66 @@ const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
 
+// Remote CDP 越しの locator.screenshot() / locator.boundingBox() は
+// actionability チェックの往復で 1 回 2〜6 秒かかり、ドロップ間隔とランキング
+// 探査バーストを大きく遅らせる (1ドロップが数十秒〜150秒)。canvas 位置は
+// セッション中ほぼ不変なので getBoundingClientRect を1回だけ取り、
+// 生の Page.captureScreenshot (0.3 秒程度) を再利用する。
+const cdpCaptureStates = new WeakMap();
+
+async function captureState(page) {
+  let state = cdpCaptureStates.get(page);
+  if (state) return state;
+  const session = await page.context().newCDPSession(page);
+  state = { session, clip: null, clipReady: false };
+  cdpCaptureStates.set(page, state);
+  page.once('close', () => {
+    cdpCaptureStates.delete(page);
+    Promise.resolve(session.detach()).catch(() => {});
+  });
+  return state;
+}
+
+async function detectCanvasClip(page) {
+  try {
+    const rect = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return null;
+      const r = canvas.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    if (rect && rect.width > 1 && rect.height > 1) {
+      return {
+        x: Math.max(0, Math.floor(rect.x)),
+        y: Math.max(0, Math.floor(rect.y)),
+        width: Math.max(1, Math.round(rect.width)),
+        height: Math.max(1, Math.round(rect.height)),
+        scale: 1,
+      };
+    }
+  } catch {}
+  return null;
+}
+
 async function captureGameScreenshot(page, path) {
-  const canvas = page.locator('canvas').first();
-  await canvas.screenshot({ path });
+  for (let attempt = 0; ; attempt++) {
+    const state = await captureState(page);
+    if (!state.clipReady) {
+      state.clip = await detectCanvasClip(page);
+      state.clipReady = true;
+    }
+    const params = state.clip ? { format: 'png', clip: state.clip } : { format: 'png' };
+    try {
+      const { data } = await state.session.send('Page.captureScreenshot', params);
+      writeFileSync(path, Buffer.from(data, 'base64'));
+      return;
+    } catch (err) {
+      // セッション/ページ差し替えで切れた場合はキャッシュを捨てて一度だけ作り直す。
+      cdpCaptureStates.delete(page);
+      Promise.resolve(state.session.detach()).catch(() => {});
+      if (attempt >= 1) throw err;
+    }
+  }
 }
 
 async function setNormalGameLifecycle(browser, state) {
