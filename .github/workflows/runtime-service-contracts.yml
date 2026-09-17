@@ -9,6 +9,7 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'wait_soren_runtime_prereqs.sh'
       - '.github/workflows/runtime-service-contracts.yml'
   push:
     branches: [main]
@@ -19,6 +20,7 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'wait_soren_runtime_prereqs.sh'
       - '.github/workflows/runtime-service-contracts.yml'
 
 permissions:
