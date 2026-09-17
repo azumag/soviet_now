@@ -145,7 +145,7 @@ async function captureGameScreenshot(page, path, options = {}) {
     options.timeoutMs ?? Infinity,
   );
   if (!(timeoutMs > 0)) throw new Error('capture-budget-exhausted');
-  if (remoteBrowserOwnsViewport() && process.env.SOREN91_CAPTURE_MODE !== 'locator') {
+  if (process.env.SOREN91_CAPTURE_MODE !== 'locator') {
     const frame = await canvasIO.capture(page, { timeoutMs });
     // Only a completed, geometry-checked canvas frame reaches disk/the analyzer.
     writeFileSync(path, frame.buffer);
