@@ -31,3 +31,21 @@ elif new_env not in text:
     raise SystemExit('cleanup driver tmux env block not found')
 
 path.write_text(text, encoding='utf-8')
+
+# The physical retirement deletes soren91/improve.mjs. Remove the one stale
+# play-contract assertion that still opens that tombstone; the shared behavior
+# validator itself remains covered by the adjacent generated-strategy tests.
+test_path = Path('tests/test_soren91_play.mjs')
+test_text = test_path.read_text(encoding='utf-8')
+stale_test = '''test('both improvement paths use the shared validator before adoption', () => {
+  const source = readFileSync(new URL('../soren91/improve.mjs', import.meta.url), 'utf8');
+  assert.ok(source.includes('const behavior = validateStrategyBehavior(module.decide);'));
+  assert.ok(source.includes('if (!behavior.valid) return behavior;'));
+  assert.equal((source.match(/let validationResult = await validateStrategy\\(newStrategy\\);/g) || []).length, 2);
+  assert.ok(source.includes('${STRATEGY_CONTRACT}'));
+});
+'''
+if stale_test in test_text:
+    test_path.write_text(test_text.replace(stale_test, '', 1), encoding='utf-8')
+elif "../soren91/improve.mjs" in test_text:
+    raise SystemExit('unexpected remaining Soren91 improve.mjs test reference')
