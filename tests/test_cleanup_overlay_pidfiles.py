@@ -8,7 +8,7 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HELPER = REPO_ROOT / "lib" / "cleanup_overlay_pidfiles.py"
-UNIT = REPO_ROOT / "deploy" / "soren-runtime" / "soren-runtime.service"
+PREREQS = REPO_ROOT / "wait_soren_runtime_prereqs.sh"
 
 spec = importlib.util.spec_from_file_location("cleanup_overlay_pidfiles", HELPER)
 assert spec and spec.loader
@@ -114,12 +114,12 @@ class CleanupOverlayPidfilesTests(unittest.TestCase):
         self.assertEqual(result["skipped_unsafe"], 1)
         self.assertTrue(path.exists())
 
-    def test_runtime_unit_runs_cleanup_only_after_control_group_stop(self) -> None:
-        unit = UNIT.read_text(encoding="utf-8")
-        cleanup = "ExecStopPost=-/usr/bin/python3 /home/ubuntu/soren/lib/cleanup_overlay_pidfiles.py"
-        self.assertIn("KillMode=control-group", unit)
-        self.assertIn(cleanup, unit)
-        self.assertGreater(unit.index(cleanup), unit.index("ExecStopPost=-/usr/bin/tmux kill-session -t soren_show_status_overlay"))
+    def test_existing_prereq_hook_runs_cleanup_fail_open_before_runtime_checks(self) -> None:
+        source = PREREQS.read_text(encoding="utf-8")
+        cleanup = 'python3 "$SCRIPT_DIR/lib/cleanup_overlay_pidfiles.py" >/dev/null 2>&1 || true'
+        self.assertIn(cleanup, source)
+        self.assertIn('SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"', source)
+        self.assertLess(source.index(cleanup), source.index("for command_name in pactl xdpyinfo"))
 
 
 if __name__ == "__main__":
