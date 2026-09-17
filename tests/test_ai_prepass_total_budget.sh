@@ -12,7 +12,7 @@ printf 'test prompt\n' >"$prompt"
 log() { :; }
 
 # Minimal versions of the two functions wrapped by ai_prepass_budget.sh. The
-# fake chain preserves rc=93 as "not attempted", matching the real policy.
+# attempt log records only candidates that actually reach the underlying dispatch.
 _ai_dispatch() {
 	local label="$1" agent="$2" _prompt="$3" timeout_override="${4:-}"
 	printf '%s|%s|%s|%s\n' "$label" "$agent" "$timeout_override" "${OPENCODE_ABORT_RETRY:-unset}" >>"$ATTEMPT_LOG"
@@ -42,9 +42,6 @@ ai_generate_list() {
 		else
 			rc=$?
 		fi
-		if [ "$rc" -eq 93 ]; then
-			continue
-		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ]; then
 			printf '%s' "$output"
 			return 0
@@ -61,10 +58,8 @@ pass() { printf 'ok - %s\n' "$1"; ok=$((ok + 1)); }
 fail_case() { printf 'not ok - %s\n' "$1" >&2; fail=$((fail + 1)); }
 
 # 1. Optional prepass uses one wall-clock budget. The first slow candidate gets
-# the remaining budget; after it consumes the second, later candidates are not
-# dispatched at all and therefore cannot extend lane ownership. Same-provider
-# retry is disabled only inside the optional prepass so one backend cannot spend
-# the remaining budget twice.
+# the remaining budget; later candidates never reach the provider dispatch. Retry
+# policy is restored when the scoped chain returns.
 : >"$ATTEMPT_LOG"
 RADIO_PREPASS_TOTAL_BUDGET_SEC=1
 export OPENCODE_ABORT_RETRY=1
@@ -81,48 +76,133 @@ else
 	fail_case "optional prepass total budget (lines=$lines timeout=$first_timeout retry=$first_retry elapsed=$elapsed restored=${OPENCODE_ABORT_RETRY:-unset})"
 fi
 
-# 2. Required main generation is not constrained by the prepass budget shim and
-# retains the normal OpenCode retry policy.
+# 2. Normal on-air main generation has its own larger total budget. A slow first
+# candidate cannot spend the same budget twice via OpenCode retry, and candidates
+# after the deadline are skipped before provider dispatch.
 : >"$ATTEMPT_LOG"
-main_out=$(ai_generate_list 'RADIO:news' "$prompt" 'success' 2>/dev/null || true)
-main_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
-main_retry=$(awk -F'|' 'NR==1 {print $4}' "$ATTEMPT_LOG")
-if [ "$main_out" = ok ] && [ -z "$main_timeout" ] && [ "$main_retry" = 1 ]; then
-	pass 'radio main timeout and retry policy are unchanged'
+RADIO_MAIN_TOTAL_BUDGET_SEC=1
+export OPENCODE_ABORT_RETRY=1
+start=$(date +%s)
+main_timed_out=$(ai_generate_list 'RADIO:news' "$prompt" 'slow,success' '' '_radio_is_valid_generation_candidate' 2>/dev/null || true)
+elapsed=$(( $(date +%s) - start ))
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+first_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+first_retry=$(awk -F'|' 'NR==1 {print $4}' "$ATTEMPT_LOG")
+if [ -z "$main_timed_out" ] && [ "$lines" -eq 1 ] && [ "$first_timeout" = 1 ] \
+	&& [ "$first_retry" = 0 ] && [ "$elapsed" -le 2 ] && [ "$OPENCODE_ABORT_RETRY" = 1 ]; then
+	pass 'live radio main releases after total budget without partial output'
 else
-	fail_case "radio main policy unchanged (out=$main_out timeout=$main_timeout retry=$main_retry)"
+	fail_case "live main total budget (out=$main_timed_out lines=$lines timeout=$first_timeout retry=$first_retry elapsed=$elapsed restored=${OPENCODE_ABORT_RETRY:-unset})"
 fi
 
-# 3. A caller-provided timeout shorter than the remaining total budget remains
-# authoritative; the shim only tightens, never lengthens, per-dispatch limits.
+# 3. Healthy live main output still completes; the default chain budget is passed
+# down as the provider timeout and retry policy is restored afterwards.
+: >"$ATTEMPT_LOG"
+unset RADIO_MAIN_TOTAL_BUDGET_SEC
+main_out=$(ai_generate_list 'RADIO:weather' "$prompt" 'success' '' '_radio_is_valid_generation_candidate' 2>/dev/null || true)
+main_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+main_retry=$(awk -F'|' 'NR==1 {print $4}' "$ATTEMPT_LOG")
+if [ "$main_out" = ok ] && [ "$main_timeout" -ge 179 ] && [ "$main_timeout" -le 180 ] \
+	&& [ "$main_retry" = 0 ] && [ "$OPENCODE_ABORT_RETRY" = 1 ]; then
+	pass 'healthy live radio main succeeds inside bounded chain'
+else
+	fail_case "healthy live main (out=$main_out timeout=$main_timeout retry=$main_retry restored=${OPENCODE_ABORT_RETRY:-unset})"
+fi
+
+# 4. RADIO users that are not the normal on-air main-generation contract remain
+# untouched. This prevents a generic RADIO:* match from changing batch/poll policy.
+: >"$ATTEMPT_LOG"
+batch_out=$(ai_generate_list 'RADIO:batch_commentary' "$prompt" 'success' 2>/dev/null || true)
+batch_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+batch_retry=$(awk -F'|' 'NR==1 {print $4}' "$ATTEMPT_LOG")
+if [ "$batch_out" = ok ] && [ -z "$batch_timeout" ] && [ "$batch_retry" = 1 ]; then
+	pass 'non-live RADIO chain keeps existing timeout and retry policy'
+else
+	fail_case "non-live RADIO policy (out=$batch_out timeout=$batch_timeout retry=$batch_retry)"
+fi
+
+# 5. Caller-provided timeouts shorter than either total budget stay authoritative.
 : >"$ATTEMPT_LOG"
 RADIO_PREPASS_TOTAL_BUDGET_SEC=5
 prepass_out=$(ai_generate_list 'RADIO:weather:prepass' "$prompt" 'success' 2 2>/dev/null || true)
-explicit_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
-if [ "$prepass_out" = ok ] && [ "$explicit_timeout" = 2 ]; then
-	pass 'explicit shorter prepass timeout is preserved'
+prepass_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+: >"$ATTEMPT_LOG"
+RADIO_MAIN_TOTAL_BUDGET_SEC=5
+main_short_out=$(ai_generate_list 'RADIO:weather' "$prompt" 'success' 2 '_radio_is_valid_generation_candidate' 2>/dev/null || true)
+main_short_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+if [ "$prepass_out" = ok ] && [ "$prepass_timeout" = 2 ] \
+	&& [ "$main_short_out" = ok ] && [ "$main_short_timeout" = 2 ]; then
+	pass 'explicit shorter timeout is preserved for prepass and main'
 else
-	fail_case "explicit shorter timeout preserved (out=$prepass_out timeout=$explicit_timeout)"
+	fail_case "explicit shorter timeout (prepass=$prepass_timeout main=$main_short_timeout)"
 fi
 
-# 4. Misconfiguration cannot silently restore multi-minute optional ownership.
+# 6. Misconfiguration cannot silently restore multi-minute lane ownership.
 RADIO_PREPASS_TOTAL_BUDGET_SEC=garbage
-invalid=$(_ai_prepass_total_budget_sec)
+prepass_invalid=$(_ai_prepass_total_budget_sec)
 RADIO_PREPASS_TOTAL_BUDGET_SEC=99999
-capped=$(_ai_prepass_total_budget_sec)
-if [ "$invalid" = 60 ] && [ "$capped" = 120 ]; then
-	pass 'prepass budget defaults safely and is capped at two minutes'
+prepass_capped=$(_ai_prepass_total_budget_sec)
+RADIO_MAIN_TOTAL_BUDGET_SEC=garbage
+main_invalid=$(_ai_radio_main_total_budget_sec)
+RADIO_MAIN_TOTAL_BUDGET_SEC=99999
+main_capped=$(_ai_radio_main_total_budget_sec)
+if [ "$prepass_invalid" = 60 ] && [ "$prepass_capped" = 120 ] \
+	&& [ "$main_invalid" = 180 ] && [ "$main_capped" = 240 ]; then
+	pass 'radio chain budgets default safely and have hard caps'
 else
-	fail_case "prepass budget validation (invalid=$invalid capped=$capped)"
+	fail_case "budget validation (prepass=$prepass_invalid/$prepass_capped main=$main_invalid/$main_capped)"
 fi
 
-# 5. Runtime shim must load the budget wrapper after the policy implementation.
+# 7. Exercise the real generation-lane lock around a budgeted fake provider. Once
+# the budgeted main chain returns, no stale radio lock remains and the next caller
+# can acquire the same lane immediately.
+if (
+	set -euo pipefail
+	ELOOP_LIB_DIR="$ROOT"
+	AI_GENERATION_QUEUE_LOCK_DIR="$TMP/real-radio-lane"
+	AI_RADIO_QUEUE_MAX_WAIT_SEC=2
+	AI_GENERATION_QUEUE_WAIT_SEC=1
+	source "$ROOT/lib/ai_generate.sh"
+	log() { :; }
+	_queued_provider() {
+		local delay="${1:-1}"
+		sleep "$delay"
+		return 1
+	}
+	_ai_dispatch() {
+		local label="$1" _agent="$2" _prompt="$3" timeout_override="${4:-1}"
+		_ai_generation_queue_run "$label" _queued_provider "$timeout_override"
+	}
+	ai_generate_list() {
+		local label="$1" prompt_file="$2" raw="$3" timeout_override="${4:-}"
+		local agent output rc
+		local agents=()
+		IFS=',' read -ra agents <<<"$raw"
+		for agent in "${agents[@]}"; do
+			if output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override"); then rc=0; else rc=$?; fi
+			if [ "$rc" -eq 0 ] && [ -n "$output" ]; then printf '%s' "$output"; return 0; fi
+		done
+		return 1
+	}
+	source "$ROOT/lib/ai_prepass_budget.sh"
+	RADIO_MAIN_TOTAL_BUDGET_SEC=1
+	ai_generate_list 'RADIO:news' "$prompt" 'slow,success' '' '_radio_is_valid_generation_candidate' >/dev/null 2>&1 || true
+	[ ! -d "$AI_GENERATION_QUEUE_LOCK_DIR" ]
+	_ai_generation_queue_run 'RADIO:next' true
+	[ ! -d "$AI_GENERATION_QUEUE_LOCK_DIR" ]
+); then
+	pass 'budgeted main releases real radio lane for next caller'
+else
+	fail_case 'budgeted main releases real radio lane for next caller'
+fi
+
+# 8. Runtime shim must load the budget wrapper after the policy implementation.
 policy_line=$(grep -nF 'source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"' "$ROOT/eloop_lib.sh" | cut -d: -f1)
 budget_line=$(grep -nF 'source "$ELOOP_LIB_DIR/lib/ai_prepass_budget.sh"' "$ROOT/eloop_lib.sh" | cut -d: -f1)
 if [ -n "$policy_line" ] && [ -n "$budget_line" ] && [ "$budget_line" -gt "$policy_line" ]; then
-	pass 'runtime loads prepass budget after ai_generate policy'
+	pass 'runtime loads radio budget after ai_generate policy'
 else
-	fail_case 'runtime load order keeps prepass budget after ai_generate policy'
+	fail_case 'runtime load order keeps radio budget after ai_generate policy'
 fi
 
 printf '# pass=%d fail=%d\n' "$ok" "$fail"
