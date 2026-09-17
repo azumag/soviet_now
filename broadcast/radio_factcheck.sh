@@ -240,7 +240,14 @@ PROMPT
 
 	local model
 	local seen_models=" "
-	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}" "${RADIO_FACT_CHECK_QUINARY:-}"; do
+	local _AI_PRIORITY_CHAIN=1
+	local factcheck_agents=("${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}" "${RADIO_FACT_CHECK_QUINARY:-}")
+	local _AI_PRIORITY_ORIGINAL_LIST
+	_AI_PRIORITY_ORIGINAL_LIST=$(IFS=','; printf '%s' "${factcheck_agents[*]}")
+	local factcheck_chain=()
+	IFS=',' read -ra factcheck_chain <<<"$(_ai_priority_prepend "$_AI_PRIORITY_ORIGINAL_LIST")"
+	for model in "${factcheck_chain[@]}"; do
+		_ai_priority_dispatch_allowed "$model" || continue
 		[ -n "$model" ] || continue
 		case "$seen_models" in
 		*" $model "*) continue ;;
@@ -274,6 +281,7 @@ PROMPT
 			if command -v _ai_stats_record >/dev/null 2>&1; then
 				local resolved_model="$model"
 				case "$model" in
+				openrouter:*) resolved_model="openrouter/${model#openrouter:}" ;;
 				opencode-go:*) resolved_model="opencode-go/${model#opencode-go:}" ;;
 				opencode:*) resolved_model="opencode/${model#opencode:}" ;;
 				codex:*) resolved_model="${model#codex:}" ;;

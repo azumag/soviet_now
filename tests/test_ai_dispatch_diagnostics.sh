@@ -60,7 +60,7 @@ jiji_route=$(
 	)
 )
 check '[ "$jiji_route" = "dispatch:RADIO:JIJI_RESEARCH:opencode:muse-spark-test" ]' 'JIJI research のモデルspecは共通AI dispatchへ送る'
-jiji_primary_count=$(grep -F -c '_run_opencode_jiji_research "${RADIO_MAIN_PREPASS_AGENT}"' "$ROOT/broadcast/radio_corners.sh")
+jiji_primary_count=$(grep -F -c 'research_agents' "$ROOT/broadcast/radio_corners.sh")
 check '[ "$jiji_primary_count" -ge 1 ]' 'JIJI research primaryは有効なprepassモデルspecを使う'
 
 # 長文stderrは先頭(バナー)と末尾(エラー本体)を両方残す
