@@ -1,5 +1,4 @@
 {
-  "improvementIntervalGames": 12,
   "merikenTextGeneration": {
     "claudePreset": "haiku",
     "claudeFallbackPreset": "ccogent",

@@ -1,91 +1,56 @@
-# 同志AI (DousiAI_US)
+# 同志AI (DousiAI_US) / Soren91
 
 ## プロジェクト概要
-unityroom.com の91人対戦型ソ連ゲーム自動プレイヤー。
-スクリーンショットベースの盤面解析 + AI自動改善ループ。
-https://unityroom.com/games/sorengame91
+unityroom.com の91人対戦型ソ連ゲーム自動プレイヤー。スクリーンショットベースで盤面を解析し、`strategy.mjs` が投下/HOLDを判断する。
 
-親プロジェクト `soren/` のローカル版と同じゲーム基盤だが、
-リモートホスト版のため JS ブリッジが使えず、スクリーンショットベースで盤面解析。
+## 自動戦略改善は禁止
 
-## 実行方法
+Soren91 自身が LLM を呼び、試合後・一定試合数ごと・日次スケジュール等で `strategy.mjs` を生成/更新したり、改善PRを自動作成する仕組みは廃止済み。
+
+今後の戦略変更は、ユーザーから明示的な改善依頼がある場合にのみ、保存済みの試合履歴・summary・strategy snapshot・スクリーンショットを確認し、通常のブランチ/PRレビュー経路で行うこと。
+
+禁止事項:
+- 自動改善cron / timer / daemon の再導入
+- 試合終了をtriggerにした戦略書換え
+- `strategy.mjs` のruntime自己更新
+- retained evidence からの無人candidate/PR生成
+- 環境変数で旧自動改善を再有効化する経路の追加
+
+`improve.mjs` は旧呼び出し元との互換のための no-op tombstone であり、LLM呼び出し・戦略変更・PR作成をしてはならない。
+
+## 実行
 ```bash
 cd soren91
-npm install          # 初回のみ
-node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善
+npm install
+node main.mjs
 ```
 
-## アーキテクチャ
-```
-main.mjs                 # エントリポイント: ブラウザ制御 + ゲームループ
-screenshot_analyzer.mjs  # スクリーンショット → 盤面状態 (Sharp)
-calibration.mjs          # ゲームボード壁検出 + 座標変換
-strategy.mjs             # ドロップ位置決定 (AI改変対象)
-improve.mjs              # ラウンド後AI改善ループ (claude CLI)
-prompts/improve_strategy.md  # AI改善プロンプト
+## 主な構成
+```text
+main.mjs                 # ブラウザ制御 + ゲームループ
+screenshot_analyzer.mjs  # スクリーンショット → 盤面状態
+calibration.mjs          # ボード検出 + 座標変換
+observation_guard.mjs    # 観測安定性/confidence gate
+strategy.mjs             # 投下/HOLD判断
+strategy_contract.mjs    # 戦略契約
+critical_turn_screenshots.mjs # 重要局面の証拠選別
+daily_evidence.mjs       # 保存履歴の解析helper。自動triggerではない
+cleanup_retention.mjs    # evidenceのage-based retention
+improve.mjs              # 廃止済み自動改善の互換no-op
 
-game_history/            # ラウンドごとのJSONLターンログ
-strategy_versions/       # strategy.mjs のバックアップ
-tmp/screenshots/         # ゲーム中スクリーンショット (サマリー後削除)
-tmp/summaries/           # ラウンドサマリーJSON
-```
-
-## ゲームフロー
-```
-[起動] headlessでトップページ→ゲームURL取得→閉じる
-  ↓
-[表示] ゲーム画面のみ非headlessで表示 (広告なし)
-  ↓
-[タイトル] 名前入力 (DousiAI_US) → PLAY
-  ↓
-[ラウンドループ]
-  Matching待ち → ゲームプレイ → ランキング
-  → 履歴保存 (game_NNNN.jsonl)
-  → 12ゲームごとにAI改善 (claude -p --model haiku でstrategy.mjs更新)
-  → 次ラウンドへ (自動)
+game_history/            # JSONL試合履歴
+tmp/summaries/           # summary
+tmp/game_screenshots/    # 保存画像
+tmp/strategy_snapshots/  # 試合時点の戦略
 ```
 
-## AI改善ループ
-- 12ゲームごとに `claude -p --model haiku` を非同期呼び出し
-- テキストサマリー (ターン数、ドロップ分布、理由分布) を送信
-- 返ってきた新strategy.mjsをバリデーション (構文 + スモークテスト)
-- パスしたら適用、旧版をstrategy_versions/にバックアップ
-- 排他ロック: 前の改善中は次をスキップ
-- 改善間隔の優先順: `runtime_config.json` → `.env` (`IMPROVEMENT_INTERVAL_GAMES`) → デフォルト値 `12`
-- `runtime_config.json` は通常の設定ファイルとして git 管理してよい
+## 改善を明示的に依頼された場合
+1. current main / open Issue / PR /直近変更を確認する。
+2. 実戦evidenceと画像を確認して原因仮説を立てる。
+3. 最小〜中規模の変更を行う。
+4. unit/replay/fixtureで回帰を確認する。
+5. protected mainへ直pushせず、必要ならPRにする。
+6. 自動でproductionへ適用しない。
 
-## ホットリロード
-全モジュールが動的importされるため、ファイル編集が即反映される (再起動不要):
-- strategy.mjs — 毎ターン
-- screenshot_analyzer.mjs — 毎ターン
-- calibration.mjs — 毎ターン
-- improve.mjs — 12ゲームごと
-
-## 盤面解析
-- **状態検出**: 中央列(35-65%)の暗さ比率でMOVE/WAITING判定。dark>10%ならMOVE
-- **壁検出**: 水平スキャンで明→暗遷移、暗領域150px以上でゲームボード壁と判定
-- **ピース検出**: gridStep=4のblob検出、背景(brightness<60)除外、低彩度(壁/灰色)除外
-- **おじゃま測定**: 灰色(brightness100-200, saturation<0.1)の割合と高さを`boardState.garbage`で提供
-- **おじゃまゲージ検出**: 左壁外側のゲージバーを検出し`boardState.garbage.gauge`(0-1)で提供。1に近いほどおじゃま発動が近い
-- **HOLD検出**: 画面上部HOLD領域のピースを検出。`boardState.hold`で提供 ({type, r}|null)
-- **NEXT検出**: 画面上部NEXT領域を3分割して最大3ピースを検出。`boardState.nextPieces`で配列提供、`boardState.next`は1つ目（後方互換）
-
-## HOLD機能
-- 右クリックで現在のカーソルピースをHOLD領域に保持
-- 既にHOLDがある場合は右クリックでHOLDとカーソルを入れ替え (1ターン1回)
-- `boardState.hold`: HOLD領域のピース ({type, r}|null)
-- `boardState.canHold`: このターンでHOLD使用可能か (ドロップ後にリセット)
-- `decide()` が `hold: true` を返すとドロップせず右クリック→再解析
-
-## ゲーム座標系
-- Board X: [-3.5 wall, -3.0 drop min ... +3.0 drop max, +3.5 wall]
-- Board Y: -5.0 (floor) to +3.32 (deadline)
-- 15種のピース (type 1-15)、同type接触で上位typeに併合
-- おじゃまブロック: 相手から送られる灰色ブロック、併合で消える
-- おじゃまゲージ: 左壁のゲージバー、充填されるとおじゃまブロックが降る。garbage.gauge (0-1) で取得
-
-## 技術的制約
-- Unity WebGLにJSブリッジなし → スクリーンショット解析必須
-- 名前入力: keyboard.press()のみ (insertText不可、日本語不可、12文字制限)
-- ゲームURL: 署名付き、有効期限あり
-- ドロップ間隔: ゲーム側クールダウン≈1秒、bot側1.2秒
+## 証拠保持
+自動改善の消費ledgerは使わない。`cleanup_retention.mjs` が既定3日を超えた管理対象evidenceのみ削除し、`strategy.mjs`、`strategy_versions/`、`tmp/state/` 等には触れない。
