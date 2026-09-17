@@ -86,7 +86,9 @@ RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
 # Explicit list for JIJI; individual *_AGENT values remain single model IDs.
-RADIO_JIJI_RESEARCH_AGENTS="${RADIO_JIJI_RESEARCH_AGENTS-opencode-go:union-alpha,openrouter:stealth/union-alpha,${RADIO_MAIN_PREPASS_AGENT},${RADIO_MAIN_FALLBACK}}"
+# 調査系は長文 reasoning のタイムアウト(300s)を共有するため Union Alpha を末尾へ置く
+# （2026-09-18 実測: Go/OpenRouter とも約300sでtimeout。既存候補を先に試す）。
+RADIO_JIJI_RESEARCH_AGENTS="${RADIO_JIJI_RESEARCH_AGENTS-${RADIO_MAIN_PREPASS_AGENT},${RADIO_MAIN_FALLBACK},opencode-go:union-alpha,openrouter:stealth/union-alpha}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
 RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
