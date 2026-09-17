@@ -19,7 +19,11 @@ jobs:
           ref: remove-soren91-improvement-remnants-physical
           persist-credentials: true
       - name: Apply cleanup
-        run: python3 .github/scripts/remove_soren91_improvement_remnants.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/fix_remove_soren91_cleanup_driver.py
+          python3 .github/scripts/remove_soren91_improvement_remnants.py
       - name: Syntax and Soren91 regression checks
         shell: bash
         run: |
@@ -34,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -n -E 'soren91_improve|SOREN91_IMPROVE|SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES|SOREN91_MERIKEN_IMPROVE_INTERVAL|POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED|SOREN91_SESSION_FILE|session_games\.json' -- ':!failures.txt' ':!.github/workflows/soren91-retirement-cleanup.yml' ':!.github/scripts/remove_soren91_improvement_remnants.py'; then
+          if git grep -n -E 'soren91_improve|SOREN91_IMPROVE|SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES|SOREN91_MERIKEN_IMPROVE_INTERVAL|POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED|SOREN91_SESSION_FILE|session_games\.json' -- ':!failures.txt' ':!.github/workflows/soren91-retirement-cleanup.yml' ':!.github/scripts/remove_soren91_improvement_remnants.py' ':!.github/scripts/fix_remove_soren91_cleanup_driver.py'; then
             echo 'retired Soren91 improvement remnants remain' >&2
             exit 1
           fi
