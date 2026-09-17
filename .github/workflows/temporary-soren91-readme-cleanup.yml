@@ -52,10 +52,10 @@ jobs:
       - name: Validate bounded diff and commit
         shell: bash
         run: |
-          rm -f .github/soren91-readme-cleanup.trigger .github/workflows/temporary-soren91-readme-cleanup.yml
           git diff --check
           test "$(git diff --name-only | sort)" = "README.md"
           git diff -- README.md
+          rm -f .github/soren91-readme-cleanup.trigger .github/workflows/temporary-soren91-readme-cleanup.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A README.md .github/soren91-readme-cleanup.trigger .github/workflows/temporary-soren91-readme-cleanup.yml
