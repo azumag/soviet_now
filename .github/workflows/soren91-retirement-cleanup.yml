@@ -47,6 +47,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # GitHub's workflow token cannot modify workflow files. The stale
+          # play-contract references are updated separately through the reviewed
+          # repository API after this tested runtime cleanup is pushed.
+          git checkout HEAD -- .github/workflows/soren91-play-contracts.yml
           git config user.name 'Tsubasa Azumagakito'
           git config user.email 'azumag@users.noreply.github.com'
           git add -A
