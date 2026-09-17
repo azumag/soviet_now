@@ -1,26 +1,20 @@
 #!/usr/bin/env node
 /**
- * cleanup_retention.mjs — soren91 ランタイムの保持ポリシー
+ * cleanup_retention.mjs — Soren91 runtime evidence retention.
  *
- * コーナー起動時に呼び、改善フローで消費済みになった試合のうち
- * 直近 N 日 (既定 3 日) より古いログ/スクショ/スナップショットだけを削除する。
- * 外部改善runnerが停止・遅延しても、未消費またはpending PR対象の入力は削除しない。
+ * Automatic strategy improvement was retired in 2026-09.  Retention therefore
+ * no longer depends on an improve_daily consumption ledger or pending PR state.
+ * Match histories, summaries, screenshots and strategy snapshots are retained
+ * for N days (default: 3) so they remain available for explicit/manual review,
+ * then removed by age to keep runtime storage bounded.
  *
- * 消す対象 (runtimeDir 配下):
- *   - tmp/summaries/            (game_*.json, ranking_*.png)
- *   - game_history/             (game_*.jsonl, latest_*.jsonl)
- *   - tmp/game_screenshots/     (game_NNNN/ ディレクトリ)
- *   - tmp/strategy_snapshots/   (game_NNNN_strategy.mjs)
- *   - tmp/screenshots/          (game_NNNN... のみ。識別不能な項目は保持)
- *
- * 消さない: strategy.mjs / strategy_versions/ / tmp/state/ / advice91.md など。
- * improve_daily state が欠落/不正な場合も fail-closed で何も削除しない。
+ * Never touches strategy.mjs, strategy_versions/, tmp/state/, or advice91.md.
  *
  * CLI: node cleanup_retention.mjs [--runtime-dir DIR] [--days N] [--dry-run]
- * env: SOREN91_RETENTION_DAYS (既定 3)
+ * env: SOREN91_RETENTION_DAYS (default 3)
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, rmSync } from 'fs';
+import { existsSync, readdirSync, statSync, rmSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -34,52 +28,24 @@ export const RETENTION_TARGETS = [
   'tmp/screenshots',
 ];
 
-function parseGameNumber(rel, name) {
+function isManagedArtifact(rel, name) {
   const patterns = rel === 'tmp/summaries'
-    ? [/^game_(\d+)\.json$/, /^ranking_(\d+)\.png$/]
+    ? [/^game_\d+\.json$/, /^ranking_\d+\.png$/]
     : rel === 'game_history'
-      ? [/^game_(\d+)\.jsonl$/, /^latest_(\d+)\.jsonl$/]
+      ? [/^game_\d+\.jsonl$/, /^latest_\d+\.jsonl$/]
       : rel === 'tmp/game_screenshots'
-        ? [/^game_(\d+)$/]
+        ? [/^game_\d+$/]
         : rel === 'tmp/strategy_snapshots'
-          ? [/^game_(\d+)_strategy\.mjs$/]
-          : [/^game_(\d+)(?:[._-].*)?$/];
-  for (const pattern of patterns) {
-    const match = name.match(pattern);
-    if (match) return Number.parseInt(match[1], 10);
-  }
-  return null;
-}
-
-function readConsumptionState(runtimeDir) {
-  const path = join(runtimeDir, 'tmp', 'state', 'improve_daily.json');
-  try {
-    const state = JSON.parse(readFileSync(path, 'utf-8'));
-    const lastConsumedGame = state?.lastConsumedGame;
-    if (!Number.isInteger(lastConsumedGame) || lastConsumedGame < 0) return null;
-    let pending = null;
-    const fromGame = state?.pendingPr?.fromGame;
-    const toGame = state?.pendingPr?.toGame;
-    if (Number.isInteger(fromGame) && Number.isInteger(toGame) && fromGame >= 0 && toGame >= fromGame) {
-      pending = { fromGame, toGame };
-    }
-    return { lastConsumedGame, pending };
-  } catch {
-    return null;
-  }
-}
-
-function isConsumedAndNotPending(game, state) {
-  if (!Number.isInteger(game) || game > state.lastConsumedGame) return false;
-  if (state.pending && game >= state.pending.fromGame && game <= state.pending.toGame) return false;
-  return true;
+          ? [/^game_\d+_strategy\.mjs$/]
+          : [/^game_\d+(?:[._-].*)?$/];
+  return patterns.some(pattern => pattern.test(name));
 }
 
 /**
  * @param {object} options
  * @param {string} options.runtimeDir
- * @param {number} [options.days]   保持日数 (既定 3)
- * @param {number} [options.now]    現在時刻 (ms, テスト用)
+ * @param {number} [options.days]
+ * @param {number} [options.now]
  * @param {boolean} [options.dryRun]
  * @param {(msg: string) => void} [options.log]
  * @returns {{ removed: number, kept: number, errors: number }}
@@ -93,11 +59,6 @@ export function cleanupRetention(options) {
     log = () => {},
   } = options || {};
   if (!runtimeDir) throw new Error('cleanupRetention requires runtimeDir');
-  const state = readConsumptionState(runtimeDir);
-  if (!state) {
-    log('[retention] skipped: improve_daily state missing or invalid; refusing to delete unconsumed inputs');
-    return { removed: 0, kept: 0, errors: 1 };
-  }
   const safeDays = Number.isFinite(days) && days >= 0 ? days : 3;
   const cutoff = now - safeDays * 24 * 60 * 60 * 1000;
 
@@ -116,8 +77,7 @@ export function cleanupRetention(options) {
       continue;
     }
     for (const entry of entries) {
-      const game = parseGameNumber(rel, entry.name);
-      if (!isConsumedAndNotPending(game, state)) {
+      if (!isManagedArtifact(rel, entry.name)) {
         kept += 1;
         continue;
       }
@@ -129,23 +89,23 @@ export function cleanupRetention(options) {
         errors += 1;
         continue;
       }
-      if (mtimeMs < cutoff) {
-        if (!dryRun) {
-          try {
-            rmSync(path, { recursive: true, force: true });
-          } catch {
-            errors += 1;
-            continue;
-          }
-        }
-        removed += 1;
-      } else {
+      if (mtimeMs >= cutoff) {
         kept += 1;
+        continue;
       }
+      if (!dryRun) {
+        try {
+          rmSync(path, { recursive: true, force: true });
+        } catch {
+          errors += 1;
+          continue;
+        }
+      }
+      removed += 1;
     }
   }
 
-  log(`[retention] removed=${removed} kept=${kept} errors=${errors} (days=${safeDays}, lastConsumed=${state.lastConsumedGame}${dryRun ? ', dry-run' : ''})`);
+  log(`[retention] removed=${removed} kept=${kept} errors=${errors} (days=${safeDays}${dryRun ? ', dry-run' : ''})`);
   return { removed, kept, errors };
 }
 
