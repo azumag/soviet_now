@@ -27,4 +27,21 @@ if old not in text:
     raise SystemExit('cleanup driver tmux env block not found')
 text = text.replace(old, new, 1)
 
+marker = '''replace(
+    "tests/test_escape_mechanisms.py",
+    "soren91_stop/soren91_improve/handover/bridge再起動をスキップ",
+'''
+insertion = '''sub(
+    "tests/test_soren91_play.mjs",
+    r"\\ntest\\('both improvement paths use the shared validator before adoption', \\(\\) => \\{.*?\\n\\}\\);(?=\\ntest\\('gate: low-confidence frame)",
+    "",
+)
+replace(
+    "tests/test_escape_mechanisms.py",
+    "soren91_stop/soren91_improve/handover/bridge再起動をスキップ",
+'''
+if marker not in text:
+    raise SystemExit('cleanup driver test insertion point not found')
+text = text.replace(marker, insertion, 1)
+
 path.write_text(text, encoding='utf-8')
