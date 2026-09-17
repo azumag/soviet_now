@@ -1,0 +1,22 @@
+name: Soren91 retirement cleanup
+
+on:
+  push:
+    branches:
+      - remove-soren91-improvement-remnants-physical
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Inventory retired Soren91 improvement remnants
+        shell: bash
+        run: |
+          set -euo pipefail
+          git grep -n -E 'soren91_improve|SOREN91_IMPROVE|SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES|SOREN91_MERIKEN_IMPROVE_INTERVAL' -- ':!failures.txt' || true
