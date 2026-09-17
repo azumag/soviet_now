@@ -1,4 +1,4 @@
 # 直近の裏側の改修 (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)
-- Union Alphaの両経路を一週間だけ優先する設定を実装中
-- Go版とOpenRouter版のローカル疎通は確認済み、本番は未確認
-- 本番への全チェーン反映と投票workerの更新は未完了
+- docich VMコンテナ基盤(Docker+gVisor)をIaC化・main統合・VM整合(実測済み)
+- soviet_now : avfoundation→ScreenCaptureKitウィンドウ指定キャプチャへ作り直し(実測検証済み、SR…
+- soviet_now Issue #303続報: SRT→OCI E2E成功も、キャプチャ方式に重大な欠陥発見（要作り直し）
