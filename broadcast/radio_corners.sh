@@ -1815,7 +1815,6 @@ _run_opencode_jiji_research() {
 		AI_DISPATCH_RECORD_WINNER=1
 		_ai_dispatch "RADIO:JIJI_RESEARCH" "$agent" "$prompt_file" "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT:-240}}"
 		local _jiji_research_rc=$?
-		_ai_priority_record_failure "$agent" "$_jiji_research_rc" "RADIO:JIJI_RESEARCH"
 		AI_DISPATCH_RECORD_WINNER="$_saved_record_winner"
 		return "$_jiji_research_rc"
 		;;
@@ -1889,12 +1888,12 @@ ${jiji_recent_topics}"
 	envsubst <"$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" >"$research_prompt_file"
 	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
-	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="${RADIO_MAIN_PREPASS_AGENT},${RADIO_MAIN_FALLBACK}"
-	local research_agents=() research_agent
-	IFS=',' read -ra research_agents <<<"$(_ai_priority_prepend "$_AI_PRIORITY_ORIGINAL_LIST")"
+	local research_agents=("${RADIO_MAIN_PREPASS_AGENT}" "${RADIO_MAIN_FALLBACK}") research_agent
+	if [ -n "${RADIO_JIJI_RESEARCH_AGENTS:-}" ]; then
+		IFS=',' read -ra research_agents <<<"$RADIO_JIJI_RESEARCH_AGENTS"
+	fi
 	for research_agent in "${research_agents[@]}"; do
 		[ -n "$research_agent" ] || continue
-		_ai_priority_dispatch_allowed "$research_agent" || continue
 		grounding_context=$(_run_opencode_jiji_research "$research_agent" "$research_prompt_file")
 		[ -z "$grounding_context" ] || break
 	done

@@ -1,9 +1,5 @@
 # broadcast/comment.sh - コメント応答生成, コンテキスト構築, advice抽出
 
-if ! declare -F _ai_priority_prepend >/dev/null; then
-	source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/ai_priority_window.sh"
-fi
-
 #=== コメント関連 ===
 
 _kill_comment_gen() {
@@ -2279,15 +2275,15 @@ _maybe_gc_redacted_diag_spool() {
 
 _classify_comments_with_edit_contract() {
 	local classifier_prompt_file="$1" output_file="$2" primary="$3" fallback="$4" timeout_sec="$5"
-	local base_prompt agent prev_agent edit_prompt candidate_rc raw_json classification
+	local base_prompt agent prev_agent="" edit_prompt candidate_rc raw_json classification
 	[ -s "$classifier_prompt_file" ] || return 1
 	[ -n "$output_file" ] || return 1
 	base_prompt=$(cat "$classifier_prompt_file")
-	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$primary,$fallback"
-	local classifier_agents=()
-	IFS=',' read -ra classifier_agents <<<"$(_ai_priority_prepend "$_AI_PRIORITY_ORIGINAL_LIST")"
+	local classifier_agents=("$primary" "$fallback")
+	if [ -n "${COMMENT_CLASSIFIER_EDIT_AGENTS:-}" ]; then
+		IFS=',' read -ra classifier_agents <<<"$COMMENT_CLASSIFIER_EDIT_AGENTS"
+	fi
 	for agent in "${classifier_agents[@]}"; do
-		_ai_priority_dispatch_allowed "$agent" || continue
 		[ -n "$agent" ] || continue
 		[ "$agent" = "-" ] && continue
 		[ "$agent" = "$prev_agent" ] && continue
@@ -2389,8 +2385,23 @@ _classify_comments() {
 	fi
 
 	classifier_output_file=$(mktemp /tmp/eloop_comment_classifier_output_XXXXXXXX)
-	if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" \
-		"_is_valid_comment_classification_output" >"$classifier_output_file"; then
+	local classifier_rc
+	if [ -n "${COMMENT_CLASSIFIER_AGENTS:-}" ]; then
+		if ai_generate_list "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$COMMENT_CLASSIFIER_AGENTS" "$timeout_sec" \
+			"_is_valid_comment_classification_output" >"$classifier_output_file"; then
+			classifier_rc=0
+		else
+			classifier_rc=$?
+		fi
+	else
+		if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" \
+			"_is_valid_comment_classification_output" >"$classifier_output_file"; then
+			classifier_rc=0
+		else
+			classifier_rc=$?
+		fi
+	fi
+	if [ "$classifier_rc" -eq 0 ]; then
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-$model}"
 	else
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-}"
@@ -2505,8 +2516,8 @@ _comment_is_valid_translation_candidate() {
 _comment_generate_translation() {
 	local prompt_file="$1" agent_list="$2" timeout_sec="$3" last_agent_file="${4:-}"
 	local agents=() agent output rc attempted=0
-	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$agent_list"
-	agent_list=$(_ai_priority_prepend "$agent_list")
+	local max_attempts="${COMMENT_TRANSLATION_MAX_ATTEMPTS:-2}"
+	case "$max_attempts" in '' | *[!0-9]* | 0) max_attempts=2 ;; esac
 	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 	case "$timeout_sec" in
 	'' | *[!0-9]*) timeout_sec=20 ;;
@@ -2517,24 +2528,19 @@ _comment_generate_translation() {
 		agent="${agent#${agent%%[![:space:]]*}}"
 		agent="${agent%${agent##*[![:space:]]}}"
 		[ -n "$agent" ] || continue
-		_ai_priority_dispatch_allowed "$agent" || continue
-		if [ "$attempted" -ge 2 ] && ! _ai_priority_agent "$agent"; then
-			log "[COMMENT_TRANSLATION] agent試行上限(2)に到達" >&2
+		if [ "$attempted" -ge "$max_attempts" ]; then
+			log "[COMMENT_TRANSLATION] agent試行上限(${max_attempts})に到達" >&2
 			break
 		fi
 		if declare -F _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
 			log "[COMMENT_TRANSLATION] backoff skip: ${agent} (no force retry)" >&2
 			continue
 		fi
-		# Promotion probes do not consume the original two-candidate budget.
-		if ! _ai_priority_active || ! _ai_priority_agent "$agent"; then
-			attempted=$((attempted + 1))
-		fi
+		attempted=$((attempted + 1))
 		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
 		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
 		rc=$?
-		_ai_priority_record_failure "$agent" "$rc" "COMMENT_TRANSLATION"
 		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		# 翻訳モデルも推論ブロックを漏らしうる。日本語本文と同じガードを通す
 		# (_comment_is_valid_translation_candidate は <think> を見ていない)。

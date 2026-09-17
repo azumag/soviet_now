@@ -28,6 +28,10 @@ _run_opencode_radio_unqueued() {
 	local raw_file raw_text cleaned model="$agent"
 	local -a model_args=()
 	case "$agent" in
+	openrouter:*)
+		model="openrouter/${agent#openrouter:}"
+		model_args=(--model "$model")
+		;;
 	opencode-go:*)
 		model="opencode-go/${agent#opencode-go:}"
 		model_args=(--model "$model")
@@ -85,15 +89,6 @@ _run_opencode_radio() {
 		_ai_dispatch "RADIO" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
 		return $?
 		;;
-	opencode-go:union-alpha | openrouter:*)
-		_ai_priority_dispatch_allowed "$agent" || return 93
-		if ! _ai_backoff_check "$agent"; then return 1; fi
-		# Keep this call site's existing read-only permission profile.
-		OPENCODE_PERMISSION="${RADIO_OPENCODE_PERMISSION:-}" _ai_dispatch "RADIO" "$agent" "$prompt_file" "${RADIO_OPENCODE_TIMEOUT:-240}"
-		local priority_rc=$?
-		_ai_priority_record_failure "$agent" "$priority_rc" "RADIO"
-		return "$priority_rc"
-		;;
 	esac
 	if _radio_opencode_should_defer_for_improve; then
 		log "[RADIO] opencode deferred during rate_limit_backoff (agent=$agent)" >&2
@@ -101,9 +96,15 @@ _run_opencode_radio() {
 	fi
 	local resolved_model="$agent"
 	case "$agent" in
+	openrouter:*) resolved_model="openrouter/${agent#openrouter:}" ;;
 	opencode-go:*) resolved_model="opencode-go/${agent#opencode-go:}" ;;
 	opencode:*) resolved_model="opencode/${agent#opencode:}" ;;
 	esac
+	# Provider非依存の共有429バックオフ。特別扱いではなく全direct-chain候補に適用する。
+	if command -v _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
+		log "[RADIO] ${agent} shared backoff skip ($(_ai_backoff_remaining "$agent")s remaining)" >&2
+		return 1
+	fi
 	if command -v _ai_stats_record >/dev/null 2>&1; then
 		local _saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
