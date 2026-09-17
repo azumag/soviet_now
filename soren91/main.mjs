@@ -28,6 +28,7 @@ import {
   installDirectGameStage,
   installInlineDirectBroadcastOverlay,
   loadDirectOverlayConfig,
+  revealStagePanels,
 } from '../lib/direct_overlay.mjs';
 import { buildDirectBroadcastOverlayState } from '../lib/direct_broadcast_overlay.mjs';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
@@ -1263,6 +1264,7 @@ async function main() {
       } catch (err) {
         console.log(`[main] Inline rail readiness wait skipped: ${err.message.split('\n')[0]}`);
       }
+      await revealStagePanels(gamePage, DIRECT_OVERLAY_CONFIG);
     }
     console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
 
