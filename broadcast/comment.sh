@@ -1,5 +1,9 @@
 # broadcast/comment.sh - コメント応答生成, コンテキスト構築, advice抽出
 
+if ! declare -F _ai_priority_prepend >/dev/null; then
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/ai_priority_window.sh"
+fi
+
 #=== コメント関連 ===
 
 _kill_comment_gen() {
@@ -2279,7 +2283,11 @@ _classify_comments_with_edit_contract() {
 	[ -s "$classifier_prompt_file" ] || return 1
 	[ -n "$output_file" ] || return 1
 	base_prompt=$(cat "$classifier_prompt_file")
-	for agent in "$primary" "$fallback"; do
+	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$primary,$fallback"
+	local classifier_agents=()
+	IFS=',' read -ra classifier_agents <<<"$(_ai_priority_prepend "$_AI_PRIORITY_ORIGINAL_LIST")"
+	for agent in "${classifier_agents[@]}"; do
+		_ai_priority_dispatch_allowed "$agent" || continue
 		[ -n "$agent" ] || continue
 		[ "$agent" = "-" ] && continue
 		[ "$agent" = "$prev_agent" ] && continue
@@ -2497,6 +2505,8 @@ _comment_is_valid_translation_candidate() {
 _comment_generate_translation() {
 	local prompt_file="$1" agent_list="$2" timeout_sec="$3" last_agent_file="${4:-}"
 	local agents=() agent output rc attempted=0
+	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$agent_list"
+	agent_list=$(_ai_priority_prepend "$agent_list")
 	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 	case "$timeout_sec" in
 	'' | *[!0-9]*) timeout_sec=20 ;;
@@ -2507,7 +2517,8 @@ _comment_generate_translation() {
 		agent="${agent#${agent%%[![:space:]]*}}"
 		agent="${agent%${agent##*[![:space:]]}}"
 		[ -n "$agent" ] || continue
-		if [ "$attempted" -ge 2 ]; then
+		_ai_priority_dispatch_allowed "$agent" || continue
+		if [ "$attempted" -ge 2 ] && ! _ai_priority_agent "$agent"; then
 			log "[COMMENT_TRANSLATION] agent試行上限(2)に到達" >&2
 			break
 		fi
@@ -2515,11 +2526,15 @@ _comment_generate_translation() {
 			log "[COMMENT_TRANSLATION] backoff skip: ${agent} (no force retry)" >&2
 			continue
 		fi
-		attempted=$((attempted + 1))
+		# Promotion probes do not consume the original two-candidate budget.
+		if ! _ai_priority_active || ! _ai_priority_agent "$agent"; then
+			attempted=$((attempted + 1))
+		fi
 		local saved_record_winner="${AI_DISPATCH_RECORD_WINNER:-0}"
 		AI_DISPATCH_RECORD_WINNER=1
 		output=$(_ai_dispatch "COMMENT_TRANSLATION" "$agent" "$prompt_file" "$timeout_sec")
 		rc=$?
+		_ai_priority_record_failure "$agent" "$rc" "COMMENT_TRANSLATION"
 		AI_DISPATCH_RECORD_WINNER="$saved_record_winner"
 		# 翻訳モデルも推論ブロックを漏らしうる。日本語本文と同じガードを通す
 		# (_comment_is_valid_translation_candidate は <think> を見ていない)。
