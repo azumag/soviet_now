@@ -4,6 +4,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DISPLAY_NAME="${SOREN_RUNTIME_DISPLAY:-:99}"
 DISPLAY_SIZE="${SOREN_RUNTIME_DISPLAY_SIZE:-1280x720}"
 PULSE_SOCKET="${SOREN_RUNTIME_PULSE_SOCKET:-/run/user/1001/pulse/native}"
@@ -33,6 +34,14 @@ case "$PULSE_SINK" in
 	exit 2
 	;;
 esac
+
+# A previous service generation can leave pidfiles for an overlay mode that is
+# no longer configured.  The reviewed helper is deliberately allowlisted and
+# fail-closed for live/foreign/symlink/hardlink/replaced files.  Housekeeping
+# itself is fail-open: stale metadata must not prevent the runtime from starting.
+if [ -f "$SCRIPT_DIR/lib/cleanup_overlay_pidfiles.py" ]; then
+	python3 "$SCRIPT_DIR/lib/cleanup_overlay_pidfiles.py" >/dev/null 2>&1 || true
+fi
 
 for command_name in pactl xdpyinfo; do
 	command -v "$command_name" >/dev/null 2>&1 || {
