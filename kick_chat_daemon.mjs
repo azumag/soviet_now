@@ -42,28 +42,6 @@ const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? '')
   .split(/\s+/)
   .filter(Boolean)
   .map((s) => s.toLowerCase());
-// 広告スパムは受信段階で落とす。分類器・返信生成へ流すと、宣伝文句への
-// 返信・英訳呼出し・視聴者メモ記録まで消費してしまう (2026-09-17 実測:
-// 「Kick viewbot, follower bot…」販売文に毎回返信を生成していた)。
-// 既定 ON。0 で無効化できる。
-const SPAM_FILTER_ENABLED = (process.env.KICK_SPAM_FILTER_ENABLED ?? '1') === '1';
-const SPAM_PATTERNS = [
-  // viewbot/follower bot 等の宣伝文 (販売誘導)。無料配布の案内は別判定しない。
-  /view\s*bot/i,
-  /follower\s*bot/i,
-  /chat\s*bot\s*(and|&|\+)\s*more/i,
-  /sub\s*4\s*sub/i,
-  /follow\s*4\s*follow/i,
-  // Discord 等への誘導は難読化 ("d1s cord" / "di$c0rd") を含めて落とす。
-  /\bd\s*1\s*s\s*c\s*(o\s*)?(r\s*d|ord)\b/i,
-  /d[i1!][s$5]c(o|0)rd(\.gg|s?\s*app)?\b/i,
-  // 対価を求める成果報酬型の宣伝 (kick/YouTube 認知狙いの手法)
-  /free\s+(viewers?|followers?|subs?|views?|likes?)/i,
-  /(grow|boost|promote)\s+(your|ur)\s+(channel|stream|kick)/i,
-];
-const SPAM_AUTHOR_RATE_LIMIT = intEnv('KICK_SPAM_AUTHOR_RATE_LIMIT', 0);
-const SPAM_AUTHOR_WINDOW_SEC = intEnv('KICK_SPAM_AUTHOR_WINDOW_SEC', 60);
-const authorMessageLog = new Map();
 
 function intEnv(name, fallback) {
   const raw = process.env[name];
@@ -168,32 +146,6 @@ function sanitizeMetadataToken(value, max = 160) {
 function isIgnoredAuthor(username, slug) {
   const candidates = [username, slug].filter(Boolean).map((s) => String(s).toLowerCase());
   return candidates.some((c) => IGNORE_AUTHORS.includes(c));
-}
-
-function isSpam(message) {
-  if (!SPAM_FILTER_ENABLED) return false;
-  return SPAM_PATTERNS.some((re) => re.test(message));
-}
-
-// 投稿者単位の簡易レート制限。0 なら無効 (既定)。
-function isRateLimited(author) {
-  if (!SPAM_AUTHOR_RATE_LIMIT || SPAM_AUTHOR_RATE_LIMIT <= 0) return false;
-  const now = Date.now();
-  const cutoff = now - SPAM_AUTHOR_WINDOW_SEC * 1000;
-  const entries = authorMessageLog.get(author) ?? [];
-  const fresh = entries.filter((ts) => ts > cutoff);
-  if (fresh.length >= SPAM_AUTHOR_RATE_LIMIT) {
-    authorMessageLog.set(author, [...fresh, now]);
-    return true;
-  }
-  fresh.push(now);
-  authorMessageLog.set(author, fresh);
-  if (authorMessageLog.size > 2000) {
-    for (const [key, timestamps] of authorMessageLog) {
-      if (timestamps.every((ts) => ts <= cutoff)) authorMessageLog.delete(key);
-    }
-  }
-  return false;
 }
 
 function trimRawLog() {
@@ -357,14 +309,6 @@ function connectOnce(chatroomId) {
       const message = sanitizeMessage(payload?.content);
       if (!message || !username) return;
       if (isIgnoredAuthor(payload?.sender?.username, senderSlug)) return;
-      if (isSpam(message)) {
-        log(`spam dropped (author=${username}): ${message.slice(0, 80)}`);
-        return;
-      }
-      if (isRateLimited(username)) {
-        log(`rate limited (author=${username}): ${message.slice(0, 80)}`);
-        return;
-      }
 
       compactRecentIds();
       if (msgId && recentIdSeen(msgId)) return;
