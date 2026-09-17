@@ -11,6 +11,7 @@ import { performance } from 'node:perf_hooks';
 import { statSync } from 'node:fs';
 import { createCanvasIO, boundedMs, probeBudget, postDropProbeEnabled } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
+import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
@@ -1474,6 +1475,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
+  let roundStartedAt = null;
   let startBeatSent = false;
   let pinchBeatSent = false;
   let awaitingFreshRoundAfterResult = false;
@@ -1569,6 +1571,7 @@ async function gameLoop(page, calibration, gameNumber) {
             waitingLogged = false;
             holdUsedThisTurn = false;
             midgameCommentSent = false;
+            roundStartedAt = null;
             startBeatSent = false;
             pinchBeatSent = false;
             await sleep(1000);
@@ -1659,6 +1662,7 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
+          roundStartedAt = null;
           startBeatSent = false;
           pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
@@ -1804,6 +1808,9 @@ async function gameLoop(page, calibration, gameNumber) {
         continue; // A fresh screenshot is mandatory after waiting.
       }
 
+      // Matchmaking does not count toward the in-round commentary clock.
+      if (roundStartedAt === null) roundStartedAt = performance.now();
+
       // 戦略決定 (canHoldを付与)
       boardState.canHold = !holdUsedThisTurn;
       const decision = await latency.measure('decide', async () => {
@@ -1861,14 +1868,24 @@ async function gameLoop(page, calibration, gameNumber) {
         return;
       }
 
-      // 試合中コメント: 1試合1回、20ターン到達後に生成 (非同期、ゲームをブロックしない)
-      // pieces < 3 はマッチング画面の誤検出の可能性が高いためスキップ
-      if (!midgameCommentSent && turn >= 20 && boardState.pieces.length >= 3) {
+      // 20手、または45秒かつ5手で1回。遅い試合も実況し、生成は投下を待たせない。
+      const midgameStatus = midgameCommentStatus({
+        sent: midgameCommentSent, turn, pieces: boardState.pieces,
+        startedAt: roundStartedAt, now: performance.now(),
+      });
+      if (!midgameCommentSent) {
+        console.log(`[game] Midgame gate: game=${gameNumber} turn=${turn} pieces=${boardState.pieces.length} elapsedMs=${Math.round(midgameStatus.elapsedMs)} reason=${midgameStatus.reason}`);
+      }
+      if (midgameStatus.due) {
         midgameCommentSent = true;
+        // Capture identity before the first await; the game loop can advance rounds meanwhile.
+        const commentGameNumber = gameNumber;
+        const commentTurn = turn;
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./comment.mjs');
-            await generateMidgameComment(gameNumber, turn, boardState, screenshotPath);
+            const result = await generateMidgameComment(commentGameNumber, commentTurn, boardState, screenshotPath);
+            console.log(`[game] Midgame completed: game=${commentGameNumber} turn=${commentTurn} generated=${Boolean(result)}`);
           } catch (err) {
             console.log(`[game] Midgame comment error: ${err.message}`);
           }

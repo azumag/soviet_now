@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
   validGeometry, sameGeometry } from '../soren91/realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
+import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -196,36 +197,49 @@ function extract(name, end) {
   return mainSource.slice(start, stop).trim();
 }
 const loopSource = extract('gameLoop', '/**\n * HOLD').replaceAll('import.meta.url', '"file:///soren91/main.mjs"');
-async function simulateLoop({ captureMs = 300, hold = false, blocked = 0 } = {}) {
+async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [], source = loopSource } = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
-  const dropTimes = [], writes = [];
+  const dropTimes = [], writes = [], comments = [];
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
-    CALIBRATION_MIN_PIECES: 3, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 10,
-    performance: { now: () => now }, Date,
+    CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,
+    performance: { now: () => now },
+    Date: class extends Date { static now() { return now; } },
     LoopMetrics: class extends LoopMetrics { constructor(opts) { super({ ...opts, now: () => now }); } },
     writeMetricsAtomically: (_, value) => writes.push(value),
     console: { log() {}, error() {} },
     snapshotCurrentStrategyForGame: () => ({ strategyHash: 'fixed', snapshotPath: 'fixed.mjs' }),
-    existsSync: path => path === 'tmp/stop' && (drops >= 2 || shots > 12),
+    existsSync: path => path === 'tmp/stop' && (drops >= maxDrops || shots > Math.max(12, maxDrops * 5)),
     writeFileSync() {}, appendFileSync() {},
     loadCommentModule: async () => null,
+    midgameCommentStatus,
     captureGameScreenshot: async () => { shots++; now += captureMs; return null; },
-    loadModule: async () => ({ analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
-      pieces: [], confidence: 1, perception: { reason: shots <= blocked ? 'unknown-current' : 'stable' } }) }),
+    loadModule: async () => ({
+      generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
+      analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
+        pieces, confidence: 1, perception: { reason: shots <= blocked ? 'unknown-current' : 'stable' } }),
+    }),
     loadStrategy: async () => ({ decide: () => ({ x: 0, reason: 'test', hold: hold && decisions++ === 0 }) }),
     executeHold: async () => { holds++; now += 300; },
     executeDrop: async () => { now += 200; drops++; dropTimes.push(now); },
     sleep: async ms => { now += ms; },
   };
-  const loop = vm.runInNewContext(`(${loopSource})`, context);
+  const loop = vm.runInNewContext(`(${source})`, context);
   await loop({}, calibration, 1);
-  return { now, shots, drops, holds, dropTimes, writes };
+  return { now, shots, drops, holds, dropTimes, writes, comments };
 }
 test('real main loop overlaps slow capture with cooldown instead of adding 1.2s each turn', async () => {
   const s = await simulateLoop({ captureMs: 1200 });
   assert.deepEqual(s.dropTimes, [1400, 2800]);
   assert.equal(s.dropTimes[1] - s.dropTimes[0], 1400);
+});
+test('real main loop requests midgame commentary once before turn 20 in a slow round', async () => {
+  const s = await simulateLoop({ captureMs: 10000, maxDrops: 9, pieces: [{}, {}, {}] });
+  assert.equal(s.drops, 9);
+  assert.equal(s.comments.length, 1);
+  assert.equal(s.comments[0].game, 1);
+  assert.ok(s.comments[0].turn >= 5 && s.comments[0].turn < 20);
+  assert.ok(s.comments[0].at >= 45000);
 });
 test('fast capture still cannot bypass minimum cooldown, and always reacquires after waiting', async () => {
   const s = await simulateLoop();
