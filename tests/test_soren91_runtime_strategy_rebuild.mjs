@@ -125,3 +125,63 @@ test('beam-v2 remains bounded on an 80-piece board with two-ply preview and HOLD
   assert.ok(d.diagnostics.expandedNodes < 500);
   assert.ok(elapsed < 5000, `bounded search took ${elapsed.toFixed(1)}ms`);
 });
+
+test('beam-v2 preserves a reachable known nextNext merge instead of burying it', () => {
+  const pieces = [
+    piece(4, 2.4689236488193274, -4.62),
+    piece(5, -2.7905295928940177, -4.586),
+    piece(5, -0.626091118901968, -4.586),
+    piece(2, 1.0119760637171566, -4.741),
+    piece(6, 1.7152004661038518, -4.22706061047885),
+    piece(1, -2.7326585054397583, -3.9677023878124213),
+    piece(3, 1.841493914835155, -3.451273291165397),
+  ];
+  const current = piece(7);
+  const middle = piece(5);
+  const future = piece(4);
+  const d = decide(board(pieces, current, { nextPieces: [current, middle, future] }));
+
+  assert.equal(d.x, -1.75, JSON.stringify(d));
+  assert.equal(d.diagnostics.pathRisk, 0);
+  assert.equal(d.diagnostics.knownMergeReservations, 1);
+  assert.equal(d.diagnostics.preservedReservations, 1);
+  assert.equal(d.diagnostics.lostReservations, 0);
+  assert.equal(d.diagnostics.reservationStatus, 'fulfilled');
+  assert.equal(d.diagnostics.reservationType, 4);
+  assert.equal(d.diagnostics.reservationDepth, 2);
+});
+
+test('low-confidence nextNext evidence never activates a merge reservation', () => {
+  const current = piece(7);
+  const middle = piece(5);
+  const future = piece(4, 0, -5 + TYPE_RADII[4], { confidence: 0.5, fallback: true });
+  const d = decide(board([piece(4, 2.4, -4.62)], current, {
+    nextPieces: [current, middle, future],
+  }));
+
+  assert.equal(d.diagnostics.knownMergeReservations, 0);
+  assert.equal(d.diagnostics.reservationStatus, 'none');
+});
+
+test('an equal guaranteed current merge outranks a future reservation', () => {
+  const pieces = [
+    piece(3, 1.169928040355444, -4.684),
+    piece(2, -2.7761001521721482, -4.741),
+    piece(6, -1.6607574429363012, -4.53),
+    piece(1, 0.5501522468402982, -4.793),
+    piece(4, -1.8219364061951637, -3.6954214585775658),
+    piece(5, -2.6188086541369557, -4.086638949320908),
+    piece(5, -1.1721794251352549, -3.239075246186235),
+    piece(6, 2.8143906304612756, -4.53),
+  ];
+  const current = piece(3);
+  const middle = piece(1);
+  const future = piece(3);
+  const d = decide(board(pieces, current, { nextPieces: [current, middle, future] }));
+
+  assert.equal(d.x, 1.25, JSON.stringify(d));
+  assert.equal(d.diagnostics.merges, 1);
+  assert.equal(d.diagnostics.pathRisk, 0);
+  assert.equal(d.diagnostics.reservationStatus, 'consumed');
+  assert.equal(d.diagnostics.lostReservations, 0);
+});
