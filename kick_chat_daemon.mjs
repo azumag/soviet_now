@@ -42,6 +42,11 @@ const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? '')
   .split(/\s+/)
   .filter(Boolean)
   .map((s) => s.toLowerCase());
+const SPAM_FILTER_ENABLED = (process.env.KICK_SPAM_FILTER_ENABLED ?? '1') === '1';
+const SPAM_PATTERNS = [
+  /^kick\s+view\s*bot,?\s*follower\s*bot\s+chat\s*bot\s+and\s+more\b[.,\s-]*(?:save\s+\d+%|pay\s+only|no\s+fees|all\s+in\s+one\s+place)/i,
+  /^ad\s*d\s+me\s+on\s+d1s\s*cord[.!\s]*$/i,
+];
 
 function intEnv(name, fallback) {
   const raw = process.env[name];
@@ -146,6 +151,12 @@ function sanitizeMetadataToken(value, max = 160) {
 function isIgnoredAuthor(username, slug) {
   const candidates = [username, slug].filter(Boolean).map((s) => String(s).toLowerCase());
   return candidates.some((c) => IGNORE_AUTHORS.includes(c));
+}
+
+function isSpam(message) {
+  if (!SPAM_FILTER_ENABLED) return false;
+  const normalized = String(message ?? '').normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  return SPAM_PATTERNS.some((re) => re.test(normalized));
 }
 
 function trimRawLog() {
@@ -309,6 +320,10 @@ function connectOnce(chatroomId) {
       const message = sanitizeMessage(payload?.content);
       if (!message || !username) return;
       if (isIgnoredAuthor(payload?.sender?.username, senderSlug)) return;
+      if (isSpam(payload?.content)) {
+        log(`spam dropped (author=${sanitizeMetadataToken(senderSlug || username, 80)}, reason=known-ad-template)`);
+        return;
+      }
 
       compactRecentIds();
       if (msgId && recentIdSeen(msgId)) return;
