@@ -119,7 +119,7 @@ cleanup_tmp_files() {
 		_lgsz=$(wc -c < "$_lg" 2>/dev/null | tr -d ' ')
 		if [ "${_lgsz:-0}" -gt 20971520 ]; then
 			tail -n 5000 "$_lg" > "${_lg}.trim" 2>/dev/null && cat "${_lg}.trim" > "$_lg" 2>/dev/null
-			rm -f "${_lg}.trim" 2>/dev/null || true
+			rm -f "${_lg}.trim" 2>/dev/null
 		fi
 	done
 
