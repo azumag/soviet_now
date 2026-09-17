@@ -103,7 +103,7 @@ def _same_inode(current: os.stat_result, opened: os.stat_result, expected_uid: i
     )
 
 
-def _safe_open_state_dir(state_dir: Path, expected_uid: int) -> int | None:
+def _safe_open_state_dir(state_dir: Path) -> int | None:
     flags = (
         os.O_RDONLY
         | getattr(os, "O_DIRECTORY", 0)
@@ -120,7 +120,7 @@ def _safe_open_state_dir(state_dir: Path, expected_uid: int) -> int | None:
         raise
 
     info = os.fstat(fd)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid:
+    if not stat.S_ISDIR(info.st_mode):
         os.close(fd)
         return -1
     return fd
@@ -137,7 +137,7 @@ def cleanup_overlay_pidfiles(root: Path, *, expected_uid: int | None = None) -> 
     state_dir = root / "tmp" / "state"
     result = {"removed": 0, "skipped_alive": 0, "skipped_unsafe": 0, "missing": 0}
 
-    dir_fd = _safe_open_state_dir(state_dir, expected_uid)
+    dir_fd = _safe_open_state_dir(state_dir)
     if dir_fd is None:
         result["missing"] = len(PIDFILE_NAMES)
         return result
