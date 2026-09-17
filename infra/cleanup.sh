@@ -84,12 +84,10 @@ cleanup_tmp_files() {
 	# 既存の _pre.wav / stream_* だけでは content_*.wav が溜まり続ける (実測 0.5GB) ため拡張。
 	find tmp/.say_queue -maxdepth 1 -type f \( -name '*.wav' -o -name '*.aiff' -o -name '*.txt' \) -mmin +60 -delete 2>/dev/null
 
-	# --- soren91 の診断スクショ: 1日より古い png を削除 (game_*.json は小さいので保持) ---
-	# soren91 は screenshot ベースで summaries/screenshots に png が大量に溜まる (実測 3.5GB)。
-	local _s91dir
-	for _s91dir in soren91/tmp/summaries soren91/tmp/screenshots soren91/tmp/game_screenshots soren91/tmp/strategy_snapshots; do
-		[ -d "$_s91dir" ] && find "$_s91dir" -maxdepth 1 -name '*.png' -type f -mtime +1 -delete 2>/dev/null
-	done
+	# Soren91 evidence retention is owned exclusively by
+	# soren91/cleanup_retention.mjs.  Do not add an independent age-based
+	# deletion here: it would bypass SOREN91_RETENTION_DAYS and can erase
+	# evidence that is still inside the manual-review window.
 
 	# --- opencode (AIツール) の XDG_DATA: セッション履歴/DBが無制限に肥大 ---
 	# writer exclusion gate (flock) を取ってから、保持期間超過セッションを単一
