@@ -115,6 +115,8 @@ try {
   // 2026-09-17 に実測した広告スパム。受信段階で落ること。
   socket.write(chat('m5', 'spam1', 'spam1', 'Kick viewbot, follower bot chat bot and more. Save 99% vs typical panels!'));
   socket.write(chat('m6', 'spam2', 'spam2', 'Ad d me on d1s cord'));
+  // 2026-09-18 03:16 に実測した同系列の別文面 (末尾が宣伝違いでも先頭一致で落とす)。
+  socket.write(chat('m11', 'spam3', 'spam3', 'Kick viewbot, follower bot chat bot and more. Fair pricing, instant!'));
   // 難読化なしの普通の英文や URL はスパム判定しない。
   socket.write(chat('m7', 'viewer3', 'viewer3', 'nice stream, check https://example.com/video'));
 
@@ -151,7 +153,8 @@ try {
   const daemonLog = fs.readFileSync(path.join(CHAT_DIR, 'daemon.log'), 'utf8');
   assert.ok(/spam dropped \(author=spam1, reason=known-ad-template\)/.test(daemonLog), 'viewbot ad is dropped at ingest with a reason log');
   assert.ok(/spam dropped \(author=spam2, reason=known-ad-template\)/.test(daemonLog), 'obfuscated discord lure is dropped at ingest');
-  assert.equal(daemonLog.match(/spam dropped/g)?.length ?? 0, 2, 'exactly the two known ad templates are dropped');
+  assert.ok(/spam dropped \(author=spam3, reason=known-ad-template\)/.test(daemonLog), 'viewbot ad variant is dropped too');
+  assert.equal(daemonLog.match(/spam dropped/g)?.length ?? 0, 3, 'exactly the three known ad templates are dropped');
 
   console.log('kick_chat_daemon: all checks passed');
 } finally {

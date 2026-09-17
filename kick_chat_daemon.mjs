@@ -44,7 +44,7 @@ const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? '')
   .map((s) => s.toLowerCase());
 const SPAM_FILTER_ENABLED = (process.env.KICK_SPAM_FILTER_ENABLED ?? '1') === '1';
 const SPAM_PATTERNS = [
-  /^kick\s+view\s*bot,?\s*follower\s*bot\s+chat\s*bot\s+and\s+more\b[.,\s-]*(?:save\s+\d+%|pay\s+only|no\s+fees|all\s+in\s+one\s+place)/i,
+  /^kick\s+view\s*bot,?\s*follower\s*bot\s+chat\s*bot\s+and\s+more\b/i,
   /^ad\s*d\s+me\s+on\s+d1s\s*cord[.!\s]*$/i,
 ];
 
