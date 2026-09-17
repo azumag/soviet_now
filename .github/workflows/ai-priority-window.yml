@@ -1,10 +1,10 @@
-name: AI priority window contracts
+name: AI explicit chain contracts
 on:
   pull_request:
-    paths: ['config/ai_priority_window.json', 'lib/ai_priority_window.*', 'lib/ai_generate*.sh', 'strategy/ai.sh', 'broadcast/**', 'soren91/text_ai.mjs', 'tests/test_ai_priority_window.*', '.github/workflows/ai-priority-window.yml']
+    paths: ['core/config.sh', 'lib/ai_generate*.sh', 'strategy/ai.sh', 'broadcast/**', 'soren91/text_ai.mjs', 'tests/test_ai_explicit_chain.*', 'tests/test_explicit_chain_config.py', '.github/workflows/ai-priority-window.yml']
   push:
     branches: [main]
-    paths: ['config/ai_priority_window.json', 'lib/ai_priority_window.*', 'lib/ai_generate*.sh', 'strategy/ai.sh', 'broadcast/**', 'soren91/text_ai.mjs', 'tests/test_ai_priority_window.*', '.github/workflows/ai-priority-window.yml']
+    paths: ['core/config.sh', 'lib/ai_generate*.sh', 'strategy/ai.sh', 'broadcast/**', 'soren91/text_ai.mjs', 'tests/test_ai_explicit_chain.*', 'tests/test_explicit_chain_config.py', '.github/workflows/ai-priority-window.yml']
 permissions:
   contents: read
 jobs:
@@ -16,5 +16,6 @@ jobs:
         with:
           persist-credentials: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: bash tests/test_ai_priority_window.sh
-      - run: node --test tests/test_ai_priority_window.mjs
+      - run: bash tests/test_ai_explicit_chain.sh
+      - run: node --test tests/test_ai_explicit_chain.mjs
+      - run: python3 -m unittest discover -s tests -p test_explicit_chain_config.py

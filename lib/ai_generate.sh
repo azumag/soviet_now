@@ -13,7 +13,6 @@ _ai_generate_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$_ai_generate_dir/opencode_db_retention.sh" ]; then
 	source "$_ai_generate_dir/opencode_db_retention.sh"
 fi
-source "$_ai_generate_dir/ai_priority_window.sh"
 unset _ai_generate_dir
 
 _ai_guard_model_output() {
@@ -810,7 +809,6 @@ _ai_call_local_llm() {
 _ai_call_opencode_unqueued() {
 	local label="$1" agent="$2" prompt_file="$3"
 	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
-	_ai_priority_dispatch_allowed "$agent" || return 93
 	local timeout_sec="${4:-90}"
 	local model="opencode/${agent#opencode:}"
 	case "$agent" in
@@ -854,10 +852,6 @@ _ai_call_opencode_unqueued() {
 		_oc_attempts=2
 	fi
 	while :; do
-		if ! _ai_priority_dispatch_allowed "$agent"; then
-			rm -f "$out_file" "$stderr_file"
-			return 93
-		fi
 		_oc_start=$(date +%s)
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
@@ -865,14 +859,10 @@ _ai_call_opencode_unqueued() {
 				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		_opencode_rotation_gate_run _ai_priority_run "$agent" timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?
-		if [ "$rc" -eq 93 ]; then
-			rm -f "$out_file" "$stderr_file"
-			return 93
-		fi
 		_oc_elapsed=$(( $(date +%s) - _oc_start ))
 		cleaned=""
 		if [ "$rc" -eq 124 ]; then
@@ -1129,7 +1119,6 @@ _ai_resolved_model_from_agent() {
 _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
-	_ai_priority_dispatch_allowed "$agent" || return 93
 	local timeout_override="${4:-}"
 	local validator="${AI_DISPATCH_VALIDATOR:-}"
 	if ! _ai_agent_spec_valid "$agent"; then
@@ -1234,11 +1223,6 @@ _ai_dispatch() {
 	# ここでバイト切断するとマルチバイト文字を壊す。行単位で読む。
 	_dispatch_error_preview=$(head -n 1 "$_dispatch_err_file" 2>/dev/null || true)
 	rm -f "$_dispatch_err_file"
-	if [ "$_dispatch_rc" -eq 93 ]; then
-		_ai_stats_record "priority_expired" "$label" "$agent" "93" "$resolved_model"
-		rm -f "$_dispatch_output_file"
-		return 93
-	fi
 	if [ "$_dispatch_rc" -eq "$AI_QUEUE_GIVEUP_RC" ]; then
 		_ai_stats_record "queue_giveup" "$label" "$agent" "" "$resolved_model"
 		log "[${label}] generation queue gave up before model call (agent=$agent)" >&2
@@ -1285,12 +1269,6 @@ ai_generate() {
 	local output
 
 	AI_GENERATE_LAST_AGENT=""
-
-	# The two-agent API keeps its legacy behavior outside the fixed campaign.
-	if _ai_priority_active; then
-		ai_generate_list "$label" "$prompt_file" "$primary${fallback:+,$fallback}" "$timeout_override" "$validator"
-		return $?
-	fi
 
 	# Primary
 	output=$(_ai_dispatch "$label" "$primary" "$prompt_file" "$timeout_override")
@@ -1587,8 +1565,6 @@ ai_generate_list() {
 	local validator="${5:-}"
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
-	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$agent_list_raw"
-	agent_list_raw=$(_ai_priority_prepend "$agent_list_raw")
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
 	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
 
@@ -1628,14 +1604,9 @@ ai_generate_list() {
 			continue
 		fi
 
-		_ai_priority_dispatch_allowed "$agent" || continue
 		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
-		if [ "$rc" -eq 93 ]; then
-			attempted_count=$((attempted_count - 1))
-			continue
-		fi
 		# 改善ゲートの打ち切りはモデル非依存で、実際のprovider呼び出しも発生していない。
 		# fallbackを続けると全候補へ偽のfail streak/backoffを付けるため、その場で伝播する。
 		if [ "$rc" -eq "$AI_GATE_GIVEUP_RC" ]; then

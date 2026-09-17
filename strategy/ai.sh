@@ -1,5 +1,3 @@
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/ai_priority_window.sh"
-
 # Guard source is host-owned; generated candidate code cannot select it.
 _IMPROVE_COMMAND_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/improve_command.py"
 
@@ -310,7 +308,6 @@ run_cmd() {
     [ "$_budget_rc" -eq 0 ] || return "$_budget_rc"
     [ "${RUN_AI_IMPROVEMENT_MODE:-0}" = "1" ] && managed_improve=1
 	local spec="$1" prompt="$2" expect_file="${3:-}" expect_snapshot="${4:-}" expect_was_present="${5:-false}"
-	_ai_priority_dispatch_allowed "$spec" || return 93
 	local type agent
 	type="${spec%%:*}"
 	agent="${spec#*:}"
@@ -453,11 +450,6 @@ run_cmd() {
 			return 1
 		}
 		opencode_lock_token="$OPENCODE_RUN_LOCK_LAST_TOKEN"
-		if ! _ai_priority_dispatch_allowed "$spec"; then
-			_opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"
-			rm -f "$prompt_file" "${receipt:-}"
-			return 93
-		fi
 		mkdir -p "$(_opencode_xdg_state_home)/opencode/locks" 2>/dev/null || true
 		mkdir -p "$(_opencode_xdg_data_home)/opencode" 2>/dev/null || true
 		_opencode_sync_auth_to_xdg
@@ -760,27 +752,6 @@ _run_ai_mark_shared_failure_backoff() {
 }
 
 run_ai() {
-	# List callers already prepended the window; standalone rollback/postmortem
-	# callers retain their original retry/fallback contract after the two probes.
-	if [ "${_AI_PRIORITY_CHAIN:-0}" != 1 ] && _ai_priority_active; then
-		local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$2,$3,${MODEL_LAST_RESORT:-}"
-		local promoted rc candidates=()
-		IFS=',' read -ra candidates <<<"$_AI_PRIORITY_AGENTS"
-		for promoted in "${candidates[@]}"; do
-			_ai_priority_dispatch_allowed "$promoted" || continue
-			if declare -F _ai_backoff_check >/dev/null && ! _ai_backoff_check "$promoted"; then continue; fi
-			_RUN_AI_SINGLE=1 RUN_AI_SHARED_FAILURE_BACKOFF=1 _run_ai_original "$1" "$promoted" "" "${@:4}"
-			rc=$?
-			[ "$rc" -ne 0 ] || return 0
-			if [ "$rc" -eq 80 ] || [ "$rc" -eq 81 ]; then return "$rc"; fi
-		done
-		_run_ai_original "$@"
-	else
-		_run_ai_original "$@"
-	fi
-}
-
-_run_ai_original() {
 	local label="$1" primary="$2" fallback="$3" pf="$4" expect="$5"
 	shift 5
 	local prompt
@@ -826,7 +797,6 @@ _run_ai_original() {
 		fi
 		run_cmd "$primary" "$attempt_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
 		primary_ret=$?
-		if [ "$primary_ret" -eq 93 ]; then break; fi
         if [ "$primary_ret" -eq 80 ] || [ "$primary_ret" -eq 81 ]; then
             rm -f "$expect_snapshot" 2>/dev/null || true
             if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
@@ -880,13 +850,6 @@ _run_ai_original() {
 		attempt=$((attempt + 1))
 	done
 
-	if [ "${_RUN_AI_SINGLE:-0}" = 1 ]; then
-		rm -f "$expect_snapshot" 2>/dev/null || true
-		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-		[ "$primary_ret" -ne 0 ] || primary_ret=1
-		return "$primary_ret"
-	fi
-
 	# Improvement fallback is intentionally fail-closed. Keep this scoped to the
 	# improvement worker: rollback/postmortem and other non-improvement callers
 	# retain their existing fallback behavior.
@@ -937,7 +900,6 @@ _run_ai_original() {
 		fi
 		run_cmd "$fallback" "$fallback_prompt" "$expect" "$expect_snapshot" "$expect_was_present"
 		fallback_ret=$?
-		if [ "$fallback_ret" -eq 93 ]; then break; fi
 		log "[$label] fallback run_cmd returned rc=$fallback_ret (attempt ${fallback_attempt}/${fallback_attempts})"
 		if [ -n "$expect" ] && _run_ai_expect_changed "$expect" "$expect_snapshot"; then
 			rm -f "$expect_snapshot" 2>/dev/null || true
@@ -1012,8 +974,6 @@ _run_ai_original() {
 #     1  それ以外の失敗
 run_ai_list() {
 	local label="$1" agent_list_raw="$2"
-	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$agent_list_raw"
-	agent_list_raw=$(_ai_priority_prepend "$agent_list_raw")
 	shift 2
 	local agents=() _IFS_save="$IFS" agent rc saw_rate_limit=0 final_rc=1
 	local attempted_count=0 skipped_backoff_count=0 backoff_remaining=""
@@ -1039,25 +999,16 @@ run_ai_list() {
 			skipped_backoff_count=$((skipped_backoff_count + 1))
 			continue
 		fi
-		_ai_priority_dispatch_allowed "$agent" || continue
 		attempted_count=$((attempted_count + 1))
 		log "[$label] run_ai_list: try ${agent}"
 		local _prev_shared_failure_backoff="${RUN_AI_SHARED_FAILURE_BACKOFF-}"
 		RUN_AI_SHARED_FAILURE_BACKOFF=1
-		if _ai_priority_active && _ai_priority_agent "$agent"; then
-			_RUN_AI_SINGLE=1 run_ai "$label" "$agent" "" "$@"
-		else
-			run_ai "$label" "$agent" "" "$@"
-		fi
+		run_ai "$label" "$agent" "" "$@"
 		rc=$?
 		if [ -n "$_prev_shared_failure_backoff" ]; then
 			RUN_AI_SHARED_FAILURE_BACKOFF="$_prev_shared_failure_backoff"
 		else
 			unset RUN_AI_SHARED_FAILURE_BACKOFF
-		fi
-		if [ "$rc" -eq 93 ]; then
-			attempted_count=$((attempted_count - 1))
-			continue
 		fi
         if [ "$rc" -eq 80 ] || [ "$rc" -eq 81 ]; then
             _improve_budget_check || true
