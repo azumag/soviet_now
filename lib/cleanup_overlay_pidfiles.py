@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Safely remove dead overlay watcher pidfiles after the runtime stops.
+"""Safely remove dead overlay watcher pidfiles before runtime start.
 
 This helper is intentionally narrow: it only knows the three reviewed overlay
-watcher pidfiles.  It never signals processes and it refuses symlinks,
-hardlinks, foreign-owned files, malformed PIDs, or a PID that is still alive.
-It is designed for the soren-runtime.service ExecStopPost path, after systemd
-has stopped the service control group.
+watcher pidfiles. It never signals processes and refuses unsafe state-directory
+indirection, symlinks, hardlinks, foreign-owned files, malformed PIDs, or a PID
+that is still alive. It is called from the existing systemd ExecStartPre path,
+so old overlay-mode metadata can converge without reinstalling the unit.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _pid_is_alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # A process we cannot signal still exists.  Fail closed.
+        # A process we cannot signal still exists. Fail closed.
         return True
     except OSError:
         # Unknown kernel/process state: never unlink on uncertainty.
@@ -62,7 +62,7 @@ def _safe_open_pidfile(dir_fd: int, name: str, expected_uid: int) -> tuple[int, 
         if info.st_uid != expected_uid or info.st_nlink != 1:
             os.close(fd)
             return None
-        # A pidfile should never be group/world writable.  Treat such a file as
+        # A pidfile should never be group/world writable. Treat such a file as
         # untrusted rather than normalizing its permissions in an ops helper.
         if stat.S_IMODE(info.st_mode) & 0o022:
             os.close(fd)
@@ -103,6 +103,29 @@ def _same_inode(current: os.stat_result, opened: os.stat_result, expected_uid: i
     )
 
 
+def _safe_open_state_dir(state_dir: Path, expected_uid: int) -> int | None:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        fd = os.open(state_dir, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.EACCES, errno.EPERM}:
+            return -1
+        raise
+
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != expected_uid:
+        os.close(fd)
+        return -1
+    return fd
+
+
 def cleanup_overlay_pidfiles(root: Path, *, expected_uid: int | None = None) -> dict[str, int]:
     """Remove only dead, owned, exact overlay pidfiles below *root*.
 
@@ -114,10 +137,12 @@ def cleanup_overlay_pidfiles(root: Path, *, expected_uid: int | None = None) -> 
     state_dir = root / "tmp" / "state"
     result = {"removed": 0, "skipped_alive": 0, "skipped_unsafe": 0, "missing": 0}
 
-    try:
-        dir_fd = os.open(state_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0))
-    except FileNotFoundError:
+    dir_fd = _safe_open_state_dir(state_dir, expected_uid)
+    if dir_fd is None:
         result["missing"] = len(PIDFILE_NAMES)
+        return result
+    if dir_fd < 0:
+        result["skipped_unsafe"] = len(PIDFILE_NAMES)
         return result
 
     try:
@@ -144,7 +169,7 @@ def cleanup_overlay_pidfiles(root: Path, *, expected_uid: int | None = None) -> 
                 result["skipped_alive"] += 1
                 continue
 
-            # Re-stat the directory entry after checking liveness.  If the file
+            # Re-stat the directory entry after checking liveness. If the file
             # was replaced while we inspected it, leave the replacement alone.
             try:
                 current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
