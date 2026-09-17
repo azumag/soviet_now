@@ -4,6 +4,18 @@ on:
   push:
     branches:
       - remove-soren91-improvement-remnants-physical
+  pull_request:
+    paths:
+      - '.github/workflows/soren91-retirement-cleanup.yml'
+      - 'soren91/**'
+      - 'soren91_control.sh'
+      - 'soren_loop.sh'
+      - 'strategy/improve.sh'
+      - 'core/**'
+      - 'broadcast/**'
+      - 'show_status.sh'
+      - 'status_dashboard.py'
+      - 'monitor_improve_runtime.sh'
 
 permissions:
   contents: read
