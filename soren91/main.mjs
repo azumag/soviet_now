@@ -12,6 +12,7 @@ import { statSync } from 'node:fs';
 import { createCanvasIO, boundedMs, probeBudget, postDropProbeEnabled } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
+import { waitForInlineRails } from './presentation_ready.mjs';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
@@ -1221,13 +1222,8 @@ async function main() {
       audioOutputLabel,
       anchorPage,
     });
-    if (process.env.SOREN91_BRING_TO_FRONT === '1') {
-      await gamePage.bringToFront();
-      console.log('[main] Soren91 page brought to front for VM game switch');
-    }
-    await fullscreenBrowserWindow(gamePage);
-    // bringToFront はOS窓を前面に raise しユーザーのフォーカスを奪う。
-    // タブ作成後は page.goto だけで十分なので、起動直後も含めて前面化しない。
+    // Do not explicitly reveal loading/unstyled pages. Presentation is committed
+    // only after the stage and the first inline-rail state have rendered below.
 
     // Unity canvas ロード待機
     console.log('[main] Waiting for Unity canvas...');
@@ -1256,10 +1252,25 @@ async function main() {
       // Remote-Mac capture must stay game-only (see DIRECT_OVERLAY_CONFIG):
       // the VM owns the rails, so never inline the live broadcast overlay
       // into the page the Mac streams.
-      await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+      // Seed state before iframe scripts run, avoiding their fallback HTTP fetch
+      // against the public game origin and a first render with empty/blue rails.
       await startInlineBroadcastState(gamePage);
+      await installInlineDirectBroadcastOverlay(gamePage, DIRECT_OVERLAY_CONFIG);
+      // Fail-open: a rail render stall must delay the corner, not cancel it.
+      try {
+        await waitForInlineRails(gamePage, DIRECT_OVERLAY_CONFIG);
+        console.log('[main] Inline rails rendered first state (presentation ready)');
+      } catch (err) {
+        console.log(`[main] Inline rail readiness wait skipped: ${err.message.split('\n')[0]}`);
+      }
     }
     console.log(`[main] Shared game stage installed: ${JSON.stringify(stageInfo)}`);
+
+    await fullscreenBrowserWindow(gamePage);
+    if (process.env.SOREN91_BRING_TO_FRONT === '1') {
+      await gamePage.bringToFront();
+      console.log('[main] Soren91 prepared page brought to front for VM game switch');
+    }
 
     // タイトル画面: 名前入力 + PLAY
     await handleTitleScreen(gamePage);

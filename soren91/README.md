@@ -11,6 +11,14 @@ Soren91 が試合後・一定試合数ごと・日次スケジュール等で LL
 - 戦略変更は、原因仮説・評価・テストを伴う通常のレビュー済みリポジトリ変更として行います。
 - runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。
 
+## 起動時の枠の準備
+
+ローカル共有ブラウザでは、Unity読込後にstageを構築し、親ページへ初期stateを渡してから枠のiframeを作ります。各枠の描画healthを最大10秒待ってから、設定で有効な全画面化・前面化を行います。remote CDPでは従来どおりゲームだけを描画し、VM側の枠は操作しません。
+
+描画待ちがタイムアウトした場合は警告を出して起動を継続します。その場合は枠未完成の表示を防げません。また、タブ作成による自動前面化や配信側のwindow capture切替はこの待機の対象外です。配信映像でのちらつき解消は、正規コーナーで別途確認が必要です。
+
+回帰テスト: `node --test tests/test_soren91_startup_rails.mjs`。実HTMLの描画テストは `SOREN91_TEST_BROWSER=/path/to/chrome node --test tests/test_soren91_startup_rails_browser.mjs`（独立headless、外部通信なし）。
+
 ## セットアップ
 
 ```bash
