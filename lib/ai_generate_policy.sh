@@ -6,6 +6,10 @@
 # 分ける。特に optional RADIO:*:prepass の一過性障害が同一 tick の本文生成まで
 # 全候補を backoff skip することを防ぐ。
 
+if ! declare -F _ai_priority_prepend >/dev/null; then
+	source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ai_priority_window.sh"
+fi
+
 _ai_failure_backoff_scope() {
 	local label="${1:-AI}" lower
 	lower="${label,,}"
@@ -187,6 +191,8 @@ ai_generate_list() {
 	local validator="${5:-}"
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
+	local _AI_PRIORITY_CHAIN=1 _AI_PRIORITY_ORIGINAL_LIST="$agent_list_raw"
+	agent_list_raw=$(_ai_priority_prepend "$agent_list_raw")
 	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
 	local vercel_rate_limit_count=0
 	local vercel_rate_limit_agents=()
@@ -258,9 +264,14 @@ ai_generate_list() {
 			continue
 		fi
 
+		_ai_priority_dispatch_allowed "$agent" || continue
 		attempted_count=$((attempted_count + 1))
 		output=$(_ai_dispatch "$label" "$agent" "$prompt_file" "$timeout_override")
 		rc=$?
+		if [ "$rc" -eq 93 ]; then
+			attempted_count=$((attempted_count - 1))
+			continue
+		fi
 		if [ "$rc" -eq "$AI_GATE_GIVEUP_RC" ]; then
 			[ -n "$failure_kind_file" ] && printf 'gate_giveup\n' >"$failure_kind_file"
 			_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "gate_giveup"

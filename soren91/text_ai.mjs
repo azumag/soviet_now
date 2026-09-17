@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { prependPriority, priorityActive, priorityAgents } from '../lib/ai_priority_window.mjs';
 import { execFile } from 'child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -13,7 +14,7 @@ const DEFAULT_OPENCODE_MODELS = 'opencode:muse-spark-1.3-contributor-free,openco
 
 export function parseOpencodeModels(raw) {
   const list = String(raw || '').split(',').map(part => part.trim()).filter(Boolean);
-  const models = list.filter(spec => spec.startsWith('opencode:') || spec.startsWith('opencode-go:'));
+  const models = list.filter(spec => spec.startsWith('opencode:') || spec.startsWith('opencode-go:') || spec.startsWith('openrouter:'));
   return models.length > 0 ? models : DEFAULT_OPENCODE_MODELS.split(',');
 }
 
@@ -407,9 +408,13 @@ function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, p
 // `opencode/<model>` 形式。timeout は通常設定 (RADIO_OPENCODE_TIMEOUT) を流用。
 export async function runOpencodeText(tag, promptText, options = {}) {
   const config = resolveTextAiConfig();
-  const models = options.opencodeAgent
-    ? [resolveOpencodeModel(options.opencodeAgent)]
-    : (config.opencodeModels || []).map(resolveOpencodeModel).filter(Boolean);
+  const originalAgents = options.opencodeAgent
+    ? [options.opencodeAgent] : (config.opencodeModels || []);
+  const agents = options.priorityHandled ? originalAgents : prependPriority(originalAgents);
+  const originalModels = originalAgents.map(resolveOpencodeModel);
+  const promotedModels = priorityAgents.map(resolveOpencodeModel);
+  const models = agents.map(resolveOpencodeModel).filter(model => model
+    && !(options.priorityHandled && !options.priorityOnly && promotedModels.includes(model)));
   if (models.length === 0) {
     throw makeProviderError('no opencode models configured');
   }
@@ -422,6 +427,8 @@ export async function runOpencodeText(tag, promptText, options = {}) {
 
   let lastErr = null;
   for (const model of models) {
+    if (promotedModels.includes(model) && !priorityActive()
+        && (options.priorityOnly || !originalModels.includes(model))) continue;
     const cooldownUntil = hungOpencodeModels.get(model) || 0;
     if (cooldownUntil > Date.now()) {
       console.error(`[${tag}] opencode model skipped (timed out recently): ${model}`);
@@ -459,6 +466,20 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
   }
   let lastErr = null;
 
+  // Prepend to the overall chain, not just its later OpenCode fallback. This
+  // does not enable Gemini or any inactive worker; existing permissions remain.
+  const priorityHandled = priorityActive() && options.includeOpencodeFallback !== false;
+  if (priorityHandled) {
+    for (const agent of priorityAgents) {
+      if (!priorityActive()) break;
+      try {
+        return await runOpencodeText(tag, promptText, {
+          ...options, opencodeAgent: agent, priorityHandled: true, priorityOnly: true,
+        });
+      } catch (err) { lastErr = err; }
+    }
+  }
+
   for (const provider of fallbackProviders) {
     if (provider === 'claude') {
       try {
@@ -494,7 +515,8 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
 
     if (provider === 'opencode' && options.includeOpencodeFallback !== false) {
       try {
-        return await runOpencodeText(tag, promptText, options);
+        // Promotion already ran above; do not re-probe it inside this leg.
+        return await runOpencodeText(tag, promptText, { ...options, priorityHandled });
       } catch (err) {
         lastErr = err;
         console.error(`[${tag}] opencode failed (${err.message})`);

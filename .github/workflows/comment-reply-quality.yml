@@ -29,6 +29,8 @@ on:
       - '.github/workflows/comment-reply-quality.yml'
 permissions:
   contents: read
+env:
+  AI_PRIORITY_NOW_EPOCH: '1790254800'
 jobs:
   regression:
     runs-on: ubuntu-24.04

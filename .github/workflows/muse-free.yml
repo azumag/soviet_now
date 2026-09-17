@@ -45,6 +45,9 @@ on:
       - '.github/workflows/muse-free.yml'
 permissions:
   contents: read
+# Legacy regression fixtures test the baseline, not the time-limited promotion.
+env:
+  AI_PRIORITY_NOW_EPOCH: '1790254800'
 jobs:
   regression:
     runs-on: ubuntu-24.04

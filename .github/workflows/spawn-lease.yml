@@ -51,6 +51,8 @@ on:
       - '.github/workflows/spawn-lease.yml'
 permissions:
   contents: read
+env:
+  AI_PRIORITY_NOW_EPOCH: '1790254800'
 jobs:
   spawn-lease:
     runs-on: ubuntu-24.04

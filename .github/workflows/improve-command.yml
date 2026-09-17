@@ -27,6 +27,8 @@ on:
       - '.github/workflows/improve-command.yml'
 permissions:
   contents: read
+env:
+  AI_PRIORITY_NOW_EPOCH: '1790254800'
 jobs:
   bounded-commands:
     runs-on: ubuntu-24.04

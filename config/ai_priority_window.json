@@ -1,0 +1,5 @@
+{
+  "start_utc": "2026-09-17T13:00:00Z",
+  "end_utc": "2026-09-24T13:00:00Z",
+  "agents": ["opencode-go:union-alpha", "openrouter:stealth/union-alpha"]
+}
