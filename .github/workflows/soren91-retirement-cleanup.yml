@@ -7,10 +7,10 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   cleanup:
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -18,314 +18,31 @@ jobs:
         with:
           ref: remove-soren91-improvement-remnants-physical
           persist-credentials: true
-      - name: Remove retired Soren91 improvement machinery
+      - name: Apply cleanup
+        run: python3 .github/scripts/remove_soren91_improvement_remnants.py
+      - name: Syntax and Soren91 regression checks
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          def load(path):
-              return Path(path).read_text(encoding='utf-8')
-
-          def save(path, text):
-              Path(path).write_text(text, encoding='utf-8')
-
-          def replace(path, old, new, expected=1):
-              text = load(path)
-              count = text.count(old)
-              if count != expected:
-                  raise SystemExit(f'{path}: expected {expected} occurrences, found {count}: {old[:100]!r}')
-              save(path, text.replace(old, new))
-
-          def sub(path, pattern, repl, expected=1, flags=re.S):
-              text = load(path)
-              new, count = re.subn(pattern, repl, text, count=expected, flags=flags)
-              if count != expected:
-                  raise SystemExit(f'{path}: expected {expected} regex replacements, found {count}: {pattern[:120]!r}')
-              save(path, new)
-
-          def filter_lines(path, needles):
-              text = load(path)
-              lines = text.splitlines(keepends=True)
-              removed = [line for line in lines if any(n in line for n in needles)]
-              if not removed:
-                  raise SystemExit(f'{path}: no matching lines for {needles!r}')
-              save(path, ''.join(line for line in lines if not any(n in line for n in needles)))
-
-          # Soren91 game runtime: no improvement schedule, gate, import, or compatibility env.
-          replace('soren91/main.mjs', "import { parse as parseDotenv } from 'dotenv';\n", '')
-          filter_lines('soren91/main.mjs', [
-              'const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;',
-              "const ENV_PATH = '.env';",
-              "const RUNTIME_CONFIG_PATH = 'runtime_config.json';",
-          ])
-          sub(
-              'soren91/main.mjs',
-              r'\nfunction loadImprovementSchedule\(\) \{.*?\n\}\n\n(?=async function queueRankingCommentOnce)',
-              '\n',
-          )
-          sub(
-              'soren91/main.mjs',
-              r'\n  // 外部制御モード: 内蔵改善をスキップ.*?\n  \}\n(?=\nasync function waitForRankingCommentContext)',
-              '\n}',
-          )
-
-          replace(
-              'soren91/run_player_loop.sh',
-              "\trun_start=$(date +%s)\n\t# Soren91 automatic strategy improvement is permanently retired. Force the\n\t# legacy main.mjs compatibility gate closed even if an old environment still\n\t# carries SOREN91_EXTERNAL_IMPROVE=0.\n\tSOREN91_EXTERNAL_IMPROVE=1 node main.mjs >>\"$LOG_FILE\" 2>&1 &\n",
-              "\trun_start=$(date +%s)\n\tnode main.mjs >>\"$LOG_FILE\" 2>&1 &\n",
-          )
-
-          # Control plane: remove Soren91-specific improvement process/lock/session machinery.
-          replace(
-              'soren91_control.sh',
-              '# soren91_control.sh - soren91 (メリケンAI) の起動・停止・改善キック管理',
-              '# soren91_control.sh - soren91 (メリケンAI) の起動・停止管理',
-          )
-          filter_lines('soren91_control.sh', [
-              'SOREN91_IMPROVE_PID_FILE=',
-              'SOREN91_IMPROVE_LOCK=',
-              'SOREN91_SESSION_FILE=',
-              'SOREN91_MERIKEN_IMPROVE_INTERVAL=',
-          ])
-          sub(
-              'soren91_control.sh',
-              r'\n# 改善モード中か判定.*?\n_soren91_improve_active\(\) \{.*?\n\}\n\n(?=_soren91_switch_obs_layout)',
-              '\n',
-          )
-          duplicate_obs = '''\t\telif _soren91_improve_active; then
-\t\t\t"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
-\t\telse
-\t\t\t"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
-'''
-          replace(
-              'soren91_control.sh',
-              duplicate_obs,
-              '''\t\telse
-\t\t\t"$SOREN91_OBS_CONTROL" batch soren show:"$status_source","$show_status_source","$china_show_sources" $s91_hide_op >/dev/null 2>>"$ELOOP_LIB_DIR/tmp/obs_control.err.log" &
-''',
-          )
-          sub(
-              'soren91_control.sh',
-              r'\n_soren91_is_improve_process\(\) \{.*?\n\}\n\n(?=_soren91_text_has_japanese)',
-              '\n',
-          )
-          sub(
-              'soren91_control.sh',
-              r'\n\t# 前回の soren91 improve がまだ実行中なら session_games\.json を上書きしない\n.*?\n\tfi\n',
-              '\n',
-          )
-          replace(
-              'soren91_control.sh',
-              '''\tprintf '{"start_game":%d,"start_time":"%s"}\\n' "$start_game" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
-\t\t> "$SOREN91_SESSION_FILE"
-''',
-              '',
-          )
-          sub(
-              'soren91_control.sh',
-              r'\n\t# メリケンAIモード判定 .*?\n\t# 多重runner防止',
-              '\n\t# 多重runner防止',
-          )
-          replace(
-              'soren91_control.sh',
-              " SOREN91_EXTERNAL_IMPROVE='${_ext_improve}' IMPROVEMENT_INTERVAL_GAMES='${_improve_interval:-}'",
-              '',
-          )
-          filter_lines('soren91_control.sh', [
-              'SOREN91_EXTERNAL_IMPROVE="$_ext_improve"',
-              'IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}"',
-          ])
-          sub(
-              'soren91_control.sh',
-              r'_soren91_record_end_game\(\) \{.*?\n\}\n\n# Soren91 から復帰',
-              '''_soren91_game_count() {
-\tlocal game_count=0
-\tif [ -d "$SOREN91_DIR/game_history" ]; then
-\t\tgame_count=$(ls -1 "$SOREN91_DIR/game_history"/game_*.jsonl 2>/dev/null | wc -l | tr -d ' ')
-\tfi
-\techo "$game_count"
-}
-
-# Soren91 から復帰''',
-          )
-          text = load('soren91_control.sh')
-          text = text.replace('_soren91_record_end_game', '_soren91_game_count')
-          text = text.replace('[SOREN91] Not running, recording end_game', '[SOREN91] Not running, cleaning up')
-          save('soren91_control.sh', text)
-          sub(
-              'soren91_control.sh',
-              r'\nsoren91_improve\(\) \{.*?\n\}\n\n(?=soren91_cleanup\(\))',
-              '\n',
-          )
-          sub(
-              'soren91_control.sh',
-              r'\n\t# 改善プロセス停止 \(コマンド名を検証\)\n.*?\n\tfi\n\n\t# ファイルクリーンアップ',
-              '\n\t# ファイルクリーンアップ',
-          )
-          replace(
-              'soren91_control.sh',
-              '''\trm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \\
-\t\t"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \\
-''',
-              '''\trm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" \\
-''',
-          )
-
-          # Normal Soren improvement remains; remove only the Soren91 self-improvement hook.
-          filter_lines('core/config.sh', [
-              'SOREN91_IMPROVE_HUNG_HARVEST_ENABLED=',
-              'SOREN91_IMPROVE_HUNG_SEC=',
-              'SOREN91_IMPROVE_HUNG_QUARANTINE_FILE=',
-              'POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED=',
-          ])
-          filter_lines('core/streaming_shim.sh', [
-              'soren91_improve() { return 0; }',
-              'soren91_harvest_hung_improve() { return 0; }',
-          ])
-          filter_lines('broadcast/comment_lib.sh', ['soren91_improve_*)'])
-          filter_lines('soren_loop.sh', ['soren91_improve 2>/dev/null || true'])
-          sub(
-              'strategy/improve.sh',
-              r'\n_post_improve_soren91_session_improve\(\) \{.*?\n\}\n\n(?=#=== 改善ステート管理)',
-              '\n',
-          )
-          text = load('strategy/improve.sh')
-          text = ''.join(line for line in text.splitlines(keepends=True) if '_post_improve_soren91_session_improve ' not in line)
-          text = text.replace(
-              'soren91_stop/soren91_improve/handover/bridge再起動をスキップ',
-              'soren91_stop/handover/bridge再起動をスキップ',
-          )
-          save('strategy/improve.sh', text)
-          replace(
-              'monitor_improve_runtime.sh',
-              'tmp/.soren91_improve_last_activate_mode',
-              'tmp/.improve_monitor_last_activate_mode',
-          )
-
-          # Remove retired Soren91 watchdog presentation.
-          sub(
-              'show_status.sh',
-              r'\n\t\t# --- soren91 改善 watchdog / quarantine 観測 ---\n.*?\n\t\t# --- 最低試合ゲート ---',
-              '\n\n\t\t# --- 最低試合ゲート ---',
-          )
-          sub(
-              'show_status.sh',
-              r'\n\t\t\tif \[\[ "\$soren91_improve_watchdog_label" != "none" \]\]; then\n.*?\n\t\t\tfi\n',
-              '\n',
-          )
-          sub(
-              'status_dashboard.py',
-              r'SOREN91_IMPROVE_LOCK_FILE = .*?\nSOREN91_IMPROVE_PID_FILE = .*?\nSOREN91_IMPROVE_HUNG_QUARANTINE_FILE = os\.getenv\(\n.*?\n\)\n',
-              '',
-          )
-          sub(
-              'status_dashboard.py',
-              r'\ndef load_soren91_improve_watchdog_status\(\):.*?\n\n(?=def load_latest_annealing_candidate)',
-              '\n',
-          )
-          sub(
-              'status_dashboard.py',
-              r'\n    soren91_watchdog = load_soren91_improve_watchdog_status\(\)\n    if soren91_watchdog:.*?\n        lines\.append\(f" \{color\}S91Improve\{RST\} \{detail\}"\)\n',
-              '\n',
-          )
-
-          # Tests now assert physical absence, not a compatibility tombstone.
-          replace(
-              'tests/test_soren91_remote_latency.mjs',
-              '''test('runner permanently hard-disables the retired Soren91 improvement path', () => {
-  assert.match(source, /SOREN91_EXTERNAL_IMPROVE=1 node main\\.mjs/);
-  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE="\\$\\{SOREN91_EXTERNAL_IMPROVE:-1\\}"/);
-});
-''',
-              '''test('runner invokes main directly without retired improvement env', () => {
-  assert.match(source, /\\n\\tnode main\\.mjs >>"\\$LOG_FILE" 2>&1 &/);
-  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES/);
-});
-''',
-          )
-          replace(
-              'tests/test_escape_mechanisms.py',
-              'soren91_stop/soren91_improve/handover/bridge再起動をスキップ',
-              'soren91_stop/handover/bridge再起動をスキップ',
-          )
-          sub(
-              'tests/test_escape_mechanisms.py',
-              r'\n    def test_post_improve_soren91_session_improve_is_opt_in\(self\):.*?\n(?=    def test_improve_and_system_progress_are_queued_for_audio_worker)',
-              '\n',
-          )
-          replace(
-              'tests/test_escape_mechanisms.py',
-              'def test_soren91_improve_hang_is_bounded_by_watchdog(self):',
-              'def test_improve_hang_is_bounded_by_watchdog(self):',
-          )
-          sub(
-              'tests/test_escape_mechanisms.py',
-              r'\n        self\.assertIn\("SOREN91_IMPROVE_HUNG_HARVEST_ENABLED", config\).*?\n        self\.assertIn\("soren91_harvest_hung_improve \|\| true", improve\)',
-              '',
-          )
-          filter_lines('tests/test_escape_mechanisms.py', [
-              'SOREN91_IMPROVE_HUNG_QUARANTINE_FILE',
-              'load_soren91_improve_watchdog_status',
-              'soren91_improve_watchdog_label',
-              'soren91_improve_hung_quarantine.jsonl',
-              '"S91Improve"',
-          ])
-
-          # Docs describe the final state: no compatibility improvement module remains.
-          replace(
-              'soren91/README.md',
-              '- `improve.mjs` は古い呼び出し元を壊さないための no-op 互換ファイルです。',
-              '- 旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも削除済みで、runtimeから自動改善を起動する経路はありません。',
-          )
-          filter_lines('soren91/README.md', ['improve.mjs              # 廃止済み自動改善の互換no-op'])
-          replace(
-              'soren91/CLAUDE.md',
-              '`improve.mjs` は旧呼び出し元との互換のための no-op tombstone であり、LLM呼び出し・戦略変更・PR作成をしてはならない。',
-              '旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも残さない。Soren91 runtimeに自動改善を起動する実行モジュールを再導入してはならない。',
-          )
-          filter_lines('soren91/CLAUDE.md', ['improve.mjs              # 廃止済み自動改善の互換no-op'])
-          text = load('README.md')
-          text = text.replace('soren91の起動・停止・改善キック・手動メリケンモード・OBS連携', 'soren91の起動・停止・手動メリケンモード・OBS連携')
-          text = text.replace('親ループからの起動・停止・改善キック・手動メリケンモード・OBS連携', '親ループからの起動・停止・手動メリケンモード・OBS連携')
-          save('README.md', text)
-          replace(
-              'CLAUDE.md',
-              'soren91 (メリケンAI) の起動・停止・改善キック管理',
-              'soren91 (メリケンAI) の起動・停止管理',
-          )
-
-          # CI no longer references the deleted tombstone.
-          text = load('.github/workflows/soren91-play-contracts.yml')
-          text = ''.join(line for line in text.splitlines(keepends=True) if 'soren91/improve.mjs' not in line)
-          save('.github/workflows/soren91-play-contracts.yml', text)
-
-          # Delete the compatibility implementation and its tombstone-specific test.
-          Path('soren91/improve.mjs').unlink()
-          Path('tests/test_soren91_improvement_retired.mjs').unlink()
-
-          # This temporary mutation workflow must not survive the cleanup.
-          Path('.github/workflows/soren91-retirement-cleanup.yml').unlink()
-          PY
-
           bash -n soren91_control.sh soren91/run_player_loop.sh soren_loop.sh strategy/improve.sh core/config.sh core/streaming_shim.sh broadcast/comment_lib.sh show_status.sh monitor_improve_runtime.sh
           node --check soren91/main.mjs
           python3 -m py_compile status_dashboard.py
           npm ci --ignore-scripts --no-audit --no-fund
           node --test tests/test_soren91_*.mjs
           python3 -m unittest tests.test_soren91_runtime_metrics
-
-          if git grep -n -E 'soren91_improve|SOREN91_IMPROVE|SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES|SOREN91_MERIKEN_IMPROVE_INTERVAL|POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED|SOREN91_SESSION_FILE|session_games\.json' -- ':!failures.txt'; then
+      - name: Assert retired machinery is physically absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -E 'soren91_improve|SOREN91_IMPROVE|SOREN91_EXTERNAL_IMPROVE|IMPROVEMENT_INTERVAL_GAMES|SOREN91_MERIKEN_IMPROVE_INTERVAL|POST_IMPROVE_SOREN91_SESSION_IMPROVE_ENABLED|SOREN91_SESSION_FILE|session_games\.json' -- ':!failures.txt' ':!.github/workflows/soren91-retirement-cleanup.yml' ':!.github/scripts/remove_soren91_improvement_remnants.py'; then
             echo 'retired Soren91 improvement remnants remain' >&2
             exit 1
           fi
-          if [ -e soren91/improve.mjs ]; then
-            echo 'soren91/improve.mjs still exists' >&2
-            exit 1
-          fi
-
+          test ! -e soren91/improve.mjs
+      - name: Commit reviewed cleanup to branch
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name 'Tsubasa Azumagakito'
           git config user.email 'azumag@users.noreply.github.com'
           git add -A
