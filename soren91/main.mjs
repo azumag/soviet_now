@@ -7,6 +7,11 @@
  */
 
 import 'dotenv/config';
+import { performance } from 'node:perf_hooks';
+import { statSync } from 'node:fs';
+import { createCanvasIO, boundedMs, probeBudget, postDropProbeEnabled } from './realtime_io.mjs';
+import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
+import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
@@ -27,10 +32,11 @@ import { buildDirectBroadcastOverlayState } from '../lib/direct_broadcast_overla
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
-  return await import(url + '?t=' + Date.now());
+  const st = statSync(fileURLToPath(url));
+  return await import(`${url}?v=${st.mtimeMs}-${st.ctimeMs}-${st.size}-${st.ino}`);
 }
 // comment.mjs は実行中に変化しないので、ビート判定用に一度だけ読み込んで使い回す
-// (loadModule は ?t= で毎回再評価するため、毎ターンの使用には向かない)。
+// 内容が変わるモジュールだけ更新時に再importする。
 let commentModulePromise = null;
 function loadCommentModule() {
   if (!commentModulePromise) {
@@ -39,10 +45,10 @@ function loadCommentModule() {
   }
   return commentModulePromise;
 }
-// strategy.mjs は毎ターン動的にロード (AI改善で更新されるため)
+// ラウンド固定の戦略スナップショットは不変。同一URLの再評価・蓄積を避ける。
 async function loadStrategy(strategyPath = './strategy.mjs') {
   const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
-  return await import(url + '?t=' + Date.now());
+  return await import(url);
 }
 
 // --- シグナルハンドラ ---
@@ -131,9 +137,36 @@ const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
 
-async function captureGameScreenshot(page, path) {
+const canvasIO = createCanvasIO();
+
+async function captureGameScreenshot(page, path, options = {}) {
+  const timeoutMs = Math.min(
+    boundedMs(process.env.SOREN91_CAPTURE_TIMEOUT_MS, 3000),
+    options.timeoutMs ?? Infinity,
+  );
+  if (!(timeoutMs > 0)) throw new Error('capture-budget-exhausted');
+  if (remoteBrowserOwnsViewport() && process.env.SOREN91_CAPTURE_MODE !== 'locator') {
+    const frame = await canvasIO.capture(page, { timeoutMs });
+    // Only a completed, geometry-checked canvas frame reaches disk/the analyzer.
+    writeFileSync(path, frame.buffer);
+    return frame;
+  }
   const canvas = page.locator('canvas').first();
-  await canvas.screenshot({ path });
+  await canvas.screenshot({ path, timeout: timeoutMs });
+  return null;
+}
+
+async function inputCanvasBox(page, calibration, frame) {
+  if (frame) {
+    return canvasIO.validateInput(page, frame, calibration, {
+      maxAgeMs: boundedMs(process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS, 2500, 500, 10000),
+    });
+  }
+  const canvas = await page.$('canvas');
+  if (!canvas) throw new Error('Canvas not found');
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas bounding box not available');
+  return box;
 }
 
 async function setNormalGameLifecycle(browser, state) {
@@ -354,6 +387,7 @@ async function cleanupRuntime(reason = 'normal') {
     const browser = activeBrowser;
     const context = activeContext;
     const gamePage = activeGamePage;
+    if (gamePage) canvasIO.close(gamePage);
     const isSharedMode = activeIsSharedMode;
     const ownsContext = activeOwnsContext;
 
@@ -562,17 +596,18 @@ async function captureRankingTransitionBurst(page, gameNumber) {
 
   const intervalMs = Math.max(50, Number(process.env.SOREN91_RANK_BURST_INTERVAL_MS || 150));
   const durationMs = Math.max(intervalMs, Number(process.env.SOREN91_RANK_BURST_DURATION_MS || 4500));
-  const frames = Math.max(1, Math.ceil(durationMs / intervalMs));
+  const budget = probeBudget(durationMs, intervalMs);
+  const frames = budget.frames;
   const prefix = `_rankburst_g${String(gameNumber).padStart(4, '0')}`;
   const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
   const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
 
   let bestIncompletePath = null;
   console.log(`[game] Ranking transition burst start: game #${gameNumber}, frames=${frames}, interval=${intervalMs}ms`);
-  for (let i = 0; i < frames; i++) {
+  for (let i = 0; i < frames && budget.remaining() > 0; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await captureGameScreenshot(page, framePath);
+      await captureGameScreenshot(page, framePath, { timeoutMs: budget.remaining() });
       const rankResult = await detectRankingScreen(framePath);
       const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult ?? 'null'}.png`);
       try { renameSync(framePath, taggedPath); } catch {}
@@ -587,7 +622,7 @@ async function captureRankingTransitionBurst(page, gameNumber) {
     } catch (err) {
       console.log(`[game] Ranking transition burst frame error: ${err.message}`);
     }
-    if (i + 1 < frames) await sleep(intervalMs);
+    if (i + 1 < frames && budget.remaining() > 0) await sleep(budget.sleepMs());
   }
 
   if (bestIncompletePath && !existsSync(rankingImagePath)) {
@@ -601,19 +636,21 @@ async function captureRankingTransitionBurst(page, gameNumber) {
 }
 
 async function probeRankingImmediatelyAfterDrop(page, gameNumber, turn) {
-  if (process.env.SOREN91_RANK_POSTDROP_PROBE === '0') return { detectedRank: null, rankingImagePath: null };
+  // Evaluate after dotenv even for direct node/main entry (not just the shell runner).
+  if (!postDropProbeEnabled()) return { detectedRank: null, rankingImagePath: null };
 
   const intervalMs = Math.max(40, Number(process.env.SOREN91_RANK_POSTDROP_INTERVAL_MS || 75));
   const durationMs = Math.max(intervalMs, Number(process.env.SOREN91_RANK_POSTDROP_DURATION_MS || 1200));
-  const frames = Math.max(1, Math.ceil(durationMs / intervalMs));
+  const budget = probeBudget(durationMs, intervalMs);
+  const frames = budget.frames;
   const prefix = `_rankpostdrop_g${String(gameNumber).padStart(4, '0')}_t${String(turn).padStart(4, '0')}`;
   const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
   const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
 
-  for (let i = 0; i < frames; i++) {
+  for (let i = 0; i < frames && budget.remaining() > 0; i++) {
     const framePath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}.png`);
     try {
-      await captureGameScreenshot(page, framePath);
+      await captureGameScreenshot(page, framePath, { timeoutMs: budget.remaining() });
       const rankResult = await detectRankingScreen(framePath);
       if (rankResult != null && rankResult > 0) {
         const taggedPath = join('tmp/summaries', `${prefix}_f${String(i + 1).padStart(2, '0')}_r${rankResult}.png`);
@@ -628,7 +665,7 @@ async function probeRankingImmediatelyAfterDrop(page, gameNumber, turn) {
       try { unlinkSync(framePath); } catch {}
       console.log(`[game] Post-drop ranking probe frame error: ${err.message}`);
     }
-    if (i + 1 < frames) await sleep(intervalMs);
+    if (i + 1 < frames && budget.remaining() > 0) await sleep(budget.sleepMs());
   }
 
   return { detectedRank: null, rankingImagePath: null };
@@ -1422,7 +1459,10 @@ async function gameLoop(page, calibration, gameNumber) {
   let historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
   let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
-  let lastDropTime = 0;
+  let lastDropTime = -Infinity;
+  const latency = new LoopMetrics({
+    write: value => writeMetricsAtomically('tmp/state/soren91_loop_metrics.json', value),
+  });
   let consecutiveErrors = 0;
   let waitingLogged = false;
   let waitingCount = 0;
@@ -1435,6 +1475,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
+  let roundStartedAt = null;
   let startBeatSent = false;
   let pinchBeatSent = false;
   let awaitingFreshRoundAfterResult = false;
@@ -1450,6 +1491,8 @@ async function gameLoop(page, calibration, gameNumber) {
   try { commentMod = await loadCommentModule(); } catch (err) { console.log(`[game] comment module load failed: ${err.message}`); }
 
   while (true) {
+    latency.begin(gameNumber, turn);
+    let loopOutcome = 'observe';
     try {
       if (existsSync('tmp/stop')) {
         if (pendingGameOver) await pendingGameOver;
@@ -1457,19 +1500,17 @@ async function gameLoop(page, calibration, gameNumber) {
         return;
       }
 
-      // ドロップクールダウン
-      const elapsed = Date.now() - lastDropTime;
-      if (elapsed < DROP_COOLDOWN_MS) {
-        await sleep(DROP_COOLDOWN_MS - elapsed);
-      }
-
+      // Observe during cooldown; never carry an early frame across a long sleep to input.
       // スクリーンショット取得
       const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.png`);
-      await captureGameScreenshot(page, screenshotPath);
+      const observation = await latency.measure('capture', () => captureGameScreenshot(page, screenshotPath));
 
       // 盤面解析
-      const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
-      const boardState = await analyzeScreenshot(screenshotPath, calibration);
+      const boardState = await latency.measure('analyze', async () => {
+        const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
+        return analyzeScreenshot(screenshotPath, calibration);
+      });
+      latency.observe(boardState);
       // ランク追跡
       if (boardState.rank != null) lastKnownRank = boardState.rank;
       console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}`);
@@ -1484,7 +1525,7 @@ async function gameLoop(page, calibration, gameNumber) {
       if (turn >= MIN_RANKING_DETECTION_TURNS && boardState.state === 'MOVE') {
         try {
           const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-          const activeRankResult = await detectRankingScreen(screenshotPath);
+          const activeRankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
           if (activeRankResult != null && activeRankResult > 0) {
             const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
             try { copyFileSync(screenshotPath, rkPath); } catch {}
@@ -1530,6 +1571,7 @@ async function gameLoop(page, calibration, gameNumber) {
             waitingLogged = false;
             holdUsedThisTurn = false;
             midgameCommentSent = false;
+            roundStartedAt = null;
             startBeatSent = false;
             pinchBeatSent = false;
             await sleep(1000);
@@ -1544,7 +1586,7 @@ async function gameLoop(page, calibration, gameNumber) {
         if (!roundEnded) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-            const rankResult = await detectRankingScreen(screenshotPath);
+            const rankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
             // 診断: 実ラウンド後の WAITING フレームを検出成否に関わらず保存
             // (detectRankingScreen 調整用の実ランキング画面サンプル採取)。
             // ゲーム1につき最大6枚、リング上書き。SOREN91_RANKDIAG=0 で無効化。
@@ -1583,7 +1625,7 @@ async function gameLoop(page, calibration, gameNumber) {
           if (!rankingDetected && !rankingBurstCaptured && turn >= MIN_RANKING_DETECTION_TURNS && waitingCount === 1) {
             rankingBurstCaptured = true;
             try {
-              const burstResult = await captureRankingTransitionBurst(page, gameNumber);
+              const burstResult = await latency.measure('ranking', () => captureRankingTransitionBurst(page, gameNumber));
               if (burstResult.detectedRank != null) {
                 lastKnownRank = burstResult.detectedRank;
                 rankingDetected = true;
@@ -1620,6 +1662,7 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
+          roundStartedAt = null;
           startBeatSent = false;
           pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
@@ -1654,7 +1697,7 @@ async function gameLoop(page, calibration, gameNumber) {
         if (roundEnded && !rankingDetected && waitingCount >= 7 && waitingCount <= 180) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-            const lateRankResult = await detectRankingScreen(screenshotPath);
+            const lateRankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
             if (lateRankResult != null && lateRankResult > 0) {
               rankingDetected = true;
               const prevGameNum = gameNumber - 1;
@@ -1704,7 +1747,7 @@ async function gameLoop(page, calibration, gameNumber) {
       if (awaitingFreshRoundAfterResult) {
         try {
           const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-          const staleRankResult = await detectRankingScreen(screenshotPath);
+          const staleRankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
           if (staleRankResult != null) {
             console.log(`[game] Ignoring stale post-result ranking screen before game #${gameNumber} starts (rank=${staleRankResult})`);
             await sleep(1000);
@@ -1744,41 +1787,58 @@ async function gameLoop(page, calibration, gameNumber) {
         if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
           console.log('[game] Game board stable, running calibration...');
           const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
-          await captureGameScreenshot(page, calScreenshot);
+          await latency.measure('capture', () => captureGameScreenshot(page, calScreenshot));
           const { calibrate } = await loadModule('./calibration.mjs');
           calibration = await calibrate(calScreenshot);
           calibrated = true;
+          continue; // Re-observe with the new calibration; the old board/frame is not compatible.
         }
       }
 
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
-        await sleep(POLL_INTERVAL_MS);
+        await latency.measure('poll', () => sleep(POLL_INTERVAL_MS));
         continue;
       }
 
+      // Keep the original minimum input spacing, but overlap it with observation.
+      const elapsed = performance.now() - lastDropTime;
+      if (elapsed < DROP_COOLDOWN_MS) {
+        await latency.measure('cooldown', () => sleep(Math.min(POLL_INTERVAL_MS, DROP_COOLDOWN_MS - elapsed)));
+        continue; // A fresh screenshot is mandatory after waiting.
+      }
+
+      // Matchmaking does not count toward the in-round commentary clock.
+      if (roundStartedAt === null) roundStartedAt = performance.now();
+
       // 戦略決定 (canHoldを付与)
       boardState.canHold = !holdUsedThisTurn;
-      const { decide } = await loadStrategy(`./${currentStrategySnapshot.snapshotPath}`);
-      const decision = decide(boardState);
+      const decision = await latency.measure('decide', async () => {
+        const { decide } = await loadStrategy(`./${currentStrategySnapshot.snapshotPath}`);
+        return decide(boardState);
+      });
       console.log(`[game] Decision: x=${decision.x.toFixed(2)}, reason=${decision.reason}${decision.hold ? ' [HOLD]' : ''}`);
 
       // HOLD操作: 右クリックでswap/save → ドロップせず再解析
       if (decision.hold && !holdUsedThisTurn) {
-        await executeHold(page, calibration);
+        await latency.measure('input', () => executeHold(page, calibration, observation));
         holdUsedThisTurn = true;
-        lastDropTime = Date.now();
+        latency.holdSent();
+        loopOutcome = 'hold-sent';
+        // HOLD already waits for its animation. It is not a drop and does not restart its 1.2s timer.
         continue; // ピースが変わるので再解析
       }
 
       // マウスドロップ実行
-      await executeDrop(page, decision.x, calibration);
+      await latency.measure('input', () => executeDrop(page, decision.x, calibration, observation));
       holdUsedThisTurn = false; // ドロップ後にhold権をリセット
-      lastDropTime = Date.now();
+      lastDropTime = performance.now();
+      latency.dropSent();
+      loopOutcome = 'drop-sent';
 
       if (!rankingDetected && turn >= MIN_RANKING_DETECTION_TURNS) {
         try {
-          const postDropRank = await probeRankingImmediatelyAfterDrop(page, gameNumber, turn);
+          const postDropRank = await latency.measure('ranking', () => probeRankingImmediatelyAfterDrop(page, gameNumber, turn));
           if (postDropRank.detectedRank != null) {
             lastKnownRank = postDropRank.detectedRank;
             boardState.rank = postDropRank.detectedRank;
@@ -1808,14 +1868,24 @@ async function gameLoop(page, calibration, gameNumber) {
         return;
       }
 
-      // 試合中コメント: 1試合1回、20ターン到達後に生成 (非同期、ゲームをブロックしない)
-      // pieces < 3 はマッチング画面の誤検出の可能性が高いためスキップ
-      if (!midgameCommentSent && turn >= 20 && boardState.pieces.length >= 3) {
+      // 20手、または45秒かつ5手で1回。遅い試合も実況し、生成は投下を待たせない。
+      const midgameStatus = midgameCommentStatus({
+        sent: midgameCommentSent, turn, pieces: boardState.pieces,
+        startedAt: roundStartedAt, now: performance.now(),
+      });
+      if (!midgameCommentSent) {
+        console.log(`[game] Midgame gate: game=${gameNumber} turn=${turn} pieces=${boardState.pieces.length} elapsedMs=${Math.round(midgameStatus.elapsedMs)} reason=${midgameStatus.reason}`);
+      }
+      if (midgameStatus.due) {
         midgameCommentSent = true;
+        // Capture identity before the first await; the game loop can advance rounds meanwhile.
+        const commentGameNumber = gameNumber;
+        const commentTurn = turn;
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./comment.mjs');
-            await generateMidgameComment(gameNumber, turn, boardState, screenshotPath);
+            const result = await generateMidgameComment(commentGameNumber, commentTurn, boardState, screenshotPath);
+            console.log(`[game] Midgame completed: game=${commentGameNumber} turn=${commentTurn} generated=${Boolean(result)}`);
           } catch (err) {
             console.log(`[game] Midgame comment error: ${err.message}`);
           }
@@ -1855,6 +1925,7 @@ async function gameLoop(page, calibration, gameNumber) {
       }
 
     } catch (err) {
+      loopOutcome = 'error';
       consecutiveErrors++;
       console.error(`[game] Error (${consecutiveErrors}):`, err.message);
 
@@ -1864,6 +1935,8 @@ async function gameLoop(page, calibration, gameNumber) {
       }
 
       await sleep(1000);
+    } finally {
+      latency.flush(loopOutcome);
     }
   }
 }
@@ -1872,16 +1945,14 @@ async function gameLoop(page, calibration, gameNumber) {
  * HOLD操作を実行 (右クリック)
  * 現在のカーソルピースをHOLD領域に保持、既にHOLDがあれば入れ替え
  */
-async function executeHold(page, calibration) {
+async function executeHold(page, calibration, frame = null) {
   const { board } = calibration;
-  const canvas = await page.$('canvas');
-  if (!canvas) throw new Error('Canvas not found');
-
+  const box = await inputCanvasBox(page, calibration, frame);
+  const sx = frame ? box.width / frame.width : 1;
+  const sy = frame ? box.height / frame.height : 1;
   // ボード中央で右クリック
-  const box = await canvas.boundingBox();
-  if (!box) throw new Error('Canvas bounding box not available');
-  const clickX = box.x + board.left + Math.floor(board.width / 2);
-  const clickY = box.y + board.top + Math.floor(board.height * 0.3);
+  const clickX = box.x + (board.left + Math.floor(board.width / 2)) * sx;
+  const clickY = box.y + (board.top + Math.floor(board.height * 0.3)) * sy;
   await page.mouse.click(clickX, clickY, { button: 'right' });
   await sleep(300);
 }
@@ -1890,7 +1961,7 @@ async function executeHold(page, calibration) {
  * ドロップ操作を実行
  * ゲームX座標をピクセル座標に変換し、キャンバス上でクリック
  */
-async function executeDrop(page, gameX, calibration) {
+async function executeDrop(page, gameX, calibration, frame = null) {
   const { dropXToPixel } = await loadModule('./calibration.mjs');
   const pixelX = dropXToPixel(gameX, calibration);
 
@@ -1898,19 +1969,11 @@ async function executeDrop(page, gameX, calibration) {
   const { board } = calibration;
   const pixelY = board.top + Math.floor(board.height * 0.18);
 
-  // canvas要素を取得
-  const canvas = await page.$('canvas');
-  if (!canvas) {
-    throw new Error('Canvas not found');
-  }
-
-  const box = await canvas.boundingBox();
-  if (!box) {
-    throw new Error('Canvas bounding box not available');
-  }
-
-  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX));
-  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, box.y + pixelY));
+  const box = await inputCanvasBox(page, calibration, frame);
+  const sx = frame ? box.width / frame.width : 1;
+  const sy = frame ? box.height / frame.height : 1;
+  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX * sx));
+  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, box.y + pixelY * sy));
   if (process.env.SOREN91_DEBUG_DROP === '1') {
     console.log(`[game] Drop click: gameX=${gameX.toFixed(2)} pixel=(${clickX.toFixed(0)},${clickY.toFixed(0)}) cal=${calibration.method || 'provisional'}${calibration.provisional ? ':provisional' : ''}`);
   }
@@ -1918,6 +1981,8 @@ async function executeDrop(page, gameX, calibration) {
   // マウスをX位置に移動 (ゲームがマウス位置でドロップ先を決定)
   await page.mouse.move(clickX, clickY);
   await sleep(200);
+  // Revalidate after aiming: resize/navigation/old analysis must never trigger a stale click.
+  if (frame) await inputCanvasBox(page, calibration, frame);
   // クリックでドロップ実行
   await page.mouse.click(clickX, clickY);
 }
