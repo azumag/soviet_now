@@ -4,9 +4,9 @@
  *
  * Automatic strategy improvement was retired in 2026-09.  Retention therefore
  * no longer depends on an improve_daily consumption ledger or pending PR state.
- * Match histories, summaries, screenshots and strategy snapshots are retained
- * for N days (default: 3) so they remain available for explicit/manual review,
- * then removed by age to keep runtime storage bounded.
+ * Match histories, summaries, screenshots, strategy snapshots and optional Jev
+ * shadow ledgers are retained for N days (default: 3) so they remain available
+ * for explicit/manual review, then removed by age to keep runtime storage bounded.
  *
  * Never touches strategy.mjs, strategy_versions/, tmp/state/, or advice91.md.
  *
@@ -26,6 +26,7 @@ export const RETENTION_TARGETS = [
   'tmp/game_screenshots',
   'tmp/strategy_snapshots',
   'tmp/screenshots',
+  'tmp/jev_shadow',
 ];
 
 function isManagedArtifact(rel, name) {
@@ -37,7 +38,9 @@ function isManagedArtifact(rel, name) {
         ? [/^game_\d+$/]
         : rel === 'tmp/strategy_snapshots'
           ? [/^game_\d+_strategy\.mjs$/]
-          : [/^game_\d+(?:[._-].*)?$/];
+          : rel === 'tmp/jev_shadow'
+            ? [/^game_\d+\.jsonl$/]
+            : [/^game_\d+(?:[._-].*)?$/];
   return patterns.some(pattern => pattern.test(name));
 }
 

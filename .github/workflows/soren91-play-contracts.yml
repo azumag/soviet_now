@@ -6,6 +6,8 @@ on:
       - '.github/workflows/soren91-play-contracts.yml'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/jev_shadow.mjs'
+      - 'soren91/cleanup_retention.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -22,6 +24,8 @@ on:
       - '.github/workflows/soren91-play-contracts.yml'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/jev_shadow.mjs'
+      - 'soren91/cleanup_retention.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -53,6 +57,8 @@ jobs:
           python3 --version
           bash -n soren91/run_player_loop.sh
           python3 -m py_compile soren91/runtime_metrics.py
+          node --check soren91/jev_shadow.mjs
+          node --check soren91/cleanup_retention.mjs
           node --check soren91/strategy.mjs
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs

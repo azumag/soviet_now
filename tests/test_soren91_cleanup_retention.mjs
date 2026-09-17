@@ -16,12 +16,14 @@ function fixture() {
   mkdirSync(join(dir, 'tmp', 'summaries'), { recursive: true });
   mkdirSync(join(dir, 'game_history'), { recursive: true });
   mkdirSync(join(dir, 'tmp', 'game_screenshots', 'game_0001'), { recursive: true });
+  mkdirSync(join(dir, 'tmp', 'jev_shadow'), { recursive: true });
   mkdirSync(join(dir, 'tmp', 'state'), { recursive: true });
 
   const oldArtifacts = [
     join(dir, 'tmp', 'summaries', 'game_0001.json'),
     join(dir, 'tmp', 'summaries', 'ranking_0001.png'),
     join(dir, 'game_history', 'game_0001.jsonl'),
+    join(dir, 'tmp', 'jev_shadow', 'game_0001.jsonl'),
   ];
   for (const path of oldArtifacts) {
     writeFileSync(path, 'x');
@@ -42,7 +44,7 @@ test('cleanupRetention removes old managed evidence by age without improve_daily
   const { dir, now, oldArtifacts, freshSummary } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now });
-    assert.equal(r.removed, 4);
+    assert.equal(r.removed, 5);
     for (const path of oldArtifacts) assert.equal(existsSync(path), false);
     assert.equal(existsSync(join(dir, 'tmp', 'game_screenshots', 'game_0001')), false);
     assert.equal(existsSync(freshSummary), true);
@@ -56,9 +58,10 @@ test('cleanupRetention dry-run reports removals but keeps files', () => {
   const { dir, now } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now, dryRun: true });
-    assert.equal(r.removed, 4);
+    assert.equal(r.removed, 5);
     assert.equal(readdirSync(join(dir, 'tmp', 'summaries')).length, 3);
     assert.equal(existsSync(join(dir, 'game_history', 'game_0001.jsonl')), true);
+    assert.equal(existsSync(join(dir, 'tmp', 'jev_shadow', 'game_0001.jsonl')), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -69,14 +72,18 @@ test('cleanupRetention ignores unknown files and never touches strategy/state', 
   try {
     const strategy = join(dir, 'strategy.mjs');
     const unknown = join(dir, 'tmp', 'summaries', 'notes.txt');
+    const unknownShadow = join(dir, 'tmp', 'jev_shadow', 'notes.txt');
     writeFileSync(strategy, 'export function decide(){}');
     writeFileSync(unknown, 'keep');
+    writeFileSync(unknownShadow, 'keep');
     const old = new Date(now - 30 * DAY);
     utimesSync(strategy, old, old);
     utimesSync(unknown, old, old);
+    utimesSync(unknownShadow, old, old);
     cleanupRetention({ runtimeDir: dir, days: 3, now });
     assert.equal(existsSync(strategy), true);
     assert.equal(existsSync(unknown), true);
+    assert.equal(existsSync(unknownShadow), true);
     assert.equal(existsSync(join(dir, 'tmp', 'state', 'manual-review.json')), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -87,7 +94,7 @@ test('global tmp cleanup does not bypass the Soren91 retention owner', () => {
   const source = readFileSync(new URL('../infra/cleanup.sh', import.meta.url), 'utf8');
   assert.doesNotMatch(
     source,
-    /soren91\/tmp\/(?:summaries|screenshots|game_screenshots|strategy_snapshots)/,
+    /soren91\/tmp\/(?:summaries|screenshots|game_screenshots|strategy_snapshots|jev_shadow)/,
   );
   assert.match(source, /soren91\/cleanup_retention\.mjs/);
 });
