@@ -512,6 +512,13 @@ schedule_nonessential_audio_jobs() {
 		return 0
 	fi
 
+	# PAPER番組枠: docich の PAPER コーナーが番組表示へ切り替えている間は
+	# 新規ラジオ生成を開始しない（コーナー読み上げと通常ラジオの混線防止）。
+	# 手動トリガー(process_external_audio_triggers)は操作者の明示指示なので対象外。
+	if _paper_corner_active; then
+		return 0
+	fi
+
 	# ラジオスケジュール: 時刻ベースのみ
 	# hh:00,30 = news / hh:05 = theme / hh:15,45 = jiji
 	# コメント優先の判定は維持しつつ、生成は止めない。
@@ -818,6 +825,33 @@ _radio_generation_blocked_by_peak_hour_queue() {
 		rm -f "$TMP_MARKERS_DIR/.radio_peak_queue_gate_active" 2>/dev/null || true
 		log "[RADIO] ピーク時間帯: deferred queue 0件 → 新規生成を再開"
 	fi
+	return 1
+}
+
+# PAPER番組枠の抑止判定。docich の PAPER コーナーが番組表示へ切り替えている間は
+# 新規ラジオ生成をブロックする（コーナー読み上げと通常ラジオの混線防止）。
+# フラグ(tmp/.paper_corner_active)は docich が開始時に書き込み、終了時に削除する。
+# ends_at を過ぎた古いフラグ・破損したフラグ・欠落は無視する（radio 既定サービスを
+# 止めない fail-open）。クラッシュで削除漏れがあっても ends_at で自動復帰する。
+# 0 を返す = 生成をブロック, 1 を返す = 生成を許可。
+_paper_corner_active() {
+	local flag="tmp/.paper_corner_active"
+	if [ ! -f "$flag" ]; then
+		rm -f "$TMP_MARKERS_DIR/.radio_paper_corner_gate_active" 2>/dev/null || true
+		return 1
+	fi
+	local ends_at=0 now=0
+	ends_at=$(python3 -c "import json; print(json.load(open('$flag')).get('ends_at',0))" 2>/dev/null || echo 0)
+	now=$(date +%s 2>/dev/null || echo 0)
+	case "$ends_at" in ''|*[!0-9.]*) ends_at=0 ;; esac
+	if [ "${ends_at%.*}" -gt "$now" ] 2>/dev/null; then
+		if [ ! -f "$TMP_MARKERS_DIR/.radio_paper_corner_gate_active" ]; then
+			touch "$TMP_MARKERS_DIR/.radio_paper_corner_gate_active" 2>/dev/null || true
+			log "[RADIO] PAPERコーナー番組枠のため新規ラジオ生成を抑制"
+		fi
+		return 0
+	fi
+	rm -f "$TMP_MARKERS_DIR/.radio_paper_corner_gate_active" 2>/dev/null || true
 	return 1
 }
 
