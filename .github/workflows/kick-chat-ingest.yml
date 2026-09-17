@@ -1,0 +1,33 @@
+name: Kick chat ingest
+
+on:
+  pull_request:
+    paths:
+      - 'kick_chat_daemon.mjs'
+      - 'tests/test_kick_chat_daemon.mjs'
+      - '.github/workflows/kick-chat-ingest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'kick_chat_daemon.mjs'
+      - 'tests/test_kick_chat_daemon.mjs'
+      - '.github/workflows/kick-chat-ingest.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      - run: node --check kick_chat_daemon.mjs
+      - run: node tests/test_kick_chat_daemon.mjs
