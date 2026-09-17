@@ -88,6 +88,7 @@ PY
 	*soren91_ranking_comment*) printf '%s' "soren91:ranking_comment" ;;
 	*soren91_midgame_comment*)  printf '%s' "soren91:midgame_comment" ;;
 	*soren91_beat_comment*)     printf '%s' "soren91:beat_comment" ;;
+	*crypto_paper*)             printf '%s' "crypto_paper" ;;
 	*)                         printf '%s' "comment" ;;
 	esac
 }
@@ -104,6 +105,7 @@ _comment_playback_overlay_title() {
 	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
 	soren91:beat_comment)      printf '%s' "メリケンAIひとこと playback" ;;
 	soren91:*)                 printf '%s' "メリケンAIコメント playback" ;;
+	crypto_paper)              printf '%s' "PAPERコーナー playback" ;;
 	comment)                   printf '%s' "コメント返信 playback" ;;
 	*)                         printf '%s' "${label} playback" ;;
 	esac
@@ -284,6 +286,17 @@ _play_comment_queue() {
 			local _skip_duplicate_check=0
 			case "$_comment_context_label_for_dedupe" in
 			soren91:ranking_comment|soren91:midgame_comment) _skip_duplicate_check=1 ;;
+			# crypto_paper (docich PAPER corner) already carries its own durable,
+			# never-expiring per-announcement dedupe upstream (event_id ->
+			# receipt marker in _enqueue_audio_delivery), so a queue file here
+			# is always a genuinely new, once-only announcement. Deterministic
+			# fallback narration can legitimately produce byte-identical text
+			# across two different real announcements (e.g. unchanged trading
+			# facts, or public data unavailable both times); this content-hash
+			# dedupe has no notion of "occasion" and would otherwise drop the
+			# later one as a false-positive replay (2026-09-18 outage: every
+			# delivery in a 10-minute corner test was skipped this way).
+			crypto_paper) _skip_duplicate_check=1 ;;
 			esac
 				if [ "$_comment_context_label_for_dedupe" = "improve_progress" ] && _comment_improve_progress_already_played; then
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] improve_progress重複スキップ: $qf" >> tmp/.say_queue/debug.log
