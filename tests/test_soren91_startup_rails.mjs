@@ -33,8 +33,17 @@ async function simulate({ remote = false, readyError = false } = {}) {
       assert.ok(!events.includes('raise'), 'must await pending rail rendering');
       assert.ok(!events.includes('fullscreen'), 'must not fullscreen during rail rendering');
       assert.ok(!events.includes('ready-marker'));
+      assert.ok(!events.includes('reveal'), 'panels stay hidden during rail rendering');
       events.push('rendered');
       if (readyError) throw Error('not-ready');
+    },
+    revealStagePanels: async (actualPage, config) => {
+      assert.equal(actualPage, page);
+      assert.equal(config, context.DIRECT_OVERLAY_CONFIG);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.ok(!events.includes('raise'), 'must await panel reveal before raising');
+      assert.ok(!events.includes('fullscreen'), 'must await panel reveal before fullscreening');
+      events.push('reveal');
     },
     handleTitleScreen: async () => events.push('title'),
     writeFileSync: () => events.push('ready-marker'), SOREN91_READY_FILE: '', Date,
@@ -44,9 +53,12 @@ async function simulate({ remote = false, readyError = false } = {}) {
 }
 test('real startup code publishes state and renders rails before raising/fullscreening', async () => {
   const events = await simulate();
+  assert.equal(events.filter(event => event === 'reveal').length, 1, 'reveal runs exactly once');
+  assert.ok(events.indexOf('reveal') > events.indexOf('rendered'));
   for (const name of ['raise', 'fullscreen']) {
     assert.ok(events.indexOf(name) > events.indexOf('stage'));
     assert.ok(events.indexOf(name) > events.indexOf('rendered'));
+    assert.ok(events.indexOf(name) > events.indexOf('reveal'));
   }
   assert.ok(events.indexOf('state') < events.indexOf('iframes'));
   assert.ok(events.indexOf('ready-marker') > events.indexOf('raise'));
@@ -56,11 +68,17 @@ test('rail timeout continues only after the stage and bounded wait attempt', asy
   assert.ok(events.includes('raise'), 'fail-open: startup proceeds past rail wait');
   assert.ok(events.indexOf('raise') > events.indexOf('stage'));
   assert.ok(events.includes('ready-marker'), 'fail-open: ready marker still written');
+  assert.equal(events.filter(event => event === 'reveal').length, 1, 'reveal runs exactly once');
+  assert.ok(events.indexOf('reveal') > events.indexOf('rendered'));
+  for (const name of ['raise', 'fullscreen', 'ready-marker']) {
+    assert.ok(events.indexOf(name) > events.indexOf('reveal'), `${name} follows reveal on timeout`);
+  }
 });
 test('remote game-only presentation does not install or wait on VM-owned rails', async () => {
   const events = await simulate({ remote: true });
   assert.ok(!events.includes('iframes'));
   assert.ok(!events.includes('rendered'));
+  assert.ok(!events.includes('reveal'));
   assert.ok(events.includes('ready-marker'));
 });
 test('readiness checks rendered state, error, and region for every expected rail', async () => {
