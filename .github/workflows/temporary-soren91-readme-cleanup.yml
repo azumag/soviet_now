@@ -1,0 +1,88 @@
+name: Temporary Soren91 README cleanup
+
+on:
+  push:
+    branches:
+      - cleanup/remove-soren91-readme-stubs
+    paths:
+      - .github/soren91-readme-cleanup.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BRANCH: cleanup/remove-soren91-readme-stubs
+      REPO: azumag/soviet_now
+    steps:
+      - name: Replace README through GitHub API
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+
+          repo = os.environ['REPO']
+          branch = os.environ['BRANCH']
+          token = os.environ['GH_TOKEN']
+          api = 'https://api.github.com'
+
+          def request(method, path, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(api + path, data=data, method=method)
+              req.add_header('Accept', 'application/vnd.github+json')
+              req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('X-GitHub-Api-Version', '2022-11-28')
+              req.add_header('User-Agent', 'soren91-readme-cleanup')
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  body = r.read()
+              return json.loads(body or b'{}')
+
+          readme = request('GET', f'/repos/{repo}/contents/README.md?ref={branch}')
+          text = base64.b64decode(readme['content']).decode('utf-8')
+          reps = [
+              (
+                  "    ├── strategy.mjs       ← ドロップ位置決定 (AI改変対象)\n    ├── improve.mjs        ← AI改善ループ\n    └── soren91_control.sh ← 親ループからの起動・停止・改善キック管理",
+                  "    ├── strategy.mjs       ← ドロップ位置決定（変更は明示的な人手/PRのみ）\n    └── soren91_control.sh ← 親ループからの起動・停止・手動メリケンモード管理",
+              ),
+              (
+                  "node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善\n```",
+                  "node main.mjs        # ゲーム起動 → 自動プレイ\n```\n\nSoren91 の自己改善・日次自動改善は廃止済み。`strategy.mjs` の変更は、明示的な人手作業またはレビュー付きPRとしてのみ行う。試合履歴・スクリーンショット等の証拠保存は手動分析用として継続する。",
+              ),
+              (
+                  "| `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |\n| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku)。スモークテスト3ケース + ESLint no-undef 静的解析でバリデーション |",
+                  "| `soren91/strategy.mjs` | ドロップ位置決定（変更は明示的な人手/PRのみ） |",
+              ),
+          ]
+          for old, new in reps:
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'exact replacement count mismatch: {n} for {old[:70]!r}')
+              text = text.replace(old, new)
+          for needle in ('soren91/improve.mjs', '12ゲームごとにAI改善', '改善キック管理'):
+              if needle in text:
+                  raise SystemExit(f'retired Soren91 doc remains: {needle}')
+
+          request('PUT', f'/repos/{repo}/contents/README.md', {
+              'message': 'docs(soren91): remove retired self-improvement instructions',
+              'content': base64.b64encode(text.encode()).decode(),
+              'sha': readme['sha'],
+              'branch': branch,
+          })
+
+          workflow = request('GET', f'/repos/{repo}/contents/.github/workflows/temporary-soren91-readme-cleanup.yml?ref={branch}')
+          request('DELETE', f'/repos/{repo}/contents/.github/workflows/temporary-soren91-readme-cleanup.yml', {
+              'message': 'chore: remove temporary README cleanup workflow',
+              'sha': workflow['sha'],
+              'branch': branch,
+          })
+
+          trigger = request('GET', f'/repos/{repo}/contents/.github/soren91-readme-cleanup.trigger?ref={branch}')
+          request('DELETE', f'/repos/{repo}/contents/.github/soren91-readme-cleanup.trigger', {
+              'message': 'chore: remove temporary README cleanup trigger',
+              'sha': trigger['sha'],
+              'branch': branch,
+          })
+          PY
