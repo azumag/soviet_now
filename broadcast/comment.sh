@@ -1979,6 +1979,10 @@ try:
 except OSError:
     raise SystemExit(1)
 
+CARD_ACQUIRED_RE = re.compile(r"が\s*(?:【[^】]{1,80}】|\[[^\]]{1,80}\])\s*[^を]{0,360}?を獲得しました")
+CARD_MULTI_RE = re.compile(r"が\s*[0-9]+\s*連ガチャで\s*[^を]{0,200}?を獲得しました")
+
+
 def classify(user: str, comment: str) -> str:
     text = comment.strip()
     lower = text.lower()
@@ -2005,7 +2009,7 @@ def classify(user: str, comment: str) -> str:
         return "other"
     if stream_bug_hint and stream_bug_failure and not strategy_hint:
         return "stream_bug_report"
-    if re.search(r"が【.+?】.+?を獲得しました", text):
+    if CARD_ACQUIRED_RE.search(text) or CARD_MULTI_RE.search(text):
         return "card_gacha"
     if "[配信目標達成]" in text:
         return "stream_goal"
@@ -2035,11 +2039,18 @@ for idx, raw in enumerate(lines, 1):
     is_english = bool(
         language_helper and language_helper.looks_like_english(comment)
     )
+    # Card notifications contain ": " inside their own text ("素材: ..."), so
+    # the ": " split can push the acquisition pattern out of `comment`. Detect
+    # on the whole raw line instead of trusting the split.
+    if CARD_ACQUIRED_RE.search(raw) or CARD_MULTI_RE.search(raw):
+        category = "card_gacha"
+    else:
+        category = classify(user, comment)
     rows.append({
         "index": idx,
         "user": user,
         "comment": comment,
-        "category": classify(user, comment),
+        "category": category,
         "is_english": is_english,
     })
 
