@@ -6,7 +6,7 @@
 
 Soren91 が試合後・一定試合数ごと・日次スケジュール等で LLM を呼び、`strategy.mjs` を自動生成・自動更新したり、改善PRを自動作成する機能は廃止しました。
 
-- `improve.mjs` は古い呼び出し元を壊さないための no-op 互換ファイルです。
+- 旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも削除済みで、runtimeから自動改善を起動する経路はありません。
 - 試合履歴、summary、strategy snapshot、スクリーンショットは引き続き保存し、明示的な手動レビューや再現評価に利用できます。
 - 戦略変更は、原因仮説・評価・テストを伴う通常のレビュー済みリポジトリ変更として行います。
 - runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。
@@ -34,7 +34,6 @@ result_screen_ocr.mjs    # ランキング画面解析
 critical_turn_screenshots.mjs # 重要局面の証拠選別
 daily_evidence.mjs       # 保存済み履歴の解析helper（自動改善triggerではない）
 cleanup_retention.mjs    # 証拠データの保持期間管理
-improve.mjs              # 廃止済み自動改善の互換no-op
 
 game_history/            # ラウンドごとのJSONL
 tmp/summaries/           # ラウンドsummary

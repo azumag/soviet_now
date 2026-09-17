@@ -100,7 +100,6 @@ _comment_playback_overlay_title() {
 	wildcard_progress)         printf '%s' "wildcard進捗 playback" ;;
 	monitor_report)            printf '%s' "監視レポート playback" ;;
 	meriken_time)              printf '%s' "メリケンAI告知 playback" ;;
-	soren91_improve_*)         printf '%s' "メリケンAI改善 playback" ;;
 	soren91:ranking_comment)   printf '%s' "ランキングコメント playback" ;;
 	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
 	soren91:beat_comment)      printf '%s' "メリケンAIひとこと playback" ;;

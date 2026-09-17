@@ -7,7 +7,6 @@
  */
 
 import 'dotenv/config';
-import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
@@ -82,15 +81,12 @@ const CALIBRATION_MIN_CONFIDENCE = 0.55;
 const CALIBRATION_MIN_PIECES = 3;
 const MIN_RANKING_DETECTION_TURNS = 10;
 const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
-const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
 const DEFAULT_STANDALONE_CDP_PORT = 9223;
 const DEFAULT_CHROME_AUDIO_OUTPUT_LABEL = 'BlackHole 2ch';
 const DEFAULT_VIEWPORT_WIDTH = 1280;
 const DEFAULT_VIEWPORT_HEIGHT = 720;
-const ENV_PATH = '.env';
-const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_DIR = dirname(fileURLToPath(import.meta.url));
 const SOREN91_MODE_FLAG_FILE = join(SOREN91_DIR, '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
@@ -519,38 +515,6 @@ function releaseRankingCommentGameClaim(gameNumber) {
   try {
     unlinkSync(rankingCommentClaimPath(n));
   } catch {}
-}
-
-function loadImprovementSchedule() {
-  // 環境変数オーバーライド (最優先 — soren91_control.sh メリケンモード等で使用)
-  const envInterval = parsePositiveInt(process.env.IMPROVEMENT_INTERVAL_GAMES);
-  if (envInterval) return { interval: envInterval, source: 'process.env' };
-
-  if (existsSync(RUNTIME_CONFIG_PATH)) {
-    try {
-      const config = JSON.parse(readFileSync(RUNTIME_CONFIG_PATH, 'utf-8'));
-      const interval = parsePositiveInt(config.improvementIntervalGames);
-      if (interval) return { interval, source: RUNTIME_CONFIG_PATH };
-      console.log(`[config] Ignoring invalid improvementIntervalGames in ${RUNTIME_CONFIG_PATH}`);
-    } catch (err) {
-      console.log(`[config] Failed to parse ${RUNTIME_CONFIG_PATH}: ${err.message}`);
-    }
-  }
-
-  if (existsSync(ENV_PATH)) {
-    try {
-      const env = parseDotenv(readFileSync(ENV_PATH, 'utf-8'));
-      const interval = parsePositiveInt(env.IMPROVEMENT_INTERVAL_GAMES);
-      if (interval) return { interval, source: ENV_PATH };
-      if (typeof env.IMPROVEMENT_INTERVAL_GAMES !== 'undefined') {
-        console.log(`[config] Ignoring invalid IMPROVEMENT_INTERVAL_GAMES in ${ENV_PATH}`);
-      }
-    } catch (err) {
-      console.log(`[config] Failed to parse ${ENV_PATH}: ${err.message}`);
-    }
-  }
-
-  return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
 }
 
 async function queueRankingCommentOnce(gameNumber, detectedRank, reason = 'post-game', allowFallback = false) {
@@ -2092,26 +2056,6 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
     console.log(`[lineage] update failed: ${err.message}`);
   }
 
-  // 外部制御モード: 内蔵改善をスキップ (親プロセスが soren91_improve() で管理)
-  if (process.env.SOREN91_EXTERNAL_IMPROVE === '1') {
-    console.log(`[game] External improvement mode, skipping internal for game #${gameNumber}`);
-    return;
-  }
-
-  const { interval: improvementIntervalGames, source: improvementIntervalSource } = loadImprovementSchedule();
-  if (gameNumber % improvementIntervalGames !== 0) {
-    console.log(`[game] Skipping improvement for game #${gameNumber} (runs every ${improvementIntervalGames} games via ${improvementIntervalSource})`);
-    return;
-  }
-
-  // AI改善ループ起動
-  try {
-    const impUrl = new URL('./improve.mjs', `file://${process.cwd()}/`).href;
-    const { runImprovement } = await import(impUrl + '?t=' + Date.now());
-    await runImprovement(gameNumber, archivePath, summaryPath);
-  } catch (err) {
-    console.error('[game] Improvement loop error:', err.message);
-  }
 }
 
 async function waitForRankingCommentContext(gameNumber, initialRank) {

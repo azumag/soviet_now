@@ -36,7 +36,10 @@ test('local player keeps the existing post-drop probe default untouched', () => 
   assert.equal(evalBlock({}), 'unset');
 });
 
-test('runner permanently hard-disables the retired Soren91 improvement path', () => {
-  assert.match(source, /SOREN91_EXTERNAL_IMPROVE=1 node main\.mjs/);
-  assert.doesNotMatch(source, /SOREN91_EXTERNAL_IMPROVE="\$\{SOREN91_EXTERNAL_IMPROVE:-1\}"/);
+test('runner invokes main directly without retired improvement env', () => {
+  assert.match(source, /\n\tnode main\.mjs >>"\$LOG_FILE" 2>&1 &/);
+  const retiredExternal = ['SOREN91', 'EXTERNAL', 'IMPROVE'].join('_');
+  const retiredInterval = ['IMPROVEMENT', 'INTERVAL', 'GAMES'].join('_');
+  assert.equal(source.includes(retiredExternal), false);
+  assert.equal(source.includes(retiredInterval), false);
 });

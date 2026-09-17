@@ -93,7 +93,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
 | `obs_control.sh` | OBS WebSocket v5 wrapper（シーン・ソースの show/hide 制御） |
 | `manual_meriken_mode.sh` | メリケンAI手動固定 (`on` で soren91 維持、`off` で通常運用) |
-| `soren91_control.sh` | soren91の起動・停止・改善キック・手動メリケンモード・OBS連携 |
+| `soren91_control.sh` | soren91の起動・停止・手動メリケンモード・OBS連携 |
 
 - `soren91` の既定は standalone `Google Chrome for Testing` です。`soren91_stop` / `soren91_cleanup` / `soren91_start` は共有タブの close だけでなく、`soren91/tmp/standalone_chromium_profile` または `SOREN91_STANDALONE_CDP_PORT` に紐づく stale standalone Chromium も掃除する。改善終了後に `新しいタブ` の残骸ウィンドウが積み上がるのを防ぐため。
 - VMの日次コーナーは `SOREN91_DAILY_ENABLED=1` で有効化する。毎日 `SOREN91_DAILY_EARLIEST_HOUR`〜`SOREN91_DAILY_LATEST_START_HOUR` の間にランダムな開始予定を `tmp/state/soren91_daily.json` へ一度だけ保存し、通常ゲームの試合終了境界で約 `SOREN91_DAILY_DURATION_SEC` 秒だけ切り替える。`SOREN91_SHARED_ISOLATED_CONTEXT=1` では通常ゲームとcookies/localStorageを共有しない別コンテキストを使い、終了後にそのコンテキストだけを閉じる。VMではSoren91の内部描画をメインゲームと同じ既定480×270まで下げて通常ゲームと同じ960×540の共通ゲームエリアへ拡大し、右320px・上下90pxの配信ステータスを維持する。Soren91用の埋込みステータス面は青い帯に見えない中立な黒背景を使う。Soren91中は通常ゲームページのcanvasと描画ループを止め、lifecycle凍結とCPU間引きを併用する。終了時は通常ページ内の音声復帰を実測できた場合に枠の再起動を省き、復帰できない場合だけbridgeを再起動する。
@@ -384,7 +384,7 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 | `soren91/hall_of_fame.mjs` | 現行戦略の殿堂入り保存ユーティリティ |
 | `soren91/radio_bridge.sh` | 親プロジェクトの定時ラジオコーナーを soren91 から呼び出すブリッジ |
 | `soren91/backfill_result_ranks.mjs` | 過去サマリーのrank情報をOCRで補完するユーティリティ |
-| `soren91_control.sh` | 親ループからの起動・停止・改善キック・手動メリケンモード・OBS連携 |
+| `soren91_control.sh` | 親ループからの起動・停止・手動メリケンモード・OBS連携 |
 
 親プロジェクトの `soren_loop.sh` から `soren91_control.sh` 経由で連携。`SOREN91_ENABLED=1` (.env) で有効化。詳細は `soren91/CLAUDE.md` を参照。
 OBS 表示は `sorengame` window capture を `obs_window_capture_source.sh` で切り替える。soren91 は既定で専用 Chrome ウィンドウ (`SOREN91_SHARED_BROWSER=0`) に出し、meriken 表示では `【91人対戦】ソ連ゲーム91` へ再バインドした `sorengame` を表示したままにする。通常復帰では `Unity WebGL Player | soren-game` へ再バインドする。同一 Chrome ウィンドウの別タブ運用に戻す場合は、OBS が現在タブを掴まず通常ゲームに固定されるため、91 専用 OBS source を別途用意する。

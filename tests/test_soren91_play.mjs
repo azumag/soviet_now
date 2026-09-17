@@ -239,13 +239,6 @@ test('generated-strategy gate rejects NaN, blind center and mutation', async () 
     assert.equal(validateStrategyBehavior(f).valid, false);
   }
 });
-test('both improvement paths use the shared validator before adoption', () => {
-  const source = readFileSync(new URL('../soren91/improve.mjs', import.meta.url), 'utf8');
-  assert.ok(source.includes('const behavior = validateStrategyBehavior(module.decide);'));
-  assert.ok(source.includes('if (!behavior.valid) return behavior;'));
-  assert.equal((source.match(/let validationResult = await validateStrategy\(newStrategy\);/g) || []).length, 2);
-  assert.ok(source.includes('${STRATEGY_CONTRACT}'));
-});
 test('gate: low-confidence frame is not the first of two trusted frames', () => {
   const c = cal();
   gateObservation(board([], piece(1, 0, 0, { confidence: 0.2 })), c, 1000);
