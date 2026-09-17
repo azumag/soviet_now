@@ -117,14 +117,20 @@ test('buildJevState sends compact structured gameplay state, not free-form/log-o
   assert.doesNotMatch(serialized, /rawScreenshotPath|secret\/path|viewerComment|private free-form reason/);
 });
 
-test('buildJevRequest asks only for typed review signals and never requests an x coordinate', () => {
+test('buildJevRequest asks only for typed review signals', () => {
   const request = buildJevRequest(record(), 12, 'jev-latest');
   assert.equal(request.model, 'jev-latest');
   assert.equal(request.questions.decision_quality.type, 'choice');
   assert.equal(request.questions.destroys_near_term_merge.type, 'noul');
   assert.equal(request.questions.strategic_risk.type, 'score');
   assert.deepEqual(Object.keys(request.questions.decision_quality.criteria), ['accept', 'review', 'reject']);
-  assert.doesNotMatch(JSON.stringify(request.questions), /generate.*x coordinate|replacement x/i);
+  assert.deepEqual(Object.keys(request.questions).sort(), [
+    'decision_quality',
+    'destroys_near_term_merge',
+    'hold_preferred',
+    'strategic_risk',
+    'survival_override_justified',
+  ]);
 });
 
 test('validateJevResponse accepts the documented System One response shape', () => {
@@ -264,4 +270,13 @@ test('follower skips pre-existing history by default and evaluates only newly ap
     stop = true;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('runner supervises Jev in a separate process and stops it with runner lifecycle', () => {
+  const runner = readFileSync(new URL('../soren91/run_player_loop.sh', import.meta.url), 'utf8');
+  assert.match(runner, /node "\$SCRIPT_DIR\/jev_shadow\.mjs" --runtime-dir "\$SCRIPT_DIR"/);
+  assert.match(runner, /_stop_jev_shadow/);
+  assert.match(runner, /_ensure_jev_shadow/);
+  assert.match(runner, /SOREN91_JEV_SHADOW_ENABLED/);
+  assert.doesNotMatch(runner, /node main\.mjs[^\n]*jev_shadow/);
 });
