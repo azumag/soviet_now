@@ -249,6 +249,78 @@ function knownQueue(queue, start) {
   return out;
 }
 
+
+// A reservation is only created for an exposed, high-confidence target that
+// the known two-step future piece can actually merge with without entering the
+// fatal deadline tier. Candidate x values are tried nearest the exposed target
+// first so this check remains bounded enough for the live drop loop.
+function bestKnownFutureMerge(pieces, piece, columns = []) {
+  const targets = exposedPieces(pieces).filter(p => p.type === piece.type);
+  if (targets.length === 0) return null;
+  const targetDistance = x => Math.min(...targets.map(p => Math.abs(p.x - x)));
+  const xs = candidates(pieces, piece, columns)
+    .sort((a, b) => targetDistance(a) - targetDistance(b) || Math.abs(a) - Math.abs(b));
+  for (const x of xs) {
+    const sim = simulateDrop(pieces, piece, x, columns);
+    if (sim.merges === 0) continue;
+    const maxTop = Math.max(FLOOR, ...sim.pieces.map(p => p.y + p.r));
+    const clearance = DEADLINE - Math.max(sim.peak, maxTop);
+    if (clearance <= FATAL_MARGIN) continue;
+    return { x, mergeValue: (piece.type + 1) ** 2, merges: 1, clearance };
+  }
+  return null;
+}
+
+function knownFutureMergeReservation(board, queue, columns = []) {
+  if (queue.length < 2) return null;
+  const piece = queue[1];
+  const access = bestKnownFutureMerge(board, piece, columns);
+  if (!access) return null;
+  return { depth: 2, piece, type: piece.type, ...access };
+}
+
+function annotateReservation(move, reservation, columns = []) {
+  if (!reservation) {
+    return { ...move, reservationStatus: 'none', reservationRank: 0 };
+  }
+  const guaranteedProgress = move.merges > 0 && move.mergeValue >= reservation.mergeValue;
+  if (guaranteedProgress) {
+    return {
+      ...move,
+      reservationStatus: 'consumed', reservationRank: 0,
+      reservationDepth: reservation.depth, reservationType: reservation.type,
+      reservationBeforeMergeValue: reservation.mergeValue,
+      reservationAfterMergeValue: move.mergeValue,
+    };
+  }
+  const after = bestKnownFutureMerge(move.pieces, reservation.piece, columns);
+  let status = 'destroyed';
+  let rank = 2;
+  if (after) {
+    if (after.mergeValue < reservation.mergeValue) { status = 'degraded'; rank = 1; }
+    else if (after.mergeValue > reservation.mergeValue
+        || after.clearance > reservation.clearance + 0.18) { status = 'improved'; rank = 0; }
+    else { status = 'preserved'; rank = 0; }
+  }
+  return {
+    ...move,
+    reservationStatus: status, reservationRank: rank,
+    reservationDepth: reservation.depth, reservationType: reservation.type,
+    reservationBeforeMergeValue: reservation.mergeValue,
+    reservationAfterMergeValue: after?.mergeValue ?? 0,
+  };
+}
+
+// Reservation rank is intentionally below hard risk (and fatal clearance) but
+// above soft shape score. Equal-or-better immediate merges are marked consumed
+// and keep rank 0, preserving guaranteed current progress.
+function compareRootAdmission(a, b) {
+  return a.risk - b.risk
+    || (a.risk === 2 ? b.clearance - a.clearance : 0)
+    || a.reservationRank - b.reservationRank
+    || compareMove(a, b);
+}
+
 function comparePath(a, b) {
   return a.pathRisk - b.pathRisk
     || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
@@ -257,10 +329,24 @@ function comparePath(a, b) {
     || compareMove(a.root, b.root);
 }
 
+// Before the reserved future piece arrives, keep at least the preservation
+// signal ahead of generic discounted shape score. Once the target depth is
+// reached the normal path comparator takes over and the real merge score is
+// used, avoiding a second synthetic reward.
+function compareReservedPath(a, b) {
+  return a.pathRisk - b.pathRisk
+    || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
+    || a.reservationRank - b.reservationRank
+    || b.totalValue - a.totalValue
+    || b.minClearance - a.minClearance
+    || compareMove(a.root, b.root);
+}
+
 function search(board, piece, queue, garbage) {
+  const reservation = knownFutureMergeReservation(board, queue, garbage.columns);
   const roots = candidates(board, piece, garbage.columns)
-    .map(x => evaluate(board, piece, x, garbage))
-    .sort(compareMove);
+    .map(x => annotateReservation(evaluate(board, piece, x, garbage), reservation, garbage.columns))
+    .sort(compareRootAdmission);
   const bestRootRisk = roots[0].risk;
   let beam = roots.filter(r => r.risk === bestRootRisk).slice(0, ROOT_BEAM).map(root => ({
     root,
@@ -268,31 +354,52 @@ function search(board, piece, queue, garbage) {
     totalValue: root.value,
     pathRisk: root.risk,
     minClearance: root.clearance,
+    reservationRank: root.reservationRank,
+    reservationStatus: root.reservationStatus,
+    reservationFulfilled: root.reservationStatus === 'consumed',
     nodes: 1,
   }));
   let expanded = beam.length;
 
   for (let depth = 0; depth < queue.length; depth++) {
     const next = queue[depth];
+    const beforeTarget = reservation && depth < reservation.depth - 1;
+    const atTarget = reservation && depth === reservation.depth - 1;
     const nextBeam = [];
     for (const state of beam) {
       const options = candidates(state.board, next, garbage.columns)
         .map(x => evaluate(state.board, next, x, garbage))
-        .sort(compareMove);
+        .sort((a, b) => {
+          const riskOrder = a.risk - b.risk
+            || (a.risk === 2 ? b.clearance - a.clearance : 0);
+          if (riskOrder) return riskOrder;
+          if (atTarget && !state.reservationFulfilled && state.reservationRank < 2 && Boolean(a.merges) !== Boolean(b.merges)) {
+            return Number(!a.merges) - Number(!b.merges);
+          }
+          return compareMove(a, b);
+        });
       const bestRisk = options[0].risk;
-      for (const move of options.filter(o => o.risk === bestRisk).slice(0, PER_NODE_BRANCH)) {
+      for (const rawMove of options.filter(o => o.risk === bestRisk).slice(0, PER_NODE_BRANCH)) {
+        const move = beforeTarget && !state.reservationFulfilled
+          ? annotateReservation(rawMove, reservation, garbage.columns)
+          : rawMove;
+        const fulfilled = state.reservationFulfilled
+          || Boolean(atTarget && !state.reservationFulfilled && state.reservationRank < 2 && move.merges > 0);
         nextBeam.push({
           root: state.root,
           board: move.pieces,
           totalValue: state.totalValue + LOOKAHEAD_DISCOUNT[depth + 1] * (move.value - move.risk * 420),
           pathRisk: Math.max(state.pathRisk, move.risk),
           minClearance: Math.min(state.minClearance, move.clearance),
+          reservationRank: beforeTarget && !state.reservationFulfilled ? move.reservationRank : state.reservationRank,
+          reservationStatus: beforeTarget && !state.reservationFulfilled ? move.reservationStatus : state.reservationStatus,
+          reservationFulfilled: fulfilled,
           nodes: state.nodes + 1,
         });
       }
       expanded += Math.min(PER_NODE_BRANCH, options.length);
     }
-    beam = nextBeam.sort(comparePath).slice(0, FUTURE_BEAM);
+    beam = nextBeam.sort(beforeTarget ? compareReservedPath : comparePath).slice(0, FUTURE_BEAM);
     if (beam.length === 0) break;
   }
 
@@ -304,6 +411,14 @@ function search(board, piece, queue, garbage) {
     minClearance: winner.minClearance,
     expandedNodes: expanded,
     depth: queue.length,
+    reservationActive: Boolean(reservation),
+    reservationStatus: reservation
+      ? (winner.root.reservationStatus === 'consumed' ? 'consumed' : winner.reservationFulfilled ? 'fulfilled' : winner.reservationStatus)
+      : 'none',
+    reservationFulfilled: winner.reservationFulfilled,
+    reservationDepth: reservation?.depth ?? 0,
+    reservationType: reservation?.type ?? null,
+    reservationBeforeMergeValue: reservation?.mergeValue ?? 0,
   };
 }
 
@@ -378,6 +493,13 @@ export function decide(boardState) {
       pairPotential: chosen.structure.pairPotential,
       roughness: chosen.structure.roughness,
       pocketPenalty: chosen.structure.pocketPenalty,
+      knownMergeReservations: chosen.reservationActive ? 1 : 0,
+      preservedReservations: chosen.reservationActive && chosen.reservationFulfilled ? 1 : 0,
+      lostReservations: chosen.reservationActive && !chosen.reservationFulfilled ? 1 : 0,
+      reservationStatus: chosen.reservationStatus,
+      reservationDepth: chosen.reservationDepth ?? 0,
+      reservationType: chosen.reservationType ?? null,
+      reservationBeforeMergeValue: chosen.reservationBeforeMergeValue ?? 0,
     },
   };
 }
