@@ -118,11 +118,15 @@ try {
   // 難読化なしの普通の英文や URL はスパム判定しない。
   socket.write(chat('m7', 'viewer3', 'viewer3', 'nice stream, check https://example.com/video'));
 
-  assert.ok(await waitFor(() => rawLines().length >= 4), 'daemon should append viewer comments');
+  socket.write(chat('m8', 'viewer4', 'viewer4', 'Does this stream have a Discord server?'));
+  socket.write(chat('m9', 'viewer5', 'viewer5', 'Discordでゲームの攻略を話しています'));
+  socket.write(chat('m10', 'viewer6', 'viewer6', 'These viewbot ads are annoying, please block them.'));
+
+  assert.ok(await waitFor(() => rawLines().some((line) => line.startsWith('id=m10\t'))), 'normal discussion of Discord and spam should be received');
   await sleep(500);
   const lines = rawLines();
 
-  assert.equal(lines.length, 4, `expected exactly 4 kept lines, got ${lines.length}: ${JSON.stringify(lines)}`);
+  assert.equal(lines.length, 7, `expected exactly 7 kept lines, got ${lines.length}: ${JSON.stringify(lines)}`);
   assert.equal(
     lines[0],
     'id=m1\tuser-id=uid-viewer1\tlogin=viewer1\tdisplay=viewer1\tflags=\tviewer1: hello KEKW world',
@@ -139,11 +143,15 @@ try {
     'shell metacharacters are stripped and whitespace collapsed',
   );
   assert.equal(lines[3].split('\t').pop(), 'viewer3: nice stream, check https://example.com/video');
+  assert.ok(lines.some((l) => l.endsWith('viewer4: Does this stream have a Discord server?')), 'plain Discord question is kept');
+  assert.ok(lines.some((l) => l.endsWith('viewer5: Discordでゲームの攻略を話しています')), 'Japanese Discord mention is kept');
+  assert.ok(lines.some((l) => l.endsWith('viewer6: These viewbot ads are annoying, please block them.')), 'complaining about viewbot ads is kept');
 
   // スパム2件は raw.log に現れず、daemon 自身の判断ログに記録される。
   const daemonLog = fs.readFileSync(path.join(CHAT_DIR, 'daemon.log'), 'utf8');
-  assert.ok(/spam dropped \(author=spam1\)/.test(daemonLog), 'viewbot ad is dropped at ingest with a reason log');
-  assert.ok(/spam dropped \(author=spam2\)/.test(daemonLog), 'obfuscated discord lure is dropped at ingest');
+  assert.ok(/spam dropped \(author=spam1, reason=known-ad-template\)/.test(daemonLog), 'viewbot ad is dropped at ingest with a reason log');
+  assert.ok(/spam dropped \(author=spam2, reason=known-ad-template\)/.test(daemonLog), 'obfuscated discord lure is dropped at ingest');
+  assert.equal(daemonLog.match(/spam dropped/g)?.length ?? 0, 2, 'exactly the two known ad templates are dropped');
 
   console.log('kick_chat_daemon: all checks passed');
 } finally {
