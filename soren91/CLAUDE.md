@@ -34,7 +34,6 @@ observation_guard.mjs    # 観測安定性/confidence gate
 strategy.mjs             # 投下/HOLD判断
 strategy_contract.mjs    # 戦略契約
 critical_turn_screenshots.mjs # 重要局面の証拠選別
-daily_evidence.mjs       # 保存履歴の解析helper。自動triggerではない
 cleanup_retention.mjs    # evidenceのage-based retention
 
 game_history/            # JSONL試合履歴

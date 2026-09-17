@@ -32,7 +32,6 @@ strategy_contract.mjs    # 戦略の共通契約
 comment.mjs              # 試合中/結果コメント
 result_screen_ocr.mjs    # ランキング画面解析
 critical_turn_screenshots.mjs # 重要局面の証拠選別
-daily_evidence.mjs       # 保存済み履歴の解析helper（自動改善triggerではない）
 cleanup_retention.mjs    # 証拠データの保持期間管理
 
 game_history/            # ラウンドごとのJSONL

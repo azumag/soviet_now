@@ -11,7 +11,7 @@ on:
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
-      - 'soren91/daily_evidence.mjs'
+      - 'soren91/critical_turn_screenshots.mjs'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -27,7 +27,7 @@ on:
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
-      - 'soren91/daily_evidence.mjs'
+      - 'soren91/critical_turn_screenshots.mjs'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -57,7 +57,7 @@ jobs:
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
           node --check soren91/observation_guard.mjs
-          node --check soren91/daily_evidence.mjs
+          node --check soren91/critical_turn_screenshots.mjs
       - name: Run play and existing Soren91 regressions
         run: |
           node --test tests/test_soren91_*.mjs

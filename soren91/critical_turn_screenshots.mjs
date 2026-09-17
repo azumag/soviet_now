@@ -7,7 +7,96 @@ import {
 } from 'fs';
 import { join } from 'path';
 
-import { analyzeHistoryText } from './daily_evidence.mjs';
+const MAX_HISTORY_LINES = 4096;
+
+function finiteNumber(value, fallback = null) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function minFinite(values) {
+  const xs = values.filter(Number.isFinite);
+  return xs.length ? Math.min(...xs) : null;
+}
+
+function selectCriticalTurns(records) {
+  if (!records.length) return [];
+  const withTurn = records.filter(record => Number.isInteger(record.turn));
+  if (!withTurn.length) return [];
+
+  const riskRecord = [...withTurn].sort((a, b) => {
+    const ar = Math.max(
+      finiteNumber(a?.decision?.diagnostics?.risk, 0),
+      finiteNumber(a?.decision?.diagnostics?.pathRisk, 0),
+    );
+    const br = Math.max(
+      finiteNumber(b?.decision?.diagnostics?.risk, 0),
+      finiteNumber(b?.decision?.diagnostics?.pathRisk, 0),
+    );
+    const ac = minFinite([
+      finiteNumber(a?.decision?.diagnostics?.clearance),
+      finiteNumber(a?.decision?.diagnostics?.minFutureClearance),
+    ]) ?? Infinity;
+    const bc = minFinite([
+      finiteNumber(b?.decision?.diagnostics?.clearance),
+      finiteNumber(b?.decision?.diagnostics?.minFutureClearance),
+    ]) ?? Infinity;
+    return br - ar || ac - bc || b.turn - a.turn;
+  })[0];
+
+  const confidenceRecord = withTurn
+    .filter(record => Number.isFinite(finiteNumber(record?.state?.confidence)))
+    .sort((a, b) => finiteNumber(a.state.confidence) - finiteNumber(b.state.confidence) || b.turn - a.turn)[0] ?? null;
+
+  const clearanceRecord = withTurn
+    .filter(record => Number.isFinite(minFinite([
+      finiteNumber(record?.decision?.diagnostics?.clearance),
+      finiteNumber(record?.decision?.diagnostics?.minFutureClearance),
+    ])))
+    .sort((a, b) => {
+      const ac = minFinite([
+        finiteNumber(a?.decision?.diagnostics?.clearance),
+        finiteNumber(a?.decision?.diagnostics?.minFutureClearance),
+      ]);
+      const bc = minFinite([
+        finiteNumber(b?.decision?.diagnostics?.clearance),
+        finiteNumber(b?.decision?.diagnostics?.minFutureClearance),
+      ]);
+      return ac - bc || b.turn - a.turn;
+    })[0] ?? null;
+
+  const latest = [...withTurn].sort((a, b) => b.turn - a.turn)[0];
+  return [...new Set([
+    riskRecord?.turn,
+    confidenceRecord?.turn,
+    clearanceRecord?.turn,
+    latest?.turn,
+  ].filter(Number.isInteger))].slice(0, 3);
+}
+
+function analyzeHistoryText(text) {
+  const lines = String(text || '').split(/\r?\n/).filter(line => line.trim().length > 0);
+  if (lines.length > MAX_HISTORY_LINES) {
+    return { ok: false, error: `history line limit exceeded (${lines.length}>${MAX_HISTORY_LINES})` };
+  }
+
+  const records = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    try {
+      const record = JSON.parse(lines[i]);
+      if (!record || typeof record !== 'object' || Array.isArray(record)) {
+        return { ok: false, error: `history line ${i + 1} is not an object` };
+      }
+      records.push(record);
+    } catch {
+      return { ok: false, error: `history line ${i + 1} is invalid JSON` };
+    }
+  }
+
+  return {
+    ok: true,
+    criticalTurns: selectCriticalTurns(records),
+  };
+}
 
 function parsedTurnFile(name) {
   const match = String(name).match(/^turn_(\d+).*\.png$/i);
@@ -64,10 +153,9 @@ export function selectCriticalSnapshotNames(fileNames, maxShots = 3, preferredTu
 }
 
 /**
- * Archive the bounded visual evidence for one completed game. History parsing
- * is fail-soft for archival only: malformed/missing history falls back to the
- * existing early/middle/late sample, while the daily evidence builder itself
- * remains fail-closed on invalid histories before any strategy mutation.
+ * Archive bounded visual evidence for one completed game. History parsing is
+ * fail-soft for archival only: malformed/missing history falls back to the
+ * established early/middle/late sample. This helper never mutates strategy.
  */
 export function archiveCriticalTurnScreenshots({
   screenshotDir,
