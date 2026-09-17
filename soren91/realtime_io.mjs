@@ -162,13 +162,16 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         }
         const after = await geometry(session, check);
         if (!sameGeometry(before, after)) throw new Error('capture-geometry-changed');
-        return { buffer, geometry: after, capturedAt, ...size };
+        return { buffer, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size };
       });
     },
-    async validateInput(page, frame, calibration, { timeoutMs = 1500, maxAgeMs = 2500 } = {}) {
+    async validateInput(page, frame, calibration, { timeoutMs = 1500, maxAgeMs = null } = {}) {
+      // A slow host must not have every drop fail-closed: the budget grows with
+      // THIS frame's own capture cost. Explicit configuration still wins.
+      const budgetMs = maxAgeMs ?? Math.max(2500, Math.round((frame?.captureMs || 0) * 3 + 500));
       const fresh = () => {
         if (!frame || !Number.isFinite(frame.capturedAt) || now() < frame.capturedAt
-            || now() - frame.capturedAt > maxAgeMs) throw new Error('input-stale-observation');
+            || now() - frame.capturedAt > budgetMs) throw new Error('input-stale-observation');
         if (calibration?.screen?.width !== frame.width || calibration?.screen?.height !== frame.height) {
           throw new Error('input-calibration-mismatch');
         }

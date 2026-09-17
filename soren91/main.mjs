@@ -159,7 +159,7 @@ async function captureGameScreenshot(page, path, options = {}) {
 async function inputCanvasBox(page, calibration, frame) {
   if (frame) {
     return canvasIO.validateInput(page, frame, calibration, {
-      maxAgeMs: boundedMs(process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS, 2500, 500, 10000),
+      maxAgeMs: boundedMs(process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS, 4000, 500, 10000),
     });
   }
   const canvas = await page.$('canvas');
