@@ -1,0 +1,38 @@
+name: Runtime service contracts
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/soren-runtime/**'
+      - 'lib/cleanup_overlay_pidfiles.py'
+      - 'tests/test_cleanup_overlay_pidfiles.py'
+      - 'tests/test_soren_runtime_service.py'
+      - 'install_soren_runtime_service.sh'
+      - 'start_all.sh'
+      - 'wait_soren_runtime_prereqs.sh'
+      - '.github/workflows/runtime-service-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/soren-runtime/**'
+      - 'lib/cleanup_overlay_pidfiles.py'
+      - 'tests/test_cleanup_overlay_pidfiles.py'
+      - 'tests/test_soren_runtime_service.py'
+      - 'install_soren_runtime_service.sh'
+      - 'start_all.sh'
+      - 'wait_soren_runtime_prereqs.sh'
+      - '.github/workflows/runtime-service-contracts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_cleanup_overlay_pidfiles tests.test_soren_runtime_service
+      - run: python3 -m py_compile lib/cleanup_overlay_pidfiles.py
