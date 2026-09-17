@@ -32,9 +32,8 @@ AI ループ (3種類から選択)
 
 soren91/                   ← 91人対戦版 (メリケンAI) 自動プレイヤー (スクリーンショットベース)
     ├── main.mjs           ← エントリポイント: ブラウザ制御 + ゲームループ
-    ├── strategy.mjs       ← ドロップ位置決定 (AI改変対象)
-    ├── improve.mjs        ← AI改善ループ
-    └── soren91_control.sh ← 親ループからの起動・停止・改善キック管理
+    ├── strategy.mjs       ← ドロップ位置決定（変更は明示的な人手/PRのみ）
+    └── soren91_control.sh ← 親ループからの起動・停止・手動メリケンモード管理
 ```
 
 ## AI ループ
@@ -367,16 +366,17 @@ EXPLORE_MIN_GAMES_BEFORE_IMPROVE=3 nohup ./explore.sh > logs/explore.log 2>&1 &
 ```bash
 cd soren91
 npm install          # 初回のみ
-node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善
+node main.mjs        # ゲーム起動 → 自動プレイ
 ```
+
+Soren91 の自己改善・日次自動改善は廃止済み。`strategy.mjs` の変更は、明示的な人手作業またはレビュー付きPRとしてのみ行う。試合履歴・スクリーンショット等の証拠保存は手動分析用として継続する。
 
 | ファイル | 役割 |
 |---------|------|
 | `soren91/run_player_loop.sh` | 自動再起動ラッパー（main.mjs の異常終了時に3秒後に再起動） |
 | `soren91/main.mjs` | エントリポイント: ブラウザ制御 + ゲームループ（複数ラウンドを1プロセスで処理） |
 | `soren91/screenshot_analyzer.mjs` | スクリーンショット → 盤面状態 (Sharp) |
-| `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |
-| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku)。スモークテスト3ケース + ESLint no-undef 静的解析でバリデーション |
+| `soren91/strategy.mjs` | ドロップ位置決定（変更は明示的な人手/PRのみ） |
 | `soren91/comment.mjs` | コメント生成 (ランキング画面 + 試合中盤面)。プロンプトは `soren91/prompts/` に分離 |
 | `soren91/result_screen_ocr.mjs` | ランキング画面OCR (Tesseract、複数画像変換＋赤星検出) |
 | `soren91/calibration.mjs` | ゲームキャンバスの座標キャリブレーション（ボード境界検出・座標変換） |
