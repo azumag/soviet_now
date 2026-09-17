@@ -49,8 +49,8 @@ sub(
 )
 sub(
     "soren91/main.mjs",
-    r"\n  // 外部制御モード: 内蔵改善をスキップ.*?\n  \}\n(?=\nasync function waitForRankingCommentContext)",
-    "\n}",
+    r"\n  // 外部制御モード: 内蔵改善をスキップ.*?\n  \}\n\}\n(?=\nasync function waitForRankingCommentContext)",
+    "\n}\n",
 )
 
 replace(
