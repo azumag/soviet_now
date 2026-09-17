@@ -29,12 +29,22 @@ class ExplicitChainConfigTests(unittest.TestCase):
         values = self.config()
         for key in ('AI_COMMON_AGENTS', 'MODEL_IMPROVE_LIST', 'PEAK_HOURS_AGENT_PREFERENCE',
                     'RADIO_AGENTS', 'COMMENT_AGENTS', 'COMMENT_CLASSIFIER_AGENTS',
-                    'COMMENT_CLASSIFIER_EDIT_AGENTS', 'RADIO_FACT_CHECK_AGENTS',
-                    'RADIO_JIJI_RESEARCH_AGENTS'):
+                    'COMMENT_CLASSIFIER_EDIT_AGENTS', 'RADIO_FACT_CHECK_AGENTS'):
             with self.subTest(key=key):
                 self.assertTrue(values[key].startswith(PREFIX), values[key])
                 self.assertEqual(values[key].count('opencode-go:union-alpha'), 1)
                 self.assertEqual(values[key].count('openrouter:stealth/union-alpha'), 1)
+
+    def test_research_chain_keeps_union_last(self):
+        # 2026-09-18: JIJI research shares the 300s timeout with every model and
+        # both Union routes timed out in production, so existing candidates are
+        # tried first and Union is only a late fallback.
+        value = self.config()['RADIO_JIJI_RESEARCH_AGENTS']
+        self.assertTrue(value.endswith(PREFIX.rstrip(',')), value)
+        self.assertEqual(value.split(',')[:2],
+                         ['opencode:muse-spark-1.3-contributor-free', 'amd:DeepSeek-V4-Flash'], value)
+        self.assertEqual(value.count('opencode-go:union-alpha'), 1)
+        self.assertEqual(value.count('openrouter:stealth/union-alpha'), 1)
 
     def test_explicit_overrides_are_not_rewritten(self):
         values = self.config('AI_COMMON_AGENTS=local\nMODEL_IMPROVE_LIST=opencode:custom\n'
