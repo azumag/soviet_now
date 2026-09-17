@@ -22,7 +22,6 @@ ExecStart=/bin/bash /home/ubuntu/soren/start_all.sh --supervisor
 ExecStopPost=-/usr/bin/tmux kill-session -t soren_bridge
 ExecStopPost=-/usr/bin/tmux kill-session -t soren_status_overlay
 ExecStopPost=-/usr/bin/tmux kill-session -t soren_show_status_overlay
-ExecStopPost=-/usr/bin/python3 /home/ubuntu/soren/lib/cleanup_overlay_pidfiles.py
 Restart=always
 RestartSec=5
 TimeoutStartSec=120
