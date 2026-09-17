@@ -83,7 +83,7 @@ export function defaults(env = process.env) {
     chromeLeft: Number(env.SOREN91_CDP_HOST_CHROME_LEFT || 0),
     videoMbps: Number(env.SOREN91_LOCAL_VIDEO_MBPS || 2),
     srtUrl: env.SOREN91_LOCAL_SRT_URL || '',
-    sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 1500),
+    sessionSec: Number(env.SOREN91_CDP_HOST_SESSION_SEC || 2400),
     // Bound the external-driver handshake separately from the full session.
     // A missing OCI driver must never hold the broadcast readiness path for
     // the entire game session (the 2026-09-15 incident waited 240 seconds).
