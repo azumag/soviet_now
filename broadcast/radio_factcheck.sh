@@ -241,9 +241,6 @@ PROMPT
 	local model
 	local seen_models=" "
 	local factcheck_agents=("${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_SECONDARY:-}" "${RADIO_FACT_CHECK_FALLBACK:-}" "${RADIO_FACT_CHECK_TERTIARY:-}" "${RADIO_FACT_CHECK_QUINARY:-}")
-	if [ -n "${RADIO_FACT_CHECK_AGENTS:-}" ]; then
-		IFS=',' read -ra factcheck_agents <<<"$RADIO_FACT_CHECK_AGENTS"
-	fi
 	for model in "${factcheck_agents[@]}"; do
 		[ -n "$model" ] || continue
 		case "$seen_models" in

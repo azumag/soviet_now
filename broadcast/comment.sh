@@ -2280,9 +2280,6 @@ _classify_comments_with_edit_contract() {
 	[ -n "$output_file" ] || return 1
 	base_prompt=$(cat "$classifier_prompt_file")
 	local classifier_agents=("$primary" "$fallback")
-	if [ -n "${COMMENT_CLASSIFIER_EDIT_AGENTS:-}" ]; then
-		IFS=',' read -ra classifier_agents <<<"$COMMENT_CLASSIFIER_EDIT_AGENTS"
-	fi
 	for agent in "${classifier_agents[@]}"; do
 		[ -n "$agent" ] || continue
 		[ "$agent" = "-" ] && continue
@@ -2385,23 +2382,8 @@ _classify_comments() {
 	fi
 
 	classifier_output_file=$(mktemp /tmp/eloop_comment_classifier_output_XXXXXXXX)
-	local classifier_rc
-	if [ -n "${COMMENT_CLASSIFIER_AGENTS:-}" ]; then
-		if ai_generate_list "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$COMMENT_CLASSIFIER_AGENTS" "$timeout_sec" \
-			"_is_valid_comment_classification_output" >"$classifier_output_file"; then
-			classifier_rc=0
-		else
-			classifier_rc=$?
-		fi
-	else
-		if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" \
-			"_is_valid_comment_classification_output" >"$classifier_output_file"; then
-			classifier_rc=0
-		else
-			classifier_rc=$?
-		fi
-	fi
-	if [ "$classifier_rc" -eq 0 ]; then
+	if ai_generate "COMMENT_CLASSIFIER" "$classifier_prompt_file" "$model" "$fallback" "$timeout_sec" \
+		"_is_valid_comment_classification_output" >"$classifier_output_file"; then
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-$model}"
 	else
 		classifier_model_used="${AI_GENERATE_LAST_AGENT:-}"
@@ -2516,8 +2498,6 @@ _comment_is_valid_translation_candidate() {
 _comment_generate_translation() {
 	local prompt_file="$1" agent_list="$2" timeout_sec="$3" last_agent_file="${4:-}"
 	local agents=() agent output rc attempted=0
-	local max_attempts="${COMMENT_TRANSLATION_MAX_ATTEMPTS:-2}"
-	case "$max_attempts" in '' | *[!0-9]* | 0) max_attempts=2 ;; esac
 	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 	case "$timeout_sec" in
 	'' | *[!0-9]*) timeout_sec=20 ;;
@@ -2528,8 +2508,8 @@ _comment_generate_translation() {
 		agent="${agent#${agent%%[![:space:]]*}}"
 		agent="${agent%${agent##*[![:space:]]}}"
 		[ -n "$agent" ] || continue
-		if [ "$attempted" -ge "$max_attempts" ]; then
-			log "[COMMENT_TRANSLATION] agent試行上限(${max_attempts})に到達" >&2
+		if [ "$attempted" -ge 2 ]; then
+			log "[COMMENT_TRANSLATION] agent試行上限(2)に到達" >&2
 			break
 		fi
 		if declare -F _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then

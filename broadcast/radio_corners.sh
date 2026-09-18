@@ -1889,9 +1889,6 @@ ${jiji_recent_topics}"
 	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
 	local research_agents=("${RADIO_MAIN_PREPASS_AGENT}" "${RADIO_MAIN_FALLBACK}") research_agent
-	if [ -n "${RADIO_JIJI_RESEARCH_AGENTS:-}" ]; then
-		IFS=',' read -ra research_agents <<<"$RADIO_JIJI_RESEARCH_AGENTS"
-	fi
 	for research_agent in "${research_agents[@]}"; do
 		[ -n "$research_agent" ] || continue
 		grounding_context=$(_run_opencode_jiji_research "$research_agent" "$research_prompt_file")

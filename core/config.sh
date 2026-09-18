@@ -63,13 +63,12 @@ fi
 # 旧変数は一括上書きと緊急停止の互換口として残す。明示的な空文字は停止。
 VERCEL_FREE_AGENTS="${VERCEL_FREE_AGENTS-$_VERCEL_ELIGIBLE_AGENTS}"
 _VERCEL_FREE_CHAIN="${VERCEL_FREE_AGENTS:+${VERCEL_FREE_AGENTS},}"
-# Union Alpha is explicitly configured; no runtime insertion or expiry gate.
-AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode-go:union-alpha,openrouter:stealth/union-alpha,opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash}"
+AI_COMMON_AGENTS="${AI_COMMON_AGENTS:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash}"
 
 # MODEL_IMPROVE_LIST: 改善ループのリスト。共通チェーンから local と openrouter/free を
-# 除き、strategy/ai.sh の run_cmd() がモデル指定を保持できる opencode/opencode-go/openrouter を使用。
+# 除き、strategy/ai.sh の run_cmd() がモデル指定を保持できる opencode/opencode-go のみ。
 # amd: は run_cmd() では legacy codex 正規化され指定モデルが保持されないため含めない。
-MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode-go:union-alpha,openrouter:stealth/union-alpha,opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash}"
+MODEL_IMPROVE_LIST="${MODEL_IMPROVE_LIST:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor,opencode-go:deepseek-v4.1-flash,opencode-go:deepseek-v4-flash}"
 # ピーク時間帯用の改善チェーン。空なら MODEL_IMPROVE_LIST を継承。
 MODEL_IMPROVE_PEAK_LIST="${MODEL_IMPROVE_PEAK_LIST:-}"
 # ピークチェーンを有効化するか。0=常に MODEL_IMPROVE_LIST、1=ピーク時は PEAK_LIST を使用。
@@ -85,10 +84,6 @@ GAME_COUNT_FILE="game_count.txt"
 RADIO_MAIN_AGENT="${RADIO_MAIN_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_PREPASS_AGENT="${RADIO_MAIN_PREPASS_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 RADIO_MAIN_FALLBACK="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
-# Explicit list for JIJI; individual *_AGENT values remain single model IDs.
-# 調査系は長文 reasoning のタイムアウト(300s)を共有するため Union Alpha を末尾へ置く
-# （2026-09-18 実測: Go/OpenRouter とも約300sでtimeout。既存候補を先に試す）。
-RADIO_JIJI_RESEARCH_AGENTS="${RADIO_JIJI_RESEARCH_AGENTS-${RADIO_MAIN_PREPASS_AGENT},${RADIO_MAIN_FALLBACK},opencode-go:union-alpha,openrouter:stealth/union-alpha}"
 # RADIO_AGENTS: ラジオ生成エージェントのフォールバックリスト（カンマ区切り、優先度順）
 # ai_generate_list() がバックオフ付きで順に試行する
 RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
@@ -129,8 +124,6 @@ COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.3-co
 COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-amd:DeepSeek-V4-Flash}"
 COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-amd:DeepSeek-V4-Flash}"
-COMMENT_CLASSIFIER_AGENTS="${COMMENT_CLASSIFIER_AGENTS-opencode-go:union-alpha,openrouter:stealth/union-alpha,${COMMENT_CLASSIFIER_AGENT},${COMMENT_CLASSIFIER_FALLBACK}}"
-COMMENT_CLASSIFIER_EDIT_AGENTS="${COMMENT_CLASSIFIER_EDIT_AGENTS-opencode-go:union-alpha,openrouter:stealth/union-alpha,${COMMENT_CLASSIFIER_EDIT_AGENT},${COMMENT_CLASSIFIER_EDIT_FALLBACK}}"
 COMMENT_CLASSIFIER_EDIT_TIMEOUT="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
 COMMENT_CLASSIFIER_TIMEOUT="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
 COMMENT_CLASSIFIER_AI_ENABLED="${COMMENT_CLASSIFIER_AI_ENABLED:-0}"
@@ -147,9 +140,6 @@ CODEX_BUG_DISPATCH_MODEL="${CODEX_BUG_DISPATCH_MODEL:-}"
 COMMENT_AGENTS="${COMMENT_AGENTS:-$AI_COMMON_AGENTS}"
 COMMENT_TRANSLATION_AGENTS="${COMMENT_TRANSLATION_AGENTS:-$COMMENT_AGENTS}"
 COMMENT_TRANSLATION_TIMEOUT="${COMMENT_TRANSLATION_TIMEOUT:-60}"
-# 翻訳の試行上限は既定4（Union Alpha 2経路 + 既存2候補）。既存チェーン全長を
-# 試す設定ではない。従来の上限2から増える遅延は、先行候補が失敗した場合のみ。
-COMMENT_TRANSLATION_MAX_ATTEMPTS="${COMMENT_TRANSLATION_MAX_ATTEMPTS:-4}"
 # --- Twitch 自動アンケートコーナー (docich#8) ---
 # broadcaster の channel:manage:polls 付き user token が必要。既存の予想用
 # token に同 scope が含まれる場合は TWITCH_PREDICTIONS_TOKEN を再利用できる。
@@ -200,7 +190,7 @@ PEAK_HOURS_TZ="${PEAK_HOURS_TZ:-Asia/Tokyo}"
 PEAK_HOURS_PRIORITY_AGENT="${PEAK_HOURS_PRIORITY_AGENT:-opencode:muse-spark-1.3-contributor-free}"
 # ピーク時の優先順序（先頭ほど優先）。最上位から該当する候補へ並べ直す。
 # muse free(1.3→1.2) > Vercel M3 Free > AMD DeepSeek > muse contributor(1.3→1.2)。
-PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode-go:union-alpha,openrouter:stealth/union-alpha,opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
+PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-1.3-contributor-free,opencode:muse-spark-1.2-contributor-free,${_VERCEL_FREE_CHAIN}amd:DeepSeek-V4-Flash,opencode-go:muse-spark-1.3-contributor,opencode-go:muse-spark-1.2-contributor}"
 
 # ===== モデル別バックオフ時間（秒） =====
 # ai_generate_list がエージェント単位で失敗時に用いる。キーは agent から
@@ -267,7 +257,6 @@ RADIO_FACT_CHECK_SECONDARY="${RADIO_FACT_CHECK_SECONDARY:-opencode-go:deepseek-v
 RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-amd:DeepSeek-V4-Flash}"
 RADIO_FACT_CHECK_TERTIARY="${RADIO_FACT_CHECK_TERTIARY:-opencode-go:muse-spark-1.3-contributor}"
 RADIO_FACT_CHECK_QUINARY="${RADIO_FACT_CHECK_QUINARY:-}"
-RADIO_FACT_CHECK_AGENTS="${RADIO_FACT_CHECK_AGENTS-opencode-go:union-alpha,openrouter:stealth/union-alpha,${RADIO_FACT_CHECK_AGENT},${RADIO_FACT_CHECK_SECONDARY},${RADIO_FACT_CHECK_FALLBACK},${RADIO_FACT_CHECK_TERTIARY}${RADIO_FACT_CHECK_QUINARY:+,${RADIO_FACT_CHECK_QUINARY}}}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
 RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy,soviet}"
