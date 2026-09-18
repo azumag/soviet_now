@@ -173,6 +173,16 @@ while true; do
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
 
+	# A child process always starts with turn/session state reset to zero. Preserve
+	# any latest_N history left by the previous child before launching the next
+	# one, so a later completed game cannot concatenate two process sessions.
+	if ! node archive_partial_history.mjs >>"$LOG_FILE" 2>&1; then
+		printf '[%s] [runner] partial history archival failed; refusing child launch\n' \
+			"$(date '+%H:%M:%S')" >>"$LOG_FILE" 2>/dev/null || true
+		sleep "$RETRY_DELAY_SEC"
+		continue
+	fi
+
 	run_start=$(date +%s)
 	node main.mjs >>"$LOG_FILE" 2>&1 &
 	CHILD_MAIN_PID=$!
