@@ -32,7 +32,7 @@ function isManagedArtifact(rel, name) {
   const patterns = rel === 'tmp/summaries'
     ? [/^game_\d+\.json$/, /^ranking_\d+\.png$/]
     : rel === 'game_history'
-      ? [/^game_\d+\.jsonl$/, /^latest_\d+\.jsonl$/]
+      ? [/^game_\d+\.jsonl$/, /^latest_\d+\.jsonl$/, /^abandoned_\d+_\d+_\d+\.jsonl$/]
       : rel === 'tmp/game_screenshots'
         ? [/^game_\d+$/]
         : rel === 'tmp/strategy_snapshots'

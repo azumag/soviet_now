@@ -22,6 +22,7 @@ function fixture() {
     join(dir, 'tmp', 'summaries', 'game_0001.json'),
     join(dir, 'tmp', 'summaries', 'ranking_0001.png'),
     join(dir, 'game_history', 'game_0001.jsonl'),
+    join(dir, 'game_history', 'abandoned_0001_1789000000000_0.jsonl'),
   ];
   for (const path of oldArtifacts) {
     writeFileSync(path, 'x');
@@ -42,7 +43,7 @@ test('cleanupRetention removes old managed evidence by age without improve_daily
   const { dir, now, oldArtifacts, freshSummary } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now });
-    assert.equal(r.removed, 4);
+    assert.equal(r.removed, 5);
     for (const path of oldArtifacts) assert.equal(existsSync(path), false);
     assert.equal(existsSync(join(dir, 'tmp', 'game_screenshots', 'game_0001')), false);
     assert.equal(existsSync(freshSummary), true);
@@ -56,9 +57,10 @@ test('cleanupRetention dry-run reports removals but keeps files', () => {
   const { dir, now } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now, dryRun: true });
-    assert.equal(r.removed, 4);
+    assert.equal(r.removed, 5);
     assert.equal(readdirSync(join(dir, 'tmp', 'summaries')).length, 3);
     assert.equal(existsSync(join(dir, 'game_history', 'game_0001.jsonl')), true);
+    assert.equal(existsSync(join(dir, 'game_history', 'abandoned_0001_1789000000000_0.jsonl')), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
