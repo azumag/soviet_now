@@ -61,6 +61,8 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
 	source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
 	source "$ELOOP_LIB_DIR/broadcast/comment.sh"
+	# Opt-in text-only classification; the original backend remains the default.
+	source "$ELOOP_LIB_DIR/broadcast/comment_classifier_jev.sh"
 	# Viewer-facing comment policy must layer after comment.sh so it can wrap
 	# the concrete generation/output contracts without weakening shared guards.
 	source "$ELOOP_LIB_DIR/broadcast/comment_runtime_policy.sh"
