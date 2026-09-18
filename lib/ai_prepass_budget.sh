@@ -66,7 +66,12 @@ _ai_dispatch() {
 		if [ "$remaining" -le 0 ]; then
 			# Return an empty successful dispatch rather than a provider failure. The
 			# policy layer will continue/finish the chain without creating a bogus
-			# failure backoff for a candidate that was never executed.
+			# failure backoff for a candidate that was never executed. A private,
+			# dynamically-scoped marker lets the outer chain record this separately
+			# from a true all-candidates-executed failure without changing control flow.
+			if [ -n "${AI_RADIO_BUDGET_EXHAUSTED_MARKER:-}" ]; then
+				printf '1\n' >"$AI_RADIO_BUDGET_EXHAUSTED_MARKER" 2>/dev/null || true
+			fi
 			log "[RADIO:${budget_kind}] total budget exhausted -> skip remaining candidate" >&2
 			return 0
 		fi
@@ -98,8 +103,10 @@ _ai_restore_scoped_radio_budget_env() {
 _ai_generate_list_with_radio_budget() {
 	local deadline_var="$1" budget="$2"
 	shift 2
+	local chain_label="${1:-AI}"
 	local previous_deadline="" previous_deadline_set=0
 	local previous_retry="" previous_retry_set=0 rc
+	local budget_marker="" budget_exhausted=0
 	if [ "${!deadline_var+x}" = x ]; then
 		previous_deadline_set=1
 		previous_deadline="${!deadline_var}"
@@ -108,6 +115,16 @@ _ai_generate_list_with_radio_budget() {
 		previous_retry_set=1
 		previous_retry="$OPENCODE_ABORT_RETRY"
 	fi
+
+	# Keep the marker local to this shell call. Bash dynamic scope makes it visible
+	# to the command-substitution subshell running _ai_dispatch, while not exporting
+	# the path into provider processes. Failure to allocate it never changes runtime
+	# behavior; it only means this diagnostic event is omitted for that chain.
+	budget_marker=$(mktemp "${TMPDIR:-/tmp}/soren-radio-budget.XXXXXX" 2>/dev/null || true)
+	if [ -n "$budget_marker" ]; then
+		printf '0\n' >"$budget_marker" 2>/dev/null || true
+	fi
+	local AI_RADIO_BUDGET_EXHAUSTED_MARKER="$budget_marker"
 
 	# A backend-internal retry uses the same timeout again and can therefore exceed
 	# the chain deadline while holding the lane. Use one attempt per candidate inside
@@ -119,8 +136,17 @@ _ai_generate_list_with_radio_budget() {
 	else
 		rc=$?
 	fi
+	if [ -n "$budget_marker" ] && [ "$(cat "$budget_marker" 2>/dev/null || true)" = "1" ]; then
+		budget_exhausted=1
+	fi
+	rm -f "$budget_marker" 2>/dev/null || true
 	_ai_restore_scoped_radio_budget_env "$deadline_var" "$previous_deadline_set" "$previous_deadline" \
 		"$previous_retry_set" "$previous_retry"
+	if [ "$budget_exhausted" -eq 1 ] && declare -F _ai_stats_record >/dev/null 2>&1; then
+		# One fixed event per chain. Label remains the existing component key; no
+		# provider/model/prompt/output/path is persisted by this observation.
+		_ai_stats_record "budget_exhausted" "$chain_label" "" "" ""
+	fi
 	return "$rc"
 }
 
