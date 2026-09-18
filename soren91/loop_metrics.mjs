@@ -7,6 +7,7 @@ const STAGES = ['capture', 'analyze', 'ranking', 'decide', 'input', 'cooldown', 
 export const DROP_PROFILE_STAGES = [...STAGES, 'holdInput', 'overlap', 'unattributed'];
 const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-frame',
   'preview-changed', 'board-moving', 'stable', 'stable-slow-advance', 'non-move', 'other'];
+const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
 const zeros = names => Object.fromEntries(names.map(name => [name, 0]));
 const rounded = n => Math.round(n * 10) / 10;
 const PROFILE_CAPACITY = 128;
@@ -102,8 +103,26 @@ export class LoopMetrics {
     const key = [...REASONS].reverse().find(r => reason === r || reason.startsWith(r + '-')) || 'other';
     this.reasons[key]++;
     if (this.profileOpen) {
-      this.profileOpen.observations++;
-      this.profileOpen.reasonCounts[key]++;
+      const bucket = this.profileOpen;
+      bucket.observations++;
+      bucket.reasonCounts[key]++;
+
+      // Evidence only: the observation guard already classifies whether NEXT
+      // advanced. Reuse that existing signal without adding waits, captures or
+      // changing gameplay. This is not treated as authoritative game acceptance.
+      const rawTransition = String(state?.perception?.queueTransition || 'unknown');
+      const transition = QUEUE_TRANSITIONS.includes(rawTransition) ? rawTransition : 'unknown';
+      const acceptance = bucket.dropAcceptance;
+      acceptance.observations++;
+      acceptance.transitionCounts[transition]++;
+      if (!acceptance.confirmed && transition === 'advanced') {
+        const now = this.now();
+        if (now < bucket.start) bucket.clockValid = false;
+        acceptance.confirmed = true;
+        acceptance.confirmLatencyMs = rounded(Math.max(0, now - bucket.start));
+        acceptance.confirmObservation = acceptance.observations;
+        acceptance.confirmReason = key;
+      }
     }
   }
   holdSent() {
@@ -139,6 +158,14 @@ export class LoopMetrics {
         endedAtMs: Date.now(), durationMs, stageMs, phaseCalls: { ...bucket.phaseCalls },
         observations: bucket.observations, holds: bucket.holds, errors: bucket.errors,
         reasonCounts: { ...bucket.reasonCounts },
+        dropAcceptance: {
+          confirmed: bucket.dropAcceptance.confirmed,
+          confirmLatencyMs: bucket.dropAcceptance.confirmLatencyMs,
+          confirmObservation: bucket.dropAcceptance.confirmObservation,
+          confirmReason: bucket.dropAcceptance.confirmReason,
+          observations: bucket.dropAcceptance.observations,
+          transitionCounts: { ...bucket.dropAcceptance.transitionCounts },
+        },
         accountingErrorMs, accountingValid: bucket.clockValid && Math.abs(accountingErrorMs) <= 1,
       });
       if (this.profileRecords.length > PROFILE_CAPACITY) {
@@ -149,6 +176,10 @@ export class LoopMetrics {
       start: now, cursor: now, fromTurn: this.turn, clockValid: true,
       stageMs: zeros(DROP_PROFILE_STAGES), phaseCalls: zeros([...STAGES, 'holdInput']),
       observations: 0, holds: 0, errors: 0, reasonCounts: zeros(REASONS),
+      dropAcceptance: {
+        confirmed: false, confirmLatencyMs: null, confirmObservation: null, confirmReason: null,
+        observations: 0, transitionCounts: zeros(QUEUE_TRANSITIONS),
+      },
     };
     // A measured operation crossing a boundary touches both intervals.
     for (const token of this.profileActive) this.profileOpen.phaseCalls[token.stage]++;
@@ -175,13 +206,21 @@ export class LoopMetrics {
         p50: percentile(0.5), p95: percentile(0.95), max: sorted.length ? rounded(sorted.at(-1)) : null },
       dropProfile: {
         schemaVersion: 1, basis: 'sent-to-sent', acceptedDropsMeasured: false,
+        acceptanceEvidence: {
+          measured: true,
+          basis: 'post-send-queue-transition',
+          authoritativeGameAcceptance: false,
+          changesGameplay: false,
+        },
         session: this.profileSession, capacity: PROFILE_CAPACITY,
         totalSamples: this.profileTotal, evictedSamples: this.profileEvicted,
         // Retain completed intervals across rounds; a process restart starts a
         // new session. Snapshot callbacks cannot mutate the internal ring.
         records: this.profileRecords.map(record => ({ ...record,
           stageMs: { ...record.stageMs }, phaseCalls: { ...record.phaseCalls },
-          reasonCounts: { ...record.reasonCounts } })),
+          reasonCounts: { ...record.reasonCounts },
+          dropAcceptance: { ...record.dropAcceptance,
+            transitionCounts: { ...record.dropAcceptance.transitionCounts } } })),
       },
     };
     // Diagnostics must not stop gameplay (full disk / permissions / rotation).
