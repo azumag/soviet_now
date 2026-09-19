@@ -5,9 +5,10 @@
 # 自動フックは未接続。切替が一段落するまでは切替時に手動で本スクリプトを実行する。
 #   ./update_stream_game.sh --game robots --strategy "v wholesale..."
 #
-# 配信タイトルは handoff 由来 (prompts/ops_brief.md の1件目=直近の作業) を既定の
-# activity とし、ゲーム・戦略の進捗を --strategy で乗せる。先頭は常に "[dayN]" とし、
-# ゲーム名はタイトルの [] へ入れない。ゲームは Twitch カテゴリーで表現する。
+# 配信タイトル本文は prompts/viewer_title.md の明示的な視聴者向け候補を既定とし、
+# ops_brief のPR番号・main・VM・CI等の内部作業ログは公開タイトルへ流さない。
+# 候補が無ければ一般向けfallbackを使う。--activity / --strategy も公開向けとして検証する。
+# 先頭は常に "[dayN]" とし、ゲーム名はタイトルの [] へ入れない。ゲームは Twitch カテゴリーで表現する。
 # カテゴリーは Twitch (IGDB) の game_id を Helix PATCH /helix/channels で更新する。
 # game_id の選定は --resolve/--verify で IGDB 照合する (docs/twitch_game_sync.md)。
 #
