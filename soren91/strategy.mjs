@@ -465,7 +465,20 @@ function filterUnsupportedHighObservations(pieces, columns = []) {
     }
   }
 
-  return pieces.filter((p, i) => p.y + p.r < UNSUPPORTED_HIGH_MIN_TOP || supported.has(i));
+  const unsupportedHigh = [];
+  for (let i = 0; i < pieces.length; i++) {
+    if (pieces[i].y + pieces[i].r >= UNSUPPORTED_HIGH_MIN_TOP && !supported.has(i)) {
+      unsupportedHigh.push(i);
+    }
+  }
+  // Fail closed when the whole observation is ungrounded or the high region is
+  // broadly populated. The retained cursor-leak pattern is a small (1-3)
+  // detached group above an otherwise physically supported board.
+  if (supported.size === 0 || unsupportedHigh.length === 0 || unsupportedHigh.length > 3) {
+    return pieces;
+  }
+  const ignored = new Set(unsupportedHigh);
+  return pieces.filter((_p, i) => !ignored.has(i));
 }
 
 function reserveValue(piece, board) {
