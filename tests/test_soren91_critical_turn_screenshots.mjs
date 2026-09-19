@@ -78,26 +78,33 @@ test('completed-game archive copies frames nearest the critical history turns', 
   }
 });
 
-test('turn reset suppresses screenshots whose turn numbers span multiple sessions', () => {
-  const root = mkdtempSync(join(tmpdir(), 'soren91-critical-shots-discontinuous-'));
-  try {
-    const screenshotDir = join(root, 'screenshots');
-    const outputDir = join(root, 'game_0007');
-    const historyFile = join(root, 'latest_0007.jsonl');
-    mkdirSync(screenshotDir, { recursive: true });
-    for (const name of makeTurnNames(7)) writeFileSync(join(screenshotDir, name), name);
+test('turn reset, skip, or duplicate suppresses ambiguous cross-session screenshots', () => {
+  const cases = [
+    ['reset', [0, 1, 2, 3, 0, 1, 2, 3, 4]],
+    ['skip', [0, 1, 3, 4]],
+    ['duplicate', [0, 1, 1, 2, 3]],
+  ];
 
-    const history = [0, 1, 2, 3, 0, 1, 2, 3, 4]
-      .map(turn => historyRecord(turn));
-    writeFileSync(historyFile, history.map(record => JSON.stringify(record)).join('\n') + '\n');
+  for (const [kind, turns] of cases) {
+    const root = mkdtempSync(join(tmpdir(), `soren91-critical-shots-${kind}-`));
+    try {
+      const screenshotDir = join(root, 'screenshots');
+      const outputDir = join(root, 'game_0007');
+      const historyFile = join(root, 'latest_0007.jsonl');
+      mkdirSync(screenshotDir, { recursive: true });
+      for (const name of makeTurnNames(7)) writeFileSync(join(screenshotDir, name), name);
 
-    const result = archiveCriticalTurnScreenshots({ screenshotDir, outputDir, historyFile });
-    assert.equal(result.historyStatus, 'discontinuous');
-    assert.deepEqual(result.preferredTurns, []);
-    assert.deepEqual(result.names, []);
-    assert.deepEqual(readdirSync(outputDir), []);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+      const history = turns.map(turn => historyRecord(turn));
+      writeFileSync(historyFile, history.map(record => JSON.stringify(record)).join('\n') + '\n');
+
+      const result = archiveCriticalTurnScreenshots({ screenshotDir, outputDir, historyFile });
+      assert.equal(result.historyStatus, 'discontinuous', kind);
+      assert.deepEqual(result.preferredTurns, [], kind);
+      assert.deepEqual(result.names, [], kind);
+      assert.deepEqual(readdirSync(outputDir), [], kind);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
