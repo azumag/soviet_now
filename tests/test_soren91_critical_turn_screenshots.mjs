@@ -78,6 +78,29 @@ test('completed-game archive copies frames nearest the critical history turns', 
   }
 });
 
+test('turn reset suppresses screenshots whose turn numbers span multiple sessions', () => {
+  const root = mkdtempSync(join(tmpdir(), 'soren91-critical-shots-discontinuous-'));
+  try {
+    const screenshotDir = join(root, 'screenshots');
+    const outputDir = join(root, 'game_0007');
+    const historyFile = join(root, 'latest_0007.jsonl');
+    mkdirSync(screenshotDir, { recursive: true });
+    for (const name of makeTurnNames(7)) writeFileSync(join(screenshotDir, name), name);
+
+    const history = [0, 1, 2, 3, 0, 1, 2, 3, 4]
+      .map(turn => historyRecord(turn));
+    writeFileSync(historyFile, history.map(record => JSON.stringify(record)).join('\n') + '\n');
+
+    const result = archiveCriticalTurnScreenshots({ screenshotDir, outputDir, historyFile });
+    assert.equal(result.historyStatus, 'discontinuous');
+    assert.deepEqual(result.preferredTurns, []);
+    assert.deepEqual(result.names, []);
+    assert.deepEqual(readdirSync(outputDir), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('malformed history keeps bounded legacy sampling instead of dropping evidence', () => {
   const root = mkdtempSync(join(tmpdir(), 'soren91-critical-shots-fallback-'));
   try {
