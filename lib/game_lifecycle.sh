@@ -114,8 +114,13 @@ PY
 	export SOREN_JEV_PLAYER_GENERATION="$generation"
 	if [ -n "$game_generation" ]; then export SOREN_JEV_GAME_GENERATION="$game_generation"; fi
 	if [ "$policy" = "jev" ]; then
+		# The committed player snapshot is the explicit opt-in boundary.  Keep
+		# the inner runner disabled for legacy/existing snapshots so an inherited
+		# .env value cannot turn an existing game into an implicit JEV run.
+		export JEV_PLAYER_ENABLED="1"
 		export SOREN_JEV_RUN_ID="$run_id"
 	else
+		export JEV_PLAYER_ENABLED="0"
 		unset SOREN_JEV_RUN_ID SOREN_JEV_GAME_GENERATION
 	fi
 }

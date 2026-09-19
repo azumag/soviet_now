@@ -188,7 +188,12 @@ function loadCommittedPlayerState() {
     if (Number.isInteger(value.game_generation) && value.game_generation >= 1) {
       process.env.SOREN_JEV_GAME_GENERATION = String(value.game_generation);
     }
-    if (value.policy === 'jev') process.env.SOREN_JEV_RUN_ID = value.run_id;
+    if (value.policy === 'jev') {
+      process.env.SOREN_JEV_RUN_ID = value.run_id;
+    } else {
+      delete process.env.SOREN_JEV_RUN_ID;
+      delete process.env.SOREN_JEV_GAME_GENERATION;
+    }
   } catch (error) {
     if (fs.existsSync(PLAYER_STATE_PATH)) failClosedPlayerState();
   }
