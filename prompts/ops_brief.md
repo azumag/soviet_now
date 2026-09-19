@@ -1,4 +1,4 @@
 # 直近の裏側の改修 (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)
-- NetHack: #750/#751/#752/#756 をマージ・deploy。#750/#751 は本番実測で確認、#756 の効果は…
-- PAPER改善の親サービス巻き込み停止を修正
-- NetHack: stall guard の取り違え修正(#750 マージ・deploy 済)、配信カテゴリ自動追従(#751)、緊急時も…
+- NetHack長期攻略 P6g: declarative action effects（#640）
+- NetHack長期攻略 P6f: 失敗episode→catalog提案→検証→昇格判定ループ（#638）
+- NetHack長期攻略 P6e: seed固定 promotion runner で自動昇格ループを実走（#634）
