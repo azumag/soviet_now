@@ -55,7 +55,7 @@ SH
 chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
 
-# --- fake game toml / ops_brief ---
+# --- fake game toml / viewer-facing title ---
 cat >"$TMP/games/robots.toml" <<'TOML'
 [game]
 name = "robots"
@@ -82,12 +82,12 @@ category_id = "abc"
 category_name = "X"
 title_prefix = "[X]"
 TOML
-printf '# brief\n- 直近の作業メモ\n- 古いメモ\n' >"$TMP/ops_brief.md"
+printf '# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n' >"$TMP/viewer_title.md"
 
 export TWITCH_CLIENT_ID=test-client TWITCH_BROADCASTER_ID=test-bid
 export TWITCH_GAME_TOKEN=test-token
 export STREAM_GAME_LOG_FILE="$TMP/game.log"
-export OPS_BRIEF_FILE="$TMP/ops_brief.md"
+export STREAM_VIEWER_TITLE_FILE="$TMP/viewer_title.md"
 export STREAM_DAY_EPOCH=2026-03-14 STREAM_DAY_TZ=Asia/Tokyo
 export STUB_PATCH_OUT="$TMP/patch_body" STUB_PATCH_COUNT="$TMP/patch_count"
 rm -f "$STUB_PATCH_OUT" "$STUB_PATCH_COUNT"
@@ -99,7 +99,7 @@ not_ok() { fail=$((fail + 1)); printf 'not ok - %s\n' "$1"; }
 # 1. dry-run: [dayN] + activity + strategy の組成。ゲーム prefix は無視する。
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
 out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" --dry-run 2>"$TMP/e1")"
-echo "$out" | grep -q '^\[day[0-9]*\] 直近の作業メモ root継続$' && ok "compose title" || not_ok "compose title: $out"
+echo "$out" | grep -q '^\[day[0-9]*\] AIの取引コーナーからゲームへ、画面切替を改善 root継続
 echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
 [ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
 
@@ -191,6 +191,110 @@ d = json.load(open(sys.argv[1]))
 assert d["game_id"] == "11585", d
 assert d["title"] == "[Soren] keep this title", d
 PY
+
+printf '\n%d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" = "0" ]
+ && ok "compose public title" || not_ok "compose public title: $out"
+echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
+[ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
+
+# 2. 実PATCH: body に title+game_id が入る
+rm -f "$STUB_PATCH_OUT" "$STUB_PATCH_COUNT"
+"$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" >/dev/null 2>&1
+[ -f "$STUB_PATCH_COUNT" ] && ok "PATCH executed" || not_ok "PATCH not executed"
+python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "PATCH body" || not_ok "PATCH body: $(cat "$STUB_PATCH_OUT" 2>/dev/null)"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["game_id"] == "11585", d
+assert d["title"].startswith("[day"), d
+assert "[Robots]" not in d["title"], d
+PY
+
+# 3. 冪等: 同一 title+game なら PATCH しない (exit 0)
+rm -f "$STUB_PATCH_COUNT"
+cur_title="$(python3 -c "import json; print(json.load(open('$STUB_PATCH_OUT'))['title'])")"
+export STUB_CHANNELS="{\"data\":[{\"title\":\"$cur_title\",\"game_id\":\"11585\",\"game_name\":\"Robots\"}]}"
+"$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" >/dev/null 2>&1
+rc=$?
+[ "$rc" = "0" ] && [ ! -f "$STUB_PATCH_COUNT" ] && ok "idempotent skip" || not_ok "idempotent skip rc=$rc"
+export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
+
+# 4. toml 不在 → exit 1 / [twitch] 不在 → exit 1 / 非数値 id → exit 1
+"$BIN" --game nosuch --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "1" ] && ok "missing toml rc=1" || not_ok "missing toml rc"
+"$BIN" --game broken --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "1" ] && ok "missing [twitch] rc=1" || not_ok "missing [twitch] rc"
+"$BIN" --game badid --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "1" ] && ok "non-numeric id rc=1" || not_ok "non-numeric id rc"
+
+# 5. scope 不足 → exit 3
+export STUB_VALIDATE='{"client_id":"cid","login":"tester","scopes":["channel:manage:predictions"]}'
+"$BIN" --game robots --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "3" ] && ok "missing scope rc=3" || not_ok "missing scope rc"
+export STUB_VALIDATE='{"client_id":"cid","login":"tester","scopes":["channel:manage:broadcast"]}'
+
+# 6. token 優先順位: GAME > TITLE (TITLE を無効値にしても成功する)
+export TWITCH_GAME_TOKEN=test-token TWITCH_TITLE_TOKEN=bogus
+"$BIN" --game robots --games-dir "$TMP/games" --dry-run >/dev/null 2>&1
+[ "$?" = "0" ] && ok "token precedence" || not_ok "token precedence"
+unset TWITCH_TITLE_TOKEN
+
+# 7. --verify 一致 → 0 / 不一致 → 5
+export STUB_GAMES='{"data":[{"id":"11585","name":"Robots"}]}'
+"$BIN" --verify --game robots --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "0" ] && ok "verify match" || not_ok "verify match"
+export STUB_GAMES='{"data":[{"id":"11585","name":"Robots 2"}]}'
+"$BIN" --verify --game robots --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "5" ] && ok "verify mismatch rc=5" || not_ok "verify mismatch rc"
+
+# 8. --resolve は候補を表示し PATCH しない
+rm -f "$STUB_PATCH_COUNT"
+export STUB_SEARCH='{"data":[{"id":"11585","name":"Robots"},{"id":"313473","name":"Robots Love Ice Cream"}]}'
+out="$("$BIN" --resolve "Robots" 2>/dev/null)"
+echo "$out" | grep -q '11585 | Robots' && ok "resolve list" || not_ok "resolve list: $out"
+[ ! -f "$STUB_PATCH_COUNT" ] && ok "resolve no PATCH" || not_ok "resolve PATCHed"
+
+# 9. --title-only は game_id を維持し、タイトルは [dayN] のまま
+rm -f "$STUB_PATCH_OUT"
+export STUB_CHANNELS='{"data":[{"title":"old","game_id":"999","game_name":"Keep"}]}'
+"$BIN" --game robots --games-dir "$TMP/games" --title-only >/dev/null 2>&1
+python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "title-only keeps game" || not_ok "title-only: $(cat "$STUB_PATCH_OUT" 2>/dev/null)"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["game_id"] == "999", d
+assert d["title"].startswith("[day"), d
+assert "[Robots]" not in d["title"], d
+PY
+export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
+
+# 10. --title-prefix は互換のため受理するが表示には使わない
+out="$("$BIN" --game robots --games-dir "$TMP/games" --title-prefix '[LegacyGame]' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\]' && ! echo "$out" | grep -q '\[LegacyGame\]' && ok "legacy title-prefix ignored" || not_ok "legacy title-prefix leaked: $out"
+
+# 11. 140字制限
+WORDS="$(python3 -c "print('あ' * 200)")"
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity "$WORDS" --strategy "$WORDS" --dry-run 2>/dev/null)"
+[ "${#out}" -le 140 ] && ok "title <= 140" || not_ok "title too long: ${#out}"
+
+# 12. --category-only は現在のタイトルをそのまま保持する
+rm -f "$STUB_PATCH_OUT"
+export STUB_CHANNELS='{"data":[{"title":"[Soren] keep this title","game_id":"1","game_name":"Old"}]}'
+"$BIN" --game robots --games-dir "$TMP/games" --category-only >/dev/null 2>&1
+python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "category-only preserves title" || not_ok "category-only: $(cat "$STUB_PATCH_OUT" 2>/dev/null)"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["game_id"] == "11585", d
+assert d["title"] == "[Soren] keep this title", d
+PY
+
+# 13. 内部作業ログや戦略バージョンは公開タイトルへ出さず、一般向けfallbackへ落とす
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'PR770をmainへマージ' --strategy 'root v763 継続' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] AIたちがゲーム・ニュース・会話に挑戦する実験配信$' && ok "internal activity filtered" || not_ok "internal activity leaked: $out"
+echo "$out" | grep -q 'PR770\|v763\|main' && not_ok "internal identifiers leaked: $out" || ok "internal identifiers omitted"
+
+# 14. 視聴者に意味のあるゲーム名・説明は保持する
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'NetHackでAIが長期攻略に挑戦' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] NetHackでAIが長期攻略に挑戦$' && ok "public activity kept" || not_ok "public activity changed: $out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ]
