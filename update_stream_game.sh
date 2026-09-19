@@ -243,57 +243,27 @@ PY
 )" || { _log "ERROR: failed to compute day N (epoch=$EPOCH today=$TODAY)"; exit 1; }
 fi
 
-# --- activity 既定: handoff 由来の ops_brief 1件目 ---
-if [ -z "${ACTIVITY_ARG+x}" ]; then
-	OPS_BRIEF="${OPS_BRIEF_FILE:-prompts/ops_brief.md}"
-	ACTIVITY="$(python3 - "$OPS_BRIEF" <<'PY'
-import sys
-from pathlib import Path
-p = Path(sys.argv[1])
-try:
-    for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-        s = line.strip()
-        if s.startswith("- ") and len(s) > 2:
-            print(s[2:].strip()); break
-except FileNotFoundError:
-    pass
-PY
-)"
-	if [ -z "$ACTIVITY" ]; then
-		_log "WARN: ops_brief から activity を取れません ($OPS_BRIEF)。--activity で明示できます"
-	fi
-else
-	ACTIVITY="$ACTIVITY_ARG"
-fi
-STRATEGY="${STRATEGY_ARG:-${STREAM_GAME_STRATEGY:-}}"
+# --- 視聴者向けタイトル本文を組成。ops_brief は公開タイトルの入力にしない。 ---
+TITLE_HELPER="${STREAM_TITLE_HELPER:-lib/stream_title_public.py}"
+VIEWER_TITLE_FILE="${STREAM_VIEWER_TITLE_FILE:-prompts/viewer_title.md}"
+PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュース・会話に挑戦する実験配信}"
+[ -f "$TITLE_HELPER" ] || { _log "ERROR: public title helper not found: $TITLE_HELPER"; exit 1; }
 
-# --- 目標タイトルを組成 (Twitch 上限 140字。[dayN] を優先保持) ---
-NEW_TITLE="$(python3 - "$N" "$ACTIVITY" "$STRATEGY" <<'PY'
-import sys
-n, activity, strategy = (a.strip() for a in sys.argv[1:4])
-parts = [f"[day{n}]"]
-def short(s, limit):
-    s = " ".join(s.split())
-    return s if len(s) <= limit else s[:max(0, limit - 1)].rstrip() + "…"
-if strategy:
-    strategy = short(strategy, 40)
-if activity:
-    # 全体 140字に収める: strategy(あれば) を守り activity を削る
-    rest = 140 - len(" ".join(parts)) - (1 + len(strategy) if strategy else 0) - 1
-    activity = short(activity, max(0, rest))
-    if activity:
-        parts.append(activity)
-if strategy:
-    # 再計算 (activity 短縮後に入り直す)
-    rest = 140 - len(" ".join(parts)) - 1
-    if rest >= 4:
-        parts.append(short(strategy, rest))
-    elif not activity:
-        parts.append(short(strategy, 140 - len(" ".join(parts)) - 1))
-title = " ".join(parts)
-print(title[:140])
-PY
-)"
+STRATEGY="${STRATEGY_ARG:-${STREAM_GAME_STRATEGY:-}}"
+compose_args=(
+    compose
+    --day "$N"
+    --candidate-file "$VIEWER_TITLE_FILE"
+    --fallback "$PUBLIC_FALLBACK"
+    --strategy "$STRATEGY"
+)
+if [ -n "${ACTIVITY_ARG+x}" ]; then
+    compose_args+=(--activity "$ACTIVITY_ARG")
+fi
+NEW_TITLE="$(python3 "$TITLE_HELPER" "${compose_args[@]}")" || {
+    _log "ERROR: failed to compose public title"
+    exit 1
+}
 _log "desired title: $NEW_TITLE"
 
 # --- 現在の title/game を取得 ---
