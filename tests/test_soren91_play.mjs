@@ -56,6 +56,47 @@ test('v221 fatal sign regression: choose low lane instead of a near-deadline mer
   const b = board([piece(1, 0, 2.7)]);
   const d = decide(b); assert.ok(Math.abs(d.x) > 0.414, JSON.stringify(d)); assert.ok(d.diagnostics.risk < 2); approx(d.diagnostics.landingY, -4.793);
 });
+test('retained replay: unsupported high cursor observations do not fabricate deadline risk', () => {
+  // Distilled from retained game 8 turn 7. The screenshot shows the settled
+  // board on the garbage surface while two cursor-like detections float near
+  // the deadline. They must not turn a reachable type-4 merge into risk=1.
+  const columns = [{ left: -3.5, right: 3.5, top: -2.512 }];
+  const ps = [
+    piece(7, 2.37, -1.86, { confidence: 0.79 }),
+    piece(7, -2.83, -1.82, { confidence: 0.82 }),
+    piece(6, 2.99, -1.46, { confidence: 0.81 }),
+    piece(3, 2.86, -1.00, { confidence: 0.45 }),
+    piece(3, 1.19, -1.94, { confidence: 0.45 }),
+    piece(4, -0.43, -2.22, { confidence: 0.82 }),
+    piece(2, 1.01, -2.30, { confidence: 0.85 }),
+    piece(2, -1.00, -2.20, { confidence: 0.83 }),
+    piece(1, -1.84, -1.80, { confidence: 0.84 }),
+    piece(1, -1.97, -2.29, { confidence: 0.80 }),
+    piece(1, -2.37, -2.30, { confidence: 0.69 }),
+    piece(1, 0.05, 2.38, { confidence: 0.84 }),
+    piece(1, -0.07, 2.68, { confidence: 0.45 }),
+  ];
+  const current = piece(4);
+  const d = decide(board(ps, current, {
+    nextPieces: [current, piece(1), null],
+    hold: piece(5),
+    canHold: true,
+    garbage: { ratio: 0.265, height: -2.512, gauge: 0, columns },
+  }));
+  assert.equal(d.diagnostics.ignoredUnsupportedHigh, 2, JSON.stringify(d));
+  assert.equal(d.diagnostics.risk, 0, JSON.stringify(d));
+  assert.ok(d.diagnostics.merges >= 1, JSON.stringify(d));
+});
+
+test('physically supported high stack remains deadline-dangerous', () => {
+  const r = TYPE_RADII[10];
+  const ps = Array.from({ length: 5 }, (_, i) =>
+    piece(10, 0, -5 + r + i * 2 * r));
+  const d = decide(board(ps));
+  assert.equal(d.diagnostics.ignoredUnsupportedHigh, 0, JSON.stringify(d));
+  assert.equal(d.diagnostics.risk, 2, JSON.stringify(d));
+});
+
 test('crowding is a cost, not a positive reward', () => {
   const d = decide(board([piece(7, -1, -1), piece(8, -1.5, -2), piece(6, 0, -2)]));
   approx(d.diagnostics.landingY, -4.793);
