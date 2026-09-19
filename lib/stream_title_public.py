@@ -23,6 +23,7 @@ _INTERNAL_PATTERNS = (
     re.compile(r"(?i)\b(?:issue|pull\s*request)\s*#?\s*\d+\b"),
     re.compile(r"(?i)\b[\w.-]+#\d+\b"),
     re.compile(r"(?i)\b(?:main|master|HEAD|SHA|CI|VM)\b"),
+    re.compile(r"(?i)\\broot\\s+v\\d+\\b"),
     re.compile(r"(?i)(?:マージ|merge(?:d)?|デプロイ|deploy(?:ed)?|コミット|commit(?:ted)?|本番反映|参照更新)"),
     re.compile(r"(?i)\b(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b"),
     re.compile(r"(?i)(?:^|\s)(?:[\w.-]+/)+[\w.-]+\.(?:py|sh|toml|ya?ml|json|md)\b"),
