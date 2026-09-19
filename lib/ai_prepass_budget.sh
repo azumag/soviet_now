@@ -33,6 +33,23 @@ _ai_radio_main_total_budget_sec() {
 	printf '%s\n' "$value"
 }
 
+# Record only bounded numeric budget facts in a private per-chain marker. The marker
+# path is dynamically scoped by _ai_generate_list_with_radio_budget and is never
+# exported into provider processes. Each _ai_dispatch call appends one fixed record,
+# allowing the outer chain to distinguish calls that really executed from candidates
+# skipped only because the total budget had already expired.
+_ai_radio_budget_detail_append() {
+	local kind="${1:-}" remaining="${2:-0}"
+	local detail_file="${AI_RADIO_BUDGET_DETAIL_MARKER:-}"
+	[ -n "$detail_file" ] || return 0
+	case "$kind" in
+	executed | skipped) ;;
+	*) return 0 ;;
+	esac
+	[[ "$remaining" =~ ^-?[0-9]+$ ]] || remaining=0
+	printf '%s|%s\n' "$kind" "$remaining" >>"$detail_file" 2>/dev/null || true
+}
+
 # eloop_lib.sh reloads ai_generate.sh and ai_generate_policy.sh before this file,
 # so these snapshots always point at the current reviewed implementations rather
 # than wrappers from an older source pass.
@@ -72,9 +89,14 @@ _ai_dispatch() {
 			if [ -n "${AI_RADIO_BUDGET_EXHAUSTED_MARKER:-}" ]; then
 				printf '1\n' >"$AI_RADIO_BUDGET_EXHAUSTED_MARKER" 2>/dev/null || true
 			fi
+			_ai_radio_budget_detail_append skipped "$remaining"
 			log "[RADIO:${budget_kind}] total budget exhausted -> skip remaining candidate" >&2
 			return 0
 		fi
+		# Capture the remaining chain budget at the moment a real provider dispatch
+		# begins. This is bounded by the reviewed 120s/240s chain caps and contains no
+		# provider/model/prompt data.
+		_ai_radio_budget_detail_append executed "$remaining"
 		case "$timeout_override" in
 		'' | *[!0-9]*) timeout_override="$remaining" ;;
 		*) [ "$timeout_override" -gt "$remaining" ] && timeout_override="$remaining" ;;
@@ -106,7 +128,9 @@ _ai_generate_list_with_radio_budget() {
 	local chain_label="${1:-AI}"
 	local previous_deadline="" previous_deadline_set=0
 	local previous_retry="" previous_retry_set=0 rc
-	local budget_marker="" budget_exhausted=0
+	local budget_marker="" budget_detail_marker="" budget_exhausted=0
+	local budget_executed=0 budget_skipped=0 budget_last_remaining=0
+	local detail_kind detail_remaining
 	if [ "${!deadline_var+x}" = x ]; then
 		previous_deadline_set=1
 		previous_deadline="${!deadline_var}"
@@ -116,15 +140,20 @@ _ai_generate_list_with_radio_budget() {
 		previous_retry="$OPENCODE_ABORT_RETRY"
 	fi
 
-	# Keep the marker local to this shell call. Bash dynamic scope makes it visible
-	# to the command-substitution subshell running _ai_dispatch, while not exporting
-	# the path into provider processes. Failure to allocate it never changes runtime
-	# behavior; it only means this diagnostic event is omitted for that chain.
+	# Keep markers local to this shell call. Bash dynamic scope makes the paths visible
+	# to command-substitution subshells running _ai_dispatch, while the variables are
+	# not exported into provider processes. Allocation failure never changes runtime
+	# behavior; it only omits the corresponding diagnostic detail.
 	budget_marker=$(mktemp "${TMPDIR:-/tmp}/soren-radio-budget.XXXXXX" 2>/dev/null || true)
 	if [ -n "$budget_marker" ]; then
 		printf '0\n' >"$budget_marker" 2>/dev/null || true
 	fi
+	budget_detail_marker=$(mktemp "${TMPDIR:-/tmp}/soren-radio-budget-detail.XXXXXX" 2>/dev/null || true)
+	if [ -n "$budget_detail_marker" ]; then
+		: >"$budget_detail_marker" 2>/dev/null || true
+	fi
 	local AI_RADIO_BUDGET_EXHAUSTED_MARKER="$budget_marker"
+	local AI_RADIO_BUDGET_DETAIL_MARKER="$budget_detail_marker"
 
 	# A backend-internal retry uses the same timeout again and can therefore exceed
 	# the chain deadline while holding the lane. Use one attempt per candidate inside
@@ -139,13 +168,31 @@ _ai_generate_list_with_radio_budget() {
 	if [ -n "$budget_marker" ] && [ "$(cat "$budget_marker" 2>/dev/null || true)" = "1" ]; then
 		budget_exhausted=1
 	fi
-	rm -f "$budget_marker" 2>/dev/null || true
+	if [ -n "$budget_detail_marker" ] && [ -f "$budget_detail_marker" ]; then
+		while IFS='|' read -r detail_kind detail_remaining; do
+			[[ "$detail_remaining" =~ ^-?[0-9]+$ ]] || continue
+			case "$detail_kind" in
+			executed)
+				budget_executed=$((budget_executed + 1))
+				[ "$detail_remaining" -gt 0 ] && budget_last_remaining="$detail_remaining"
+				;;
+			skipped) budget_skipped=$((budget_skipped + 1)) ;;
+			esac
+		done <"$budget_detail_marker"
+	fi
+	# Keep persisted counters bounded even if an operator supplies an abnormally long
+	# candidate list. Normal chains are far below these caps.
+	[ "$budget_executed" -gt 99 ] && budget_executed=99
+	[ "$budget_skipped" -gt 99 ] && budget_skipped=99
+	[ "$budget_last_remaining" -gt 240 ] && budget_last_remaining=240
+	rm -f "$budget_marker" "$budget_detail_marker" 2>/dev/null || true
 	_ai_restore_scoped_radio_budget_env "$deadline_var" "$previous_deadline_set" "$previous_deadline" \
 		"$previous_retry_set" "$previous_retry"
 	if [ "$budget_exhausted" -eq 1 ] && declare -F _ai_stats_record >/dev/null 2>&1; then
-		# One fixed event per chain. Label remains the existing component key; no
-		# provider/model/prompt/output/path is persisted by this observation.
-		_ai_stats_record "budget_exhausted" "$chain_label" "" "" ""
+		# One fixed event per chain. The error field is a strict numeric grammar for
+		# owner-only/sanitized diagnostics: no provider/model/prompt/output/path data.
+		_ai_stats_record "budget_exhausted" "$chain_label" "" "" "" \
+			"exec=${budget_executed};skip=${budget_skipped};last_budget=${budget_last_remaining};rem=0"
 	fi
 	return "$rc"
 }
