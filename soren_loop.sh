@@ -1093,6 +1093,21 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 	post_game_bookkeeping
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
+	if [ "${LAST_PLAYER_POLICY:-existing}" = "jev" ]; then
+		rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+		case "$post_rc" in
+		2|3)
+			log "[JEV] 試合境界後の lifecycle が未完了 (rc=$post_rc)。通常の次ゲーム/回帰を開始せず停止"
+			STOP_REQUESTED=1
+			trap - EXIT
+			exit 75
+			;;
+		esac
+		log "[JEV] 実験試合を終了。通常の改善・回帰・次ゲームを開始しない"
+		STOP_REQUESTED=1
+		trap - EXIT
+		exit 0
+	fi
 	_evolution_flow_notify \
 		"game_finished" \
 		"game finished" \

@@ -31,6 +31,7 @@ import {
   createStaticFileServer,
   resolveStaticBindAddress,
 } from './lib/static_file_server.mjs';
+import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,6 +70,7 @@ for (const signal of ['SIGTERM', 'SIGHUP']) {
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
+const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 // Stray-tab guard cadence. soren91 runs as a GUEST tab in this same Chrome
 // (SOREN91_SHARED_BROWSER) and can orphan an about:blank tab over the local
@@ -149,6 +151,97 @@ function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(data));
   fs.renameSync(tmpPath, filePath);
+}
+
+const JEV_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+let jevFrameSeq = 0;
+let jevOpportunitySeq = 0;
+let jevLastGameInstanceId = '';
+let jevLastDropPieceId = null;
+
+function jevIntegerEnv(name) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function annotateJevState(state) {
+  if (!state || process.env.SOREN_PLAYER_POLICY !== 'jev') return state;
+  const existing = state.jev_identity && typeof state.jev_identity === 'object'
+    ? state.jev_identity
+    : {};
+  const next = state.next && typeof state.next === 'object' ? state.next : {};
+  const runId = existing.run_id || process.env.SOREN_JEV_RUN_ID || null;
+  const gameInstanceId = existing.game_instance_id || process.env.SOREN_JEV_GAME_INSTANCE_ID || null;
+  const gameGeneration = existing.game_generation ?? jevIntegerEnv('SOREN_JEV_GAME_GENERATION');
+  const playerGeneration = existing.player_generation ?? jevIntegerEnv('SOREN_JEV_PLAYER_GENERATION');
+  const dropPieceId = existing.drop_piece_id ?? next.id ?? null;
+  if (gameInstanceId && gameInstanceId !== jevLastGameInstanceId) {
+    jevLastGameInstanceId = gameInstanceId;
+    jevOpportunitySeq = 0;
+    jevLastDropPieceId = null;
+  }
+  // A new bridge-provided current-piece id is an actual drop opportunity;
+  // polling the same frame never increments it.  If the bridge cannot expose
+  // the id, leave the opportunity absent and let the JEV runner fail closed.
+  if (state.state === 'MOVE' && Number.isInteger(dropPieceId) && dropPieceId !== jevLastDropPieceId) {
+    jevLastDropPieceId = dropPieceId;
+    jevOpportunitySeq += 1;
+  }
+  const opportunitySeq = existing.opportunity_seq
+    ?? state.opportunity_seq
+    ?? state.opportunitySeq
+    ?? (jevOpportunitySeq > 0 ? jevOpportunitySeq : null);
+  jevFrameSeq += 1;
+  return {
+    ...state,
+    jev_identity: {
+      ...existing,
+      ...(runId ? { run_id: runId } : {}),
+      ...(gameInstanceId ? { game_instance_id: gameInstanceId } : {}),
+      ...(gameGeneration != null ? { game_generation: gameGeneration } : {}),
+      ...(playerGeneration != null ? { player_generation: playerGeneration } : {}),
+      ...(opportunitySeq != null ? { opportunity_seq: opportunitySeq } : {}),
+      ...(dropPieceId != null ? { drop_piece_id: dropPieceId } : {}),
+      frame_seq: jevFrameSeq,
+      observed_at: new Date().toISOString(),
+      board_bounds: state.board_bounds || existing.board_bounds || { drop_x_min: -3, drop_x_max: 3 },
+    },
+  };
+}
+
+function writeJevAck(command, status, reason = '') {
+  if (!command || typeof command.run_id !== 'string' || !JEV_UUID_RE.test(command.run_id)) return;
+  if (!Number.isInteger(command.opportunity_seq) || command.opportunity_seq < 1) return;
+  const directory = path.join(JEV_ACK_ROOT, command.run_id);
+  const target = path.join(directory, `opportunity_${String(command.opportunity_seq).padStart(8, '0')}.json`);
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    let previous = null;
+    try { previous = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+    if (previous && ['accepted', 'outcome_unknown'].includes(previous.status) && previous.status !== status) return;
+    if (previous?.status === 'accepted' && status === 'accepted') return;
+    const payload = {
+      schema_version: 1,
+      status,
+      ...(reason ? { reason } : {}),
+      run_id: command.run_id,
+      game_instance_id: command.game_instance_id,
+      game_generation: command.game_generation,
+      player_generation: command.player_generation,
+      opportunity_seq: command.opportunity_seq,
+      frame_seq: command.frame_seq,
+      candidate_id: command.candidate_id,
+      command_id: command.command_id,
+      updated_at: new Date().toISOString(),
+    };
+    const temporary = `${target}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(payload), { mode: 0o600 });
+    fs.chmodSync(temporary, 0o600);
+    fs.renameSync(temporary, target);
+    fs.chmodSync(target, 0o600);
+  } catch (error) {
+    console.warn(`[JEV] ack write failed: ${error.message}`);
+  }
 }
 
 // canvas の CSS 表示領域の中央をクリックする。Unity キャンバスがウィンドウ/画面
@@ -1024,7 +1117,7 @@ function clearCommands() {
 async function getGameState(page) {
   try {
     const state = await page.evaluate(() => window.__sorenGameState);
-    return state || null;
+    return annotateJevState(state || null);
   } catch (e) {
     console.error('Error getting game state:', e.message);
     return null;
@@ -1034,7 +1127,8 @@ async function getGameState(page) {
 // Write game state to JSON file for AI loop
 function writeGameState(state) {
   if (!state) return;
-  fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(state, null, 2));
+  const persisted = state.jev_identity ? state : annotateJevState(state);
+  fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(persisted, null, 2));
 }
 
 function writeAudioHealth(health) {
@@ -1806,7 +1900,7 @@ function stateChanged(prev, curr) {
 }
 
 // Execute a command via JS Bridge
-async function executeCommand(page, command, externalGameAudio = null) {
+async function executeCommand(page, command, externalGameAudio = null, jevDropGuard = null) {
   if (command.action === 'retry') {
     console.log('Executing: RETRY');
     externalGameAudio?.resetForNewGame();
@@ -1826,10 +1920,39 @@ async function executeCommand(page, command, externalGameAudio = null) {
     await page.evaluate((v) => { window.__sorenCommand = v; }, command.value);
     await page.waitForTimeout(1000);
   } else if (command.action === 'drop') {
+    let jevValidation = null;
+    let currentState = null;
+    if (command.player_policy === 'jev') {
+      currentState = await getGameState(page);
+      jevValidation = jevDropGuard?.dispatch(command, {
+        state: currentState,
+        identity: currentState?.jev_identity,
+      }) || { ok: false, status: 'rejected', reason: 'guard_unavailable' };
+      if (!jevValidation.ok) {
+        writeJevAck(command, jevValidation.status, jevValidation.reason);
+        console.warn(`[JEV] guarded drop rejected: ${jevValidation.reason}`);
+        return currentState;
+      }
+      writeJevAck(command, 'dispatched');
+    }
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     externalGameAudio?.playDrop();
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
     await page.waitForTimeout(500);
+    if (command.player_policy === 'jev') {
+      const afterState = await getGameState(page);
+      const beforeId = currentState?.jev_identity?.drop_piece_id;
+      const afterId = afterState?.jev_identity?.drop_piece_id;
+      const phaseChanged = afterState?.state !== 'MOVE' && afterState?.phase !== 'MOVE';
+      const pieceAdvanced = Number.isInteger(afterId) && afterId !== beforeId;
+      if (!phaseChanged && !pieceAdvanced) {
+        writeJevAck(command, 'outcome_unknown', 'drop_transition_not_observed');
+        console.warn('[JEV] drop outcome unknown: no post-drop state transition observed');
+      } else {
+        writeJevAck(command, 'accepted');
+      }
+      return afterState || currentState;
+    }
   } else if (command.action === 'mute') {
     console.log('Executing: MUTE');
     await page.evaluate(() => {
@@ -2522,6 +2645,7 @@ async function runLocalController() {
   let lastUnityAudioRecoverAt = 0;
   let lastStrayTabGuardAt = 0;
   let lastGameRenderHealthAt = 0;
+  const jevDropGuard = new JevDropGuard();
   let gameLifecycleStopped = false;
   let gameLifecycleBlocked = false;
   let gameLifecycleRequestId = '';
@@ -2807,7 +2931,7 @@ async function runLocalController() {
 
     if (commands.length > processedCount) {
       for (let i = processedCount; i < commands.length; i++) {
-        const state = await executeCommand(page, commands[i], externalGameAudio);
+        const state = await executeCommand(page, commands[i], externalGameAudio, jevDropGuard);
         lastState = state;
         if (state) nullStateCount = 0;
         processedCount++;

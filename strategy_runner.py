@@ -15,13 +15,16 @@ Usage: python3 strategy_runner.py
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
+import uuid
 
 from lib.country_names import country_named_reason
 
@@ -45,6 +48,10 @@ CANVAS_X_MAX = 830
 
 # タイミング
 POLL_INTERVAL = 0.15      # ポーリング間隔(秒)
+JEV_ACK_ROOT = os.path.join("tmp", "state", "jev_player", "acks")
+JEV_RUN_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+POLICY_EXISTING = "existing"
+POLICY_JEV = "jev"
 
 
 def _env_int(name, default):
@@ -514,6 +521,86 @@ def write_drop_command(game_x):
     log(f"DROP {game_x:+.2f} → {cx}")
     with open(COMMANDS, "w") as f:
         f.write(f"{cx},350\n")
+
+
+def _jev_ack_path(identity):
+    """Return the bridge ack path only for a canonical run/turn identity."""
+    if not isinstance(identity, dict):
+        return None
+    run_id = identity.get("run_id")
+    opportunity_seq = identity.get("opportunity_seq")
+    if not isinstance(run_id, str) or not JEV_RUN_ID_RE.fullmatch(run_id):
+        return None
+    if type(opportunity_seq) is not int or opportunity_seq < 1:
+        return None
+    return os.path.join(JEV_ACK_ROOT, run_id, f"opportunity_{opportunity_seq:08d}.json")
+
+
+def write_jev_drop_command(game_x, identity, candidate_id):
+    """Write one guarded JSON command; legacy commands retain their old shape."""
+    ack_path = _jev_ack_path(identity)
+    if ack_path is None or not isinstance(candidate_id, str) or not re.fullmatch(r"c[0-9]{2}", candidate_id):
+        raise ValueError("invalid JEV command identity")
+    if os.path.exists(ack_path):
+        raise RuntimeError("JEV ack already exists; refusing command replay")
+    if not isinstance(game_x, (int, float)) or isinstance(game_x, bool) or not math.isfinite(float(game_x)):
+        raise ValueError("invalid JEV command x")
+    os.makedirs(os.path.dirname(ack_path), mode=0o700, exist_ok=True)
+    command = [{
+        "action": "drop",
+        "command_id": str(uuid.uuid4()),
+        "x": float(game_x),
+        "player_policy": "jev",
+        "run_id": identity["run_id"],
+        "game_instance_id": identity["game_instance_id"],
+        "game_generation": identity["game_generation"],
+        "player_generation": identity["player_generation"],
+        "opportunity_seq": identity["opportunity_seq"],
+        "frame_seq": identity["frame_seq"],
+        "expected_drop_piece_id": identity["drop_piece_id"],
+        "candidate_id": candidate_id,
+        "expires_at": time.time() + max(1.0, min(float(COMMAND_TIMEOUT), 5.0)),
+    }]
+    log(f"JEV DROP candidate={candidate_id} x={float(game_x):+.2f}")
+    temporary = f"{COMMANDS}.jev.tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        json.dump(command, stream, ensure_ascii=False, separators=(",", ":"))
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, COMMANDS)
+    return ack_path
+
+
+def wait_jev_drop_ack(identity, candidate_id, timeout=COMMAND_TIMEOUT):
+    """Wait for bridge accepted/rejected evidence; never resend a lost command."""
+    ack_path = _jev_ack_path(identity)
+    if ack_path is None:
+        return {"status": "unknown", "reason": "invalid_identity"}
+    deadline = time.time() + max(0.1, float(timeout))
+    expected = {
+        "run_id": identity.get("run_id"),
+        "game_instance_id": identity.get("game_instance_id"),
+        "game_generation": identity.get("game_generation"),
+        "player_generation": identity.get("player_generation"),
+        "opportunity_seq": identity.get("opportunity_seq"),
+        "candidate_id": candidate_id,
+    }
+    while time.time() < deadline:
+        try:
+            with open(ack_path, encoding="utf-8") as stream:
+                ack = json.load(stream)
+            if not isinstance(ack, dict) or any(ack.get(key) != value for key, value in expected.items()):
+                return {"status": "unknown", "reason": "ack_identity_mismatch"}
+            status = ack.get("status")
+            if status in {"accepted", "rejected", "duplicate", "unknown"}:
+                return ack
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError):
+            return {"status": "unknown", "reason": "ack_unreadable"}
+        time.sleep(POLL_INTERVAL)
+    return {"status": "unknown", "reason": "ack_timeout"}
 
 
 def wait_commands_done():
@@ -3117,6 +3204,50 @@ def run_game():
     """1試合を自律プレイ"""
     log("=== Strategy Runner: 試合開始 ===")
 
+    player_policy = str(os.environ.get("SOREN_PLAYER_POLICY", POLICY_EXISTING) or POLICY_EXISTING).strip().lower()
+    if player_policy not in {POLICY_EXISTING, POLICY_JEV}:
+        log(f"ERROR: unknown player policy: {player_policy}")
+        return {"error": "unknown_player_policy", "score": 0, "turns": 0}
+    jev_runner = None
+    if player_policy == POLICY_JEV:
+        if os.environ.get("JEV_PLAYER_ENABLED", "0") != "1":
+            log("ERROR: JEV player policy requested while JEV_PLAYER_ENABLED is not 1")
+            return {"error": "jev_disabled", "score": 0, "turns": 0, "player_policy": POLICY_JEV}
+        try:
+            from lib.jev_runner import JevRunner
+
+            jev_runner = JevRunner()
+        except Exception as exc:
+            log(f"ERROR: JEV player preflight failed: {type(exc).__name__}")
+            return {"error": "jev_preflight", "score": 0, "turns": 0, "player_policy": POLICY_JEV}
+
+    jev_applied_count = 0
+    jev_fallback_count = 0
+    jev_ack_unknown_count = 0
+    jev_pure = True
+
+    def finish_result(result):
+        nonlocal jev_pure
+        if player_policy == POLICY_JEV:
+            result = dict(result)
+            result.update({
+                "player_policy": POLICY_JEV,
+                "pure_jev": bool(jev_pure and jev_fallback_count == 0 and jev_ack_unknown_count == 0),
+                "jev_applied_count": jev_applied_count,
+                "jev_fallback_count": jev_fallback_count,
+                "jev_ack_unknown_count": jev_ack_unknown_count,
+            })
+            if jev_runner is not None:
+                jev_runner.finalize({
+                    "score": result.get("score", 0),
+                    "turns": result.get("turns", 0),
+                    "pure_jev": result["pure_jev"],
+                    "jev_applied_count": jev_applied_count,
+                    "jev_fallback_count": jev_fallback_count,
+                    "jev_ack_unknown_count": jev_ack_unknown_count,
+                })
+        return result
+
     # strategy.py ロード
     try:
         strategy = load_strategy_module()
@@ -3155,7 +3286,11 @@ def run_game():
     except FileNotFoundError:
         pass
 
-    with open(HISTORY_FILE, "w") as history_f:
+    # JEV experiments never open/truncate the normal game_history stream.  A
+    # memory sink keeps the legacy record function callable in tests while the
+    # experiment ledger remains the only durable JEV record.
+    history_sink = open(HISTORY_FILE, "w", encoding="utf-8") if player_policy == POLICY_EXISTING else io.StringIO()
+    with history_sink as history_f:
         while True:
             # stop-file チェック
             if os.path.exists(STOP_FILE):
@@ -3169,7 +3304,7 @@ def run_game():
                 final_state = get_state_field(gs) if gs else "UNKNOWN"
                 final_score = gs.get("score", 0) if gs else 0
                 log(f"END s={final_score} t={turn} ({final_state})")
-                return {
+                return finish_result({
                     "score": final_score,
                     "turns": turn,
                     "state": final_state,
@@ -3178,7 +3313,7 @@ def run_game():
                     "russia_announced": russia_announced,
                     "soviet_created": soviet_created,
                     "final_types": [p.get("type", 0) for p in gs.get("pieces", [])] if gs else [],
-                }
+                })
 
             current_deadline_contact = has_deadline_contact(gs)
             if current_deadline_contact and not prev_actual_deadline_contact:
@@ -3241,19 +3376,20 @@ def run_game():
                     decision = {"x": 0.0, "reason": "soviet created -> strategy halted"}
                     analysis = {"results": [], "same_type": [], "reactor": {}}
                     delta = score - prev_score
-                    record_turn(
-                        history_f,
-                        turn,
-                        gs,
-                        decision,
-                        analysis,
-                        russia_created=russia_created,
-                        soviet_created=True,
-                        strategy_hash=strategy_hash,
-                        score_delta=delta,
-                    )
+                    if player_policy == POLICY_EXISTING:
+                        record_turn(
+                            history_f,
+                            turn,
+                            gs,
+                            decision,
+                            analysis,
+                            russia_created=russia_created,
+                            soviet_created=True,
+                            strategy_hash=strategy_hash,
+                            score_delta=delta,
+                        )
                     log("HALT: 建国達成により strategy_runner を停止（操作なし）")
-                    return {
+                    return finish_result({
                         "score": score,
                         "turns": turn,
                         "state": get_state_field(gs),
@@ -3262,7 +3398,7 @@ def run_game():
                         "russia_announced": russia_announced,
                         "soviet_created": True,
                         "final_types": [p.get("type", 0) for p in pieces],
-                    }
+                    })
 
             # 盤面解析
             analysis = build_analysis(gs)
@@ -3283,36 +3419,55 @@ def run_game():
             except Exception as err:
                 log(f"WARN: strategy.py reload failed, keeping previous module: {err}")
 
-            # strategy.decide() でドロップ決定
-            try:
-                decision = strategy.decide(gs, analysis)
-                if not isinstance(decision, dict) or "x" not in decision:
-                    log(f"WARNING: decide() returned invalid: {decision}")
-                    decision = {"x": 0.0, "reason": "invalid decide() return → center fallback"}
-            except Exception as e:
-                err = str(e)
-                log(f"ERROR: strategy.decide() failed: {err}")
-                # decide例外は戦略破損の可能性が高いため即時終了して外側でロールバックさせる
-                return {
-                    "error": "decide_exception",
-                    "error_message": err,
-                    "score": score,
-                    "turns": turn,
-                    "state": get_state_field(gs),
-                    "pieces": len(pieces),
-                    "russia_created": russia_created,
-                    "russia_announced": russia_announced,
-                    "soviet_created": soviet_created,
-                    "strategy_hash": strategy_hash,
-                    "final_types": [p.get("type", 0) for p in pieces],
-                }
+            # JEV is selected before the legacy strategy is called.  A
+            # successful JEV selection skips every legacy finalizer; only an
+            # explicit transport/contract failure enters the existing fallback
+            # bundle, which permanently taints the run as mixed.
+            jev_selection = None
+            decision_source = POLICY_EXISTING
+            if player_policy == POLICY_JEV:
+                jev_selection = jev_runner.choose(gs, analysis)
+                if jev_selection.applied:
+                    decision = dict(jev_selection.decision)
+                    decision_source = POLICY_JEV
+                    jev_applied_count += 1
+                else:
+                    jev_fallback_count += 1
+                    jev_pure = False
+                    log(f"JEV fallback: status={jev_selection.outcome.status}")
 
-            # ドロップX をクランプ
-            drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
-            decision["x"] = drop_x
-            decision = enforce_deadline_safety(decision, analysis, gs, strategy)
-            decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
-            drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
+            if decision_source == POLICY_EXISTING:
+                try:
+                    decision = strategy.decide(gs, analysis)
+                    if not isinstance(decision, dict) or "x" not in decision:
+                        log(f"WARNING: decide() returned invalid: {decision}")
+                        decision = {"x": 0.0, "reason": "invalid decide() return → center fallback"}
+                except Exception as e:
+                    err = str(e)
+                    log(f"ERROR: strategy.decide() failed: {err}")
+                    # decide例外は戦略破損の可能性が高いため即時終了して外側でロールバックさせる
+                    return finish_result({
+                        "error": "decide_exception",
+                        "error_message": err,
+                        "score": score,
+                        "turns": turn,
+                        "state": get_state_field(gs),
+                        "pieces": len(pieces),
+                        "russia_created": russia_created,
+                        "russia_announced": russia_announced,
+                        "soviet_created": soviet_created,
+                        "strategy_hash": strategy_hash,
+                        "final_types": [p.get("type", 0) for p in pieces],
+                    })
+
+                # Existing player retains the exact legacy safety/finalizer path.
+                drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
+                decision["x"] = drop_x
+                decision = enforce_deadline_safety(decision, analysis, gs, strategy)
+                decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
+            else:
+                drop_x = float(decision["x"])
+            drop_x = max(GAME_X_MIN, min(GAME_X_MAX, drop_x))
             decision["x"] = drop_x
 
             reason = decision.get("reason", "")
@@ -3323,18 +3478,20 @@ def run_game():
             # score_delta を計算 (前ターンとの差分) — record_turn の前に計算
             delta = score - prev_score
 
-            # 履歴記録
-            record_turn(
-                history_f,
-                turn,
-                gs,
-                decision,
-                analysis,
-                russia_created=russia_created,
-                soviet_created=soviet_created,
-                strategy_hash=strategy_hash,
-                score_delta=delta,
-            )
+            # JEV decisions belong to the experiment ledger, not normal
+            # strategy history/best-score bookkeeping.
+            if player_policy == POLICY_EXISTING:
+                record_turn(
+                    history_f,
+                    turn,
+                    gs,
+                    decision,
+                    analysis,
+                    russia_created=russia_created,
+                    soviet_created=soviet_created,
+                    strategy_hash=strategy_hash,
+                    score_delta=delta,
+                )
 
             if delta > 0:
                 print(f"  +{delta} → {score}", flush=True)
@@ -3347,11 +3504,54 @@ def run_game():
                 log("WARNING: commands.txt not empty, waiting...")
                 wait_commands_done()
 
-            write_drop_command(drop_x)
+            jev_ack = None
+            if decision_source == POLICY_JEV and jev_selection is not None and jev_selection.candidate is not None:
+                identity = dict(gs.get("jev_identity") or {})
+                jev_runner.record_dispatch(identity, jev_selection.candidate)
+                try:
+                    write_jev_drop_command(drop_x, identity, jev_selection.candidate.candidate_id)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    jev_ack_unknown_count += 1
+                    jev_pure = False
+                    log(f"JEV command dispatch failed: {type(exc).__name__}")
+                    return finish_result({
+                        "error": "jev_command_error",
+                        "score": score,
+                        "turns": turn,
+                        "state": get_state_field(gs),
+                        "pieces": len(pieces),
+                        "russia_created": russia_created,
+                        "russia_announced": russia_announced,
+                        "soviet_created": soviet_created,
+                        "strategy_hash": strategy_hash,
+                        "final_types": [p.get("type", 0) for p in pieces],
+                    })
+                jev_ack = wait_jev_drop_ack(identity, jev_selection.candidate.candidate_id)
+                if jev_ack.get("status") != "accepted":
+                    jev_ack_unknown_count += 1
+                    jev_pure = False
+                    log(f"JEV ack not accepted: status={jev_ack.get('status', 'unknown')}")
+                    return finish_result({
+                        "error": "jev_ack_unknown",
+                        "score": score,
+                        "turns": turn,
+                        "state": get_state_field(gs),
+                        "pieces": len(pieces),
+                        "russia_created": russia_created,
+                        "russia_announced": russia_announced,
+                        "soviet_created": soviet_created,
+                        "strategy_hash": strategy_hash,
+                        "final_types": [p.get("type", 0) for p in pieces],
+                    })
+                jev_runner.record_accepted(identity, jev_selection.candidate, jev_ack.get("status", "accepted"))
+            else:
+                write_drop_command(drop_x)
             last_decision = dict(decision)
 
             # コマンド消化待ち + bridge非同期 自己回復ウォッチドッグ
-            if wait_commands_done():
+            if decision_source == POLICY_JEV:
+                cmd_desync_streak = 0
+            elif wait_commands_done():
                 cmd_desync_streak = 0
             else:
                 cmd_desync_streak += 1
@@ -3360,7 +3560,7 @@ def run_game():
                         f"BRIDGE DESYNC: commands未消化 {cmd_desync_streak}連続 "
                         f"→ bridge非同期と判定・ゲーム中断 (eloop側で自己回復)"
                     )
-                    return {
+                    return finish_result({
                         "error": "bridge_desync",
                         "score": score,
                         "turns": turn,
@@ -3371,7 +3571,7 @@ def run_game():
                         "soviet_created": soviet_created,
                         "strategy_hash": strategy_hash,
                         "final_types": [p.get("type", 0) for p in pieces],
-                    }
+                    })
 
             # ドロップ後の待ち
             time.sleep(DROP_WAIT)
