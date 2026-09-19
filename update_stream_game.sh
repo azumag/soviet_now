@@ -13,6 +13,7 @@
 #
 # Usage:
 #   ./update_stream_game.sh --game <id> [--strategy TEXT] [--activity TEXT]
+#   ./update_stream_game.sh --game <id> --category-only
 #   ./update_stream_game.sh --game <id> --dry-run
 #   ./update_stream_game.sh --game <id> --show
 #   ./update_stream_game.sh --game <id> --title-only [--strategy TEXT]
@@ -62,7 +63,7 @@ _log() {
 
 MODE="update"
 GAME="" TOML="" GAMES_DIR="" CAT_ID_ARG="" CAT_NAME_ARG="" PREFIX_ARG=""
-TITLE_ONLY=0 RESOLVE_QUERY=""
+TITLE_ONLY=0 CATEGORY_ONLY=0 RESOLVE_QUERY=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--game) GAME="$2"; shift 2 ;;
@@ -75,6 +76,7 @@ while [ "$#" -gt 0 ]; do
 		--strategy) STRATEGY_ARG="$2"; shift 2 ;;
 		--day) DAY_OVERRIDE="$2"; shift 2 ;;
 		--title-only) TITLE_ONLY=1; shift ;;
+		--category-only) CATEGORY_ONLY=1; shift ;;
 		--show) MODE="show"; shift ;;
 		--dry-run) MODE="dryrun"; shift ;;
 		--dryrun) MODE="dryrun"; shift ;;
@@ -312,6 +314,13 @@ if [ -z "$CUR_TITLE" ]; then
 	_log "ERROR: failed to fetch current channel (resp: $(printf '%s' "$CH_JSON" | head -c 200))"; exit 4
 fi
 _log "current: game_id=$CUR_GAME_ID game_name=${CUR_GAME_NAME:-?} title=$CUR_TITLE"
+
+# Automatic category synchronisation must not rewrite the title.  Keep this
+# separate from --title-only: the latter intentionally changes the title while
+# retaining the current category for the manual title workflow.
+if [ "$CATEGORY_ONLY" = "1" ]; then
+	NEW_TITLE="$CUR_TITLE"
+fi
 
 if [ "$MODE" = "show" ]; then
 	echo "current game : ${CUR_GAME_ID} ${CUR_GAME_NAME:-?}"
