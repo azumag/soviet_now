@@ -82,7 +82,7 @@ category_id = "abc"
 category_name = "X"
 title_prefix = "[X]"
 TOML
-printf '# generated\\n- AIの取引コーナーからゲームへ、画面切替を改善\\n' >\"$TMP/viewer_title.md\"
+printf '# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n' >"$TMP/viewer_title.md"
 
 export TWITCH_CLIENT_ID=test-client TWITCH_BROADCASTER_ID=test-bid
 export TWITCH_GAME_TOKEN=test-token
@@ -99,7 +99,7 @@ not_ok() { fail=$((fail + 1)); printf 'not ok - %s\n' "$1"; }
 # 1. dry-run: [dayN] + activity + strategy の組成。ゲーム prefix は無視する。
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
 out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" --dry-run 2>"$TMP/e1")"
-echo "$out" | grep -q '^\\[day[0-9]*\\] AIの取引コーナーからゲームへ、画面切替を改善 root継続$' && ok "compose public title" || not_ok "compose public title: $out"
+echo "$out" | grep -q '^\[day[0-9]*\] AIの取引コーナーからゲームへ、画面切替を改善 root継続$' && ok "compose public title" || not_ok "compose public title: $out"
 echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
 [ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
 
@@ -193,13 +193,13 @@ assert d["title"] == "[Soren] keep this title", d
 PY
 
 # 13. 内部作業ログや戦略バージョンは公開タイトルへ出さず、一般向けfallbackへ落とす
-out=\"$(\"$BIN\" --game robots --games-dir \"$TMP/games\" --activity 'PR770をmainへマージ' --strategy 'root v763 継続' --dry-run 2>/dev/null)\"
-echo \"$out\" | grep -q '^\\[day[0-9]*\\] AIたちがゲーム・ニュース・会話に挑戦する実験配信$' && ok \"internal activity filtered\" || not_ok \"internal activity leaked: $out\"
-echo \"$out\" | grep -q 'PR770\\|v763\\|main' && not_ok \"internal identifiers leaked: $out\" || ok \"internal identifiers omitted\"
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'PR770をmainへマージ' --strategy 'root v763 継続' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] AIたちがゲーム・ニュース・会話に挑戦する実験配信$' && ok "internal activity filtered" || not_ok "internal activity leaked: $out"
+echo "$out" | grep -q 'PR770\|v763\|main' && not_ok "internal identifiers leaked: $out" || ok "internal identifiers omitted"
 
 # 14. 視聴者に意味のあるゲーム名・説明は保持する
-out=\"$(\"$BIN\" --game robots --games-dir \"$TMP/games\" --activity 'NetHackでAIが長期攻略に挑戦' --dry-run 2>/dev/null)\"
-echo \"$out\" | grep -q '^\\[day[0-9]*\\] NetHackでAIが長期攻略に挑戦$' && ok \"public activity kept\" || not_ok \"public activity changed: $out\"
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'NetHackでAIが長期攻略に挑戦' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] NetHackでAIが長期攻略に挑戦$' && ok "public activity kept" || not_ok "public activity changed: $out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ]
