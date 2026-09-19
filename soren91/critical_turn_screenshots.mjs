@@ -18,6 +18,16 @@ function minFinite(values) {
   return xs.length ? Math.min(...xs) : null;
 }
 
+function hasContiguousTurnLineage(records) {
+  if (!records.length) return true;
+  if (!records.every(record => Number.isInteger(record.turn))) return false;
+  if (records[0].turn !== 0) return false;
+  for (let i = 1; i < records.length; i += 1) {
+    if (records[i].turn !== records[i - 1].turn + 1) return false;
+  }
+  return true;
+}
+
 function selectCriticalTurns(records) {
   if (!records.length) return [];
   const withTurn = records.filter(record => Number.isInteger(record.turn));
@@ -94,6 +104,7 @@ function analyzeHistoryText(text) {
 
   return {
     ok: true,
+    contiguousTurns: hasContiguousTurnLineage(records),
     criticalTurns: selectCriticalTurns(records),
   };
 }
@@ -155,7 +166,11 @@ export function selectCriticalSnapshotNames(fileNames, maxShots = 3, preferredTu
 /**
  * Archive bounded visual evidence for one completed game. History parsing is
  * fail-soft for archival only: malformed/missing history falls back to the
- * established early/middle/late sample. This helper never mutates strategy.
+ * established early/middle/late sample. A syntactically valid history whose
+ * turn lineage resets/skips is different: turn_N no longer names one unique
+ * session observation, so pairing screenshots with those turns would create
+ * misleading evidence. In that case visual evidence is suppressed fail-closed.
+ * This helper never mutates strategy.
  */
 export function archiveCriticalTurnScreenshots({
   screenshotDir,
@@ -170,8 +185,12 @@ export function archiveCriticalTurnScreenshots({
     try {
       const analyzed = analyzeHistoryText(readFileSync(historyFile, 'utf-8'));
       if (analyzed.ok) {
-        preferredTurns = analyzed.criticalTurns;
-        historyStatus = 'ok';
+        if (analyzed.contiguousTurns) {
+          preferredTurns = analyzed.criticalTurns;
+          historyStatus = 'ok';
+        } else {
+          historyStatus = 'discontinuous';
+        }
       } else {
         historyStatus = 'invalid';
       }
@@ -182,7 +201,9 @@ export function archiveCriticalTurnScreenshots({
 
   const sourceNames = readdirSync(screenshotDir)
     .filter(name => /^turn_\d+.*\.png$/i.test(name));
-  const names = selectCriticalSnapshotNames(sourceNames, maxShots, preferredTurns);
+  const names = historyStatus === 'discontinuous'
+    ? []
+    : selectCriticalSnapshotNames(sourceNames, maxShots, preferredTurns);
 
   mkdirSync(outputDir, { recursive: true });
   for (const name of names) {
