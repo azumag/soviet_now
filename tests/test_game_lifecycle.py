@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -72,6 +73,69 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             busy, busy_payload = self.request(root, str(uuid.uuid4()))
             self.assertEqual(busy.returncode, 3)
             self.assertEqual(busy_payload["status"], "busy")
+
+    def test_player_change_requires_capability_boundary_and_generation_cas(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            request_id = str(uuid.uuid4())
+            run_id = str(uuid.uuid4())
+            config_hash = "a" * 64
+            args = (
+                "request", "--request-id", request_id, "--game", "sorengame",
+                "--generation", "1", "--deadline-sec", "60",
+                "--operation", "player_change", "--target-policy", "jev",
+                "--run-id", run_id, "--expected-player-generation", "0",
+                "--config-hash", config_hash,
+            )
+            unsupported, unsupported_payload = self.run_broker(root, *args)
+            self.assertEqual(unsupported.returncode, 4)
+            self.assertEqual(unsupported_payload["status"], "unsupported")
+
+            lifecycle.mkdir(parents=True, exist_ok=True)
+            (lifecycle / "player_capabilities.json").write_text(
+                json.dumps({
+                    "schema": 1, "game": "sorengame", "pid": os.getpid(),
+                    "capabilities": ["player_policy_v1"],
+                }),
+                encoding="utf-8",
+            )
+            (lifecycle / "player_state.json").write_text(
+                json.dumps({
+                    "schema": 1, "game": "sorengame", "game_generation": 1,
+                    "policy": "existing", "player_generation": 0,
+                }),
+                encoding="utf-8",
+            )
+            accepted, accepted_payload = self.run_broker(root, *args)
+            self.assertEqual(accepted.returncode, 0)
+            self.assertEqual(accepted_payload["request"]["operation"], "player_change")
+
+            self.write_state(root, "GAMEOVER")
+            prepared, prepared_payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(prepared.returncode, 0)
+            self.assertEqual(prepared_payload["ack"]["status"], "prepared")
+            repeated, repeated_payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(repeated.returncode, 0)
+            self.assertEqual(repeated_payload["ack"]["status"], "prepared")
+
+            committed, committed_payload = self.run_broker(root, "commit-player", "--request-id", request_id)
+            self.assertEqual(committed.returncode, 0)
+            self.assertEqual(committed_payload["status"], "committed")
+            player_state = json.loads((lifecycle / "player_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(player_state["policy"], "jev")
+            self.assertEqual(player_state["player_generation"], 1)
+            self.assertFalse((lifecycle / "request.json").exists())
+            self.assertFalse((lifecycle / "ack.json").exists())
+
+            stale = self.run_broker(
+                root, "request", "--request-id", str(uuid.uuid4()), "--game", "sorengame",
+                "--generation", "1", "--deadline-sec", "60", "--operation", "player_change",
+                "--target-policy", "existing", "--run-id", str(uuid.uuid4()),
+                "--expected-player-generation", "0", "--config-hash", "b" * 64,
+            )
+            self.assertEqual(stale[0].returncode, 3)
+            self.assertIn("expected_player_generation", stale[1]["error"])
 
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

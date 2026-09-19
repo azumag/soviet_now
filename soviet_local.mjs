@@ -63,6 +63,7 @@ process.on('exit', (code) => bridgeLogExit(`exit code=${code}`));
 for (const signal of ['SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
     bridgeLogExit(`signal ${signal}`);
+    removePlayerCapability();
     process.exit(signal === 'SIGTERM' ? 143 : 129);
   });
 }
@@ -71,6 +72,8 @@ const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
+const PLAYER_STATE_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_state.json');
+const PLAYER_CAPABILITY_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_capabilities.json');
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 // Stray-tab guard cadence. soren91 runs as a GUEST tab in this same Chrome
 // (SOREN91_SHARED_BROWSER) and can orphan an about:blank tab over the local
@@ -154,6 +157,68 @@ function writeJsonAtomic(filePath, data) {
 }
 
 const JEV_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function failClosedPlayerState() {
+  process.env.SOREN_PLAYER_POLICY = 'existing';
+  delete process.env.SOREN_JEV_PLAYER_GENERATION;
+  delete process.env.SOREN_JEV_GAME_GENERATION;
+  delete process.env.SOREN_JEV_RUN_ID;
+}
+
+function loadCommittedPlayerState() {
+  try {
+    const value = JSON.parse(fs.readFileSync(PLAYER_STATE_PATH, 'utf8'));
+    if (!value || value.schema !== 1 || value.game !== 'sorengame') {
+      failClosedPlayerState();
+      return;
+    }
+    if (!['existing', 'jev'].includes(value.policy)) {
+      failClosedPlayerState();
+      return;
+    }
+    if (!Number.isInteger(value.player_generation) || value.player_generation < 0) {
+      failClosedPlayerState();
+      return;
+    }
+    if (value.policy === 'jev' && !JEV_UUID_RE.test(String(value.run_id || ''))) {
+      failClosedPlayerState();
+      return;
+    }
+    process.env.SOREN_PLAYER_POLICY = value.policy;
+    process.env.SOREN_JEV_PLAYER_GENERATION = String(value.player_generation);
+    if (Number.isInteger(value.game_generation) && value.game_generation >= 1) {
+      process.env.SOREN_JEV_GAME_GENERATION = String(value.game_generation);
+    }
+    if (value.policy === 'jev') process.env.SOREN_JEV_RUN_ID = value.run_id;
+  } catch (error) {
+    if (fs.existsSync(PLAYER_STATE_PATH)) failClosedPlayerState();
+  }
+}
+
+function removePlayerCapability() {
+  try { fs.unlinkSync(PLAYER_CAPABILITY_PATH); } catch {}
+}
+
+function advertisePlayerCapability() {
+  try {
+    fs.mkdirSync(path.dirname(PLAYER_CAPABILITY_PATH), { recursive: true, mode: 0o700 });
+    writeJsonAtomic(PLAYER_CAPABILITY_PATH, {
+      schema: 1,
+      game: 'sorengame',
+      pid: process.pid,
+      capabilities: ['player_policy_v1'],
+      policies: ['existing', 'jev'],
+      active_policy: process.env.SOREN_PLAYER_POLICY || 'existing',
+      player_generation: Number.parseInt(process.env.SOREN_JEV_PLAYER_GENERATION || '0', 10) || 0,
+      game_generation: Number.parseInt(process.env.SOREN_JEV_GAME_GENERATION || '', 10) || null,
+      started_at: new Date().toISOString(),
+    });
+    try { fs.chmodSync(PLAYER_CAPABILITY_PATH, 0o600); } catch {}
+  } catch (error) {
+    console.warn(`[GAME-LIFECYCLE] player capability write failed: ${error.message}`);
+  }
+}
+
+loadCommittedPlayerState();
 let jevFrameSeq = 0;
 let jevOpportunitySeq = 0;
 let jevLastGameInstanceId = '';
@@ -1990,6 +2055,7 @@ async function runLocalController() {
   try {
     server = await startServer();
     console.log(`Server started on port ${SERVE_PORT}`);
+    advertisePlayerCapability();
   } catch (e) {
     console.error('Failed to start server:', e.message);
     process.exit(1);
@@ -2019,12 +2085,16 @@ async function runLocalController() {
   }
   process.on('SIGINT', () => {
     console.log('\nShutting down...');
+    removePlayerCapability();
     removeCdpEndpoint();
     server.close();
     if (twicaProxyServer) twicaProxyServer.close();
     process.exit(0);
   });
-  process.on('exit', removeCdpEndpoint);
+  process.on('exit', () => {
+    removePlayerCapability();
+    removeCdpEndpoint();
+  });
 
   let browser;
   let context;

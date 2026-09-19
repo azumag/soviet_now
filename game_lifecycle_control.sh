@@ -54,6 +54,12 @@ fresh-start)
 	[ -n "$request_id" ] || exit 4
 	python3 ./lib/game_lifecycle.py --root "$ROOT" fresh-start --request-id "$request_id"
 	;;
+player-commit)
+	request_id="${2:-}"
+	[ -n "$request_id" ] || exit 4
+	[ "$(game_lifecycle_request_id 2>/dev/null || true)" = "$request_id" ] || exit 3
+	game_lifecycle_commit_player
+	;;
 cancel)
 	request_id="${2:-}"
 	[ -n "$request_id" ] || exit 4

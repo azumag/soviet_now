@@ -111,6 +111,13 @@ rm -f tmp/stop
 # --- 共通ライブラリ読み込み ---
 source ./eloop_lib.sh
 
+# A committed same-game player snapshot is the only source that may override
+# the legacy existing policy for this process. Invalid/missing state remains
+# existing and never becomes an implicit JEV start.
+if command -v game_lifecycle_load_player_policy >/dev/null 2>&1; then
+	game_lifecycle_load_player_policy || true
+fi
+
 # --- グローバル状態 ---
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0

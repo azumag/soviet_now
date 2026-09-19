@@ -16,6 +16,7 @@ GAME_LIFECYCLE_POLL_SEC="${GAME_LIFECYCLE_POLL_SEC:-1}"
 GAME_LIFECYCLE_IMPROVE_PAUSE_FILE="$GAME_LIFECYCLE_DIR/improvement_pause.json"
 GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
 GAME_LIFECYCLE_PREDICTION_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/prediction_worker.paused"
+GAME_LIFECYCLE_PLAYER_STATE_FILE="$GAME_LIFECYCLE_DIR/player_state.json"
 GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE="$GAME_LIFECYCLE_DIR/watchdog_pause.json"
 GAME_LIFECYCLE_WATCHDOG_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/soviet_watchdog.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
@@ -67,6 +68,56 @@ game_lifecycle_ack_status() {
 
 game_lifecycle_resource_status() {
 	_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/game_resource.json" status 2>/dev/null
+}
+
+game_lifecycle_operation() {
+	_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/request.json" operation 2>/dev/null
+}
+
+# Load the committed player snapshot for the next game. Missing/invalid state
+# deliberately means legacy existing player; an unknown policy never starts
+# JEV implicitly.
+game_lifecycle_load_player_policy() {
+	local state_file="$GAME_LIFECYCLE_PLAYER_STATE_FILE"
+	[ -f "$state_file" ] || return 0
+	local values
+	values=$(python3 - "$state_file" <<'PY'
+import json
+import sys
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(value, dict) or value.get("schema") != 1 or value.get("game") != "sorengame":
+    raise SystemExit(1)
+policy = value.get("policy")
+generation = value.get("player_generation")
+game_generation = value.get("game_generation")
+if policy not in {"existing", "jev"} or type(generation) is not int or generation < 0:
+    raise SystemExit(1)
+if game_generation is not None and (type(game_generation) is not int or game_generation < 1):
+    raise SystemExit(1)
+run_id = value.get("run_id") or ""
+if policy == "jev" and (not isinstance(run_id, str) or not run_id):
+    raise SystemExit(1)
+print(f"{policy}\t{generation}\t{game_generation if game_generation is not None else ''}\t{run_id}")
+PY
+	) || {
+		_game_lifecycle_log "player_state.json が不正のため existing へ fail-closed"
+		export SOREN_PLAYER_POLICY="existing"
+		unset SOREN_JEV_RUN_ID SOREN_JEV_PLAYER_GENERATION SOREN_JEV_GAME_GENERATION
+		return 1
+	}
+	local policy generation game_generation run_id
+	IFS=$'\t' read -r policy generation game_generation run_id <<<"$values"
+	export SOREN_PLAYER_POLICY="$policy"
+	export SOREN_JEV_PLAYER_GENERATION="$generation"
+	if [ -n "$game_generation" ]; then export SOREN_JEV_GAME_GENERATION="$game_generation"; fi
+	if [ "$policy" = "jev" ]; then
+		export SOREN_JEV_RUN_ID="$run_id"
+	else
+		unset SOREN_JEV_RUN_ID SOREN_JEV_GAME_GENERATION
+	fi
 }
 
 _game_lifecycle_control_action() {
@@ -622,7 +673,7 @@ _game_lifecycle_stop_from_boundary() {
 	local request_id="$1" ack_status="${2:-}"
 	[ -n "$request_id" ] || return 1
 	case "$ack_status" in
-	boundary|stop_requested|stopping|stopped) ;;
+	boundary|stop_requested|stopping|stopped|prepared) ;;
 	*) return 1 ;;
 	esac
 
@@ -774,10 +825,19 @@ game_lifecycle_after_game() {
 			;;
 		esac
 		;;
-	boundary|stop_requested|stopping|stopped) ;;
+	boundary|stop_requested|stopping|stopped|prepared) ;;
 	resume_requested|cancelled|failed|timeout|unsupported|"" ) return 1 ;;
 	*) return 1 ;;
 	esac
+	if [ "$(game_lifecycle_operation 2>/dev/null || true)" = "player_change" ] && [ "$ack_status" = "prepared" ]; then
+		# Freeze only game-owned gates. Common overlay, audio, and encoder stay
+		# alive during a same-game player transaction.
+		_game_lifecycle_pause_improvements "$request_id" || return 2
+		_game_lifecycle_pause_predictions "$request_id" || return 2
+		_game_lifecycle_pause_loop "$request_id" || return 2
+		_game_lifecycle_log "player_change を境界で prepared。commit-player まで次ゲームのみ保留 (request=$request_id)"
+		return 3
+	fi
 	case "$ack_status" in
 	boundary|stop_requested|stopping|stopped)
 		# Boundary acknowledgement only parks the loop.  An explicit stop
@@ -792,6 +852,23 @@ game_lifecycle_after_game() {
 		;;
 	*) return 1 ;;
 	esac
+}
+
+game_lifecycle_commit_player() {
+	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
+	local request_id output rc
+	request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || return 1
+	[ "$(game_lifecycle_operation 2>/dev/null || true)" = "player_change" ] || return 1
+	output=$(_game_lifecycle_cli commit-player --request-id "$request_id" 2>/dev/null)
+	rc=$?
+	[ "$rc" -eq 0 ] || return "$rc"
+	# Restore only gates created by this request; operator-owned pauses remain.
+	game_lifecycle_restore_predictions || return 2
+	game_lifecycle_restore_improvements || return 2
+	game_lifecycle_restore_loop || return 2
+	printf '%s\n' "$output"
+	return 0
 }
 
 # Explicit irreversible half of a handover.  The coordinator calls this only
@@ -849,6 +926,12 @@ game_lifecycle_resume_pending() {
 	boundary)
 		# A prior controller may have exited after parking.  Preserve that
 		# park without implicitly converting recovery into a stop.
+		request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+		[ -n "$request_id" ] || return 1
+		_game_lifecycle_pause_loop "$request_id" || return 2
+		return 3
+		;;
+	prepared)
 		request_id=$(game_lifecycle_request_id 2>/dev/null || true)
 		[ -n "$request_id" ] || return 1
 		_game_lifecycle_pause_loop "$request_id" || return 2
