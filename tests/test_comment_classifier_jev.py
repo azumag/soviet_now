@@ -3,10 +3,15 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import select
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -53,6 +58,21 @@ class JevTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', jev.dumps(request))
         self.assertIn('index=1', request['questions']['c1']['instructions'])
 
+    def test_criteria_match_canonical_prompt(self):
+        prompt = (ROOT / 'prompts/comment_classifier.md').read_text(encoding='utf-8')
+        categories = re.findall(r'^- ([a-z_]+):', prompt, re.MULTILINE)
+        self.assertTrue(categories)
+        self.assertEqual(len(categories), len(set(categories)))
+        self.assertEqual(set(categories), set(jev.CRITERIA))
+        self.assertEqual(jev.NOTIFICATIONS,
+                         {'card_gacha', 'raid', 'subscription', 'stream_goal', 'bits'})
+        self.assertLessEqual(jev.NOTIFICATIONS, set(categories))
+        workflow = (ROOT / '.github/workflows/comment-classifier-jev.yml').read_text()
+        for event in ('pull_request', 'push'):
+            paths = workflow.split('  ' + event + ':', 1)[1].split('\npermissions:', 1)[0]
+            paths = paths.split('\n  push:', 1)[0]
+            self.assertIn("      - 'prompts/comment_classifier.md'", paths)
+
     def test_success_only_changes_category(self):
         output, event = self.classify()
         self.assertEqual(output, [{**self.rows[0], 'category': 'stream_bug_report'}])
@@ -85,10 +105,12 @@ class JevTests(unittest.TestCase):
         self.assertEqual(event['rows'][0]['status'], 'local_notification')
 
     def test_model_cannot_create_platform_notification(self):
-        transport = lambda req, *_: {'status': 'ok', 'data': response(req, ['raid'])}
-        output, event = self.classify(transport=transport)
-        self.assertEqual(output, self.rows)
-        self.assertEqual(event['rows'][0]['status'], 'unconfirmed_notification')
+        for category in jev.NOTIFICATIONS:
+            with self.subTest(category=category):
+                transport = lambda req, *_: {'status': 'ok', 'data': response(req, [category])}
+                output, event = self.classify(transport=transport)
+                self.assertEqual(output, self.rows)
+                self.assertEqual(event['rows'][0]['status'], 'unconfirmed_notification')
 
     def test_missing_key_no_network(self):
         for key in ('', 'bad\nkey', 'nonasciiあ'):
@@ -196,6 +218,120 @@ class JevTests(unittest.TestCase):
         self.assertIsNotNone(processes[0].returncode)
         with self.assertRaises(ChildProcessError):
             os.waitpid(processes[0].pid, os.WNOHANG)
+
+    @unittest.skipUnless(sys.platform.startswith('linux') or sys.platform == 'darwin',
+                         'requires Linux/macOS POSIX process groups and selectable pipes')
+    def test_parent_signals_reap_detached_child_even_during_creation(self):
+        code = textwrap.dedent('''
+            import os, subprocess, sys
+            from lib import comment_classifier_jev as jev
+            real_popen, children = subprocess.Popen, []
+            def barrier(process):
+                print(process.pid, os.getpgid(process.pid), flush=True)
+                assert sys.stdin.buffer.read(1) == b'x'
+            def spawn(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                children.append(process)
+                if sys.argv[1] == 'spawn':
+                    barrier(process)
+                else:
+                    real_communicate = process.communicate
+                    def communicate(*args, **kwargs):
+                        process.communicate = real_communicate
+                        barrier(process)
+                        return real_communicate(*args, **kwargs)
+                    process.communicate = communicate
+                return process
+            jev.subprocess.Popen = spawn
+            try:
+                jev.bounded_process([sys.executable, '-c',
+                                     'import time; time.sleep(30)'], timeout=20)
+            finally:
+                child = children[0]
+                assert child.returncode is not None, 'child was not reaped'
+                try:
+                    os.waitpid(child.pid, os.WNOHANG)
+                except ChildProcessError:
+                    print('reaped', flush=True)
+                else:
+                    raise AssertionError('child still waitable')
+        ''')
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            for phase in ('spawn', 'communicate'):
+                with self.subTest(signum=signum, phase=phase):
+                    parent = subprocess.Popen([sys.executable, '-c', code, phase], cwd=ROOT,
+                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE, start_new_session=True)
+                    child_pid = None
+                    try:
+                        ready, _, _ = select.select([parent.stdout], [], [], 5)
+                        self.assertTrue(ready, 'parent did not reach child-created barrier')
+                        child_pid, group = map(int, parent.stdout.readline().split())
+                        self.assertEqual(child_pid, group)
+                        self.assertNotEqual(group, parent.pid)
+                        parent.send_signal(signum)
+                        out, err = parent.communicate(b'x', timeout=5)
+                        self.assertEqual(parent.returncode, 128 + signum, err.decode())
+                        self.assertEqual(out.strip(), b'reaped')
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(child_pid, 0)
+                        with self.assertRaises(ProcessLookupError):
+                            os.killpg(group, 0)
+                    finally:
+                        # A failing regression must not leave its sleeper behind.
+                        if child_pid is not None:
+                            try:
+                                os.killpg(child_pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        if parent.poll() is None:
+                            parent.kill()
+                        parent.communicate(timeout=5)
+
+    def test_handlers_restored_after_success_spawn_failure_and_cancellation(self):
+        originals = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+        custom = lambda *_: None
+        try:
+            for signum in originals:
+                signal.signal(signum, custom)
+            self.assertEqual(jev.bounded_process([sys.executable, '-c', 'print("ok")']), b'ok\n')
+            for signum in originals:
+                self.assertIs(signal.getsignal(signum), custom)
+            with patch.object(jev.subprocess, 'Popen', side_effect=OSError('spawn failed')):
+                with self.assertRaises(OSError):
+                    jev.bounded_process(['unused'])
+            for signum in originals:
+                self.assertIs(signal.getsignal(signum), custom)
+            for error in (KeyboardInterrupt(), SystemExit(7), subprocess.TimeoutExpired('test', .1)):
+                process = Mock(returncode=None)
+                process.communicate.side_effect = [error, (b'', b'')]
+                with patch.object(jev.subprocess, 'Popen', return_value=process), \
+                        patch.object(jev.os, 'killpg') as killpg, \
+                        patch.object(jev.time, 'monotonic', side_effect=[0, 0, 1]):
+                    with self.assertRaises(type(error)):
+                        jev.bounded_process(['unused'], timeout=.1)
+                    killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+                    self.assertEqual(process.communicate.call_count, 2)
+                for signum in originals:
+                    self.assertIs(signal.getsignal(signum), custom)
+        finally:
+            for signum, handler in originals.items():
+                signal.signal(signum, handler)
+
+    def test_non_main_thread_fails_before_spawning(self):
+        errors = []
+        def run():
+            try:
+                jev.bounded_process(['unused'])
+            except ValueError as exc:
+                errors.append(exc)
+        with patch.object(jev.subprocess, 'Popen') as spawn:
+            thread = threading.Thread(target=run)
+            thread.start()
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(len(errors), 1)
+            spawn.assert_not_called()
 
     def test_http_worker_transport_and_fixed_endpoint(self):
         mock_response = Mock()
@@ -344,6 +480,28 @@ class ShellTests(unittest.TestCase):
         ''')
         self.assertEqual(result.stdout, 'legacy')
         self.assertEqual(result.returncode, 17)
+
+    def test_rollback_explicit_empty_backend_and_restart_contract(self):
+        doc = (ROOT / 'docs/comment_classifier_jev.md').read_text(encoding='utf-8')
+        self.assertIn('`COMMENT_CLASSIFIER_BACKEND=`', doc)
+        self.assertIn('対象workerを完全再起動', doc)
+        self.assertIn('APIキー除去には再起動が必要', doc)
+        with tempfile.TemporaryDirectory() as temp:
+            removed, disabled = Path(temp) / 'removed.env', Path(temp) / 'disabled.env'
+            removed.write_text('# Jev settings removed\n')
+            disabled.write_text('COMMENT_CLASSIFIER_BACKEND=\n')
+            result = self.shell('''
+                export COMMENT_CLASSIFIER_BACKEND=jev TYPESAFE_API_KEY=dummy
+                source "$2"
+                printf '%s:%s\\n' "$COMMENT_CLASSIFIER_BACKEND" "$TYPESAFE_API_KEY"
+                source "$3"
+                printf '%s:%s\\n' "$COMMENT_CLASSIFIER_BACKEND" "$TYPESAFE_API_KEY"
+                _classify_comments() { printf 'legacy'; }
+                source "$1/broadcast/comment_classifier_jev.sh"
+                _classify_comments unused
+            ''', str(removed), str(disabled))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'jev:dummy\n:dummy\nlegacy')
 
     def test_full_reload_captures_fresh_base(self):
         result = self.shell('''

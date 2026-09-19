@@ -51,6 +51,9 @@ Linux/macOSのローカルディスクとPython 3.9以降を対象とする。
 全チャットworkerで同じstateディレクトリを使う必要がある。
 
 DNS、接続、ボディ受信を含め通信用子プロセスを期限でkill・回収する。
+親PythonへのSIGTERM/SIGINTや例外によるキャンセルでも、子のプロセスグループをkillし、
+直接の子をwaitしてから終了する。SIGKILLや親の強制クラッシュは捕捉できない。
+シグナル管理が可能なメインスレッドでのみ起動し、それ以外では子を作らず失敗する。
 既定1500msはJev要求の時間予算であり、分類全体の保証ではない。
 ヒューリスティック側の子プロセスは別に3秒で打ち切り、起動異常時はshellの旧heuristicへ戻す。
 OSスケジューリング、元の処理、ファイルI/O、ログ書き込みの時間をゼロとは扱わない。
@@ -67,7 +70,13 @@ OSスケジューリング、元の処理、ファイルI/O、ログ書き込み
 COMMENT_CLASSIFIER_JEV_LOG_ENABLED=1
 ```
 
-rollbackは `COMMENT_CLASSIFIER_BACKEND` を導入前の値へ戻す（通常はunset）。
+rollbackでJevを無効化するときは、設定元に `COMMENT_CLASSIFIER_BACKEND=` を明示し、
+対象workerを完全再起動する。`.env` の行削除やコメントアウトだけでは、再sourceしても
+長寿命shellに残った `jev` はunsetされない。USR1/HUP reloadだけを完了条件にしない。
+旧workerと実行中の分類子プロセスが終了し、新PID・起動時刻・実効backendが空であることを確認する。
+`TYPESAFE_API_KEY` も設定元／secret注入元から削除する場合、既存プロセスからの
+APIキー除去には再起動が必要。親supervisorの環境に残っていればworkerは再継承するため、
+キーを保持する親も対象として、除去済みの環境から起動する。キー値は表示・記録しない。
 `COMMENT_CLASSIFIER_AI_ENABLED` 等は導入前の値を保つ。
 コードを戻す必要がある場合も元の分類器はそのまま残っている。
 本番反映はdocichのowner-only VM control planeを使用する。手動コピー／勝手な再起動はしない。

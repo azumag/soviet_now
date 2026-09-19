@@ -228,18 +228,52 @@ def _kill_and_reap(process):
 
 
 def bounded_process(argv, *, data=None, timeout=1.5, env=None, cwd=None):
+    """Main-thread only: cancel and reap the detached group before exiting.
+
+    Defer signals while Popen is acquiring the child handle and during cleanup.
+    Short communicate slices observe cancellation without interrupting either
+    operation; the original wall deadline still includes process creation.
+    """
     started = time.monotonic()
-    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, env=env, cwd=cwd,
-                               start_new_session=True)
+    process, cancelled, completed = None, None, False
+    handlers = {}
+
+    def cancel(signum, _frame):
+        nonlocal cancelled
+        cancelled = signum
+
     try:
-        out, _ = process.communicate(data, timeout=max(0.001, timeout - (time.monotonic() - started)))
-        if process.returncode:
-            raise ValueError('process_error')
-        return out
-    except BaseException:
-        _kill_and_reap(process)
-        raise
+        # signal.signal fails before spawning outside the main thread.
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            handlers[signum] = signal.signal(signum, cancel)
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, env=env, cwd=cwd,
+                                   start_new_session=True)
+        while True:
+            if cancelled is not None:
+                raise SystemExit(128 + cancelled)
+            remaining = max(0.001, timeout - (time.monotonic() - started))
+            try:
+                out, _ = process.communicate(data, timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired as exc:
+                data = None  # communicate retains pending input across retries.
+                if time.monotonic() - started >= timeout:
+                    exc.timeout = timeout
+                    raise
+                continue
+            if process.returncode:
+                raise ValueError('process_error')
+            completed = True
+            return out
+    finally:
+        try:
+            if process is not None and (not completed or cancelled is not None):
+                _kill_and_reap(process)
+        finally:
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
+        if cancelled is not None:
+            raise SystemExit(128 + cancelled)
 
 
 def request_once(request, key, timeout):
