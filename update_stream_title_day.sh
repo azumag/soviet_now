@@ -21,6 +21,8 @@
 # 任意:
 #   STREAM_DAY_EPOCH        : day 1 の日付 (YYYY-MM-DD)。既定 2026-03-14
 #   STREAM_DAY_TZ           : 日付判定のタイムゾーン。既定 Asia/Tokyo
+#   STREAM_VIEWER_TITLE_FILE : 明示的な視聴者向けタイトル候補。既定 prompts/viewer_title.md
+#   STREAM_TITLE_PUBLIC_FALLBACK : 候補も安全な現タイトルも無い場合の一般向け本文
 #
 # 終了コード: 0=更新済/変化なし, 3=トークン/スコープ不足,
 #            4=API エラー, 1=設定不足
