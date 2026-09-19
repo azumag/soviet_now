@@ -38,7 +38,8 @@
 #    BOT は broadcast 付き。--verify/--resolve は読取のみで scope 不要)
 # 任意:
 #   STREAM_DAY_EPOCH (既定 2026-03-14), STREAM_DAY_TZ (既定 Asia/Tokyo)
-#   OPS_BRIEF_FILE (既定 prompts/ops_brief.md), STREAM_GAME_STRATEGY
+#   STREAM_VIEWER_TITLE_FILE (既定 prompts/viewer_title.md)
+#   STREAM_TITLE_PUBLIC_FALLBACK, STREAM_GAME_STRATEGY
 #
 # 終了コード: 0=更新済/変化なし, 1=設定・使い方エラー, 3=トークン/スコープ不足,
 #            4=API エラー, 5=verify 不一致
