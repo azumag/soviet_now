@@ -181,5 +181,16 @@ WORDS="$(python3 -c "print('あ' * 200)")"
 out="$("$BIN" --game robots --games-dir "$TMP/games" --activity "$WORDS" --strategy "$WORDS" --dry-run 2>/dev/null)"
 [ "${#out}" -le 140 ] && ok "title <= 140" || not_ok "title too long: ${#out}"
 
+# 12. --category-only は現在のタイトルをそのまま保持する
+rm -f "$STUB_PATCH_OUT"
+export STUB_CHANNELS='{"data":[{"title":"[Soren] keep this title","game_id":"1","game_name":"Old"}]}'
+"$BIN" --game robots --games-dir "$TMP/games" --category-only >/dev/null 2>&1
+python3 - "$STUB_PATCH_OUT" <<'PY' 2>/dev/null && ok "category-only preserves title" || not_ok "category-only: $(cat "$STUB_PATCH_OUT" 2>/dev/null)"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["game_id"] == "11585", d
+assert d["title"] == "[Soren] keep this title", d
+PY
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ]
