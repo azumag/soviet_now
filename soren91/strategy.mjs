@@ -422,6 +422,65 @@ function search(board, piece, queue, garbage) {
   };
 }
 
+const UNSUPPORTED_HIGH_MIN_TOP = DEADLINE - WARNING_MARGIN * 2;
+const SUPPORT_GAP = TYPE_RADII[1] + 0.015;
+
+/**
+ * Ignore only high observations that cannot be connected to a physical support
+ * surface. Retained screenshots show the controllable cursor piece can leak
+ * into pieces[] near the deadline; treating it as settled board mass creates a
+ * false warning/fatal stack. Low/mid-board observations are never removed.
+ */
+function filterUnsupportedHighObservations(pieces, columns = []) {
+  const supported = new Set();
+  const supportedBySurface = p => {
+    const bottom = p.y - p.r;
+    if (bottom <= FLOOR + SUPPORT_GAP) return true;
+    for (const c of columns) {
+      if (![c?.left, c?.right, c?.top].every(Number.isFinite) || c.left > c.right) continue;
+      if (p.x + p.r < c.left - SUPPORT_GAP || p.x - p.r > c.right + SUPPORT_GAP) continue;
+      if (Math.abs(bottom - c.top) <= SUPPORT_GAP) return true;
+    }
+    return false;
+  };
+
+  for (let i = 0; i < pieces.length; i++) {
+    if (supportedBySurface(pieces[i])) supported.add(i);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < pieces.length; i++) {
+      if (supported.has(i)) continue;
+      const p = pieces[i];
+      for (const j of supported) {
+        const q = pieces[j];
+        if (q.y > p.y + SUPPORT_GAP) continue;
+        if (Math.hypot(p.x - q.x, p.y - q.y) <= p.r + q.r + SUPPORT_GAP) {
+          supported.add(i);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  const unsupportedHigh = [];
+  for (let i = 0; i < pieces.length; i++) {
+    if (pieces[i].y + pieces[i].r >= UNSUPPORTED_HIGH_MIN_TOP && !supported.has(i)) {
+      unsupportedHigh.push(i);
+    }
+  }
+  // Fail closed when the whole observation is ungrounded or the high region is
+  // broadly populated. The retained cursor-leak pattern is a small (1-3)
+  // detached group above an otherwise physically supported board.
+  if (supported.size === 0 || unsupportedHigh.length === 0 || unsupportedHigh.length > 3) {
+    return pieces;
+  }
+  const ignored = new Set(unsupportedHigh);
+  return pieces.filter((_p, i) => !ignored.has(i));
+}
+
 function reserveValue(piece, board) {
   if (!piece || piece.type <= 0 || piece.type >= 15) return 0;
   const exposed = exposedPieces(board).filter(p => p.type === piece.type);
@@ -434,7 +493,7 @@ export function decide(boardState) {
   if (!boardState || !Array.isArray(boardState.pieces) || boardState.pieces.length > 256) {
     throw new TypeError('Unusable Soren91 board observation');
   }
-  const pieces = boardState.pieces.map(p => normalizePiece(p, true));
+  const observedPieces = boardState.pieces.map(p => normalizePiece(p, true));
   const current = normalizePiece(boardState.next);
   if (certainty(current) < 0.5) throw new TypeError('Uncertain Soren91 current piece');
 
@@ -443,6 +502,8 @@ export function decide(boardState) {
     gauge: Number.isFinite(boardState.garbage?.gauge) ? boardState.garbage.gauge : 0,
     columns: Array.isArray(boardState.garbage?.columns) ? boardState.garbage.columns.slice(0, 64) : [],
   };
+  const pieces = filterUnsupportedHighObservations(observedPieces, garbage.columns);
+  const ignoredUnsupportedHigh = observedPieces.length - pieces.length;
 
   const normal = search(pieces, current, knownQueue(boardState.nextPieces, 1), garbage);
   let chosen = normal;
@@ -500,6 +561,7 @@ export function decide(boardState) {
       reservationDepth: chosen.reservationDepth ?? 0,
       reservationType: chosen.reservationType ?? null,
       reservationBeforeMergeValue: chosen.reservationBeforeMergeValue ?? 0,
+      ignoredUnsupportedHigh,
     },
   };
 }
