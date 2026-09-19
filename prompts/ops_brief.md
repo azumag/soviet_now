@@ -1,4 +1,4 @@
 # 直近の裏側の改修 (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)
-- NetHack長期攻略 P6g: declarative action effects（#640）
-- NetHack長期攻略 P6f: 失敗episode→catalog提案→検証→昇格判定ループ（#638）
-- NetHack長期攻略 P6e: seed固定 promotion runner で自動昇格ループを実走（#634）
+- PAPER/ゲーム切替時のTwitchカテゴリ同期をmain・VMへ反映
+- soviet_now PR #442をmain・docich・VMへ反映完了
+- PR #770をmainへマージ、VM反映と実機状態を確認
