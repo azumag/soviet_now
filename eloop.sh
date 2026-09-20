@@ -304,8 +304,15 @@ play_one_game() {
 	fi
 
 	local game_num_display=$((GAME_NUM + 1))
-	python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" start "$game_num_display" || return 1
-	PREDICTION_GAME_STARTED_AT=$(date +%s)
+	if [ "${SOREN_PLAYER_POLICY:-existing}" = "jev" ]; then
+		# JEV is a manual experiment. Do not open a normal prediction round
+		# whose result could enter the production accumulator.
+		PREDICTION_GAME_STARTED_AT=0
+		log "[JEV] 通常の prediction round を開始せず、実験証跡へ分離"
+	else
+		python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" start "$game_num_display" || return 1
+		PREDICTION_GAME_STARTED_AT=$(date +%s)
+	fi
 	log ""
 	log "── Game #${game_num_display} ──"
 	_clear_stale_commands_if_any "before play_one_game"
@@ -322,13 +329,17 @@ play_one_game() {
 	AB_SOURCE=""
 	AB_IDX=""
 	AB_HELPERS=""
-	# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
-	if command -v _ab_gate_before_game >/dev/null 2>&1; then
-		_ab_gate_before_game || true
-	fi
-	if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
-		_ab_select_arm
-		ab_snapshot_source="$AB_SOURCE"
+	# JEV は開始時点の fallback bundle だけを使い、通常の A/B 候補選択を
+	# 実験へ持ち込まない。strategy snapshot 自体は fallback 用に固定する。
+	if [ "${SOREN_PLAYER_POLICY:-existing}" != "jev" ]; then
+		# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
+		if command -v _ab_gate_before_game >/dev/null 2>&1; then
+			_ab_gate_before_game || true
+		fi
+		if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
+			_ab_select_arm
+			ab_snapshot_source="$AB_SOURCE"
+		fi
 	fi
 	if ! strategy_runtime_create_game_snapshot \
 		"$ab_snapshot_source" \
@@ -447,9 +458,10 @@ PY
 	rm -f "$runner_tmpfile"
 
 	if [ -z "$RESULT_JSON" ]; then
-		RESULT_JSON='{"score":0,"turns":0,"state":"UNKNOWN"}'
+		RESULT_JSON='{"score":0,"turns":0,"state":"UNKNOWN","player_policy":"'"${SOREN_PLAYER_POLICY:-existing}"'"}'
 	fi
 
+	LAST_PLAYER_POLICY=$(echo "$RESULT_JSON" | SOREN_PLAYER_POLICY="${SOREN_PLAYER_POLICY:-existing}" python3 -c "import json,os,sys; d=json.load(sys.stdin); print(str(d.get('player_policy') or os.environ.get('SOREN_PLAYER_POLICY','existing')).strip().lower())" 2>/dev/null || echo "${SOREN_PLAYER_POLICY:-existing}")
 	LAST_SCORE=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null || echo 0)
 	LAST_TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
 	LAST_RUSSIA=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('russia_created',False) else 'false')" 2>/dev/null || echo "false")
@@ -458,6 +470,14 @@ PY
 	local runner_error runner_error_msg
 	runner_error=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
 	runner_error_msg=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_message',''))" 2>/dev/null || echo "")
+
+	# JEV failure/fallback is an experiment outcome, never a normal strategy
+	# recovery or regression signal. The bounded runner records the explicit
+	# fallback/ack status in its private ledger.
+	if [ "$LAST_PLAYER_POLICY" = "jev" ]; then
+		log "[JEV] result score=$LAST_SCORE turns=$LAST_TURNS error=${runner_error:-none}; 通常の復旧・回帰判定へ流さない"
+		return 0
+	fi
 
 	# --- Fix3: recovery-taint ガード (guardian/復旧アクターが当該ゲーム中に
 	# stuck/hang 復旧を実行した場合、その復旧起点ゲームを評価系に入れない) ---
@@ -659,6 +679,20 @@ handle_soviet_celebration() {
 
 #=== 試合後の後処理 ===
 post_game_bookkeeping() {
+	if [ "${LAST_PLAYER_POLICY:-existing}" = "jev" ]; then
+		# No prediction, score/best/history, improvement accumulator, clip, or
+		# regression side effect is allowed for the JEV corner. A pending
+		# lifecycle request may still observe this game boundary.
+		log "[JEV] 通常 post_game_bookkeeping をスキップ（専用ledgerのみ）"
+		if command -v game_lifecycle_jev_complete >/dev/null 2>&1; then
+			local _jev_lifecycle_rc=0
+			game_lifecycle_jev_complete || _jev_lifecycle_rc=$?
+			case "$_jev_lifecycle_rc" in
+			0|2|3) return "$_jev_lifecycle_rc" ;;
+			esac
+		fi
+		return 0
+	fi
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ] && [ "${LAST_SOVIET:-false}" != "true" ]; then
 		log "[HALT] post_game_bookkeepingをスキップ（建国後停止中）"
 		return 0
