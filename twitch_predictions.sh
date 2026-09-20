@@ -74,6 +74,49 @@ _cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1
 _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-48}"
 case "$PREDICTION_MAX_GAMES" in ''|*[!0-9]*|0) PREDICTION_MAX_GAMES=48 ;; esac
+
+_prediction_create_context_allowed() {
+	[ "$_cfg_min_games" = "48" ] || {
+		_log "SKIP: prediction create requires the 48-game improvement cycle"
+		return 1
+	}
+	[ "$PREDICTION_MAX_GAMES" = "48" ] || {
+		_log "SKIP: prediction create requires a 48-game prediction window"
+		return 1
+	}
+	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
+	[ ! -f "$state_file" ] || {
+		_log "SKIP: prediction create blocked while A/B test state exists"
+		return 1
+	}
+	[ -z "${SOREN_AB_ALT_STRATEGY:-}" ] || {
+		_log "SKIP: prediction create blocked while A/B runtime toggle exists"
+		return 1
+	}
+	local acc_file="${ACCUMULATED_GAMES_FILE:-${TMP_STATE_DIR}/accumulated_games.json}"
+	local acc_count
+	acc_count=$(python3 - "$acc_file" <<'PY' 2>/dev/null
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.exists():
+    print(0)
+    raise SystemExit(0)
+try:
+    print(int((json.loads(path.read_text(encoding="utf-8")) or {}).get("count", 0) or 0))
+except Exception:
+    print("invalid")
+PY
+)
+	case "$acc_count" in
+	0) return 0 ;;
+	*)
+		_log "SKIP: prediction create requires an empty improvement accumulator (count=${acc_count:-unknown})"
+		return 1
+		;;
+	esac
+}
+
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
 # Twitch Predictions API の上限は1800秒。改善サイクルが45試合を超える場合も、
 # 受付時間だけはAPIの上限内へ丸め、予想の解決stateはサイクル完了まで保持する。
@@ -595,6 +638,9 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
+	if ! _prediction_create_context_allowed; then
+		exit 0
+	fi
 	if _prediction_retry_active create; then
 		_log "SKIP: prediction create retry backoff active ($(_prediction_retry_remaining create)s)"
 		exit 0
