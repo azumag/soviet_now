@@ -11,6 +11,7 @@ PREREQS = REPO_ROOT / "wait_soren_runtime_prereqs.sh"
 INSTALLER = REPO_ROOT / "install_soren_runtime_service.sh"
 UNIT = REPO_ROOT / "deploy" / "soren-runtime" / "soren-runtime.service"
 OBS_DROPIN = REPO_ROOT / "deploy" / "soren-runtime" / "obs-backend.conf"
+CHAT_WORKER = REPO_ROOT / "workers" / "chat_worker.sh"
 
 
 class SorenRuntimeServiceTests(unittest.TestCase):
@@ -133,6 +134,65 @@ esac
         self.assertIn("_cleanup", handler)
         self.assertIn("exit 0", handler)
         self.assertNotIn("exit 130", handler)
+
+    def test_chat_worker_reexecs_with_current_classifier_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "workers").mkdir()
+            (root / "tmp" / "state").mkdir(parents=True)
+            (root / "workers" / "chat_worker.sh").write_text(
+                CHAT_WORKER.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            (root / "eloop_lib.sh").write_text(
+                'printf \'backend=%s key=%s\\n\' "${COMMENT_CLASSIFIER_BACKEND:-empty}" '
+                '"${TYPESAFE_API_KEY:+present}" >>"$PWD/tmp/env_seen"\n',
+                encoding="utf-8",
+            )
+            (root / "tmp" / "stop").touch()
+            (root / "tmp" / "state" / "chat_worker.paused").touch()
+            env = os.environ.copy()
+            env.update(
+                {
+                    "COMMENT_CLASSIFIER_BACKEND": "jev",
+                    "TYPESAFE_API_KEY": "stale-inherited-value",
+                }
+            )
+            env.pop("CHAT_WORKER_ENV_REEXEC", None)
+
+            (root / ".env").write_text(
+                "COMMENT_CLASSIFIER_BACKEND=jev\n"
+                "TYPESAFE_API_KEY=fresh-test-value\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(root / "workers" / "chat_worker.sh"), "test"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
+                ["backend=jev key=present"],
+            )
+
+            (root / "tmp" / "env_seen").unlink()
+            (root / ".env").write_text("COMMENT_CLASSIFIER_BACKEND=\n", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(root / "workers" / "chat_worker.sh"), "test"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
+                ["backend=empty key="],
+            )
 
     def test_chat_respawn_refreshes_managed_classifier_environment(self) -> None:
         source = (REPO_ROOT / "start_all.sh").read_text(encoding="utf-8")

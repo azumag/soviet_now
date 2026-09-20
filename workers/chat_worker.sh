@@ -17,7 +17,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # --- 環境変数読み込み ---
+# The supervisor may be older than the projected worker file and can retain
+# classifier variables from its launch environment.  The .env file is the
+# source of truth for this worker: clear the managed names before sourcing it,
+# then re-exec once so /proc and future children carry the effective values.
+unset \
+	COMMENT_CLASSIFIER_BACKEND \
+	COMMENT_CLASSIFIER_JEV_MODEL \
+	COMMENT_CLASSIFIER_JEV_TIMEOUT_MS \
+	COMMENT_CLASSIFIER_JEV_MIN_CONFIDENCE \
+	COMMENT_CLASSIFIER_JEV_LOG_ENABLED \
+	TYPESAFE_API_KEY
 [ -f .env ] && set -a && . ./.env && set +a
+if [ "${CHAT_WORKER_ENV_REEXEC:-0}" != "1" ]; then
+	export CHAT_WORKER_ENV_REEXEC=1
+	exec /bin/bash "$SCRIPT_DIR/workers/chat_worker.sh" "$@"
+fi
+unset CHAT_WORKER_ENV_REEXEC
 
 # --- 共通ライブラリ ---
 source ./eloop_lib.sh
