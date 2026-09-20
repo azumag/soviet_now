@@ -32,6 +32,7 @@ import {
   resolveStaticBindAddress,
 } from './lib/static_file_server.mjs';
 import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
+import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -246,6 +247,8 @@ function refreshCommittedPlayerState() {
     jevOpportunitySeq = 0;
     jevLastGameInstanceId = '';
     jevLastDropPieceId = null;
+    jevGameInstanceId = null;
+    jevLastPhase = null;
   }
   if (after !== lastAdvertisedPlayerFingerprint) {
     advertisePlayerCapability();
@@ -256,6 +259,11 @@ let jevFrameSeq = 0;
 let jevOpportunitySeq = 0;
 let jevLastGameInstanceId = '';
 let jevLastDropPieceId = null;
+// Per-game identity nonce owned by this bridge (Issue #771 section 5.1). The
+// sorengame build does not push one, so it starts fresh per bridge process and
+// rotates on the observed terminal -> MOVE transition, never on score alone.
+let jevGameInstanceId = null;
+let jevLastPhase = null;
 
 function jevIntegerEnv(name) {
   const value = Number.parseInt(process.env[name] || '', 10);
@@ -269,11 +277,21 @@ function annotateJevState(state) {
     : {};
   const next = state.next && typeof state.next === 'object' ? state.next : {};
   const runId = existing.run_id || process.env.SOREN_JEV_RUN_ID || null;
-  const gameInstanceId = existing.game_instance_id || process.env.SOREN_JEV_GAME_INSTANCE_ID || null;
+  const currentPhase = typeof state.state === 'string' ? state.state : null;
+  const resolvedNonce = nextGameInstanceId({
+    providedId: existing.game_instance_id || process.env.SOREN_JEV_GAME_INSTANCE_ID || null,
+    previousPhase: jevLastPhase,
+    currentPhase,
+    currentId: jevGameInstanceId,
+    generate: () => crypto.randomUUID(),
+  });
+  jevGameInstanceId = resolvedNonce.gameInstanceId;
+  jevLastPhase = resolvedNonce.phase;
+  const gameInstanceId = resolvedNonce.gameInstanceId;
   const gameGeneration = existing.game_generation ?? jevIntegerEnv('SOREN_JEV_GAME_GENERATION');
   const playerGeneration = existing.player_generation ?? jevIntegerEnv('SOREN_JEV_PLAYER_GENERATION');
   const dropPieceId = existing.drop_piece_id ?? next.id ?? null;
-  if (gameInstanceId && gameInstanceId !== jevLastGameInstanceId) {
+  if (gameInstanceId !== jevLastGameInstanceId) {
     jevLastGameInstanceId = gameInstanceId;
     jevOpportunitySeq = 0;
     jevLastDropPieceId = null;
