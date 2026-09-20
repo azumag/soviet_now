@@ -1062,3 +1062,60 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	[ -f "tmp/improve_ai.log" ] && mv "tmp/improve_ai.log" "$TMP_DEBUG_DIR/improve_ai.log" 2>/dev/null
 	touch "$TMP_STATE_DIR/.migrated"
 fi
+
+# MiniMax is retired.  A long-lived supervisor can retain an older exported
+# environment even after .env has been corrected, so sanitize every model
+# list when this file is sourced.  This keeps reloads fail-closed without
+# requiring a restart of the shared streaming/overlay services.
+_remove_retired_minimax_agents() {
+	local input="${1:-}" output="" token normalized
+	local -a tokens
+	local old_ifs="$IFS"
+	IFS=','
+	read -r -a tokens <<< "$input"
+	IFS="$old_ifs"
+	for token in "${tokens[@]}"; do
+		token="${token#"${token%%[![:space:]]*}"}"
+		token="${token%"${token##*[![:space:]]}"}"
+		[ -n "$token" ] || continue
+		normalized=$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')
+		case "$normalized" in
+		*minimax*) continue ;;
+		esac
+		if [ -n "$output" ]; then
+			output="$output,$token"
+		else
+			output="$token"
+		fi
+	done
+	printf '%s' "$output"
+}
+
+# Remove retired credentials/overrides from the current shell as well as from
+# future children.  The live .env no longer defines these names, but unset is
+# required because sourcing an env file does not remove inherited variables.
+unset MINIMAX_API_KEY MINIMAX_BASE_URL MINIMAX_MODEL CODEX_MINIMAX_RUN_TIMEOUT_SEC
+
+for _retired_model_var in \
+	MODEL_IMPROVE MODEL_FALLBACK_IMPROVE MODEL_IMPROVE_LIST MODEL_IMPROVE_PEAK_LIST \
+	VERCEL_CATEGORY_A_AGENTS VERCEL_CATEGORY_B_AGENTS VERCEL_FREE_AGENTS \
+	AI_COMMON_AGENTS RADIO_MAIN_AGENT RADIO_MAIN_PREPASS_AGENT RADIO_MAIN_FALLBACK \
+	RADIO_AGENTS RADIO_PREPASS_AGENTS \
+	COMMENT_CLASSIFIER_AGENT COMMENT_CLASSIFIER_FALLBACK \
+	COMMENT_CLASSIFIER_EDIT_AGENT COMMENT_CLASSIFIER_EDIT_FALLBACK \
+	COMMENT_AGENTS COMMENT_TRANSLATION_AGENTS TWITCH_POLL_AGENTS \
+	COMMENT_SOREN91_AGENT COMMENT_SOREN91_FALLBACK \
+	RADIO_SOREN91_AGENT RADIO_SOREN91_FALLBACK \
+	PEAK_HOURS_PRIORITY_AGENT PEAK_HOURS_AGENT_PREFERENCE \
+	ROLLBACK_POSTMORTEM_MODEL ROLLBACK_POSTMORTEM_FALLBACK \
+	RADIO_FACT_CHECK_AGENT RADIO_FACT_CHECK_FALLBACK \
+	RADIO_FACT_CHECK_TERTIARY RADIO_FACT_CHECK_QUINARY \
+	BATCH_COMMENTARY_AGENTS; do
+	if [ -n "${!_retired_model_var+x}" ]; then
+		_retired_model_value="$(_remove_retired_minimax_agents "${!_retired_model_var}")"
+		printf -v "$_retired_model_var" '%s' "$_retired_model_value"
+		export "$_retired_model_var"
+	fi
+done
+
+unset _retired_model_var _retired_model_value
