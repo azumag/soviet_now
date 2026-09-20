@@ -193,5 +193,19 @@ esac
         self.assertIn('|| mt=$(stat -c %Y "$LOCK_DIR"', source)
 
 
+    def test_soren_loop_reloads_committed_player_policy_per_game(self) -> None:
+        source = (REPO_ROOT / "soren_loop.sh").read_text(encoding="utf-8")
+        # The startup read stays as the process-wide fail-closed default.
+        self.assertIn("game_lifecycle_load_player_policy", source)
+        # A player_change is committed at a game boundary while this loop keeps
+        # running, so the main loop must re-read the committed snapshot after
+        # the per-match .env reload; otherwise the next game never adopts the
+        # new policy (the JEV corner activation silently no-ops).
+        main_loop = source.split("# --- メインループ: 1試合ずつ ---", 1)[1]
+        env_reload = main_loop.index("# .env を毎試合再読込")
+        reload_call = main_loop.index("game_lifecycle_load_player_policy")
+        self.assertGreater(reload_call, env_reload)
+
+
 if __name__ == "__main__":
     unittest.main()

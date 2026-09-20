@@ -106,6 +106,7 @@ PY
 	) || {
 		_game_lifecycle_log "player_state.json が不正のため existing へ fail-closed"
 		export SOREN_PLAYER_POLICY="existing"
+		export JEV_PLAYER_ENABLED="0"
 		unset SOREN_JEV_RUN_ID SOREN_JEV_PLAYER_GENERATION SOREN_JEV_GAME_GENERATION
 		return 1
 	}

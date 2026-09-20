@@ -898,6 +898,14 @@ while true; do
 	if ! source ./eloop_lib.sh 2>/dev/null; then
 		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で継続)"
 	fi
+
+	# committed player snapshot も毎試合再読込する。JEV corner の player 切替は
+	# 試合境界で commit されるが、長命 loop は起動時にしか snapshot を読まない。
+	# ここで読むことで loop を再起動せずに次の試合から policy を反映する
+	# （snapshot 不正/欠損は関数内で existing へ fail-closed）。
+	if command -v game_lifecycle_load_player_policy >/dev/null 2>&1; then
+		game_lifecycle_load_player_policy || true
+	fi
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi

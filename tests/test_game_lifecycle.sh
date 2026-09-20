@@ -423,4 +423,70 @@ wait "$watchdog_launcher_pid" 2>/dev/null || true
 unset watchdog_pid
 unset watchdog_launcher_pid
 
+# The committed player snapshot is re-read every game by soren_loop.sh (see the
+# main-loop reload), so a player_change committed at a game boundary must apply
+# to the next game without restarting the long-lived loop.  The reload has to be
+# idempotent inside one process and fail closed to existing on a corrupt or
+# missing snapshot.
+player_state_path="$GAME_LIFECYCLE_DIR/player_state.json"
+GAME_LIFECYCLE_PLAYER_STATE_FILE="$player_state_path"
+write_player_state() {
+	local policy="$1" generation="$2" game_generation="$3" run_id="$4"
+	python3 - "$player_state_path" "$policy" "$generation" "$game_generation" "$run_id" <<'PY'
+import json
+import sys
+
+path, policy, generation, game_generation, run_id = sys.argv[1:6]
+value = {
+    "schema": 1,
+    "game": "sorengame",
+    "policy": policy,
+    "player_generation": int(generation),
+    "game_generation": int(game_generation) if game_generation else None,
+    "run_id": run_id,
+    "config_hash": "a" * 64,
+    "source_request_id": run_id,
+    "updated_at": "2030-01-01T00:00:00.000Z",
+}
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+    stream.write("\n")
+PY
+}
+
+unset SOREN_PLAYER_POLICY SOREN_JEV_RUN_ID SOREN_JEV_PLAYER_GENERATION SOREN_JEV_GAME_GENERATION JEV_PLAYER_ENABLED
+write_player_state existing 2 "" ""
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+
+jev_run_id="ca834b7a-d0f7-4b74-9d9a-f3182855f2a7"
+write_player_state jev 3 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "jev" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "1" ]
+[ "${SOREN_JEV_RUN_ID:-}" = "$jev_run_id" ]
+[ "${SOREN_JEV_PLAYER_GENERATION:-}" = "3" ]
+[ "${SOREN_JEV_GAME_GENERATION:-}" = "1" ]
+[ "${JEV_MAX_REQUESTS_PER_RUN:-}" = "500" ]
+
+# The same process must switch back to existing without leaking JEV identity.
+write_player_state existing 4 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+[ -z "${SOREN_JEV_GAME_GENERATION:-}" ]
+
+# A corrupt snapshot fails closed even when JEV was active a moment ago.
+write_player_state jev 5 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+printf '%s\n' '{"schema":1,"game":"sorengame","policy":"bogus"}' >"$player_state_path"
+game_lifecycle_load_player_policy || true
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+rm -f "$player_state_path"
+
 echo "game lifecycle shell tests passed"
