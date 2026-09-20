@@ -1,0 +1,184 @@
+name: Temporary apply A/B dashboard frozen rule #299
+
+on:
+  push:
+    branches:
+      - automation/ab-dashboard-frozen-rule-299
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Apply minimal dashboard patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('status_dashboard.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''def ab_gate_schedule(env_path=None):
+              """(looks, max_blocks) を返す。ゲートが渡す .env キーと既定値に合わせる。"""
+              looks = AB_DEFAULT_LOOKS
+              raw = _ab_env_value("AB_GATE_LOOKS", env_path)
+              if raw:
+                  try:
+                      parsed = tuple(int(x) for x in raw.split(",") if x.strip())
+                  except ValueError:
+                      parsed = ()
+                  if parsed:
+                      looks = parsed
+              max_blocks = AB_DEFAULT_MAX_BLOCKS
+              raw = _ab_env_value("AB_GATE_MAX_BLOCKS", env_path)
+              if raw:
+                  try:
+                      max_blocks = int(raw)
+                  except ValueError:
+                      pass
+              return tuple(sorted(looks)), max_blocks
+          '''
+          # The literal above is indented by the workflow's Python block; normalize it.
+          import textwrap
+          old = textwrap.dedent(old)
+          if old not in text:
+              raise SystemExit('ab_gate_schedule block not found exactly once')
+          new = old + textwrap.dedent('''
+
+          def ab_gate_schedule_from_state(state, env_path=None):
+              """Resolve the dashboard schedule from the same frozen contract as the gate.
+
+              Versioned experiments freeze their decision rule in ab_state.json. Once a
+              state declares rule version >= 2, live .env changes must not alter the
+              dashboard's remaining-games display. Legacy states intentionally keep the
+              historical .env behavior.
+              """
+              if not isinstance(state, dict):
+                  return ab_gate_schedule(env_path)
+              rule = state.get("decision_rule")
+              try:
+                  version = int(
+                      state.get("decision_rule_version")
+                      or ((rule or {}).get("version") if isinstance(rule, dict) else 0)
+                      or 0
+                  )
+              except (TypeError, ValueError):
+                  version = 0
+              if version < 2:
+                  return ab_gate_schedule(env_path)
+
+              # A versioned state is fail-closed against live config drift: missing or
+              # malformed frozen fields fall back to code defaults, never to .env.
+              looks = AB_DEFAULT_LOOKS
+              max_blocks = AB_DEFAULT_MAX_BLOCKS
+              if isinstance(rule, dict):
+                  raw_looks = rule.get("looks")
+                  if raw_looks is not None:
+                      try:
+                          parsed = tuple(int(x) for x in raw_looks)
+                      except (TypeError, ValueError):
+                          parsed = ()
+                      if parsed:
+                          looks = parsed
+                  raw_max = rule.get("max_blocks")
+                  if raw_max is not None:
+                      try:
+                          max_blocks = int(raw_max)
+                      except (TypeError, ValueError):
+                          pass
+              return tuple(sorted(looks)), max_blocks
+          ''')
+          text = text.replace(old, new, 1)
+          needle = '    looks, max_blocks = ab_gate_schedule(env_path)\n'
+          if text.count(needle) != 1:
+              raise SystemExit(f'expected exactly one load_ab_progress schedule call, found {text.count(needle)}')
+          text = text.replace(
+              needle,
+              '    looks, max_blocks = ab_gate_schedule_from_state(state, env_path)\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/test_status_dashboard_ab.py')
+          tests = test_path.read_text(encoding='utf-8')
+          anchor = '''    def test_env_last_match_wins_and_quotes_stripped(self):\n'''
+          if tests.count(anchor) != 1:
+              raise SystemExit(f'expected test anchor once, found {tests.count(anchor)}')
+          additions = '''    def test_versioned_state_uses_frozen_rule_instead_of_env(self):
+              """v2 experiment display follows state.decision_rule even if live .env drifts."""
+              def _test():
+                  state, games, meta, env = self._write_ab(
+                      self._complete_blocks(4),
+                      env_text="AB_GATE_LOOKS=2,3\\nAB_GATE_MAX_BLOCKS=4\\n",
+                  )
+                  payload = json.loads(Path(state).read_text(encoding="utf-8"))
+                  payload.update({
+                      "decision_rule_version": 2,
+                      "decision_rule": {"version": 2, "looks": [10, 20], "max_blocks": 20},
+                  })
+                  Path(state).write_text(json.dumps(payload), encoding="utf-8")
+                  ab = sd.load_ab_progress(state, games, meta, env_path=env)
+                  self.assertEqual(ab["looks"], (10, 20))
+                  self.assertEqual(ab["max_blocks"], 20)
+                  self.assertEqual(ab["next_look"], 10)
+                  self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+                  self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+              self._run_in_tempdir(_test)
+
+              def test_versioned_invalid_fields_use_defaults_not_env(self):
+                  """Broken v2 frozen fields fail to reviewed defaults, never mutable .env."""
+                  def _test():
+                      state, games, meta, env = self._write_ab(
+                          self._complete_blocks(4),
+                          env_text="AB_GATE_LOOKS=2,3\\nAB_GATE_MAX_BLOCKS=4\\n",
+                      )
+                      payload = json.loads(Path(state).read_text(encoding="utf-8"))
+                      payload.update({
+                          "decision_rule_version": 2,
+                          "decision_rule": {"version": 2, "looks": ["bad"]},
+                      })
+                      Path(state).write_text(json.dumps(payload), encoding="utf-8")
+                      ab = sd.load_ab_progress(state, games, meta, env_path=env)
+                      self.assertEqual(ab["looks"], tuple(sd.AB_DEFAULT_LOOKS))
+                      self.assertEqual(ab["max_blocks"], sd.AB_DEFAULT_MAX_BLOCKS)
+                      self.assertEqual(ab["next_look"], 19)
+                      self.assertEqual(ab["games_to_next_look"], (19 - 4) * 4)
+                      self.assertEqual(ab["games_to_max"], (37 - 4) * 4)
+
+                  self._run_in_tempdir(_test)
+
+          '''
+          # The additions literal is nested in this workflow script. Dedent it to class scope.
+          additions = textwrap.dedent(additions)
+          # Re-indent at class method level (4 spaces), while preserving nested blocks.
+          additions = ''.join(('    ' + line if line.strip() else line) for line in additions.splitlines(keepends=True))
+          tests = tests.replace(anchor, additions + anchor, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+
+      - name: Run focused regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_status_dashboard_ab
+
+      - name: Commit reviewed patch and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/tmp-ab-dashboard-frozen-rule-299.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add status_dashboard.py tests/test_status_dashboard_ab.py .github/workflows/tmp-ab-dashboard-frozen-rule-299.yml
+          git diff --cached --check
+          git commit -m "fix: freeze A/B dashboard gate schedule"
+          git push origin HEAD:automation/ab-dashboard-frozen-rule-299
