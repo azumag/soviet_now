@@ -3751,7 +3751,7 @@ PY
 		else
 			comment_agent_list="${COMMENT_AGENTS:-amd:DeepSeek-V4-Flash}"
 		fi
-		# ピーク時間帯は候補順序のみ入替え（MiniMax優先 / DeepSeekはフォールバックに温存）
+		# ピーク時間帯は設定された候補の順序だけを入れ替える。
 		local comment_agent_list_before="$comment_agent_list"
 		local comment_peak_note=""
 		comment_agent_list=$(_peak_priority_agent_list "$comment_agent_list")

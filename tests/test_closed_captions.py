@@ -184,7 +184,7 @@ class ClosedCaptionPlanTests(unittest.TestCase):
         )
         self.assertEqual(len(plan["chunks"]), 40)
 
-    def test_translation_client_disables_reasoning_only_for_minimax_m3(self) -> None:
+    def test_translation_client_does_not_send_provider_specific_reasoning_controls(self) -> None:
         response = {
             "choices": [{"message": {"content": '{"translations":["Hello."]}'}}]
         }
