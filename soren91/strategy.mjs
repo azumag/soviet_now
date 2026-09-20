@@ -424,12 +424,15 @@ function search(board, piece, queue, garbage) {
 
 const UNSUPPORTED_HIGH_MIN_TOP = DEADLINE - WARNING_MARGIN * 2;
 const SUPPORT_GAP = TYPE_RADII[1] + 0.015;
+const IMPOSSIBLE_HIGH_OVERLAP_MARGIN = 0.04;
 
 /**
- * Ignore only high observations that cannot be connected to a physical support
- * surface. Retained screenshots show the controllable cursor piece can leak
- * into pieces[] near the deadline; treating it as settled board mass creates a
- * false warning/fatal stack. Low/mid-board observations are never removed.
+ * Ignore a detached high cluster only when the observation itself contains
+ * positive evidence that it cannot be a settled board state. In particular,
+ * a same-type pair that penetrates substantially while one member is below
+ * the normal certainty threshold is consistent with a duplicated cursor/
+ * transient detector observation. Mere lack of an observed support chain is
+ * not enough: a single isolated high piece stays risk-bearing.
  */
 function filterUnsupportedHighObservations(pieces, columns = []) {
   const supported = new Set();
@@ -471,13 +474,28 @@ function filterUnsupportedHighObservations(pieces, columns = []) {
       unsupportedHigh.push(i);
     }
   }
-  // Fail closed when the whole observation is ungrounded or the high region is
-  // broadly populated. The retained cursor-leak pattern is a small (1-3)
-  // detached group above an otherwise physically supported board.
-  if (supported.size === 0 || unsupportedHigh.length === 0 || unsupportedHigh.length > 3) {
+  if (supported.size === 0 || unsupportedHigh.length < 2 || unsupportedHigh.length > 3) {
     return pieces;
   }
-  const ignored = new Set(unsupportedHigh);
+
+  const ignored = new Set();
+  for (let a = 0; a < unsupportedHigh.length; a++) {
+    const i = unsupportedHigh[a];
+    const p = pieces[i];
+    for (let b = a + 1; b < unsupportedHigh.length; b++) {
+      const j = unsupportedHigh[b];
+      const q = pieces[j];
+      if (p.type <= 0 || p.type !== q.type) continue;
+      const penetration = p.r + q.r - Math.hypot(p.x - q.x, p.y - q.y);
+      if (penetration < IMPOSSIBLE_HIGH_OVERLAP_MARGIN) continue;
+      const lowConfidence = Math.min(certainty(p), certainty(q));
+      const highConfidence = Math.max(certainty(p), certainty(q));
+      if (!(lowConfidence < 0.6 && highConfidence >= 0.6)) continue;
+      ignored.add(i);
+      ignored.add(j);
+    }
+  }
+  if (ignored.size === 0) return pieces;
   return pieces.filter((_p, i) => !ignored.has(i));
 }
 
