@@ -21,6 +21,7 @@ GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE="$GAME_LIFECYCLE_DIR/watchdog_pause.json"
 GAME_LIFECYCLE_WATCHDOG_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/soviet_watchdog.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
+GAME_LIFECYCLE_JEV_ONE_GAME_FILE="$GAME_LIFECYCLE_DIR/jev_one_game.json"
 
 _game_lifecycle_log() {
 	if command -v log >/dev/null 2>&1; then
@@ -118,11 +119,64 @@ PY
 		# the inner runner disabled for legacy/existing snapshots so an inherited
 		# .env value cannot turn an existing game into an implicit JEV run.
 		export JEV_PLAYER_ENABLED="1"
+		# These values are part of the Issue #771 contract and are deliberately
+		# fixed at the runtime boundary; an inherited .env override must not make
+		# the config hash describe a different experiment.
+		export JEV_MAX_REQUESTS_PER_RUN="500"
+		export JEV_DECISION_BUDGET_MS="1500"
+		export JEV_HTTP_TIMEOUT_MS="1000"
+		export JEV_FAILURE_LATCH_AFTER="3"
 		export SOREN_JEV_RUN_ID="$run_id"
 	else
 		export JEV_PLAYER_ENABLED="0"
 		unset SOREN_JEV_RUN_ID SOREN_JEV_GAME_GENERATION
 	fi
+}
+
+# A completed manual JEV game is an intentional park, not a crashed loop.
+# Verify the marker against the committed player snapshot so a stale marker
+# cannot suppress an existing-policy runtime or a later JEV generation.
+game_lifecycle_jev_one_game_parked() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	python3 - "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" "$GAME_LIFECYCLE_PLAYER_STATE_FILE" <<'PY'
+import json
+import sys
+
+try:
+    marker = json.load(open(sys.argv[1], encoding="utf-8"))
+    state = json.load(open(sys.argv[2], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(marker, dict) or not isinstance(state, dict):
+    raise SystemExit(1)
+if marker.get("schema") != 1 or state.get("schema") != 1:
+    raise SystemExit(1)
+if marker.get("game") != "sorengame" or state.get("game") != "sorengame":
+    raise SystemExit(1)
+if marker.get("policy") != "jev" or state.get("policy") != "jev":
+    raise SystemExit(1)
+for field in ("run_id", "game_generation", "player_generation"):
+    if marker.get(field) != state.get(field):
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+game_lifecycle_mark_jev_one_game() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	_game_lifecycle_cli mark-jev-one-game
+}
+
+# Handle the JEV end-of-game boundary without allowing the supervisor to
+# respawn another JEV game. If an operator already requested existing, the
+# normal request-scoped boundary path remains authoritative.
+game_lifecycle_jev_complete() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	if [ -e "$GAME_LIFECYCLE_DIR/request.json" ] || [ -e "$GAME_LIFECYCLE_DIR/ack.json" ]; then
+		game_lifecycle_after_game
+		return $?
+	fi
+	game_lifecycle_mark_jev_one_game >/dev/null 2>&1
 }
 
 _game_lifecycle_control_action() {

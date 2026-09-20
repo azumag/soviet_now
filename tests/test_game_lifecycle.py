@@ -137,6 +137,90 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(stale[0].returncode, 3)
             self.assertIn("expected_player_generation", stale[1]["error"])
 
+    def test_completed_jev_game_is_parked_and_marker_requires_stable_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            lifecycle.mkdir(parents=True, exist_ok=True)
+            run_id = str(uuid.uuid4())
+            state = {
+                "schema": 1,
+                "game": "sorengame",
+                "game_generation": 7,
+                "policy": "jev",
+                "player_generation": 3,
+                "run_id": run_id,
+            }
+            (lifecycle / "player_state.json").write_text(json.dumps(state), encoding="utf-8")
+            self.write_state(root, "GAMEOVER")
+
+            parked, parked_payload = self.run_broker(root, "mark-jev-one-game")
+            self.assertEqual(parked.returncode, 0)
+            self.assertEqual(parked_payload["status"], "parked")
+            marker = json.loads((lifecycle / "jev_one_game.json").read_text(encoding="utf-8"))
+            self.assertEqual(marker["run_id"], run_id)
+            self.assertEqual(marker["game_generation"], 7)
+            self.assertEqual(marker["player_generation"], 3)
+
+            (root / "game_state.json").write_text(
+                json.dumps({"state": "MOVE", "score": 12, "pieces": []}), encoding="utf-8"
+            )
+            waiting, waiting_payload = self.run_broker(root, "mark-jev-one-game")
+            self.assertEqual(waiting.returncode, 1)
+            self.assertEqual(waiting_payload["status"], "waiting")
+
+    def test_player_commit_clears_completed_jev_park(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            lifecycle.mkdir(parents=True, exist_ok=True)
+            current = {
+                "schema": 1,
+                "game": "sorengame",
+                "game_generation": 1,
+                "policy": "jev",
+                "player_generation": 1,
+                "run_id": str(uuid.uuid4()),
+                "config_hash": "a" * 64,
+            }
+            (lifecycle / "player_state.json").write_text(json.dumps(current), encoding="utf-8")
+            (lifecycle / "jev_one_game.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "game": "sorengame",
+                    "policy": "jev",
+                    "run_id": current["run_id"],
+                    "game_generation": 1,
+                    "player_generation": 1,
+                }),
+                encoding="utf-8",
+            )
+            (lifecycle / "player_capabilities.json").write_text(
+                json.dumps({
+                    "schema": 1,
+                    "game": "sorengame",
+                    "pid": os.getpid(),
+                    "capabilities": ["player_policy_v1"],
+                }),
+                encoding="utf-8",
+            )
+            self.write_state(root, "GAMEOVER")
+            request_id = str(uuid.uuid4())
+            run_id = str(uuid.uuid4())
+            accepted, _ = self.run_broker(
+                root,
+                "request", "--request-id", request_id, "--game", "sorengame",
+                "--generation", "1", "--deadline-sec", "60", "--operation", "player_change",
+                "--target-policy", "existing", "--run-id", run_id,
+                "--expected-player-generation", "1", "--config-hash", "b" * 64,
+            )
+            self.assertEqual(accepted.returncode, 0)
+            prepared, _ = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(prepared.returncode, 0)
+            committed, _ = self.run_broker(root, "commit-player", "--request-id", request_id)
+            self.assertEqual(committed.returncode, 0)
+            self.assertFalse((lifecycle / "jev_one_game.json").exists())
+
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

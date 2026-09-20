@@ -684,9 +684,9 @@ post_game_bookkeeping() {
 		# regression side effect is allowed for the JEV corner. A pending
 		# lifecycle request may still observe this game boundary.
 		log "[JEV] 通常 post_game_bookkeeping をスキップ（専用ledgerのみ）"
-		if command -v game_lifecycle_after_game >/dev/null 2>&1; then
+		if command -v game_lifecycle_jev_complete >/dev/null 2>&1; then
 			local _jev_lifecycle_rc=0
-			game_lifecycle_after_game || _jev_lifecycle_rc=$?
+			game_lifecycle_jev_complete || _jev_lifecycle_rc=$?
 			case "$_jev_lifecycle_rc" in
 			0|2|3) return "$_jev_lifecycle_rc" ;;
 			esac

@@ -34,6 +34,7 @@ CONTROL_FILE = "control.json"
 RESOURCE_FILE = "game_resource.json"
 PLAYER_STATE_FILE = "player_state.json"
 PLAYER_CAPABILITIES_FILE = "player_capabilities.json"
+JEV_ONE_GAME_FILE = "jev_one_game.json"
 LOCK_FILE = "broker.lock"
 HISTORY_DIR = "history"
 
@@ -179,6 +180,7 @@ class LifecycleStore:
         self.resource_path = self.directory / RESOURCE_FILE
         self.player_state_path = self.directory / PLAYER_STATE_FILE
         self.player_capabilities_path = self.directory / PLAYER_CAPABILITIES_FILE
+        self.jev_one_game_path = self.directory / JEV_ONE_GAME_FILE
         self.lock_path = self.directory / LOCK_FILE
         self.history_dir = self.directory / HISTORY_DIR
 
@@ -217,6 +219,9 @@ class LifecycleStore:
     def player_capabilities(self) -> dict[str, Any] | None:
         return _json_object(self.player_capabilities_path)
 
+    def jev_one_game(self) -> dict[str, Any] | None:
+        return _json_object(self.jev_one_game_path)
+
     def save_request(self, value: dict[str, Any]) -> None:
         _atomic_json(self.request_path, value)
 
@@ -231,6 +236,12 @@ class LifecycleStore:
 
     def save_player_state(self, value: dict[str, Any]) -> None:
         _atomic_json(self.player_state_path, value)
+
+    def save_jev_one_game(self, value: dict[str, Any]) -> None:
+        _atomic_json(self.jev_one_game_path, value)
+
+    def clear_jev_one_game(self) -> None:
+        self.jev_one_game_path.unlink(missing_ok=True)
 
     def archive_current(self) -> None:
         request = self.request()
@@ -510,6 +521,11 @@ def command_commit_player(store: LifecycleStore, args: argparse.Namespace) -> in
             "updated_at": _utc_now(),
         }
         store.save_player_state(player_state)
+        # A completed JEV one-game park belongs to the previous committed
+        # policy. Clear it only after the new player snapshot is durable. If
+        # this process dies before the clear, the supervisor still verifies
+        # the marker against player_state before suppressing a respawn.
+        store.clear_jev_one_game()
         committed = _base_ack(
             request,
             "committed",
@@ -522,6 +538,45 @@ def command_commit_player(store: LifecycleStore, args: argparse.Namespace) -> in
         store.ack_path.unlink(missing_ok=True)
         store.control_path.unlink(missing_ok=True)
         return _emit({"status": "committed", "player_state": player_state, "ack": committed}, RC_OK)
+
+
+def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) -> int:
+    """Durably park the supervisor after the explicitly requested JEV game."""
+
+    with store.lock():
+        # A pending player transaction owns the boundary. The loop must let
+        # game_lifecycle_after_game() prepare that request instead of marking
+        # a completed park that could race the operator's finish operation.
+        if store.request() is not None or store.ack() is not None:
+            return _emit({"status": "conflict", "error": "player transaction is still active"}, RC_CONFLICT)
+        player_state = store.player_state() or {}
+        run_id = player_state.get("run_id")
+        if (
+            player_state.get("schema") != SCHEMA_VERSION
+            or player_state.get("game") != "sorengame"
+            or player_state.get("policy") != "jev"
+            or not isinstance(run_id, str)
+            or not UUID_RE.fullmatch(run_id)
+            or type(player_state.get("game_generation")) is not int
+            or player_state.get("game_generation") < 1
+            or type(player_state.get("player_generation")) is not int
+            or player_state.get("player_generation") < 0
+        ):
+            return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
+        snapshot = _read_game_snapshot(store.root)
+        if snapshot.get("state") not in {"GAMEOVER", "STOP"} or snapshot.get("runner_alive"):
+            return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
+        marker = {
+            "schema": SCHEMA_VERSION,
+            "game": "sorengame",
+            "policy": "jev",
+            "run_id": run_id,
+            "game_generation": player_state["game_generation"],
+            "player_generation": player_state["player_generation"],
+            "completed_at": _utc_now(),
+        }
+        store.save_jev_one_game(marker)
+        return _emit({"status": "parked", "marker": marker}, RC_OK)
 
 
 def _load_matching_request(store: LifecycleStore, request_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -845,6 +900,7 @@ def command_status(store: LifecycleStore, _args: argparse.Namespace) -> int:
                 "resource": store.resource(),
                 "player_state": store.player_state(),
                 "player_capabilities": store.player_capabilities(),
+                "jev_one_game": store.jev_one_game(),
             },
             RC_OK,
         )
@@ -954,6 +1010,7 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--request-id", required=True)
     commit = sub.add_parser("commit-player")
     commit.add_argument("--request-id", required=True)
+    sub.add_parser("mark-jev-one-game")
     sub.add_parser("capabilities")
     sub.add_parser("status")
     return parser
@@ -967,6 +1024,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_request(store, args)
         if args.command == "commit-player":
             return command_commit_player(store, args)
+        if args.command == "mark-jev-one-game":
+            return command_mark_jev_one_game(store, args)
         if args.command == "capabilities":
             with store.lock():
                 return _emit(store.player_capabilities() or {"capabilities": []}, RC_OK)

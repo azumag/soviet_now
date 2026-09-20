@@ -20,6 +20,12 @@
 5. 次に起動した loop/bridge はこの snapshot から policy、run、generation を
    読む。欠損・不正な snapshot は JEV ではなく `existing` に fail-closed する。
 
+JEV の one-game 完了時は `jev_one_game.json` を committed snapshot と同じ
+identityで記録し、supervisor の `soren_loop` 再起動を抑止する。`finish` 側は
+loopが既に終了していても broker の side-effect-free `boundary` を実行できる。
+bridge は player snapshot を観測ごとに再読込し、bridge自体を再起動せずに
+JEV identity と existing policy の切替を反映する。
+
 `player-commit` は以下の固定 control surface から実行できる。
 
 ```text

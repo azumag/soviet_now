@@ -627,6 +627,9 @@ _worker_paused() {
 	if [ -n "$name" ] && [ -f "tmp/state/${name}.paused" ]; then
 		return 0
 	fi
+	if [ "$name" = "soren_loop" ] && command -v game_lifecycle_jev_one_game_parked >/dev/null 2>&1 && game_lifecycle_jev_one_game_parked; then
+		return 0
+	fi
 	if [ "$name" = "soviet_watchdog" ] && command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked; then
 		return 0
 	fi

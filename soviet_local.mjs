@@ -195,7 +195,11 @@ function loadCommittedPlayerState() {
       delete process.env.SOREN_JEV_GAME_GENERATION;
     }
   } catch (error) {
-    if (fs.existsSync(PLAYER_STATE_PATH)) failClosedPlayerState();
+    // A missing snapshot is also a fail-closed existing policy. This matters
+    // when an operator finishes a JEV corner while this long-lived bridge is
+    // still running: stale JEV environment must never survive a state-file
+    // replacement or removal.
+    failClosedPlayerState();
   }
 }
 
@@ -224,6 +228,30 @@ function advertisePlayerCapability() {
 }
 
 loadCommittedPlayerState();
+function playerPolicyFingerprint() {
+  return JSON.stringify([
+    process.env.SOREN_PLAYER_POLICY || 'existing',
+    process.env.SOREN_JEV_RUN_ID || '',
+    process.env.SOREN_JEV_PLAYER_GENERATION || '',
+    process.env.SOREN_JEV_GAME_GENERATION || '',
+  ]);
+}
+let lastAdvertisedPlayerFingerprint = playerPolicyFingerprint();
+function refreshCommittedPlayerState() {
+  const before = playerPolicyFingerprint();
+  loadCommittedPlayerState();
+  const after = playerPolicyFingerprint();
+  if (after !== before) {
+    jevFrameSeq = 0;
+    jevOpportunitySeq = 0;
+    jevLastGameInstanceId = '';
+    jevLastDropPieceId = null;
+  }
+  if (after !== lastAdvertisedPlayerFingerprint) {
+    advertisePlayerCapability();
+    lastAdvertisedPlayerFingerprint = after;
+  }
+}
 let jevFrameSeq = 0;
 let jevOpportunitySeq = 0;
 let jevLastGameInstanceId = '';
@@ -1186,6 +1214,11 @@ function clearCommands() {
 // Get game state from JS Bridge
 async function getGameState(page) {
   try {
+    // Player changes are committed at a GAMEOVER boundary without restarting
+    // this bridge. Refresh the durable snapshot before every observation so
+    // the next JEV game gets its identity and the finish path clears it from
+    // the same long-lived process.
+    refreshCommittedPlayerState();
     const state = await page.evaluate(() => window.__sorenGameState);
     return annotateJevState(state || null);
   } catch (e) {
