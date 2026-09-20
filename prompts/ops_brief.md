@@ -1,4 +1,4 @@
 # 直近の裏側の改修 (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)
-- メリケンAI(ソ連ゲーム91)コーナー序盤停止: ランキング画面の誤認識とコーナー死活監視をmain・VMへ反映
-- Jevコメント分類器のowner-only設定操作をmainへ統合（Jev本体は未有効）
-- PAPER終了後のNetHack bounded実走と復帰を確認
+- JEVコメント分類器を有効化、実効環境とworker健全性を確認
+- existing通常運用の一試合をTwitch画面で目視確認
+- JEV本編sorengame一試合canary（実プレイ・existing復帰済み）
