@@ -71,7 +71,7 @@ class LegacyRunnerGoldenTests(unittest.TestCase):
             "board_bounds": {"drop_x_min": -3.0, "drop_x_max": 3.0},
         }
         with tempfile.TemporaryDirectory() as directory:
-            run_dir = Path(directory) / identity["run_id"]
+            run_dir = Path(directory) / identity["run_id"] / identity["game_instance_id"]
             run_dir.mkdir(parents=True)
             ack = dict(identity, status="outcome_unknown", candidate_id="c12")
             (run_dir / "opportunity_00000007.json").write_text(
@@ -80,6 +80,20 @@ class LegacyRunnerGoldenTests(unittest.TestCase):
             with patch.object(runner, "JEV_ACK_ROOT", directory):
                 result = runner.wait_jev_drop_ack(identity, "c12", timeout=0.5)
         self.assertEqual(result["status"], "outcome_unknown")
+
+    def test_jev_ack_path_is_scoped_by_game_instance(self):
+        # opportunity_seq restarts per game, so a second game in the same run
+        # must not reuse the first game's ack path.
+        base = {
+            "run_id": "11111111-1111-4111-8111-111111111111",
+            "game_generation": 1,
+            "player_generation": 13,
+            "opportunity_seq": 1,
+        }
+        first = dict(base, game_instance_id="22222222-2222-4222-8222-222222222222")
+        second = dict(base, game_instance_id="33333333-3333-4333-8333-333333333333")
+        self.assertNotEqual(runner._jev_ack_path(first), runner._jev_ack_path(second))
+        self.assertEqual(runner._jev_ack_path(first), runner._jev_ack_path(dict(first)))
 
 
 if __name__ == "__main__":
