@@ -84,6 +84,40 @@ _prediction_create_context_allowed() {
 		_log "SKIP: prediction create requires a 48-game prediction window"
 		return 1
 	}
+	local improve_state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR}/improve_state.json}"
+	local improve_status=""
+	if [ -f "$improve_state_file" ]; then
+		improve_status=$(python3 - "$improve_state_file" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        state = json.load(handle) or {}
+    print(state.get("status", "") or "")
+except Exception:
+    print("invalid")
+PY
+)
+		case "$improve_status" in
+		running)
+			_log "SKIP: prediction create blocked while improvement is running"
+			return 1
+			;;
+		invalid)
+			_log "SKIP: prediction create blocked by invalid improvement state"
+			return 1
+			;;
+		esac
+	fi
+	local improve_lock_file="${IMPROVE_LOCK_FILE:-tmp/improve.lock}"
+	[ ! -f "$improve_lock_file" ] || {
+		_log "SKIP: prediction create blocked while improvement lock exists"
+		return 1
+	}
+	local hot_streak_pending_file="${HOT_STREAK_PREDICTION_PENDING_FILE:-${TMP_STATE_DIR}/hot_streak_prediction_pending}"
+	[ ! -f "$hot_streak_pending_file" ] || {
+		_log "SKIP: prediction create blocked while hot-streak prediction is pending"
+		return 1
+	}
 	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
 	[ ! -f "$state_file" ] || {
 		_log "SKIP: prediction create blocked while A/B test state exists"
