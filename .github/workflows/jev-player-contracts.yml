@@ -1,0 +1,62 @@
+name: JEV player contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/jev-player-contracts.yml'
+      - 'soviet_local.mjs'
+      - 'lib/jev_*.mjs'
+      - 'lib/jev_*.py'
+      - 'tests/test_jev_*.mjs'
+      - 'tests/test_jev_*.py'
+      - 'tests/test_game_lifecycle.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/jev-player-contracts.yml'
+      - 'soviet_local.mjs'
+      - 'lib/jev_*.mjs'
+      - 'lib/jev_*.py'
+      - 'tests/test_jev_*.mjs'
+      - 'tests/test_jev_*.py'
+      - 'tests/test_game_lifecycle.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Syntax check JEV bridge and worker modules
+        run: |
+          node --version
+          python3 --version
+          node --check soviet_local.mjs
+          python3 -m py_compile \
+            lib/jev_player_contract.py \
+            lib/jev_player_worker.py \
+            lib/jev_player_candidates.py \
+            lib/jev_player_evidence.py \
+            lib/jev_runner.py
+      - name: Run JEV bridge identity and guard regressions
+        run: |
+          node --test \
+            tests/test_jev_game_nonce.mjs \
+            tests/test_jev_drop_piece.mjs \
+            tests/test_jev_guarded_drop.mjs \
+            tests/test_game_lifecycle.mjs
+      - name: Run bounded JEV player regressions
+        run: |
+          python3 -m unittest \
+            tests.test_jev_player_worker \
+            tests.test_jev_player_contract \
+            tests.test_jev_player_candidates \
+            tests.test_jev_player_evidence \
+            tests.test_jev_runner \
+            tests.test_jev_legacy_golden
