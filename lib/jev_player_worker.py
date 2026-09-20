@@ -20,6 +20,13 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+# The bounded worker child runs under `python -I`.  Since Python 3.11 `-I`
+# implies `-P`, so the script directory is not on sys.path and the sibling
+# fallback import below fails; the child then exits non-zero and the parent
+# surfaces it as `worker_exit`.  Add the script directory in child mode only.
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 try:  # package import when used by the game
     from .jev_player_contract import (
         ENDPOINT,
