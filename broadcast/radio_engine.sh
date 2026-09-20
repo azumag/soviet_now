@@ -962,11 +962,37 @@ _radio_repair_mixed_language() {
 		rm -rf "$tmp_dir"
 		return 2
 	}
-	cp "$body_file" "$current_file"
 
 	local start end encoded_segment encoded_before encoded_after segment before after
 	local prompt_file replacement_file original_segment_file last_agent_file replacement repair_agent
 	local repair_agents_used=""
+	local preflight_span_count=0 preflight_total_chars=0
+	# Check the complete span set before the first model call. Otherwise an input
+	# with four spans could spend three calls and only then discover MAX_SPANS=3.
+	while IFS=$'\t' read -r start end encoded_segment encoded_before encoded_after; do
+		[ -n "${start:-}" ] && [ -n "${end:-}" ] || continue
+		segment=$(_radio_mixed_language_b64_decode "$encoded_segment")
+		[ -n "$segment" ] || {
+			[ -n "$metadata_file" ] && printf 'status=invalid_span\nspans=%s\n' "$preflight_span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 2
+		}
+		preflight_span_count=$((preflight_span_count + 1))
+		preflight_total_chars=$((preflight_total_chars + ${#segment}))
+	done <"$spans_file"
+	if [ "$preflight_span_count" -gt "$max_spans" ] || [ "$preflight_total_chars" -gt "$max_chars" ]; then
+		[ -n "$metadata_file" ] && printf 'status=too_many_spans\nspans=%s\nchars=%s\n' \
+			"$preflight_span_count" "$preflight_total_chars" >"$metadata_file"
+		rm -rf "$tmp_dir"
+		return 2
+	fi
+	cp "$body_file" "$current_file"
+	local repair_total_budget=60
+	if declare -F _ai_radio_mixed_repair_total_budget_sec >/dev/null 2>&1; then
+		repair_total_budget=$(_ai_radio_mixed_repair_total_budget_sec)
+	fi
+	# This dynamically-scoped deadline is shared by every span-level chain below.
+	local AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH=$(( $(date +%s) + repair_total_budget ))
 	while IFS=$'\t' read -r start end encoded_segment encoded_before encoded_after; do
 		[ -n "${start:-}" ] && [ -n "${end:-}" ] || continue
 		segment=$(_radio_mixed_language_b64_decode "$encoded_segment")

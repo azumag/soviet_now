@@ -4,12 +4,13 @@
 # ai_generate_list() tries multiple providers sequentially and the OpenCode backend can
 # retry one provider internally. Because each dispatch owns the shared radio lane while
 # its provider command runs, a required main generation can otherwise occupy that lane
-# for several minutes. Optional prepass already has a short total budget; live main
-# generation now gets a separate, more generous total wall-clock budget.
+# for several minutes. Optional prepass and mixed-language repair have short total
+# budgets; live main generation gets a separate, more generous total wall-clock budget.
 #
-# The budget applies only to the normal on-air main-generation call, identified by the
-# existing _radio_is_valid_generation_candidate validator. Other RADIO users (batch,
-# polls, etc.), COMMENT and improvement chains retain their existing policy.
+# The live-main budget applies to the normal on-air main-generation call, identified by
+# the existing _radio_is_valid_generation_candidate validator. Mixed-language repair
+# uses its own short budget. Other RADIO users (batch, polls, etc.), COMMENT and
+# improvement chains retain their existing policy.
 
 _ai_prepass_total_budget_sec() {
 	local value="${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}"
@@ -30,6 +31,18 @@ _ai_radio_main_total_budget_sec() {
 	# Keep required generation below the default 300s radio queue wait while still
 	# allowing a slow-but-healthy backend substantially more time than prepass.
 	[ "$value" -gt 240 ] && value=240
+	printf '%s\n' "$value"
+}
+
+_ai_radio_mixed_repair_total_budget_sec() {
+	# Local repair defaults to the existing prepass budget. It must remain short
+	# because a failed repair immediately falls back to the normal full rewrite.
+	local value="${RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC:-${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}}"
+	case "$value" in
+	'' | *[!0-9]*) value=60 ;;
+	esac
+	[ "$value" -lt 1 ] && value=60
+	[ "$value" -gt 120 ] && value=120
 	printf '%s\n' "$value"
 }
 
@@ -65,6 +78,10 @@ _ai_dispatch() {
 	local deadline="" budget_kind="" now remaining
 
 	case "${label,,}" in
+	radio:*:mixed_repair*)
+		deadline="${AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH:-}"
+		budget_kind="mixed_repair"
+		;;
 	radio:*:prepass*)
 		deadline="${AI_PREPASS_CHAIN_DEADLINE_EPOCH:-}"
 		budget_kind="prepass"
@@ -130,7 +147,7 @@ _ai_generate_list_with_radio_budget() {
 	local previous_retry="" previous_retry_set=0 rc
 	local budget_marker="" budget_detail_marker="" budget_exhausted=0
 	local budget_executed=0 budget_skipped=0 budget_last_remaining=0
-	local detail_kind detail_remaining
+	local detail_kind detail_remaining shared_deadline=""
 	if [ "${!deadline_var+x}" = x ]; then
 		previous_deadline_set=1
 		previous_deadline="${!deadline_var}"
@@ -159,7 +176,17 @@ _ai_generate_list_with_radio_budget() {
 	# the chain deadline while holding the lane. Use one attempt per candidate inside
 	# a bounded chain; normal retry behavior is restored immediately afterwards.
 	export OPENCODE_ABORT_RETRY=0
-	export "$deadline_var=$(( $(date +%s) + budget ))"
+	# mixed-language repair invokes one bounded chain per span. The caller supplies
+	# one dynamically-scoped deadline for the whole repair, so each span cannot
+	# silently receive a fresh budget.
+	if [ "$deadline_var" = "AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH" ]; then
+		shared_deadline="${AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH:-}"
+	fi
+	if [[ "$shared_deadline" =~ ^[0-9]+$ ]]; then
+		export "$deadline_var=$shared_deadline"
+	else
+		export "$deadline_var=$(( $(date +%s) + budget ))"
+	fi
 	if _ai_generate_list_without_radio_budget "$@"; then
 		rc=0
 	else
@@ -200,7 +227,16 @@ _ai_generate_list_with_radio_budget() {
 ai_generate_list() {
 	local label="${1:-AI}" validator="${5:-}" budget
 	case "${label,,}" in
-	radio:*:prepass*)
+		radio:*:mixed_repair*)
+		# Local mixed-language repair is an on-air radio chain too, but it uses a
+		# short independent deadline so up to three spans cannot starve the lane.
+		if [ "$validator" = "_radio_is_valid_mixed_language_repair_candidate" ]; then
+			budget=$(_ai_radio_mixed_repair_total_budget_sec)
+			_ai_generate_list_with_radio_budget AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH "$budget" "$@"
+			return $?
+		fi
+		;;
+		radio:*:prepass*)
 		budget=$(_ai_prepass_total_budget_sec)
 		_ai_generate_list_with_radio_budget AI_PREPASS_CHAIN_DEADLINE_EPOCH "$budget" "$@"
 		return $?

@@ -71,6 +71,19 @@ else
 	not_ok 'multiple spans are replaced from the end without offset corruption'
 fi
 
+REPAIR_CALLS=0
+RADIO_QUALITY_REPAIR_MAX_SPANS=1
+meta="$TMP/preflight.meta"
+if _radio_repair_mixed_language "$input" news 'fixture:repair' "$meta" >"$TMP/preflight.out" 2>/dev/null; then
+	not_ok 'span limits reject before any local repair call'
+elif [ "$REPAIR_CALLS" -eq 0 ] &&
+	grep -q '^status=too_many_spans$' "$meta" && grep -q '^spans=2$' "$meta"; then
+	ok 'span limits reject before any local repair call'
+else
+	not_ok 'span limits reject before any local repair call'
+fi
+unset RADIO_QUALITY_REPAIR_MAX_SPANS
+
 input='こんばんは。The price is 2026 dollars. これは日本語の本文です。'
 REPAIR_OUTPUT='価格は2025ドルです。'
 meta="$TMP/protected.meta"
