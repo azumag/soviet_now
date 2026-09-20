@@ -496,13 +496,19 @@ rm -f "$player_state_path"
 _jev_mark_calls_file="$test_root/jev_mark_calls"
 : >"$_jev_mark_calls_file"
 rm -f "$GAME_LIFECYCLE_DIR/request.json" "$GAME_LIFECYCLE_DIR/ack.json"
+rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
+GAME_LIFECYCLE_JEV_ONE_GAME_FILE="$GAME_LIFECYCLE_DIR/jev_one_game.json"
 game_lifecycle_mark_jev_one_game() {
 	echo x >>"$_jev_mark_calls_file"
+	printf '%s\n' '{"schema":1,"game":"sorengame","policy":"jev","run_id":"22222222-2222-4222-8222-222222222222"}' >"$GAME_LIFECYCLE_JEV_ONE_GAME_FILE"
 	[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ] && return 0
 	return 1
 }
 game_lifecycle_jev_complete
 [ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ]
+# A long-lived supervisor that predates the dedicated predicate must still be
+# suppressed, so the one-game park also creates the generic loop pause marker.
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
 
 # A terminal failure is not retried forever.
 : >"$_jev_mark_calls_file"
