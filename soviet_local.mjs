@@ -33,6 +33,7 @@ import {
 } from './lib/static_file_server.mjs';
 import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
 import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
+import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -290,7 +291,11 @@ function annotateJevState(state) {
   const gameInstanceId = resolvedNonce.gameInstanceId;
   const gameGeneration = existing.game_generation ?? jevIntegerEnv('SOREN_JEV_GAME_GENERATION');
   const playerGeneration = existing.player_generation ?? jevIntegerEnv('SOREN_JEV_PLAYER_GENERATION');
-  const dropPieceId = existing.drop_piece_id ?? next.id ?? null;
+  const dropPieceId = resolveDropPieceId({
+    providedId: existing.drop_piece_id,
+    nextId: next.id,
+    pieces: state.pieces,
+  });
   if (gameInstanceId !== jevLastGameInstanceId) {
     jevLastGameInstanceId = gameInstanceId;
     jevOpportunitySeq = 0;
