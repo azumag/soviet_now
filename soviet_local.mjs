@@ -332,8 +332,12 @@ function annotateJevState(state) {
 
 function writeJevAck(command, status, reason = '') {
   if (!command || typeof command.run_id !== 'string' || !JEV_UUID_RE.test(command.run_id)) return;
+  if (typeof command.game_instance_id !== 'string' || !JEV_UUID_RE.test(command.game_instance_id)) return;
   if (!Number.isInteger(command.opportunity_seq) || command.opportunity_seq < 1) return;
-  const directory = path.join(JEV_ACK_ROOT, command.run_id);
+  // opportunity_seq restarts per game, so scope the ack by game instance too;
+  // keying only on run_id made a second game in the same run collide with the
+  // first game's ack (the runner then refused the command as a replay).
+  const directory = path.join(JEV_ACK_ROOT, command.run_id, command.game_instance_id);
   const target = path.join(directory, `opportunity_${String(command.opportunity_seq).padStart(8, '0')}.json`);
   try {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });

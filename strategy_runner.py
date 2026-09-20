@@ -524,16 +524,29 @@ def write_drop_command(game_x):
 
 
 def _jev_ack_path(identity):
-    """Return the bridge ack path only for a canonical run/turn identity."""
+    """Return the bridge ack path only for a canonical run/turn identity.
+
+    Scoped by game instance: ``opportunity_seq`` restarts per game, so keying
+    only on run_id made a second game in the same run collide with the first
+    game's ack and fail with `jev_command_error`.
+    """
     if not isinstance(identity, dict):
         return None
     run_id = identity.get("run_id")
+    game_instance_id = identity.get("game_instance_id")
     opportunity_seq = identity.get("opportunity_seq")
     if not isinstance(run_id, str) or not JEV_RUN_ID_RE.fullmatch(run_id):
         return None
+    if not isinstance(game_instance_id, str) or not JEV_RUN_ID_RE.fullmatch(game_instance_id):
+        return None
     if type(opportunity_seq) is not int or opportunity_seq < 1:
         return None
-    return os.path.join(JEV_ACK_ROOT, run_id, f"opportunity_{opportunity_seq:08d}.json")
+    return os.path.join(
+        JEV_ACK_ROOT,
+        run_id,
+        game_instance_id,
+        f"opportunity_{opportunity_seq:08d}.json",
+    )
 
 
 def write_jev_drop_command(game_x, identity, candidate_id):
