@@ -636,6 +636,27 @@ _worker_paused() {
 	return 1
 }
 
+# A long-lived supervisor keeps the environment it inherited at launch.  The
+# chat classifier is intentionally configured through .env, so a chat worker
+# respawn must rebuild only that worker's managed classifier environment from
+# the current file.  Run this in the child subshell below: the supervisor's
+# own environment must not retain a removed API key or change other workers.
+_refresh_chat_worker_env() {
+	unset \
+		COMMENT_CLASSIFIER_BACKEND \
+		COMMENT_CLASSIFIER_JEV_MODEL \
+		COMMENT_CLASSIFIER_JEV_TIMEOUT_MS \
+		COMMENT_CLASSIFIER_JEV_MIN_CONFIDENCE \
+		COMMENT_CLASSIFIER_JEV_LOG_ENABLED \
+		TYPESAFE_API_KEY
+	if [ -f "$ENV_FILE" ]; then
+		set -a
+		# shellcheck disable=SC1090
+		. "$ENV_FILE"
+		set +a
+	fi
+}
+
 # --- Worker 起動 ---
 _start_worker() {
 	local idx="$1"
@@ -675,7 +696,14 @@ _start_worker() {
 		return 0
 	fi
 
-	$cmd >>"$log_file" 2>&1 &
+	if [ "$name" = "chat_worker" ]; then
+		(
+			_refresh_chat_worker_env
+			exec $cmd
+		) >>"$log_file" 2>&1 &
+	else
+		$cmd >>"$log_file" 2>&1 &
+	fi
 	local pid=$!
 	if [ "$name" = "soren_loop" ]; then
 		sleep 1
