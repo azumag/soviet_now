@@ -5,21 +5,33 @@ on:
     paths:
       - '.github/workflows/jev-player-contracts.yml'
       - 'soviet_local.mjs'
+      - 'soren_loop.sh'
+      - 'strategy_runner.py'
+      - 'lib/game_lifecycle.sh'
+      - 'lib/game_lifecycle.py'
+      - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
       - 'lib/jev_*.py'
       - 'tests/test_jev_*.mjs'
       - 'tests/test_jev_*.py'
       - 'tests/test_game_lifecycle.mjs'
+      - 'tests/test_game_lifecycle.sh'
   push:
     branches: [main]
     paths:
       - '.github/workflows/jev-player-contracts.yml'
       - 'soviet_local.mjs'
+      - 'soren_loop.sh'
+      - 'strategy_runner.py'
+      - 'lib/game_lifecycle.sh'
+      - 'lib/game_lifecycle.py'
+      - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
       - 'lib/jev_*.py'
       - 'tests/test_jev_*.mjs'
       - 'tests/test_jev_*.py'
       - 'tests/test_game_lifecycle.mjs'
+      - 'tests/test_game_lifecycle.sh'
 
 permissions:
   contents: read
@@ -60,3 +72,6 @@ jobs:
             tests.test_jev_player_evidence \
             tests.test_jev_runner \
             tests.test_jev_legacy_golden
+
+      - name: Run game lifecycle shell regression
+        run: bash tests/test_game_lifecycle.sh

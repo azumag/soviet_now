@@ -186,6 +186,16 @@ game_lifecycle_jev_complete() {
 		# Keep the call in an `if` condition: a bare assignment would abort a
 		# `set -e` loop on the first not-yet-stable boundary.
 		if output=$(game_lifecycle_mark_jev_one_game 2>&1); then
+			# A long-lived supervisor can predate game_lifecycle_jev_one_game_parked,
+			# so the dedicated marker alone may not suppress the respawn.  Also
+			# create the generic loop pause marker every supervisor honours;
+			# finish's commit-player restores it through the matching ownership
+			# record, so it cannot leak.
+			local jev_run_id
+			jev_run_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" run_id 2>/dev/null || true)
+			if [ -n "$jev_run_id" ]; then
+				_game_lifecycle_pause_loop "$jev_run_id" || true
+			fi
 			return 0
 		else
 			rc=$?
