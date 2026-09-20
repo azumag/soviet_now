@@ -177,7 +177,28 @@ game_lifecycle_jev_complete() {
 		game_lifecycle_after_game
 		return $?
 	fi
-	game_lifecycle_mark_jev_one_game >/dev/null 2>&1
+	# The one-game park marker is what stops the supervisor from respawning
+	# another JEV game.  game_state.json is written asynchronously, so retry
+	# briefly for the stable boundary instead of exiting without a marker and
+	# silently starting a second JEV game.
+	local attempt=0 output rc
+	while :; do
+		# Keep the call in an `if` condition: a bare assignment would abort a
+		# `set -e` loop on the first not-yet-stable boundary.
+		if output=$(game_lifecycle_mark_jev_one_game 2>&1); then
+			return 0
+		else
+			rc=$?
+		fi
+		# RC_WAITING means game_state.json has not settled to a terminal
+		# boundary yet; every other code is terminal.
+		if [ "$rc" -ne 1 ] || [ "$attempt" -ge 20 ]; then
+			_game_lifecycle_log "JEV one-game park を確定できません (rc=$rc output=${output:-none})"
+			return "$rc"
+		fi
+		attempt=$((attempt + 1))
+		sleep 0.5
+	done
 }
 
 _game_lifecycle_control_action() {

@@ -489,4 +489,32 @@ game_lifecycle_load_player_policy || true
 [ -z "${SOREN_JEV_RUN_ID:-}" ]
 rm -f "$player_state_path"
 
+# A one-game JEV park that is not yet stable must be retried rather than
+# silently skipped: skipping it let the supervisor respawn and start a second
+# JEV game under the same explicit start.  The mark helper runs in a command
+# substitution, so count calls in a file rather than a shell variable.
+_jev_mark_calls_file="$test_root/jev_mark_calls"
+: >"$_jev_mark_calls_file"
+rm -f "$GAME_LIFECYCLE_DIR/request.json" "$GAME_LIFECYCLE_DIR/ack.json"
+game_lifecycle_mark_jev_one_game() {
+	echo x >>"$_jev_mark_calls_file"
+	[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ] && return 0
+	return 1
+}
+game_lifecycle_jev_complete
+[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ]
+
+# A terminal failure is not retried forever.
+: >"$_jev_mark_calls_file"
+game_lifecycle_mark_jev_one_game() {
+	echo x >>"$_jev_mark_calls_file"
+	return 3
+}
+set +e
+game_lifecycle_jev_complete
+jev_terminal_rc=$?
+set -e
+[ "$jev_terminal_rc" -eq 3 ]
+[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -eq 1 ]
+
 echo "game lifecycle shell tests passed"

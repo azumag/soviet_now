@@ -467,8 +467,19 @@ def _probabilities(value: Any, expected_ids: tuple[str, ...]) -> dict[str, float
         )
         if result[candidate_id] > 1.0:
             raise JevContractError("invalid_response")
-    if not math.isclose(sum(result.values()), 1.0, abs_tol=1e-6):
+    total = sum(result.values())
+    # The API rounds each probability to two decimals, so a genuine
+    # distribution can sum to 0.99 (or 1.01) by up to 0.005 per candidate.
+    # Accept that rounding band and normalize, so downstream always sees a
+    # distribution that sums to 1.0 instead of rejecting ~4% of real requests.
+    tolerance = 0.005 * len(expected_ids) + 1e-6
+    if total <= 0.0 or abs(total - 1.0) > tolerance:
         raise JevContractError("invalid_response")
+    if abs(total - 1.0) > 1e-9:
+        result = {
+            candidate_id: probability / total
+            for candidate_id, probability in result.items()
+        }
     return result
 
 

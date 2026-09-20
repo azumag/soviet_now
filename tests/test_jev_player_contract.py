@@ -170,6 +170,47 @@ class RequestAndChoiceTests(unittest.TestCase):
         }
         self.assertEqual(validate_choice(tied, tied_ids).selected_id, tied_ids[1])
 
+    def test_two_decimal_rounded_probabilities_are_accepted_and_normalized(self):
+        # The API rounds each probability to two decimals, so a real response
+        # can sum to 0.99.  Accept that rounding band and normalize instead of
+        # rejecting ~4% of real requests.
+        probabilities = {candidate_id: 0.0 for candidate_id in self.ids}
+        probabilities[self.ids[0]] = 0.99
+        response = {
+            "model": MODEL,
+            "answers": {
+                "drop_position": {
+                    "type": "choice",
+                    "choice": self.ids[0],
+                    "probabilities": probabilities,
+                    "confidence": 0.5,
+                }
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+        }
+        result = validate_choice(response, self.ids)
+        self.assertEqual(result.status, "ok")
+        self.assertAlmostEqual(sum(result.probabilities.values()), 1.0, places=9)
+        self.assertEqual(result.probabilities[self.ids[0]], 1.0)
+
+    def test_probabilities_outside_the_rounding_band_are_rejected(self):
+        probabilities = {candidate_id: 0.0 for candidate_id in self.ids}
+        probabilities[self.ids[0]] = 0.5
+        response = {
+            "model": MODEL,
+            "answers": {
+                "drop_position": {
+                    "type": "choice",
+                    "choice": self.ids[0],
+                    "probabilities": probabilities,
+                    "confidence": 0.5,
+                }
+            },
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+        }
+        with self.assertRaisesRegex(JevContractError, "invalid_response"):
+            validate_choice(response, self.ids)
+
     def test_choice_rejects_unknown_or_nonmax_candidate_and_bad_usage(self):
         response = {
             "model": MODEL,
