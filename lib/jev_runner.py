@@ -129,7 +129,10 @@ class JevRunner:
         self.evidence = evidence
         self.evidence_incomplete = False
         if self.evidence is None:
-            run_id = os.environ.get("JEV_RUN_ID", "")
+            # The game loop exports SOREN_JEV_RUN_ID (see
+            # game_lifecycle_load_player_policy).  Reading only JEV_RUN_ID made
+            # production runners build no ledger at all (evidence_incomplete).
+            run_id = os.environ.get("SOREN_JEV_RUN_ID") or os.environ.get("JEV_RUN_ID", "")
             if run_id:
                 try:
                     self.evidence = JevEvidence(

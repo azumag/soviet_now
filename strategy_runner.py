@@ -593,7 +593,7 @@ def wait_jev_drop_ack(identity, candidate_id, timeout=COMMAND_TIMEOUT):
             if not isinstance(ack, dict) or any(ack.get(key) != value for key, value in expected.items()):
                 return {"status": "unknown", "reason": "ack_identity_mismatch"}
             status = ack.get("status")
-            if status in {"accepted", "rejected", "duplicate", "unknown"}:
+            if status in {"accepted", "rejected", "outcome_unknown", "duplicate", "unknown"}:
                 return ack
         except FileNotFoundError:
             pass
@@ -3527,10 +3527,23 @@ def run_game():
                         "final_types": [p.get("type", 0) for p in pieces],
                     })
                 jev_ack = wait_jev_drop_ack(identity, jev_selection.candidate.candidate_id)
-                if jev_ack.get("status") != "accepted":
+                jev_ack_status = jev_ack.get("status", "unknown")
+                if jev_ack_status in {"rejected", "outcome_unknown"}:
+                    # The bridge either refused the drop before dispatch or
+                    # dispatched it without observing the state transition.
+                    # Issue #771 section 7: never resend, record the operational
+                    # outcome, and keep playing from the next observation instead
+                    # of ending the JEV game on a single unconfirmed ack.
                     jev_ack_unknown_count += 1
                     jev_pure = False
-                    log(f"JEV ack not accepted: status={jev_ack.get('status', 'unknown')}")
+                    jev_runner.record_accepted(identity, jev_selection.candidate, jev_ack_status)
+                    log(f"JEV ack {jev_ack_status}: recorded, continuing without resend")
+                elif jev_ack_status != "accepted":
+                    # Missing or mismatched ack: the drop's effect is unknown,
+                    # so fail closed and let the corner recover.
+                    jev_ack_unknown_count += 1
+                    jev_pure = False
+                    log(f"JEV ack not accepted: status={jev_ack_status}")
                     return finish_result({
                         "error": "jev_ack_unknown",
                         "score": score,
@@ -3543,7 +3556,8 @@ def run_game():
                         "strategy_hash": strategy_hash,
                         "final_types": [p.get("type", 0) for p in pieces],
                     })
-                jev_runner.record_accepted(identity, jev_selection.candidate, jev_ack.get("status", "accepted"))
+                else:
+                    jev_runner.record_accepted(identity, jev_selection.candidate, "accepted")
             else:
                 write_drop_command(drop_x)
             last_decision = dict(decision)

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +53,33 @@ class LegacyRunnerGoldenTests(unittest.TestCase):
             self.assertEqual(record[field], expected, field)
         self.assertNotIn("player_policy", record)
         self.assertNotIn("run_id", record)
+
+    def test_outcome_unknown_ack_is_terminal_and_never_waits_for_timeout(self):
+        # The bridge writes `outcome_unknown` when it dispatched a drop but
+        # could not observe the state transition.  That is a terminal
+        # operational outcome, not a missing ack, so the runner must see it
+        # immediately instead of burning the whole ack timeout.
+        identity = {
+            "run_id": "11111111-1111-4111-8111-111111111111",
+            "game_instance_id": "22222222-2222-4222-8222-222222222222",
+            "game_generation": 18,
+            "player_generation": 3,
+            "opportunity_seq": 7,
+            "frame_seq": 120,
+            "observed_at": "2026-09-20T04:00:00Z",
+            "drop_piece_id": 17,
+            "board_bounds": {"drop_x_min": -3.0, "drop_x_max": 3.0},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / identity["run_id"]
+            run_dir.mkdir(parents=True)
+            ack = dict(identity, status="outcome_unknown", candidate_id="c12")
+            (run_dir / "opportunity_00000007.json").write_text(
+                json.dumps(ack), encoding="utf-8"
+            )
+            with patch.object(runner, "JEV_ACK_ROOT", directory):
+                result = runner.wait_jev_drop_ack(identity, "c12", timeout=0.5)
+        self.assertEqual(result["status"], "outcome_unknown")
 
 
 if __name__ == "__main__":

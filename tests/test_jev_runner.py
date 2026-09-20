@@ -98,6 +98,19 @@ class JevRunnerTests(unittest.TestCase):
         self.assertFalse(selection.applied)
         self.assertEqual(calls, [])
 
+    def test_runner_builds_evidence_from_the_committed_run_id_env(self):
+        # The loop exports SOREN_JEV_RUN_ID; a runner that only read JEV_RUN_ID
+        # silently produced no ledger (evidence_incomplete) in production.
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ,
+                {"SOREN_JEV_RUN_ID": IDENTITY["run_id"], "JEV_EVIDENCE_ROOT": directory},
+            ):
+                runner = JevRunner()
+            self.assertIsNotNone(runner.evidence)
+            self.assertFalse(runner.evidence_incomplete)
+            self.assertEqual(runner.evidence.run_id, IDENTITY["run_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
