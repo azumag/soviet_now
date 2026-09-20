@@ -139,6 +139,15 @@ _get_improve_status() {
 	_read_json_field "$IMPROVE_STATE_FILE" "status" ""
 }
 
+_prediction_ab_test_running() {
+	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR:-tmp/state}/ab_state.json}"
+	# A/B state is authoritative. Keep the gate closed if the state file or
+	# its runtime toggle remains during a partial cleanup/restart.
+	[ -f "$state_file" ] && return 0
+	[ -n "${SOREN_AB_ALT_STRATEGY:-}" ] && return 0
+	return 1
+}
+
 _get_best_outcome() {
 	_has_prediction || {
 		echo 0
@@ -164,6 +173,22 @@ PY
 }
 
 HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
+
+_prediction_cycle_start_allowed() {
+	# Predictions belong only to the fixed 48-game improvement batch. This
+	# prevents explore/other cycle sizes from silently creating a different
+	# public promise.
+	case "${MIN_GAMES_BEFORE_IMPROVE:-}" in
+	48) ;;
+	*) return 1 ;;
+	esac
+	[ "${current_acc_count:-0}" -eq 0 ] 2>/dev/null || return 1
+	_prediction_ab_test_running && return 1
+	[ "${improve_status:-}" != "running" ] || return 1
+	[ ! -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] || return 1
+	[ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] || return 1
+	return 0
+}
 
 # --- 初期状態 ---
 _LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -192,8 +217,8 @@ while true; do
 	improve_status=$(_get_improve_status)
 	_resolved_this_tick=0
 
-	# Independent rounds do not use accumulated counts, improvement status,
-	# hot-streak extensions or A/B adoption as their start/end boundary.
+	# Independent rounds retain their own result accounting, but a new round
+	# may start only at the 48-game improvement-cycle boundary and outside A/B.
 	_round_version=$(_read_json_field "$TMP_STATE_DIR/current_prediction.json" round_version 0)
 	if ! _has_prediction || [ "$_round_version" = "2" ]; then
 		if [ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
@@ -207,7 +232,9 @@ while true; do
 				elif [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
 					./twitch_predictions.sh cleanup >>tmp/prediction.log 2>&1 || true
 				fi
-			elif [ "${TWITCH_PREDICTIONS_ENABLED:-0}" = "1" ] && ! _prediction_retry_active_for create; then
+			elif [ "${TWITCH_PREDICTIONS_ENABLED:-0}" = "1" ] &&
+				! _prediction_retry_active_for create &&
+				_prediction_cycle_start_allowed; then
 				./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
 			fi
 		fi
@@ -287,13 +314,15 @@ while true; do
 		_resolved_this_tick=1
 	fi
 
-	# --- 予想作成: サイクル開始 (acc_count=0, 改善完了後, 予想なし) ---
-	if [ "${current_acc_count:-0}" -eq 0 ] && ! _has_prediction && ! _prediction_retry_active_for create; then
-		if [ "$improve_status" != "running" ] && [ ! -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
+	# --- 予想作成: 48試合の改善サイクル開始 (A/B中は作らない) ---
+	if ! _has_prediction && ! _prediction_retry_active_for create; then
+		if _prediction_cycle_start_allowed; then
 			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
 			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
 		elif [ -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ]; then
 			_log "予想作成スキップ: rank1 hot streak延長ペンディング中"
+		elif _prediction_ab_test_running; then
+			_log "予想作成スキップ: A/Bテスト中"
 		fi
 	fi
 
