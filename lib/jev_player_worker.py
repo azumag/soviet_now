@@ -139,15 +139,23 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def _request_candidate_ids(request: Mapping[str, Any]) -> list[str]:
     state = request.get("state")
     if not isinstance(state, Mapping):
-        raise JevContractError("invalid_request", "state must be an object")
+        raise JevContractError("invalid_request")
     candidates = state.get("candidates")
     if not isinstance(candidates, list):
-        raise JevContractError("invalid_request", "candidates must be a list")
+        raise JevContractError("invalid_request")
     ids: list[str] = []
     for candidate in candidates:
-        if not isinstance(candidate, Mapping) or not isinstance(candidate.get("candidate_id"), str):
-            raise JevContractError("invalid_request", "candidate id missing")
-        ids.append(candidate["candidate_id"])
+        if not isinstance(candidate, Mapping):
+            raise JevContractError("invalid_request")
+        # `Candidate.to_public_dict()` publishes the id as `id`; accept the
+        # explicit `candidate_id` spelling too so a caller cannot silently
+        # drift from the request the API actually receives.
+        candidate_id = candidate.get("id")
+        if not isinstance(candidate_id, str):
+            candidate_id = candidate.get("candidate_id")
+        if not isinstance(candidate_id, str):
+            raise JevContractError("invalid_request")
+        ids.append(candidate_id)
     return ids
 
 
