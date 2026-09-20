@@ -220,6 +220,29 @@ test('Sharp decode → recognition → gate → real strategy contract', async (
   const state = await analyzeScreenshot(png, c); assert.equal(state.state, 'MOVE', JSON.stringify(state));
   assert.ok(Number.isFinite(decide(state).x));
 });
+test('image: dark warm result/ranking panel is WAITING, never a moving board', async () => {
+  // 2026-09-20 production: the "RANKING / WAITING FOR THE NEXT GAME" panel is a
+  // dark *brown* list. Reading it as the neutral-dark play area produced ~30
+  // phantom pieces and left the bot in board-moving (capture/input errors x11)
+  // until it exited early in the Soren91 corner.
+  const im = image(), c = cal();
+  for (let y = 220; y < 636; y++) for (let x = 450; x < 800; x++) {
+    const i = (y * im.w + x) * 4; im.data[i] = 80; im.data[i + 1] = 40; im.data[i + 2] = 20;
+  }
+  const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();
+  const state = await analyzeScreenshot(png, c);
+  assert.equal(state.state, 'WAITING', JSON.stringify(state));
+  assert.equal(state.pieces.length, 0);
+});
+test('image: a mostly neutral board with a warm strip still reads as a board', async () => {
+  const im = image(), c = cal();
+  for (let y = 220; y < 636; y++) for (let x = 450; x < 540; x++) {
+    const i = (y * im.w + x) * 4; im.data[i] = 80; im.data[i + 1] = 40; im.data[i + 2] = 20;
+  }
+  disc(im, 730, 50, 14);
+  const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();
+  assert.notEqual((await analyzeScreenshot(png, c)).state, 'WAITING');
+});
 test('bounded search benchmark on 80-piece noisy board (reported, not win rate)', () => {
   const ps = Array.from({ length: 80 }, (_, i) => piece(1 + i % 10, -2.7 + i % 9 * 0.65, -4.5 + Math.floor(i / 9) * 0.7));
   const b = board(ps, piece(3), { nextPieces: [piece(3), piece(2), piece(5)], hold: piece(4), canHold: true });

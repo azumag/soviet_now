@@ -442,6 +442,7 @@ function detectGameState(data, width, height, board) {
     const boardHeight = Math.max(1, boardBottom - boardTop);
 
     let boardDark = 0;
+    let boardWarmDark = 0;
     let buttonWarm = 0;
     let spinnerRingGray = 0;
     let spinnerRingSamples = 0;
@@ -470,6 +471,9 @@ function detectGameState(data, width, height, board) {
         const saturation = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
         boardSamples++;
         if (brightness < 120) boardDark++;
+        // The live play area is neutral-dark (grey/blue). A dark but *warm*
+        // (brown/maroon) interior is the result/ranking panel instead.
+        if (brightness < 130 && r > g + 15 && g >= b) boardWarmDark++;
 
         const outerDx = (x - spinnerCenterX) / Math.max(1, spinnerOuterRx);
         const outerDy = (y - spinnerCenterY) / Math.max(1, spinnerOuterRy);
@@ -494,9 +498,19 @@ function detectGameState(data, width, height, board) {
     }
 
     const boardDarkRatio = boardSamples > 0 ? boardDark / boardSamples : 0;
+    const boardWarmDarkRatio = boardSamples > 0 ? boardWarmDark / boardSamples : 0;
     const buttonWarmRatio = buttonSamples > 0 ? buttonWarm / buttonSamples : 0;
     const spinnerRingGrayRatio = spinnerRingSamples > 0 ? spinnerRingGray / spinnerRingSamples : 0;
     const spinnerCoreDarkRatio = spinnerCoreSamples > 0 ? spinnerCoreDark / spinnerCoreSamples : 0;
+
+    // 結果/ランキング画面 ("RANKING"/"WAITING FOR THE NEXT GAME") は中央が濃茶の
+    // 一覧パネルで、実際の盤面 (中立な暗色) より暖色の暗部が支配的になる。これを
+    // 盤面と誤認すると board-moving のまま次ゲーム処理へ進めず、コーナー序盤で
+    // キャプチャ/入力エラーが連続して bot が停止する。実測 0.01-0.02 (盤面) に対し
+    // 0.68 (ランキング) なので、誤検出しない側に余裕を持たせた閾値にする。
+    if (boardWarmDarkRatio > 0.5) {
+      return 'WAITING';
+    }
 
     if (
       boardDarkRatio > 0.70 &&
