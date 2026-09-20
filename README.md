@@ -172,7 +172,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 本番では `IMPROVE_KEEP_MAIN_GAME_RUNNING=1` を指定すると、改善ロック待ち・AI改善・WILDCARD候補評価の間もメインゲームを継続する。各試合は開始時に `strategy.py` と `strategy_helpers` を固定スナップショットへコピーし、その試合中は同じ組を使い続ける。改善結果は共通ロック下で原子的に反映され、次の試合から有効になる。このモードでは soren91 代打とメインゲームの commands 競合を避けるため、改善開始時に代打だけを止める。`0` または未指定なら従来どおり改善中は本線を一時停止する。
 
-改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。MiniMax系の1回の上限は `CODEX_MINIMAX_RUN_TIMEOUT_SEC`（既定300秒）で、最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
+改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
 
 改善jobの開始時には入力batchを `tmp/state/improve_retry_batch.json` へ原子的に退避する。`failed_no_apply` で通常lockが別の回収経路に消えていても、現行strategyと同一hashかつ通常しきい値を満たすbatchだけを復元し、backoff後に再試行する。hashが古いbatchと、通常しきい値未満のpartial batchは復元しない。戦略が実際に変わった場合は退避batchを消し、旧戦略の100試合を新戦略へ混ぜない。
 
@@ -280,7 +280,6 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` | `14` | `escape_ai` seed として許す最小 frontier 到達type |
 | `IMPROVE_KEEP_MAIN_GAME_RUNNING` | `0` | `1` なら改善・backoff・候補評価中も本線ゲームを継続し、試合単位スナップショットで戦略世代を固定する |
 | `RUN_AI_FALLBACK_RETRIES` | `3` | primary失敗後にfallbackモデルを再試行する最大回数 |
-| `CODEX_MINIMAX_RUN_TIMEOUT_SEC` | `300` | MiniMax系の改善AIを1回だけ待つ最大秒数 |
 
 `EARLY_COMP_TOP_GAP_MIN_GAMES=4` は低スコア崩壊の短絡用であり、4試合でロシア(type15)未達というだけでは粛清しない。current が type14 以上の frontier に届いている間は、通常の `MIN_GAMES_BEFORE_REGRESSION` まで見てから回帰判定する。
 
@@ -314,7 +313,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - ファクトチェックの判定範囲は「事実誤認・嘘・でっちあげ」のみ。政治・戦争・軍事の話題は事実に基づく限り通す。ブロック対象は性的コンテンツのみ
 - ファクトチェック出力の書式が崩れても、本文抽出をやり直して極力再生する。最終的に検証出力が使えない場合でも、無音スキップせず元原稿で続行する
 - `theme` / `soviet` / `news` はファクトチェック前に Web 由来の資料も取得して検証AIへ渡す。既定では `fetch_radio_grounding.py` が Wikipedia と Google News RSS を引く
-- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` → `RADIO_FACT_CHECK_QUINARY` の順（既定は x-preview → muse → MiniMax）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
+- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` → `RADIO_FACT_CHECK_QUINARY` の順（既定は muse → DeepSeek → AMD）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
 - WebFetch / WebSearch の権限確認や失敗ログが読み上げ・overlay へ漏れていないかは `monitor_webfetch_failure.sh` で確認する。`tmp/debug`、`tmp/.radio_deferred_queue`、`tmp/.say_queue`、`tmp/state/overlay_events.jsonl` を対象にし、prompt や opencode raw log は監視対象から外す
 - 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。
@@ -701,7 +700,7 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 
 ```bash
 MODEL_PRIMARY="opencode-go:deepseek-v4-flash"           # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="minimax-api:MiniMax-M3"
+MODEL_FALLBACK="opencode-go:deepseek-v4.1-flash"
 MODEL_IMPROVE="opencode:muse-spark-1.3-contributor-free" # 改善primary
 MODEL_FALLBACK_IMPROVE="opencode-go:muse-spark-1.3-contributor" # 改善fallback
 MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
@@ -722,16 +721,16 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `opencode:muse-spark-1.3-contributor-free` | `opencode:muse-spark-1.2-contributor-free` | `amd:DeepSeek-V4-Flash` → `minimax-api:MiniMax-M3` → `opencode-go:omen-alpha` → `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` | `opencode-go:deepseek-v4-flash` |
+| **改善** | `opencode:muse-spark-1.3-contributor-free` | `opencode:muse-spark-1.2-contributor-free` | `amd:DeepSeek-V4-Flash` → `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` | `opencode-go:deepseek-v4-flash` |
 | **ラジオ生成** | 共通チェーン（muse 1.3先行） | - | - | - |
-| **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:omen-alpha` | `opencode-go:muse-spark-1.3-contributor` → `minimax-api:MiniMax-M3` | 元原稿 |
+| **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:deepseek-v4.1-flash` | `amd:DeepSeek-V4-Flash` → `opencode-go:muse-spark-1.3-contributor` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
 | **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
 | **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`amd:<model>` / `minimax-api:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
+`amd:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
 事前調査ラベルでは`webfetch`/`websearch`だけを許可した`soren-research`、本文生成では
 全tool denyの`soren-lite`を使う。`codex:<model>` は移行互換用に残す。
 
@@ -778,7 +777,7 @@ Bのスモーク時点は全て429のため既定では無効。HTTP 200・費�
 codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
 `codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
 VM のDeepSeek V4 Flashは `opencode run --model opencode-go/deepseek-v4-flash` で
-opencode.aiへ接続する。`codex:<model>` はAMD Token FactoryやMiniMaxなど、
+opencode.aiへ接続する。`codex:<model>` はAMD Token Factoryなど、
 Codex CLIで使うモデルだけに指定する。
 
 #### Claude Code の使い方

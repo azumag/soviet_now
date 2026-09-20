@@ -57,7 +57,7 @@ done
 [ ! -s "$OPENCODE_CALLS" ] || { echo "not ok - retired provider invoked CLI"; exit 1; }
 
 [ "$(_ai_resolved_model_from_agent vercel:minimax/minimax-m3-free)" = 'vercel/minimax/minimax-m3-free' ] || { echo "not ok - resolved model"; exit 1; }
-[ "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)" = 300 ] || { echo "not ok - backoff"; exit 1; }
+[ "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)" = 300 ] || { echo "not ok - backoff"; exit 1; }
 [ "$(_ai_agent_spec_valid vercel:minimax/minimax-m3-free; echo $?)" = 0 ] || { echo "not ok - enabled spec"; exit 1; }
 VERCEL_FREE_AGENTS=""
 _ai_agent_spec_valid vercel:minimax/minimax-m3-free

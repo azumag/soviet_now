@@ -50,8 +50,8 @@ MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
 # Aは入出力単価$0かつHTTP 200/本文ありを確認したモデル。Bは月$5 Free Tier対象の
 # 通常単価モデルで、カタログ表示とAPIの対象認識（RestrictedModelsErrorではなく429）を確認。
-# Cは登録せず、A→Bの順で使う。
-VERCEL_CATEGORY_A_AGENTS="${VERCEL_CATEGORY_A_AGENTS-vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin}"
+# Cは登録せず、A→Bの順で使う。MiniMax M3は品質上の理由で候補から外す。
+VERCEL_CATEGORY_A_AGENTS="${VERCEL_CATEGORY_A_AGENTS-vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin}"
 # Bは月$5クレジットを消費するモデル。2026-09-05にGateway HTTP 200を確認し、
 # Aの後ろへ低単価順で置く。Free Tierの短期429時は300秒backoffして次候補へ進む。
 VERCEL_CATEGORY_B_AGENTS="${VERCEL_CATEGORY_B_AGENTS-vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro}"
@@ -197,7 +197,7 @@ PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
 # クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 deepseek-v4.1-flash:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 deepseek-v4.1-flash:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
