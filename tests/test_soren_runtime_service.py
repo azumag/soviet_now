@@ -134,6 +134,15 @@ esac
         self.assertIn("exit 0", handler)
         self.assertNotIn("exit 130", handler)
 
+    def test_chat_respawn_refreshes_managed_classifier_environment(self) -> None:
+        source = (REPO_ROOT / "start_all.sh").read_text(encoding="utf-8")
+        refresh = source.split("_refresh_chat_worker_env() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("COMMENT_CLASSIFIER_BACKEND", refresh)
+        self.assertIn("TYPESAFE_API_KEY", refresh)
+        self.assertIn('if [ "$name" = "chat_worker" ]; then', source)
+        self.assertIn("_refresh_chat_worker_env", source)
+        self.assertIn("exec $cmd", source)
+
     def test_installer_requires_explicit_migration_confirmation(self) -> None:
         result = subprocess.run(
             ["bash", str(INSTALLER), "--install"],
