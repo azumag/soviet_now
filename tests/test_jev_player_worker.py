@@ -1,5 +1,7 @@
+import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -111,6 +113,21 @@ class WorkerTransportTests(unittest.TestCase):
                 20,
             )
         self.assertEqual(caught.exception.status, "timeout")
+
+    def test_child_runs_under_isolated_python(self):
+        # `python -I` does not put the script directory on sys.path (3.11+), so
+        # the child must bootstrap its sibling import or it exits non-zero and
+        # the parent reports worker_exit.
+        child = ROOT / "lib" / "jev_player_worker.py"
+        completed = subprocess.run(
+            [sys.executable, "-I", str(child), "--jev-http-worker"],
+            input=b"{}",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+        self.assertEqual(json.loads(completed.stdout)["status"], "auth_error")
 
     def test_player_is_disabled_by_default_without_transport(self):
         player = JevPlayer(JevPlayerConfig())
