@@ -35,6 +35,11 @@ if grep -q '見出しの文言をそのまま音読せず' "$NEWS_PROMPT"; then
 else
 	not_ok 'unused radio_news template follows the same reconstruction policy'
 fi
+if grep -q '読み上げ本文は日本語のみ' "$CORNERS" "$NEWS_PROMPT"; then
+	ok 'news prompts forbid ordinary English words in the spoken body'
+else
+	not_ok 'news prompts forbid ordinary English words in the spoken body'
+fi
 if grep -q 'タイトルを日本語で1文だけ読み上げること\|ニュース本文に入る前に' "$CORNERS" "$NEWS_PROMPT"; then
 	not_ok 'old read-the-headline instruction is gone'
 else
@@ -76,9 +81,12 @@ fi
 
 # --- 品質チェック: 外国語混入検出（英語・簡体字中国語） ---
 # 日本語の読み上げに英文・英単語・簡体字が混ざると、日本語TTSが日本語の音素で
-# 誤読し、聞き取れない読み上げになる。短い固有名詞（NATO等）は許容する。
+# 誤読し、聞き取れない読み上げになる。短い固有名詞（NATO等）は許容するが、
+# 日本語の中に少数だけ混ざる普通の英単語も再生成へ回す。
 ja_normal=$'こんばんは、現在時刻は21時です。本日のニュースです。ロシアの無人機がウクライナ西部、ポーランド国境に近い地域を攻撃したという話です。ポーランド国境はNATO圏との境界でもあり、外交官団を乗せた列車が通過した直後だったという点が注目されています。ロシアはエネルギーインフラへの攻撃を続けており、EU諸国も対応を協議しています。事実関係を確認しながら、今後の展開を見ていきたいと思います。'
 word_salad=$'こんばんは、現在時刻は21時です。ニュースを一つ。ロシアの無人機がウクライナ西部を攻撃したという話です。外交官たちがキーウから戻る列車で数分の違いで巻き込まれるところでした。ここから先は推測になりますが、合意がある apis aside、実際には戦闘が続いているという現実です。直接的に非難する hard な声明もあれば、事実確認が必要と terraceamine remain ものもあるでしょう。協議の場での heavy な論拠になります。歴史的に見ると、外交官の安全という問題は uppet に複雑です。この境界で外交官を危険にさらすことは、 escalate のリスクを computed に高める行為です。'
+sparse_english=$'こんばんは、現在時刻は23時です。政府の対応が誰の利益をserveしているのかが問われています。これは一時的なperiodではなく、制度の問題です。'
+sparse_english_jiji=$'時事ニュースです。今回の判断には明確なstanceがあり、旧guardの影響も残っています。国際情勢への波及も慎重に見ておく必要があります。'
 english_run=$'新しい橋が開通しました。A bridge is more than just a structure. It is a place where people live. 地元の人々は思い出を語っています。長年親しまれた旧橋が取り壊され、近代的な新橋に生まれ変わりました。'
 simp_mix=$'今回の選挙の話です。这次の結果は非常に重要で、支持基盤を追っていくと保守と護憲の対立が見えます。投票率の时间帯ごとの変化も注目されます。选择の判断は难しいですが、现场の空気は伝わってきます。それでも住民の関心は高いままだと思います。'
 
@@ -94,6 +102,20 @@ if [ "$verdict" = "FAIL:mixed_language" ]; then
 	ok 'English words mixed into Japanese are detected'
 else
 	not_ok "English words mixed into Japanese are detected (got: ${verdict})"
+fi
+
+verdict=$(_radio_quality_check "$sparse_english" "news")
+if [ "$verdict" = "FAIL:mixed_language" ]; then
+	ok 'a few ordinary English words mixed into Japanese news are detected'
+else
+	not_ok "a few ordinary English words mixed into Japanese news are detected (got: ${verdict})"
+fi
+
+verdict=$(_radio_quality_check "$sparse_english_jiji" "jiji")
+if [ "$verdict" = "FAIL:mixed_language" ]; then
+	ok 'a few ordinary English words mixed into Japanese current affairs are detected'
+else
+	not_ok "a few ordinary English words mixed into Japanese current affairs are detected (got: ${verdict})"
 fi
 
 verdict=$(_radio_quality_check "$english_run" "news")
