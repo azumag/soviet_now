@@ -11,12 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lib.jev_player import JevPlayer, JevPlayerConfig  # noqa: E402
-from lib.jev_player_contract import MODEL, dumps  # noqa: E402
+from lib.jev_player_contract import MODEL, JevContractError, dumps  # noqa: E402
 from lib.jev_player_worker import (  # noqa: E402
     ENDPOINT,
     JevWorkerError,
     WorkerConfig,
     WorkerResult,
+    _request_candidate_ids,
     bounded_process,
     http_worker,
 )
@@ -31,7 +32,10 @@ def request():
         "rules_version": "sorengame-v1",
         "model": MODEL,
         "questions": {"drop_position": {"type": "choice", "candidate_ids": IDS}},
-        "state": {"observation": {}, "candidates": [{"candidate_id": item} for item in IDS]},
+        "state": {
+            "observation": {},
+            "candidates": [{"id": item, "x": 0.0, "prediction": {}} for item in IDS],
+        },
     }
 
 
@@ -104,6 +108,21 @@ class WorkerTransportTests(unittest.TestCase):
         opener = FakeOpener(FakeResponse(b"", status=429))
         with patch("lib.jev_player_worker.urllib.request.build_opener", return_value=opener):
             self.assertEqual(http_worker(request(), "key", 500).status, "rate_limited")
+
+    def test_request_candidate_ids_reads_the_public_candidate_shape(self):
+        # `Candidate.to_public_dict()` publishes the id as `id`; the worker must
+        # read the same key the API receives or every real request fails before
+        # it is even sent.
+        self.assertEqual(_request_candidate_ids(request()), IDS)
+
+    def test_request_candidate_ids_accepts_the_explicit_candidate_id_spelling(self):
+        payload = {"state": {"candidates": [{"candidate_id": "c00"}, {"candidate_id": "c01"}]}}
+        self.assertEqual(_request_candidate_ids(payload), ["c00", "c01"])
+
+    def test_request_candidate_ids_fails_closed_with_a_contract_error(self):
+        with self.assertRaises(JevContractError) as caught:
+            _request_candidate_ids({"state": {"candidates": [{"x": 0.0}]}})
+        self.assertEqual(caught.exception.reason, "invalid_request")
 
     def test_bounded_process_kills_and_reaps_timeout(self):
         with self.assertRaises(JevWorkerError) as caught:
