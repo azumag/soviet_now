@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 const STAGES = ['capture', 'analyze', 'ranking', 'decide', 'input', 'cooldown', 'poll'];
 export const DROP_PROFILE_STAGES = [...STAGES, 'holdInput', 'overlap', 'unattributed'];
+export const CAPTURE_PROFILE_STAGES = ['geometryBefore', 'screenshot', 'imageValidate', 'geometryAfter'];
 const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-frame',
   'preview-changed', 'board-moving', 'stable', 'stable-slow-advance', 'non-move', 'other'];
 const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
@@ -88,7 +89,11 @@ export class LoopMetrics {
     const token = { stage, inputMs: 0, inputBucket: null };
     this.profileActive.add(token);
     if (this.profileOpen) this.profileOpen.phaseCalls[stage]++;
-    try { return await action(); }
+    try {
+      const result = await action();
+      if (stage === 'capture') this._captureStages(result?.captureStageMs);
+      return result;
+    }
     finally {
       const end = this.now();
       this._profileSettle(end);
@@ -96,6 +101,17 @@ export class LoopMetrics {
       if (stage === 'input') this.profileLastInput = token;
       this.stages[stage] += Math.max(0, end - start);
     }
+  }
+  _captureStages(value) {
+    const bucket = this.profileOpen;
+    if (!bucket || !value || typeof value !== 'object') return;
+    const parsed = {};
+    for (const key of CAPTURE_PROFILE_STAGES) {
+      const n = value[key];
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return;
+      parsed[key] = n;
+    }
+    for (const key of CAPTURE_PROFILE_STAGES) bucket.captureStageMs[key] += parsed[key];
   }
   observe(state) {
     this.observations++;
@@ -151,11 +167,12 @@ export class LoopMetrics {
     const bucket = this.profileOpen;
     if (bucket) {
       const stageMs = Object.fromEntries(DROP_PROFILE_STAGES.map(s => [s, rounded(bucket.stageMs[s])]));
+      const captureStageMs = Object.fromEntries(CAPTURE_PROFILE_STAGES.map(s => [s, rounded(bucket.captureStageMs[s])]));
       const durationMs = rounded(Math.max(0, now - bucket.start));
       const accountingErrorMs = rounded(durationMs - Object.values(stageMs).reduce((a, b) => a + b, 0));
       this.profileRecords.push({
         sample: ++this.profileTotal, game: this.game, fromTurn: bucket.fromTurn, toTurn: this.turn,
-        endedAtMs: Date.now(), durationMs, stageMs, phaseCalls: { ...bucket.phaseCalls },
+        endedAtMs: Date.now(), durationMs, stageMs, captureStageMs, phaseCalls: { ...bucket.phaseCalls },
         observations: bucket.observations, holds: bucket.holds, errors: bucket.errors,
         reasonCounts: { ...bucket.reasonCounts },
         dropAcceptance: {
@@ -174,7 +191,8 @@ export class LoopMetrics {
     }
     this.profileOpen = {
       start: now, cursor: now, fromTurn: this.turn, clockValid: true,
-      stageMs: zeros(DROP_PROFILE_STAGES), phaseCalls: zeros([...STAGES, 'holdInput']),
+      stageMs: zeros(DROP_PROFILE_STAGES), captureStageMs: zeros(CAPTURE_PROFILE_STAGES),
+      phaseCalls: zeros([...STAGES, 'holdInput']),
       observations: 0, holds: 0, errors: 0, reasonCounts: zeros(REASONS),
       dropAcceptance: {
         confirmed: false, confirmLatencyMs: null, confirmObservation: null, confirmReason: null,
@@ -217,7 +235,8 @@ export class LoopMetrics {
         // Retain completed intervals across rounds; a process restart starts a
         // new session. Snapshot callbacks cannot mutate the internal ring.
         records: this.profileRecords.map(record => ({ ...record,
-          stageMs: { ...record.stageMs }, phaseCalls: { ...record.phaseCalls },
+          stageMs: { ...record.stageMs }, captureStageMs: { ...record.captureStageMs },
+          phaseCalls: { ...record.phaseCalls },
           reasonCounts: { ...record.reasonCounts },
           dropAcceptance: { ...record.dropAcceptance,
             transitionCounts: { ...record.dropAcceptance.transitionCounts } } })),

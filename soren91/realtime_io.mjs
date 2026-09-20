@@ -140,16 +140,21 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
   return {
     async capture(page, { timeoutMs = 3000 } = {}) {
       return run(page, timeoutMs, async (session, check, remaining) => {
+        const geometryBeforeStartedAt = now();
         const before = await geometry(session, check);
-        const capturedAt = now(); // Conservative age: request start, NOT transfer completion.
+        const geometryBeforeEndedAt = now();
+        const capturedAt = geometryBeforeEndedAt; // Preserve existing freshness semantics.
         // Page-level clipping skips locator actionability/scroll/stability waits.
         // Use Playwright's own screenshot session: raw capture on a NEW CDP
         // session can reset DPR emulation belonging to the host's session.
+        const screenshotStartedAt = capturedAt;
         const buffer = await page.screenshot({
           type: 'png', scale: 'css', timeout: remaining(),
           clip: { x: before.x, y: before.y, width: before.width, height: before.height },
         });
         check();
+        const screenshotEndedAt = now();
+        const imageValidateStartedAt = screenshotEndedAt;
         if (!Buffer.isBuffer(buffer) || buffer.length > 24 * 1024 * 1024) throw new Error('capture-invalid-image');
         const size = pngSize(buffer);
         // Attached browsers may not expose their native DPR in context options.
@@ -160,9 +165,20 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         if ((!matchesScale(1) && !matchesScale(before.dpr)) || size.width * size.height > 16_777_216) {
           throw new Error('capture-pixel-scale-mismatch');
         }
+        const imageValidateEndedAt = now();
+        const geometryAfterStartedAt = imageValidateEndedAt;
         const after = await geometry(session, check);
+        const geometryAfterEndedAt = now();
         if (!sameGeometry(before, after)) throw new Error('capture-geometry-changed');
-        return { buffer, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size };
+        return {
+          buffer, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
+          captureStageMs: {
+            geometryBefore: Math.max(0, geometryBeforeEndedAt - geometryBeforeStartedAt),
+            screenshot: Math.max(0, screenshotEndedAt - screenshotStartedAt),
+            imageValidate: Math.max(0, imageValidateEndedAt - imageValidateStartedAt),
+            geometryAfter: Math.max(0, geometryAfterEndedAt - geometryAfterStartedAt),
+          },
+        };
       });
     },
     async validateInput(page, frame, calibration, { timeoutMs = 1500, maxAgeMs = null } = {}) {
