@@ -132,6 +132,18 @@ class AiGenerateBackoffTests(unittest.TestCase):
         self.assertNotIn("_ai_backoff_set", quality_retry)
         self.assertIn("モデルbackoffなし", quality_retry)
 
+    def test_mixed_language_repairs_local_span_before_full_regeneration(self) -> None:
+        source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
+        start = source.index("品質チェック失敗")
+        end = source.index("done # attempt loop end", start)
+        quality_retry = source[start:end]
+        self.assertIn('if [ "$_qr" = "FAIL:mixed_language" ]', quality_retry)
+        self.assertIn("_radio_repair_mixed_language", quality_retry)
+        self.assertLess(
+            quality_retry.index("_radio_repair_mixed_language"),
+            quality_retry.index("_radio_build_rewrite_prompt"),
+        )
+
     def test_comment_global_backoff_is_only_set_for_rate_limit_outcome(self) -> None:
         source = (REPO_ROOT / "broadcast/comment.sh").read_text(encoding="utf-8")
         start = source.index("_comment_handle_generation_failure()")
@@ -385,7 +397,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:amd-token-factory-deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:openrouter/free RADIO)"
-            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:inclusionai/ling-3.0-flash-fin RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
