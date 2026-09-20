@@ -564,6 +564,50 @@ def ab_gate_schedule(env_path=None):
     return tuple(sorted(looks)), max_blocks
 
 
+def ab_gate_schedule_from_state(state, env_path=None):
+    """Resolve the dashboard schedule from the same frozen contract as the gate.
+
+    Versioned experiments freeze their decision rule in ab_state.json. Once a
+    state declares rule version >= 2, live .env changes must not alter the
+    dashboard's remaining-games display. Legacy states intentionally keep the
+    historical .env behavior.
+    """
+    if not isinstance(state, dict):
+        return ab_gate_schedule(env_path)
+    rule = state.get("decision_rule")
+    try:
+        version = int(
+            state.get("decision_rule_version")
+            or ((rule or {}).get("version") if isinstance(rule, dict) else 0)
+            or 0
+        )
+    except (TypeError, ValueError):
+        version = 0
+    if version < 2:
+        return ab_gate_schedule(env_path)
+
+    # A versioned state is fail-closed against live config drift: missing or
+    # malformed frozen fields fall back to code defaults, never to .env.
+    looks = AB_DEFAULT_LOOKS
+    max_blocks = AB_DEFAULT_MAX_BLOCKS
+    if isinstance(rule, dict):
+        raw_looks = rule.get("looks")
+        if raw_looks is not None:
+            try:
+                parsed = tuple(int(x) for x in raw_looks)
+            except (TypeError, ValueError):
+                parsed = ()
+            if parsed:
+                looks = parsed
+        raw_max = rule.get("max_blocks")
+        if raw_max is not None:
+            try:
+                max_blocks = int(raw_max)
+            except (TypeError, ValueError):
+                pass
+    return tuple(sorted(looks)), max_blocks
+
+
 _AB_REPORT_UNSET = object()
 _AB_REPORT = _AB_REPORT_UNSET
 
@@ -805,7 +849,7 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     # 残り試合数。ADOPT は look でしか出ないので「次の採用判定まで」と、
     # 強制決着 (最終 look = max_blocks) までの「最長」を出す。害/無益による
     # 早期打ち切りは毎試合判定されるため、これは上限であって確定値ではない。
-    looks, max_blocks = ab_gate_schedule(env_path)
+    looks, max_blocks = ab_gate_schedule_from_state(state, env_path)
     done_blocks = ab_complete_blocks(rows, pattern, primary)
     if done_blocks is None:
         next_look = None

@@ -690,6 +690,50 @@ class AbRemainingGamesTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_versioned_state_uses_frozen_rule_instead_of_env(self):
+        """v2 display follows state.decision_rule even if live .env drifts."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=2,3\nAB_GATE_MAX_BLOCKS=4\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": 2,
+                "decision_rule": {"version": 2, "looks": [10, 20], "max_blocks": 20},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], (10, 20))
+            self.assertEqual(ab["max_blocks"], 20)
+            self.assertEqual(ab["next_look"], 10)
+            self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_versioned_invalid_fields_use_defaults_not_env(self):
+        """Broken v2 frozen fields use code defaults, never mutable .env."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=2,3\nAB_GATE_MAX_BLOCKS=4\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": 2,
+                "decision_rule": {"version": 2, "looks": ["bad"]},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], tuple(sd.AB_DEFAULT_LOOKS))
+            self.assertEqual(ab["max_blocks"], sd.AB_DEFAULT_MAX_BLOCKS)
+            self.assertEqual(ab["next_look"], 19)
+            self.assertEqual(ab["games_to_next_look"], (19 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (37 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
     def test_env_last_match_wins_and_quotes_stripped(self):
         def _test():
             state, games, meta, env = self._write_ab(
