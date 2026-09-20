@@ -1069,7 +1069,7 @@ fi
 # requiring a restart of the shared streaming/overlay services.
 _remove_retired_minimax_agents() {
 	local input="${1:-}" output="" token normalized
-	local -a tokens
+	local -a tokens=()
 	local old_ifs="$IFS"
 	IFS=','
 	read -r -a tokens <<< "$input"
