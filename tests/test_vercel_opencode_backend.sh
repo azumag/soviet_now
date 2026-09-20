@@ -34,6 +34,23 @@ export OPENCODE_CALLS="$TMP/calls"
 # shellcheck disable=SC1091
 . "$ROOT/lib/ai_generate.sh"
 
+# A stale supervisor environment must not re-enable the retired provider on a
+# worker reload.  core/config.sh is the shared fail-closed boundary.
+(
+  AI_COMMON_AGENTS='opencode:good,vercel:minimax/minimax-m3-free,opencode:tail'
+  RADIO_AGENTS='codex:minimax-m3,opencode:good'
+  MINIMAX_API_KEY='redacted-test'
+  MINIMAX_BASE_URL='https://example.invalid'
+  MINIMAX_MODEL='MiniMax-test'
+  export AI_COMMON_AGENTS RADIO_AGENTS MINIMAX_API_KEY MINIMAX_BASE_URL MINIMAX_MODEL
+  . "$ROOT/core/config.sh"
+  case "$AI_COMMON_AGENTS|$RADIO_AGENTS|${MINIMAX_API_KEY-}|${MINIMAX_BASE_URL-}|${MINIMAX_MODEL-}" in
+    *minimax*|*MINIMAX*) echo "not ok - retired provider survived config reload"; exit 1 ;;
+  esac
+  [ "$AI_COMMON_AGENTS" = 'opencode:good,opencode:tail' ] || { echo "not ok - common chain was not sanitized"; exit 1; }
+  [ "$RADIO_AGENTS" = 'opencode:good' ] || { echo "not ok - radio chain was not sanitized"; exit 1; }
+)
+
 result=$(_ai_call_opencode_unqueued TEST vercel:minimax/minimax-m3-free "$TMP/prompt" 10)
 [ "$result" = "VERCEL_OK" ] || { echo "not ok - M3 result"; exit 1; }
 grep -qx 'run --agent soren-lite --model vercel/minimax/minimax-m3-free test prompt' "$OPENCODE_CALLS" || { echo "not ok - M3 mapping"; exit 1; }
