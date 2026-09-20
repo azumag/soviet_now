@@ -884,6 +884,180 @@ _radio_parse_output_to_files() {
 		"$body_file" "$summary_file" "$selected_news_file"
 }
 
+_radio_mixed_language_helper() {
+	local root="${ELOOP_LIB_DIR:-}"
+	if [ -z "$root" ]; then
+		root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+	fi
+	printf '%s/lib/radio_mixed_language.py' "$root"
+}
+
+_radio_mixed_language_spans() {
+	local text_file="$1" corner_name="${2:-}"
+	local helper
+	helper=$(_radio_mixed_language_helper)
+	[ -r "$helper" ] || return 1
+	python3 "$helper" spans \
+		--text-file "$text_file" \
+		--corner "$corner_name" \
+		--allowed-latin "${RADIO_QUALITY_ALLOWED_LATIN_WORDS:-}" \
+		--format tsv \
+		--reverse
+}
+
+_radio_mixed_language_b64_decode() {
+	printf '%s' "$1" | python3 -c \
+		'import base64,sys; sys.stdout.write(base64.urlsafe_b64decode(sys.stdin.read().encode()).decode("utf-8"))'
+}
+
+_radio_is_valid_mixed_language_repair_candidate() {
+	local candidate="$1"
+	[ -n "$candidate" ] || return 1
+	_contains_provider_error_text "$candidate" && return 1
+	# 局所置換の返答に説明・コードフェンス・メタ見出しを混ぜさせない。
+	if printf '%s' "$candidate" | grep -Eiq \
+		'(^|[[:space:]])(```|修正後[：:]|置換後[：:]|説明[：:]|以下の?文|Here is|I have |The replacement)' ; then
+		return 1
+	fi
+	[ "${#candidate}" -le 1600 ] || return 1
+	printf '%s' "$candidate" | python3 -c \
+		'import re,sys; text=sys.stdin.read().strip(); sys.exit(0 if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text) else 1)'
+}
+
+# _radio_repair_mixed_language <talk_body> <corner_name> <agent_list> [metadata_file]
+#
+# mixed_language は原稿全体を捨てず、検出された文/行だけを現行のAIチェーンで
+# 置換する。元の数値・URLを保持できない返答は受け入れず、呼び出し側が必要なら
+# 既存の全文再生成へフォールバックする。
+_radio_repair_mixed_language() {
+	local talk_body="$1" corner_name="${2:-}" agent_list="${3:-}" metadata_file="${4:-}"
+	local helper tmp_dir body_file spans_file current_file next_file
+	local max_spans max_chars span_count=0 total_chars=0 repair_agents=""
+	helper=$(_radio_mixed_language_helper)
+	[ -r "$helper" ] || return 2
+
+	# config.sh でも除去するが、環境変数を直接上書きした場合にも fail-closed にする。
+	if declare -f _remove_retired_minimax_agents >/dev/null 2>&1; then
+		repair_agents=$(_remove_retired_minimax_agents "$agent_list")
+	else
+		repair_agents="$agent_list"
+	fi
+	[ -n "$repair_agents" ] || return 2
+
+	max_spans="${RADIO_QUALITY_REPAIR_MAX_SPANS:-3}"
+	case "$max_spans" in ''|*[!0-9]*) max_spans=3 ;; esac
+	max_chars="${RADIO_QUALITY_REPAIR_MAX_CHARS:-800}"
+	case "$max_chars" in ''|*[!0-9]*) max_chars=800 ;; esac
+
+	tmp_dir=$(mktemp -d /tmp/eloop_radio_mixed_repair_XXXXXXXX)
+	body_file="$tmp_dir/body.txt"
+	spans_file="$tmp_dir/spans.tsv"
+	current_file="$tmp_dir/current.txt"
+	printf '%s' "$talk_body" >"$body_file"
+	_radio_mixed_language_spans "$body_file" "$corner_name" >"$spans_file" 2>/dev/null || {
+		rm -rf "$tmp_dir"
+		return 2
+	}
+	[ -s "$spans_file" ] || {
+		rm -rf "$tmp_dir"
+		return 2
+	}
+	cp "$body_file" "$current_file"
+
+	local start end encoded_segment encoded_before encoded_after segment before after
+	local prompt_file replacement_file original_segment_file last_agent_file replacement repair_agent
+	local repair_agents_used=""
+	while IFS=$'\t' read -r start end encoded_segment encoded_before encoded_after; do
+		[ -n "${start:-}" ] && [ -n "${end:-}" ] || continue
+		segment=$(_radio_mixed_language_b64_decode "$encoded_segment")
+		before=$(_radio_mixed_language_b64_decode "$encoded_before")
+		after=$(_radio_mixed_language_b64_decode "$encoded_after")
+
+		if [ "$span_count" -ge "$max_spans" ] || [ $((total_chars + ${#segment})) -gt "$max_chars" ]; then
+			[ -n "$metadata_file" ] && printf 'status=too_many_spans\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 2
+		fi
+
+		prompt_file="$tmp_dir/prompt_${span_count}.txt"
+		cat >"$prompt_file" <<REPAIR_PROMPT
+あなたは日本語ラジオ原稿の局所修正担当です。
+本文全体を再生成せず、【修正対象】の文だけを自然な日本語に置き換えてください。
+
+厳守すること:
+- 出力は置き換え後の文だけ。説明、見出し、引用符、コードフェンスは付けない。
+- 元の事実、固有名詞、数値、日時、URLを変更・追加しない。
+- 英文や簡体字中国語は、意味を保った自然な日本語（必要ならカタカナ）に直す。
+- 前後の文脈とつながる語尾・時制を保つ。
+
+【前の文脈】
+${before}
+
+【修正対象】
+${segment}
+
+【後の文脈】
+${after}
+REPAIR_PROMPT
+
+		last_agent_file="$tmp_dir/last_agent_${span_count}.txt"
+		replacement=$(ai_generate_list \
+			"RADIO:${corner_name}:mixed_repair" \
+			"$prompt_file" \
+			"$repair_agents" \
+			"" \
+			"_radio_is_valid_mixed_language_repair_candidate" \
+			"$last_agent_file") || replacement=""
+		replacement=$(printf '%s' "$replacement" | _ai_guard_model_output)
+		if ! _radio_is_valid_mixed_language_repair_candidate "$replacement"; then
+			[ -n "$metadata_file" ] && printf 'status=invalid_replacement\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+
+		replacement_file="$tmp_dir/replacement_${span_count}.txt"
+		original_segment_file="$tmp_dir/original_${span_count}.txt"
+		printf '%s' "$replacement" >"$replacement_file"
+		printf '%s' "$segment" >"$original_segment_file"
+		if ! python3 "$helper" validate \
+			--original-file "$original_segment_file" \
+			--replacement-file "$replacement_file" 2>/dev/null; then
+			[ -n "$metadata_file" ] && printf 'status=changed_protected_token\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+
+		next_file="$tmp_dir/next_${span_count}.txt"
+		if ! python3 "$helper" replace \
+			--text-file "$current_file" \
+			--start "$start" \
+			--end "$end" \
+			--replacement-file "$replacement_file" \
+			--output-file "$next_file" 2>/dev/null; then
+			[ -n "$metadata_file" ] && printf 'status=replace_failed\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+		mv "$next_file" "$current_file"
+		repair_agent=$(cat "$last_agent_file" 2>/dev/null || true)
+		[ -n "$repair_agent" ] && repair_agents_used="${repair_agents_used:+${repair_agents_used},}${repair_agent}"
+		span_count=$((span_count + 1))
+		total_chars=$((total_chars + ${#segment}))
+	done <"$spans_file"
+
+	[ "$span_count" -gt 0 ] || {
+		[ -n "$metadata_file" ] && printf 'status=no_spans\nspans=0\n' >"$metadata_file"
+		rm -rf "$tmp_dir"
+		return 2
+	}
+	if [ -n "$metadata_file" ]; then
+		printf 'status=ok\nspans=%s\nchars=%s\nagents=%s\n' \
+			"$span_count" "$total_chars" "${repair_agents_used:-unknown}" >"$metadata_file"
+	fi
+	cat "$current_file"
+	rm -rf "$tmp_dir"
+}
+
 # ai_generate_list の候補判定。非空でも、実際の読み上げ本文へ変換した結果が
 # 短い・メタ出力・プロバイダエラーなら失敗として次モデルへ進める。
 _radio_is_valid_generation_candidate() {
@@ -1279,6 +1453,7 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_prepass_agent="" radio_prepass_agents="" radio_agents_list=""
+	local radio_repair_agents=""
 	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
 	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
@@ -1294,6 +1469,13 @@ _radio_generate_and_play() {
 		# 後方互換 (soren91モード向け)
 		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode-go:deepseek-v4-flash}"
 		radio_second_agent="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
+	fi
+	if [ -n "${RADIO_QUALITY_REPAIR_AGENTS:-}" ]; then
+		radio_repair_agents="$RADIO_QUALITY_REPAIR_AGENTS"
+	elif [ "$host_mode_generated" = "soren91" ]; then
+		radio_repair_agents="${radio_primary_agent},${radio_second_agent}"
+	else
+		radio_repair_agents="$radio_agents_list"
 	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
@@ -1511,7 +1693,7 @@ PREPASS_APPEND
 
 		# 品質チェック（中国語/非日本語/無限ループ/文字化け/素材の丸読み）
 		if [ "${RADIO_QUALITY_CHECK_ENABLED:-1}" = "1" ]; then
-			local _qr
+			local _qr _repaired_body _repair_meta _post_repair_qr
 			_qr=$(_radio_quality_check "$talk_body" "$corner_name" "${RADIO_QUALITY_SOURCE_MATERIAL:-}")
 			if [ "$_qr" = "OK" ]; then
 				_quality_ok=true
@@ -1519,6 +1701,34 @@ PREPASS_APPEND
 			else
 				_quality_fail_reason="$_qr"
 				log "[RADIO:${corner_name}] 品質チェック失敗 attempt=${_radio_attempt}/${_radio_max_attempts}: ${_qr}"
+				if [ "$_qr" = "FAIL:mixed_language" ]; then
+					# 外国語混入だけは原稿全体を捨てず、検出された文/行を局所修正する。
+					# 局所修正が対象過多・不正返答・保護トークン変更になった場合だけ、
+					# 下の既存全文再生成へフォールバックする。
+					_repair_meta=$(mktemp /tmp/eloop_radio_mixed_repair_meta_XXXXXXXX)
+					if _repaired_body=$(_radio_repair_mixed_language \
+						"$talk_body" "$corner_name" "$radio_repair_agents" "$_repair_meta"); then
+						_repaired_body=$(printf '%s' "$_repaired_body" | _sanitize_onair_text)
+						if [ "${#_repaired_body}" -lt 100 ]; then
+							_post_repair_qr="FAIL:body_too_short"
+						else
+							_post_repair_qr=$(_radio_quality_check \
+								"$_repaired_body" "$corner_name" "${RADIO_QUALITY_SOURCE_MATERIAL:-}")
+						fi
+						if [ "$_post_repair_qr" = "OK" ]; then
+							talk_body="$_repaired_body"
+							_quality_ok=true
+							log "[RADIO:${corner_name}] mixed_languageを局所修正で回復 ($(tr '\n' ' ' <"$_repair_meta" 2>/dev/null))"
+							rm -f "$_repair_meta" 2>/dev/null || true
+							break
+						fi
+						_quality_fail_reason="$_post_repair_qr"
+						log "[RADIO:${corner_name}] mixed_language局所修正後も品質失敗: ${_post_repair_qr} → 全文再生成へfallback"
+					else
+						log "[RADIO:${corner_name}] mixed_language局所修正不可 ($(tr '\n' ' ' <"$_repair_meta" 2>/dev/null)) → 全文再生成へfallback"
+					fi
+					rm -f "$_repair_meta" 2>/dev/null || true
+				fi
 				if [ "$_radio_attempt" -lt "$_radio_max_attempts" ]; then
 					if [ -n "$provider_used" ]; then
 						# 品質/形式不正はモデルのレート制限ではないため、モデル別
