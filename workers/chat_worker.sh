@@ -216,13 +216,14 @@ _process_clip_queue() {
 		[ -f "$queue_file" ] || continue
 
 		# JSON パース
-		local event_msg game_id delay
+		local event_msg game_id delay event_kind
 		eval "$(python3 -c "
 import json, sys, shlex
 d = json.load(open(sys.argv[1]))
 print(f'event_msg={shlex.quote(d.get(\"event_msg\",\"\"))}')
 print(f'game_id={shlex.quote(d.get(\"game_id\",\"\"))}')
 print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
+print(f'event_kind={shlex.quote(d.get(\"event_kind\",\"generic\"))}')
 " "$queue_file" 2>/dev/null)" || {
 			_log "WARN: clip parse failed: $(basename "$queue_file") → skip"
 			mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
@@ -251,7 +252,7 @@ print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
 		fi
 
 		_log "clip creating: ${event_msg} (game=${game_id:-?})"
-		./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
+		./twitch_clip.sh "$event_msg" "$event_kind" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
 
 		mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
 	done

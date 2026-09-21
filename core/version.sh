@@ -74,7 +74,7 @@ CLIP_QUEUE_DIR="tmp/clip_queue"
 mkdir -p "$CLIP_QUEUE_DIR" 2>/dev/null || true
 _TWITCH_CLIP_GAME=""
 _create_twitch_clip() {
-	local event_msg="$1" game_id="${2:-}" delay="${3:-0}"
+	local event_msg="$1" game_id="${2:-}" delay="${3:-0}" event_kind="${4:-generic}"
 	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
 	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
 	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
@@ -87,12 +87,13 @@ _create_twitch_clip() {
 	local ts
 	ts=$(date '+%s%N' 2>/dev/null || date '+%s')
 	local queue_file="${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.json"
-	printf '{"event_msg":"%s","game_id":"%s","delay":%s}\n' \
+	printf '{"event_msg":"%s","game_id":"%s","delay":%s,"event_kind":"%s"}\n' \
 		"$(printf '%s' "$event_msg" | sed 's/"/\\"/g')" \
 		"${game_id:-}" \
 		"${delay:-0}" \
+		"${event_kind}" \
 		> "$queue_file"
-	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s)"
+	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s, kind=${event_kind})"
 }
 
 archive_history() {

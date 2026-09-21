@@ -16,6 +16,7 @@ urllib だけで XRPC を叩くので、Mac の system python でも doci の ve
 使い方:
   ./tools/bluesky_post.py --podcast --date 20260825   # 公開済みポッドキャストを告知
   ./tools/bluesky_post.py --text "本文" --link https://... --thumb path.png
+  ./tools/bluesky_post.py --text "本文" --link https://... --clip-id <twitch-id>
   ./tools/bluesky_post.py --podcast --dry-run         # 送信せず組み立て結果だけ表示
   ./tools/bluesky_post.py --delete https://bsky.app/profile/<handle>/post/<rkey>
   ./tools/bluesky_post.py --podcast --date 20260825 --delete   # 記録した投稿を消す
@@ -257,6 +258,13 @@ def post_url(handle: str, at_uri: str) -> str:
     return f"https://bsky.app/profile/{handle}/post/{rkey}"
 
 
+def clip_state_path(state_dir: Path, clip_id: str) -> Path:
+    """Twitch clip IDを安全な冪等性記録パスへ変換する。"""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", clip_id):
+        raise ValueError("invalid Twitch clip id")
+    return state_dir / f"{clip_id}.json"
+
+
 # --- CLI ------------------------------------------------------------------
 
 def delete_post(args, out_dir: Path) -> int:
@@ -305,6 +313,11 @@ def main() -> int:
     ap.add_argument("--text", help="本文 (--podcast を使わない場合)")
     ap.add_argument("--link", help="カードにする URL")
     ap.add_argument("--thumb", help="カードのサムネイル画像")
+    ap.add_argument("--card-title", default="", help="外部カードの題名")
+    ap.add_argument("--card-description", default="", help="外部カードの説明")
+    ap.add_argument("--clip-id", help="Twitch clip ID。投稿記録を作り、同じIDの再投稿を防ぐ")
+    ap.add_argument("--state-dir", default="tmp/state/bluesky_clips",
+                    help="--clip-id の投稿記録ディレクトリ")
     ap.add_argument("--tags", default=os.environ.get("PODCAST_BLUESKY_TAGS", ""),
                     help="末尾に付けるハッシュタグ (カンマ区切り)")
     ap.add_argument("--dry-run", action="store_true", help="送信せず内容だけ表示")
@@ -320,6 +333,26 @@ def main() -> int:
 
     if args.delete:
         return delete_post(args, out_dir)
+
+    if args.podcast and args.clip_id:
+        log("--podcast と --clip-id は同時に使えない")
+        return 2
+
+    if args.clip_id:
+        try:
+            state_file = clip_state_path(Path(args.state_dir), args.clip_id)
+        except ValueError as e:
+            log(str(e))
+            return 2
+        if state_file.is_file() and not args.force:
+            try:
+                prev = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                log(f"投稿記録が読めないため再投稿しない: {state_file} ({e})")
+                return 2
+            log(f"クリップ投稿済みなのでスキップ: {prev.get('post_url') or prev.get('uri')} "
+                "(--force で再投稿)")
+            return 0
 
     if args.podcast:
         date = parse_date(args.date) if args.date else \
@@ -345,7 +378,8 @@ def main() -> int:
             text = text + "\n" + " ".join(f"#{t.lstrip('#')}" for t in tags)
         payload = {"text": text, "link": args.link,
                    "thumb": Path(args.thumb) if args.thumb else None,
-                   "card_title": args.link or "", "card_description": ""}
+                   "card_title": args.card_title or args.link or "",
+                   "card_description": args.card_description or ""}
 
     text = payload["text"]
     log(f"本文 ({len(text)} 文字):")
@@ -399,11 +433,16 @@ def main() -> int:
     url = post_url(handle, res["uri"])
     log(f"投稿した: {url}")
     if state_file is not None:
-        state_file.write_text(json.dumps({
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state = {
             "uri": res["uri"], "cid": res.get("cid"), "post_url": url,
             "handle": handle, "text": text,
             "posted_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        }
+        if args.clip_id:
+            state.update({"kind": "twitch_clip", "clip_id": args.clip_id})
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                              encoding="utf-8")
         log(f"投稿情報を記録: {state_file}")
     print(url)
     return 0
