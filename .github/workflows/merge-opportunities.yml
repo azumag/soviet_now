@@ -5,7 +5,12 @@ on:
       - 'strategy.py'
       - 'strategy_runner.py'
       - 'eloop.sh'
+      - 'soren_loop.sh'
+      - 'core/config.sh'
+      - 'core/game_state.sh'
+      - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
+      - 'tests/test_soviet_continuation.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -19,7 +24,12 @@ on:
       - 'strategy.py'
       - 'strategy_runner.py'
       - 'eloop.sh'
+      - 'soren_loop.sh'
+      - 'core/config.sh'
+      - 'core/game_state.sh'
+      - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
+      - 'tests/test_soviet_continuation.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -40,6 +50,7 @@ jobs:
       - run: bash tests/test_eloop_runner_tail_cleanup.sh
       - run: >-
           python3 -m unittest
+          tests.test_soviet_continuation
           tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_strategy_hash
           tests.test_policy_bundle tests.test_v747_endgame_merge
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
