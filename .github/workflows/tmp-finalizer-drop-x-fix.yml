@@ -1,0 +1,40 @@
+name: Temporary finalizer drop-x patch
+
+on:
+  push:
+    branches: [fix/finalizer-drop-x-consistency]
+    paths:
+      - '.github/workflows/tmp-finalizer-drop-x-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: fix/finalizer-drop-x-consistency
+      - name: Apply exact one-line runner fix and remove temporary workflow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('strategy_runner.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''                decision = enforce_deadline_safety(decision, analysis, gs, strategy)\n                decision = apply_strategy_final_decision(strategy, decision, analysis, gs)\n            else:\n                drop_x = float(decision["x"])\n'''
+          new = '''                decision = enforce_deadline_safety(decision, analysis, gs, strategy)\n                decision = apply_strategy_final_decision(strategy, decision, analysis, gs)\n                # Dispatch and history must reflect the post-finalizer decision.\n                drop_x = float(decision["x"])\n            else:\n                drop_x = float(decision["x"])\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one runner target, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          rm .github/workflows/tmp-finalizer-drop-x-fix.yml
+          python3 -m unittest tests.test_jev_legacy_golden
+          git diff --check
+          git config user.name 'docich automation'
+          git config user.email 'doc@example.com'
+          git add strategy_runner.py tests/test_jev_legacy_golden.py .github/workflows/tmp-finalizer-drop-x-fix.yml
+          git commit -m 'fix: dispatch post-finalizer x'
+          git push origin HEAD:fix/finalizer-drop-x-consistency
