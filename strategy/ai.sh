@@ -420,6 +420,12 @@ run_cmd() {
         fi
         OPENCODE_RUN_LOCK_MAX_WAIT_SEC="$wait_cap"
         OPENCODE_RUN_LOCK_WAIT_SEC=1
+        # The priority queue must obey the same improvement/job budget as the
+        # legacy per-model lock; do not let a background slot wait exceed it.
+        local AI_GENERATION_QUEUE_MAX_WAIT_SEC="$wait_cap"
+        # A zero value normally means "use the lane default". Here the value
+        # came from the live job/stage deadline, so it is an explicit hard cap.
+        local AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP=1
     fi
     # Allocate the receipt before acquiring the shared CLI slot, so setup
     # failure cannot strand a slot or modified XDG environment.
@@ -431,6 +437,27 @@ run_cmd() {
         [ -n "${IMPROVE_JOB_DEADLINE_MONOTONIC:-}" ] && guard_args+=(--job-deadline "$IMPROVE_JOB_DEADLINE_MONOTONIC")
         [ -n "${IMPROVE_STAGE_DEADLINE_MONOTONIC:-}" ] && guard_args+=(--stage-deadline "$IMPROVE_STAGE_DEADLINE_MONOTONIC")
     fi
+    local improve_queue_token=""
+    local improve_queue_label=""
+    if [ "$managed_improve" -eq 1 ] && [ "${AI_GENERATION_QUEUE_ENABLED:-1}" = "1" ] &&
+        command -v _ai_generation_queue_enter >/dev/null 2>&1; then
+        improve_queue_label="IMPROVE:${cmd_log_tag}:${target}"
+        _ai_generation_queue_enter "$improve_queue_label"
+        local _improve_queue_rc=$?
+        if [ "$_improve_queue_rc" -ne 0 ]; then
+            if [ "$_improve_queue_rc" -eq "${AI_QUEUE_GIVEUP_RC:-92}" ]; then
+                RUN_AI_LIST_FAILURE_KIND="queue_giveup"
+                if command -v _ai_stats_record >/dev/null 2>&1; then
+                    _ai_stats_record "queue_giveup" "$cmd_log_tag" "$target" "$_improve_queue_rc" "$resolved_model"
+                fi
+            else
+                RUN_AI_LIST_FAILURE_KIND="queue_unavailable"
+            fi
+            rm -f "$prompt_file"
+            return "$_improve_queue_rc"
+        fi
+        improve_queue_token="${AI_GENERATION_QUEUE_LAST_TOKEN:-}"
+    fi
 	local opencode_lock_token=""
 	local opencode_prev_xdg_state_home="${XDG_STATE_HOME-}"
 	local opencode_prev_xdg_data_home="${XDG_DATA_HOME-}"
@@ -439,7 +466,11 @@ run_cmd() {
 	[ "${XDG_STATE_HOME+x}" = "x" ] && opencode_had_xdg_state_home=1
 	[ "${XDG_DATA_HOME+x}" = "x" ] && opencode_had_xdg_data_home=1
 	if [ "$opencode_cli" -eq 1 ] || [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
-		_opencode_run_lock_enter "$cmd_log_tag:$target" || {
+        _opencode_run_lock_enter "$cmd_log_tag:$target" || {
+            if [ -n "$improve_queue_token" ]; then
+                _ai_generation_queue_leave "$improve_queue_token" "$improve_queue_label"
+                improve_queue_token=""
+            fi
 			rm -f "$prompt_file"
             _improve_budget_check; _budget_rc=$?
             [ "$_budget_rc" -eq 0 ] || return "$_budget_rc"
@@ -580,7 +611,7 @@ run_cmd() {
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
 	interrupted=0
-	trap 'interrupted=1; _run_cmd_stop_expected_file_watchdog; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; _opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"; opencode_lock_token=""; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
+	trap 'interrupted=1; _run_cmd_stop_expected_file_watchdog; _run_cmd_stop_heartbeat; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; _opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"; opencode_lock_token=""; if command -v _ai_generation_queue_leave >/dev/null 2>&1; then _ai_generation_queue_leave "$improve_queue_token" "$improve_queue_label"; fi; improve_queue_token=""; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
@@ -597,6 +628,10 @@ run_cmd() {
 	_run_cmd_stop_heartbeat
 	_opencode_run_lock_leave "$opencode_lock_token" "$cmd_log_tag"
 	opencode_lock_token=""
+	if [ -n "$improve_queue_token" ]; then
+		_ai_generation_queue_leave "$improve_queue_token" "$improve_queue_label"
+		improve_queue_token=""
+	fi
 	RUN_CMD_ACTIVE_PID=0
 	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
 	# デバッグ: wait直後の状態をログに記録 (リトライ未到達問題の調査用)
@@ -1010,7 +1045,11 @@ run_ai_list() {
 		else
 			unset RUN_AI_SHARED_FAILURE_BACKOFF
 		fi
-        if [ "$rc" -eq 80 ] || [ "$rc" -eq 81 ]; then
+		if [ "$rc" -eq "${AI_QUEUE_GIVEUP_RC:-92}" ]; then
+			RUN_AI_LIST_FAILURE_KIND=queue_giveup
+			return "$rc"
+		fi
+		if [ "$rc" -eq 80 ] || [ "$rc" -eq 81 ]; then
             _improve_budget_check || true
             [ -n "$RUN_AI_LIST_FAILURE_KIND" ] || RUN_AI_LIST_FAILURE_KIND=deadline_or_guard_failure
             return "$rc"

@@ -99,10 +99,9 @@ RADIO_QUALITY_REPAIR_MAX_CHARS="${RADIO_QUALITY_REPAIR_MAX_CHARS:-800}"
 RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC="${RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC:-${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}}"
 AI_AGENT_BACKOFF_SEC="${AI_AGENT_BACKOFF_SEC:-600}"
 RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"
-# AIレーン同時実行制御 (issue #7 必須条件)。放送系 (RADIO/NEWS/JIJI/CELEBRATION) は
-# モデル差に関係なく単一ロックへ直列化、コメント返しも comment レーンで直列化する。
-# 全体で 放送系1 + コメント返し1 + 改善1 の最大3並列になる。
-# 改善ジョブ稼働中は新規の放送系生成のみ待機する (開始済み生成はキャンセルしない)。
+# AIレーン同時実行制御。優先度付き共有スケジューラは comment > radio > improve。
+# comment は1件ずつ直列化し、すでに走っている radio/improve とだけ1件並行できる。
+# radio と improve は共有の background 1枠を使い、コメント待ちがあれば新規開始しない。
 # 読み上げ/TTSはAI呼出を経ないため影響を受けない。
 AI_RADIO_LANE_LOCK="${AI_RADIO_LANE_LOCK:-1}"
 AI_COMMENT_LANE_LOCK="${AI_COMMENT_LANE_LOCK:-1}"
@@ -110,6 +109,7 @@ AI_COMMENT_LANE_LOCK="${AI_COMMENT_LANE_LOCK:-1}"
 # それ以上古いコーナーを無期限に溜めると、単一radioレーンの背後へbackground
 # process treeが蓄積する。0で明示的に無期限待機へ戻せる。
 AI_RADIO_QUEUE_MAX_WAIT_SEC="${AI_RADIO_QUEUE_MAX_WAIT_SEC:-300}"
+AI_IMPROVE_QUEUE_MAX_WAIT_SEC="${AI_IMPROVE_QUEUE_MAX_WAIT_SEC:-300}"
 AI_RADIO_IMPROVE_GATE="${AI_RADIO_IMPROVE_GATE:-1}"
 # 改善中に放送系生成が待機する上限秒。超過したらその生成だけ諦める
 # (改善サイクル実測 439-828秒のため余裕を見て1200秒)。

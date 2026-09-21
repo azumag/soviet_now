@@ -64,3 +64,10 @@ test('a model that times out is cooled down instead of retried every comment', (
   assert.equal(isOpencodeTimeout(null), false);
   assert.match(source, /opencode model skipped \(timed out recently\)/);
 });
+
+test('Soren91 opencode calls use the shared priority queue and release it', () => {
+  assert.match(source, /AI_QUEUE_SCRIPT = join\(PROJECT_DIR, 'lib', 'ai_generation_queue_cli\.sh'\)/);
+  assert.match(source, /runAiQueueCli\(\['acquire', lane\]\)/);
+  assert.match(source, /await releaseOpencodeQueue\(tag, queueSlot\)/);
+  assert.match(source, /if \(options\.queueLane\) return String\(options\.queueLane\)/);
+});

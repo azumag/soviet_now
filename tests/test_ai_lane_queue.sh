@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # AIレーン同時実行制御の回帰テスト。
+# - comment > radio > improve の優先順位で共有スロットを選ぶ
+# - comment は低優先度の実行中ジョブとだけ1件並行し、comment同士は直列化
 # - 放送系 (RADIO/NEWS/JIJI/CELEBRATION) はモデル差に関係なく単一 "radio" レーンへ直列化
 # - コメント返し (COMMENT*) も "comment" レーンへ直列化
 # - 改善ジョブ稼働中 (improve_state.json running + PID生存) は新規放送系生成のみ待機
@@ -47,6 +49,22 @@ write_improve_state() {
 	cat >"$IMPROVE_STATE_FILE" <<EOF
 {"status": "$status", "pid": $pid, "started_at": $started_at, "phase": "test"}
 EOF
+}
+
+wait_for_path() {
+	local path="$1"
+	for _ in $(seq 1 100); do
+		[ -e "$path" ] && return 0
+		sleep 0.02
+	done
+	return 1
+}
+
+priority_callback() {
+	local marker="$1"
+	: >"${marker}.start"
+	sleep 1
+	: >"${marker}.end"
 }
 
 # --- 1. レーンスコープの畳み込み ---
@@ -165,6 +183,84 @@ check '[ ! -f "$TMP/comment_follower_done" ]' 'comment ロック保持中は後�
 _ai_generation_queue_leave holder "COMMENT:holder"
 wait "$comment_follower_pid"
 check '[ -f "$TMP/comment_follower_done" ]' 'ロック解放後にコメント返しの後続が完了する'
+
+# --- 3b. 優先順位と許可する1件並行 ---
+# 低優先度の radio 実行中でも comment は直ちに1件だけ進める。
+rm -rf "$LOCK_BASE"
+(
+	_ai_generation_queue_run "RADIO:priority-holder" priority_callback "$TMP/priority_radio"
+) &
+priority_radio_pid=$!
+wait_for_path "$LOCK_BASE/radio"
+(
+	_ai_generation_queue_run "COMMENT:priority-reply" priority_callback "$TMP/priority_comment"
+) &
+priority_comment_pid=$!
+wait_for_path "$TMP/priority_comment.start"
+check '[ -f "$TMP/priority_comment.start" ] && [ -d "$LOCK_BASE/radio" ]' 'radio実行中でもcommentは1件だけ並行して開始できる'
+wait "$priority_comment_pid"
+wait "$priority_radio_pid"
+
+# comment同士は直列、comment待ちがある間は新しい低優先ジョブを始めない。
+rm -rf "$LOCK_BASE"
+(
+	_ai_generation_queue_run "RADIO:priority-radio" priority_callback "$TMP/priority_radio2"
+) &
+priority_radio2_pid=$!
+wait_for_path "$LOCK_BASE/radio"
+(
+	_ai_generation_queue_run "COMMENT:priority-first" priority_callback "$TMP/priority_comment1"
+) &
+priority_comment1_pid=$!
+wait_for_path "$TMP/priority_comment1.start"
+(
+	_ai_generation_queue_run "COMMENT:priority-second" priority_callback "$TMP/priority_comment2"
+) &
+priority_comment2_pid=$!
+sleep 0.2
+check '[ ! -e "$TMP/priority_comment2.start" ]' 'comment待ちがある間もcommentは1件ずつ消化する'
+wait "$priority_comment1_pid"
+wait_for_path "$TMP/priority_comment2.start"
+check '[ -e "$TMP/priority_comment2.start" ]' '先行comment完了後に後続commentが開始する'
+wait "$priority_comment2_pid"
+wait "$priority_radio2_pid"
+
+# radio > improve。commentが待機中は両方とも開始せず、comment解放後は
+# radioがimproveを追い越し、radio完了までimproveは開始しない。
+rm -rf "$LOCK_BASE"
+mkdir -p "$LOCK_BASE/comment"
+printf 'token=holder\npid=%s\nlabel=COMMENT:holder\nlane=comment\n' "$$" >"$LOCK_BASE/comment/owner"
+(
+	_ai_generation_queue_run "IMPROVE:priority-improve" priority_callback "$TMP/priority_improve"
+) &
+priority_improve_pid=$!
+sleep 0.2
+(
+	_ai_generation_queue_run "RADIO:priority-radio-after-comment" priority_callback "$TMP/priority_radio3"
+) &
+priority_radio3_pid=$!
+sleep 0.3
+check '[ ! -e "$TMP/priority_improve.start" ] && [ ! -e "$TMP/priority_radio3.start" ]' 'comment待ち中はradio/improveを開始しない'
+_ai_generation_queue_leave holder "COMMENT:holder"
+wait_for_path "$TMP/priority_radio3.start"
+sleep 0.2
+check '[ -e "$TMP/priority_radio3.start" ] && [ ! -e "$TMP/priority_improve.start" ]' 'comment解放後はradioがimproveより先に開始する'
+wait "$priority_radio3_pid"
+wait_for_path "$TMP/priority_improve.start"
+check '[ -e "$TMP/priority_improve.start" ]' 'radio完了後にimproveが開始する'
+wait "$priority_improve_pid"
+rm -rf "$LOCK_BASE"
+
+# CLI/Node callers keep their real long-lived PID in the owner metadata; the
+# short-lived acquire helper must not be reaped while the caller is running.
+export AI_GENERATION_QUEUE_OWNER_PID="$$"
+_ai_generation_queue_enter "COMMENT:external-caller"
+external_token="$AI_GENERATION_QUEUE_LAST_TOKEN"
+unset AI_GENERATION_QUEUE_OWNER_PID
+external_owner_pid=$(sed -n 's/^pid=//p' "$LOCK_BASE/comment/owner")
+check '[ "$external_owner_pid" = "$$" ]' '外部呼び出し元の長寿命PIDをキュー所有者として保持する'
+_ai_generation_queue_leave "$external_token" "COMMENT:external-caller"
+check '[ ! -d "$LOCK_BASE/comment" ]' '外部呼び出し元のreleaseでcommentスロットを解放する'
 
 # --- 4. 改善ゲート ---
 unset RADIO_GEN_STARTED_AT
@@ -305,6 +401,19 @@ check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "COMMENT:test")" = "0" ]' 'COMMENT系はradio専用上限の影響を受けない'
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=20 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "NEWS:test")" = "20" ]' 'call-siteの短い待ち上限はradio既定値より優先する'
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=0 _ai_generation_queue_max_wait_sec "RADIO:test")" = "0" ]' 'radio専用上限は0で明示的に無効化できる'
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=17 AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP=1 AI_IMPROVE_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "IMPROVE:test")" = "17" ]' '改善ジョブの残りbudgetをhard capとして優先する'
+
+# 生存中の長時間改善ジョブは、900秒相当の古いslotでも年齢だけでは回収しない。
+rm -rf "$LOCK_BASE/improve"
+mkdir -p "$LOCK_BASE/improve"
+printf 'token=long-improve\npid=%s\nlane=improve\nlabel=IMPROVE:long-running\n' "$$" >"$LOCK_BASE/improve/owner"
+touch -t 200001010000 "$LOCK_BASE/improve"
+live_reap_out=$(_ai_generation_queue_priority_reap_path "$LOCK_BASE/improve" 900 slot 2>&1)
+live_reap_rc=$?
+check '[ "$live_reap_rc" -eq 1 ] && [ -d "$LOCK_BASE/improve" ]' '生存中の改善slotは900秒を超えてもstale reapしない'
+check '! printf %s "$live_reap_out" | grep -q "stale slot request cleared"' '生存中の改善slotをstale扱いしない'
+rm -rf "$LOCK_BASE/improve"
+
 rm -f "$IMPROVE_STATE_FILE"
 rm -rf "$LOCK_BASE/radio"
 mkdir -p "$LOCK_BASE/radio"

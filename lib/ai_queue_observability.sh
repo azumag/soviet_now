@@ -61,11 +61,15 @@ _ai_generation_queue_enter() {
 
 	finished=$(date +%s)
 	wait_sec=$(_ai_queue_observability_wait_sec "$started" "$finished")
-	lock_dir=$(_ai_generation_queue_lock_dir "$label")
-	if [ -r "$lock_dir/owner" ]; then
-		owner_label=$(sed -n 's/^label=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+	holder_category="${AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY:-}"
+	if [ -z "$holder_category" ]; then
+		lock_dir=$(_ai_generation_queue_lock_dir "$label")
+		if [ -r "$lock_dir/owner" ]; then
+			owner_label=$(sed -n 's/^label=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
+		fi
+		holder_category=$(_ai_queue_observability_holder_category "$owner_label")
 	fi
-	holder_category=$(_ai_queue_observability_holder_category "$owner_label")
+	AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY=""
 
 	# Use a constant component label and fixed error grammar so this record can be
 	# safely summarized without exposing the private owner label.
