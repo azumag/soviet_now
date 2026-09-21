@@ -431,6 +431,19 @@ def played_ab_arm(ab, snapshot_path=None):
     return "", ""
 
 
+def displayed_ab_arm(ab):
+    """Return the already-resolved A/B arm when the caller has cached it.
+
+    ``status_dashboard.py`` renders several panels in one pass.  The live arm
+    is resolved from the game snapshot once in ``main`` and shared with those
+    panels so a slow or failing hash subprocess cannot make the panels disagree.
+    Direct callers (including tests) still resolve it through ``played_ab_arm``.
+    """
+    if isinstance(ab, dict) and "_played_hash" in ab and "_played_arm" in ab:
+        return str(ab.get("_played_hash") or ""), str(ab.get("_played_arm") or "")
+    return played_ab_arm(ab)
+
+
 def load_restorable_hashes():
     restorable = set()
 
@@ -2173,7 +2186,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # A/B 中は root (strategy.py) が B 腕の試合でも書き換わらないので、そのまま
     # 出すと「ずっと A のハッシュ」に見えて実際に打っている戦略と食い違う。
     # 実測できた場合だけ、打っている腕のハッシュと [A]/[B] を出す。
-    played_hash, played_arm = played_ab_arm(ab)
+    played_hash, played_arm = displayed_ab_arm(ab)
     hash_short = (played_hash or strat_hash)[:8] if (played_hash or strat_hash) else "?"
     ver_num = ""
     if strat_ver and strat_ver != "?":
@@ -2255,8 +2268,13 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             ab_n_b = int(ab.get("n_b") or 0)
         except (TypeError, ValueError):
             ab_n_b = 0
-        ab_raw = f" A/B: A {a8} vs B {b8} n={ab_n}"
-        ab_disp = ab_raw
+        now_raw = f" now={played_arm}" if played_arm else ""
+        now_disp = ""
+        if played_arm:
+            arm_color = C_GREEN if played_arm == "B" else C_CYAN
+            now_disp = f" now={arm_color}{played_arm}{RST}"
+        ab_raw = f" A/B:{now_raw} A {a8} vs B {b8} n={ab_n}"
+        ab_disp = f" A/B:{now_disp} A {a8} vs B {b8} n={ab_n}"
         counts_raw = f"(A{ab_n_a}/B{ab_n_b})"
         if len(ab_raw) + len(counts_raw) <= inner:
             ab_raw += counts_raw
@@ -2645,8 +2663,15 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     for idx, e in enumerate(combined_entries, start=1):
         e["overall_rank"] = idx
 
+    played_hash, played_arm = displayed_ab_arm(ab_status)
+    live_arm_line = ""
+    if played_arm:
+        live_arm_line = f"  NOW: A/B arm={played_arm} hash={played_hash[:8]}"
+
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
+        if live_arm_line:
+            lines.append(live_arm_line)
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -2693,6 +2718,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
+    if live_arm_line:
+        lines.append(live_arm_line)
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
@@ -3111,6 +3138,13 @@ def main():
     # (jsonl 1 本で軽い。重いのは russia_rate 側の archive 走査なのでそれは従来どおり
     # ai_backoff モードでは走らせない)。
     ab_status = load_ab_progress()
+    if isinstance(ab_status, dict) and ab_status.get("active"):
+        # A/B の現在腕は試合中の game_snapshot から一度だけ実測し、
+        # ヘッダーと Strategy Comparison の両方で同じ値を表示する。
+        played_hash, played_arm = played_ab_arm(ab_status)
+        ab_status = dict(ab_status)
+        ab_status["_played_hash"] = played_hash
+        ab_status["_played_arm"] = played_arm
     if top_panel_mode() != "ai_backoff":
         # render_header 専用の集計。ai_backoff 側では使わないので、その時は
         # archive 走査や jsonl 読み込みを走らせない。

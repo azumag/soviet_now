@@ -301,6 +301,35 @@ class RenderHeaderAbRowTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_active_ab_row_identifies_the_current_arm(self):
+        """A/B 行に、試合中の snapshot から実測した現在腕を明示する。"""
+        from unittest import mock
+
+        def _test():
+            kwargs = self._base_kwargs()
+            Path("strategy.py.game_snapshot").write_text("# snap\n", encoding="utf-8")
+            ab_status = {
+                "active": True,
+                "a_hash": "3a9bd96b76a0",
+                "b_hash": "d0188f418f58",
+                "pattern": "ABBA",
+                "n": 53,
+                "n_a": 27,
+                "n_b": 26,
+                "mean_a": 1000.0,
+                "mean_b": 1120.0,
+                "diff": 120.0,
+                "tainted": 0,
+                "candidate": None,
+            }
+            with mock.patch.object(sd, "compute_decide_hash", return_value="d0188f418f58"):
+                lines = sd.render_header(russia_rate=None, ab_status=ab_status, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("A/B: now=B A 3a9bd96b vs B d0188f41", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
     def test_no_ab_status_renders_no_ab_row(self):
         def _test():
             kwargs = self._base_kwargs()
@@ -862,6 +891,26 @@ class StrategyComparisonAbTest(unittest.TestCase):
 
     def _plain(self, lines):
         return sd.ANSI_RE.sub("", "\n".join(lines))
+
+    def test_now_line_shows_snapshot_arm(self):
+        """ヘッダーを省く show_status_g でも、現在腕を独立行で示す。"""
+        from unittest import mock
+
+        def _test():
+            Path("strategy.py.game_snapshot").write_text("# snap\n", encoding="utf-8")
+            ab_status = {
+                "active": True,
+                "a_hash": self.A,
+                "b_hash": self.B,
+            }
+            with mock.patch.object(sd, "compute_decide_hash", return_value=self.B):
+                lines = sd.render_strategy_comparison({}, self.A, ab_status=ab_status)
+            joined = self._plain(lines)
+            self.assertIn(f"NOW: A/B arm=B hash={self.B[:8]}", joined)
+            for line in lines:
+                self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+
+        self._run_in_tempdir(_test)
 
     def test_current_row_falls_back_to_rolling_when_run_file_holds_other_arm(self):
         """current_strategy_run.json が B 腕で上書きされても現行 A を 0/0 にしない。"""
