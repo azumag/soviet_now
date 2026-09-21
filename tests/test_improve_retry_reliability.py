@@ -621,6 +621,7 @@ PY
         run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]
         self.assertIn('improve_queue_label="IMPROVE:${cmd_log_tag}:${target}"', run_cmd)
         self.assertIn('local AI_GENERATION_QUEUE_MAX_WAIT_SEC="$wait_cap"', run_cmd)
+        self.assertIn('local AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP=1', run_cmd)
         self.assertIn('_ai_generation_queue_enter "$improve_queue_label"', run_cmd)
         self.assertIn('_ai_generation_queue_leave "$improve_queue_token" "$improve_queue_label"', run_cmd)
         self.assertIn('if [ "$rc" -eq "${AI_QUEUE_GIVEUP_RC:-92}" ]; then', source)

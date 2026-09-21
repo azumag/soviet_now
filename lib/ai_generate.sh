@@ -157,9 +157,13 @@ PY
 
 _ai_generation_queue_max_wait_sec() {
 	local label="${1:-AI}" max_wait_sec="${AI_GENERATION_QUEUE_MAX_WAIT_SEC:-0}"
+	local hard_cap="${AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP:-0}"
 	local radio_max_wait_sec="${AI_RADIO_QUEUE_MAX_WAIT_SEC:-300}"
 	case "$max_wait_sec" in
 	'' | *[!0-9]*) max_wait_sec=0 ;;
+	esac
+	case "$hard_cap" in
+	1) printf '%s\n' "$max_wait_sec"; return 0 ;;
 	esac
 	# Call-site overrides (NEWS spam checkなど) remain authoritative.
 	if [ "$max_wait_sec" -gt 0 ]; then
@@ -332,11 +336,12 @@ _ai_generation_queue_priority_mtime() {
 	printf '%s\n' "$mt"
 }
 
-# stale owner/request を scheduler guard の内側から回収する。request は
-# pid が死んでいれば即時、slot は既存キューと同じ stale TTL でも回収する。
+# stale owner/request を scheduler guard の内側から回収する。owner PIDが
+# 死んでいれば即時、PIDを持たない残骸だけstale TTLで回収する。生存中の
+# ownerは長時間の正規改善ジョブになり得るため、年齢だけでは回収しない。
 _ai_generation_queue_priority_reap_path() {
 	local path="$1" stale_sec="$2" kind="${3:-slot}"
-	local pid now mt age reason=""
+	local pid now mt age reason="" owner_alive=0
 	[ -d "$path" ] || return 1
 	pid=$(_ai_generation_queue_priority_owner_pid "$path")
 	now=$(date +%s)
@@ -345,12 +350,14 @@ _ai_generation_queue_priority_reap_path() {
 	case "$pid" in
 	'' | *[!0-9]*) ;;
 	*)
-		if ! kill -0 "$pid" 2>/dev/null; then
+		if kill -0 "$pid" 2>/dev/null; then
+			owner_alive=1
+		else
 			reason="dead ${kind} owner cleared (pid=${pid})"
 		fi
 		;;
 	esac
-	if [ -z "$reason" ] && [ "$age" -gt "$stale_sec" ]; then
+	if [ -z "$reason" ] && [ "$owner_alive" -eq 0 ] && [ "$age" -gt "$stale_sec" ]; then
 		reason="stale ${kind} request cleared (age=${age}s)"
 	fi
 	if [ -n "$reason" ]; then

@@ -423,6 +423,9 @@ run_cmd() {
         # The priority queue must obey the same improvement/job budget as the
         # legacy per-model lock; do not let a background slot wait exceed it.
         local AI_GENERATION_QUEUE_MAX_WAIT_SEC="$wait_cap"
+        # A zero value normally means "use the lane default". Here the value
+        # came from the live job/stage deadline, so it is an explicit hard cap.
+        local AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP=1
     fi
     # Allocate the receipt before acquiring the shared CLI slot, so setup
     # failure cannot strand a slot or modified XDG environment.

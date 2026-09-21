@@ -401,6 +401,19 @@ check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "COMMENT:test")" = "0" ]' 'COMMENT系はradio専用上限の影響を受けない'
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=20 AI_RADIO_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "NEWS:test")" = "20" ]' 'call-siteの短い待ち上限はradio既定値より優先する'
 check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=0 AI_RADIO_QUEUE_MAX_WAIT_SEC=0 _ai_generation_queue_max_wait_sec "RADIO:test")" = "0" ]' 'radio専用上限は0で明示的に無効化できる'
+check '[ "$(AI_GENERATION_QUEUE_MAX_WAIT_SEC=17 AI_GENERATION_QUEUE_MAX_WAIT_SEC_HARD_CAP=1 AI_IMPROVE_QUEUE_MAX_WAIT_SEC=300 _ai_generation_queue_max_wait_sec "IMPROVE:test")" = "17" ]' '改善ジョブの残りbudgetをhard capとして優先する'
+
+# 生存中の長時間改善ジョブは、900秒相当の古いslotでも年齢だけでは回収しない。
+rm -rf "$LOCK_BASE/improve"
+mkdir -p "$LOCK_BASE/improve"
+printf 'token=long-improve\npid=%s\nlane=improve\nlabel=IMPROVE:long-running\n' "$$" >"$LOCK_BASE/improve/owner"
+touch -t 200001010000 "$LOCK_BASE/improve"
+live_reap_out=$(_ai_generation_queue_priority_reap_path "$LOCK_BASE/improve" 900 slot 2>&1)
+live_reap_rc=$?
+check '[ "$live_reap_rc" -eq 1 ] && [ -d "$LOCK_BASE/improve" ]' '生存中の改善slotは900秒を超えてもstale reapしない'
+check '! printf %s "$live_reap_out" | grep -q "stale slot request cleared"' '生存中の改善slotをstale扱いしない'
+rm -rf "$LOCK_BASE/improve"
+
 rm -f "$IMPROVE_STATE_FILE"
 rm -rf "$LOCK_BASE/radio"
 mkdir -p "$LOCK_BASE/radio"
