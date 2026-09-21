@@ -25,6 +25,7 @@ from lib.country_names import (
     country_named_reason,
     last_drop_turn_country_label,
 )
+from lib.docich_corner_stats import load_active_corner
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -3104,9 +3105,199 @@ def render_decision_patterns(reasons, max_rows=8, bar_w=30):
     return lines
 
 
+# ── docich corner stats ──────────────────────────────────────
+
+
+def _corner_status_label(status):
+    return {
+        "preparing": "準備中",
+        "starting": "切替中",
+        "active": "進行中",
+        "restoring": "復元中",
+        "recovery_required": "回復待ち",
+    }.get(str(status or ""), str(status or "不明"))
+
+
+def _corner_short(value, fallback="--", limit=28):
+    text = str(value if value not in (None, "") else fallback)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)] + "…"
+
+
+def _corner_int(value, fallback="--"):
+    if isinstance(value, bool):
+        return fallback
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _corner_recent(scores):
+    values = []
+    for item in list(scores or [])[-8:]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            values.append(str(int(item["score"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return " ".join(values) if values else "score data waiting"
+
+
+def _corner_fill_line(fill):
+    if not isinstance(fill, dict):
+        return None
+    symbol = _corner_short(fill.get("symbol"), "?", 12)
+    side = {"buy": "BUY", "sell": "SELL"}.get(str(fill.get("side") or "").lower(), "TRADE")
+    notional = fill.get("quote_notional")
+    if notional in (None, ""):
+        notional = fill.get("price")
+    return f"{symbol} {side} {_corner_short(notional, "?", 12)}"
+
+
+def render_docich_corner_stats(corner):
+    """Render a corner-owned stats feed without consulting Soren score history."""
+    if not isinstance(corner, dict):
+        return []
+
+    kind = str(corner.get("kind") or "")
+    if kind == "conflict":
+        return [
+            "SOREN/CORNER: STATE CONFLICT",
+            "Live: multiple active corners; stats locked",
+            "Score Timeline",
+            "  corner data unavailable until one state is active",
+        ]
+    if kind == "invalid":
+        return [
+            "SOREN/CORNER: STATE INVALID",
+            "Live: corner state cannot be trusted; stats locked",
+            "Score Timeline",
+            "  corner data unavailable until state recovery",
+        ]
+
+    label = _corner_short(corner.get("label"), "CORNER", 16)
+    status = _corner_status_label(corner.get("status"))
+    lines = []
+
+    if kind == "retro":
+        game = _corner_short(corner.get("game"), "unknown", 22)
+        scores = corner.get("scores") if isinstance(corner.get("scores"), list) else []
+        score_values = [
+            int(item["score"])
+            for item in scores
+            if isinstance(item, dict) and isinstance(item.get("score"), int)
+        ]
+        target = _corner_int(corner.get("target_matches"))
+        progress = f"{len(score_values)}/{target}" if target != "--" else str(len(score_values))
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            f"Live: matches {progress}",
+            f"  Score Timeline [{game}]",
+        ]
+        timeline = render_score_timeline(score_values)
+        if timeline:
+            lines += timeline[1:]
+        lines.append("")
+        distribution = render_score_distribution(score_values)
+        lines += distribution
+        lines.append(f"Recent30: {_corner_recent(scores)}")
+        ranking = corner.get("strategy_ranking") if isinstance(corner.get("strategy_ranking"), list) else []
+        if ranking:
+            top = ranking[:3]
+            lines.append(
+                "Strategy: "
+                + " / ".join(
+                    f"#{index} {str(row.get('key') or '')[:8]} avg={int(float(row.get('best') or 0))}"
+                    for index, row in enumerate(top, 1)
+                    if isinstance(row, dict)
+                )
+            )
+        else:
+            lines.append("Strategy: no corner ranking data")
+        return lines
+
+    if kind == "nethack":
+        run = corner.get("run") if isinstance(corner.get("run"), dict) else {}
+        scores = corner.get("scores") if isinstance(corner.get("scores"), list) else []
+        expedition = _corner_int(run.get("expedition"))
+        run_status = _corner_short(run.get("status"), "waiting", 16)
+        score = _corner_int(run.get("score"))
+        turns = _corner_int(run.get("turns"))
+        depth = _corner_int(run.get("max_depth"))
+        lines += [
+            f"SOREN/CORNER: {label} / expedition {expedition} / {status}",
+            f"Live: run={run_status} score={score} turns={turns} depth={depth}",
+            "  Score Timeline [NetHack runs]",
+        ]
+        timeline = render_score_timeline([int(value) for value in scores if isinstance(value, int)])
+        lines += timeline[1:]
+        lines.append("")
+        lines += render_score_distribution([int(value) for value in scores if isinstance(value, int)])
+        lines.append(f"Recent30: {_corner_recent([{'score': value} for value in scores])}")
+        return lines
+
+    if kind == "paper":
+        paper = corner.get("paper") if isinstance(corner.get("paper"), dict) else {}
+        fills = paper.get("fills") if isinstance(paper.get("fills"), list) else []
+        positions = paper.get("positions") if isinstance(paper.get("positions"), dict) else {}
+        fill_lines = [_corner_fill_line(fill) for fill in reversed(fills[-5:])]
+        fill_lines = [line for line in fill_lines if line]
+        worker = _corner_short(paper.get("status"), "unknown", 14)
+        capital = _corner_short(paper.get("capital"), "?", 14)
+        deployed = _corner_short(paper.get("deployed"), "?", 14)
+        lines += [
+            f"SOREN/CORNER: {label} / dashboard / {status}",
+            f"Live: worker={worker} positions={len(positions)}",
+            f"Funds: capital={capital} deployed={deployed}",
+            f"Recent30: fills={len(fills)} positions={len(positions)}",
+            "  PAPER FILL HISTORY (newest)",
+        ]
+        lines += [f"  {line}" for line in fill_lines] or ["  (no fills yet)"]
+        return lines
+
+    if kind == "soren91":
+        game = _corner_short(corner.get("game"), "soren91", 20)
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            "Live: rank-based session; numeric score is not applicable",
+            "Strategy: ranking / placement",
+            "Recent30: placement history is supplied by the Soren91 runtime",
+        ]
+        return lines
+
+    if kind == "jev":
+        game = _corner_short(corner.get("game"), "sorengame", 20)
+        policy = _corner_short(corner.get("policy"), "unknown", 12)
+        generation = _corner_int(corner.get("player_generation"))
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            f"Live: player policy={policy} generation={generation}",
+            "Strategy: bounded player-policy decision scope",
+            "Recent30: numeric score is not applicable",
+        ]
+        return lines
+
+    return [
+        "SOREN/CORNER: UNKNOWN",
+        "Live: corner kind is not supported; stats locked",
+    ]
+
+
 # ── Main ──────────────────────────────────────────────────────
 def main():
     os.chdir(os.path.dirname(os.path.abspath(__file__)) or ".")
+
+    corner = load_active_corner()
+    if corner is not None:
+        output = render_ai_backoff_header()
+        output.append("")
+        output += render_docich_corner_stats(corner)
+        print("\n".join(fit_dashboard_lines(output)))
+        return
 
     scores = load_scores()
     rolling = load_rolling()
