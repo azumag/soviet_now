@@ -43,3 +43,35 @@ _curl_cfg_build() {
 	done
 	[ "${#lines[@]}" -eq 0 ] || printf '%s\n' "${lines[@]}"
 }
+
+# _curl_secure_exec COMMAND [ARGS...] - docich#71
+#
+# 任意のコマンドを最小環境で実行する。親workerが `.env` を `set -a` で
+# source しているため全secretがexportされており、素の `curl` 呼び出しでは
+# 子プロセスの environ (`/proc/PID/environ`) へ TOKEN等が継承される。
+# `env -i` + 非secret allowlist だけを渡すことで継承を断つ。
+# stdin/stdout/stderr の FD は維持されるため、
+# `printf '%s' "$cfg" | _curl_secure_exec curl -K - ...` の形で使う。
+# proxy/CA系は環境によって curl の到達性に必須のため、設定時のみ継承する。
+_curl_secure_exec() {
+	local -a _allow=()
+	local _name _val
+	_allow+=("PATH=${PATH:-/usr/bin:/bin}")
+	for _name in HOME LANG LC_ALL LC_MESSAGES LANGUAGE TZ TMPDIR TEMP TMP \
+		http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY \
+		no_proxy NO_PROXY CURL_CA_BUNDLE SSL_CERT_FILE SSL_CERT_DIR; do
+		eval "_val=\${${_name}:-}"
+		[ -n "${_val:-}" ] && _allow+=("${_name}=${_val}")
+	done
+	command env -i "${_allow[@]}" "$@"
+}
+
+# _curl_secure_run [CURL_ARGS...] - docich#71
+#
+# curl を最小環境で実行する薄いラッパ。secret自体は argv/environ ではなく
+# stdin の `-K -` config 経由で渡すこと (docich#39 と併用)。
+# 使い方:
+#   printf '%s' "$cfg" | _curl_secure_run -sS --max-time 20 -K - ...
+_curl_secure_run() {
+	_curl_secure_exec curl "$@"
+}

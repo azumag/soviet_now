@@ -251,6 +251,8 @@ PY
 
 # docich#39: url ($YOUTUBE_API_KEY をクエリに含むことがある) と
 # Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
+# docich#71: `_curl_secure_run` (env -i + 最小allowlist) で実行し、
+# export済みsecretの environ 継承も断つ。
 _api_get() {
 	local url="$1"
 	local access_token="${2:-}"
@@ -260,7 +262,7 @@ _api_get() {
 	else
 		cfg=$(_curl_cfg_build url "$url")
 	fi
-	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" -K -
+	printf '%s' "$cfg" | _curl_secure_run -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" -K -
 }
 
 _youtube_json_value() {
@@ -287,7 +289,8 @@ _discover_live_video_id_from_channel_page() {
 	fi
 	[ -n "$channel_id" ] || return 1
 	local page video_id
-	page=$(curl -fsSL --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "https://www.youtube.com/channel/${channel_id}/live") || return 1
+	# docich#71: secretを含まない取得でも export済みsecretの environ 継承を断つ。
+	page=$(_curl_secure_run -fsSL --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "https://www.youtube.com/channel/${channel_id}/live") || return 1
 	video_id=$(printf '%s' "$page" | python3 -c '
 import re
 import sys
@@ -1004,13 +1007,14 @@ _oauth_access_token() {
 		# docich#39: client_id/client_secret/refresh_token を argv に載せない。
 		# curl の `-K -` で標準入力から渡す (data-urlencode/data/url いずれも
 		# argv ではなく config directive として渡る)。
+		# docich#71: `_curl_secure_run` で environ 継承も断つ。
 		oauth_cfg=$(_curl_cfg_build \
 			url "https://oauth2.googleapis.com/token" \
 			data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
 			data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
 			data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
 			data "grant_type=refresh_token")
-		http_code=$(printf '%s' "$oauth_cfg" | curl -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+		http_code=$(printf '%s' "$oauth_cfg" | _curl_secure_run -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
 			-o "$resp_file" -w '%{http_code}' \
 			-K - 2>"$err_file")
 		rc=$?
@@ -1081,6 +1085,7 @@ _maybe_oauth_access_token() {
 
 # docich#39: insert_url ($YOUTUBE_API_KEY をクエリに含むことがある) と
 # Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
+# docich#71: `_curl_secure_run` で environ 継承も断つ。
 _send_api() {
 	local insert_url="$1"
 	local access_token="$2"
@@ -1092,7 +1097,7 @@ _send_api() {
 		url "$insert_url" \
 		header "Authorization: Bearer ${access_token}" \
 		header "Content-Type: application/json; charset=UTF-8")
-	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+	printf '%s' "$cfg" | _curl_secure_run -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
 		-X POST \
 		--data-binary "@${payload_file}" \
 		-K - >"$resp_file" 2>"$err_file"
