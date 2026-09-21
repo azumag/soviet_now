@@ -168,6 +168,21 @@ except Exception:
     def is_public_interest_news_title(title: str) -> bool:
         return True
 
+try:
+    _news_filter_dir = os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib")
+    if _news_filter_dir and os.path.isdir(_news_filter_dir) and _news_filter_dir not in sys.path:
+        sys.path.insert(0, _news_filter_dir)
+    from news_filter import event_dedup_enabled, event_tokens, generic_tokens, same_event
+except Exception:
+    def event_dedup_enabled() -> bool:
+        return False
+    def event_tokens(title: str) -> set:
+        return set()
+    def generic_tokens(titles) -> frozenset:
+        return frozenset()
+    def same_event(a: set, b: set, generic: frozenset = frozenset()) -> bool:
+        return False
+
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
 past_topic_key_file = sys.argv[3]
@@ -260,9 +275,29 @@ for line in news_text.splitlines():
 if current:
     blocks.append(current)
 
+# 同じ事件の別媒体見出しを、jiji と同じ内容語判定で候補から除外する。
+past_titles_for_events = []
+if event_dedup_enabled() and os.path.exists(past_title_file):
+    try:
+        recent_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
+    except ValueError:
+        recent_limit = 60
+    past_titles_for_events = [
+        ln.strip()
+        for ln in open(past_title_file, encoding="utf-8", errors="ignore")
+        if ln.strip()
+    ][-recent_limit:]
+past_event_tokens = [
+    tokens for tokens in (event_tokens(title) for title in past_titles_for_events) if tokens
+]
+generic_event_tokens = generic_tokens(
+    past_titles_for_events + [block[0][2:].strip() for block in blocks]
+) if event_dedup_enabled() else frozenset()
+
 seen = set()
 seen_topics = set()
 seen_url_hashes = set()
+seen_event_tokens = []
 out = []
 for b in blocks:
     title = b[0][2:].strip()
@@ -291,6 +326,16 @@ for b in blocks:
         continue
     if uh and uh in past_url_hashes:
         continue
+    tokens = event_tokens(title) if event_dedup_enabled() else set()
+    if tokens:
+        already_seen = any(same_event(tokens, previous, generic_event_tokens) for previous in seen_event_tokens)
+        # Keep rejected candidates in the chain so differently worded variants
+        # can still be connected through an intermediate headline.
+        seen_event_tokens.append(tokens)
+        if any(same_event(tokens, previous, generic_event_tokens) for previous in past_event_tokens):
+            continue
+        if already_seen:
+            continue
     seen.add(k)
     if tk:
         seen_topics.add(tk)

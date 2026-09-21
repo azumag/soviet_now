@@ -168,6 +168,58 @@ class NewsPoliticalPriorityTest(unittest.TestCase):
         self.assertAlmostEqual(weights[0], 7.0)
         self.assertAlmostEqual(weights[1], 2.5)
 
+    def test_topic_family_marks_numbered_storm_variants_as_weather(self) -> None:
+        self.assertEqual(
+            news_priority.topic_family("台風17号上陸、沖縄で住宅浸水と避難指示"),
+            "weather_disaster",
+        )
+        self.assertEqual(
+            news_priority.topic_family("鹿児島に台風17号、避難所を開設"),
+            "weather_disaster",
+        )
+
+    def test_topic_cooldown_prefers_another_family(self) -> None:
+        blocks = """■ 台風17号上陸、沖縄で住宅浸水と避難指示
+天気本文
+
+■ 大手メーカーが新工場を稼働
+経済本文"""
+        chosen = news_priority.choose_news_block(
+            blocks,
+            meta=self.meta,
+            source_counts={},
+            political_share=0.0,
+            recent_titles=["鹿児島に台風16号、避難所を開設"],
+            rng=random.Random(1),
+        )
+        self.assertTrue(chosen.startswith("■ 大手メーカーが新工場を稼働"))
+
+    def test_topic_cooldown_falls_back_when_only_family_is_available(self) -> None:
+        block = "■ 台風17号上陸、沖縄で住宅浸水と避難指示\n天気本文"
+        chosen = news_priority.choose_news_block(
+            block,
+            meta=self.meta,
+            source_counts={},
+            recent_titles=["鹿児島に台風16号、避難所を開設"],
+            rng=random.Random(1),
+        )
+        self.assertEqual(chosen, block)
+
+    def test_invalid_topic_cooldown_falls_back_safely(self) -> None:
+        previous = os.environ.get("NEWS_TOPIC_COOLDOWN")
+        try:
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "invalid"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 2)
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "-1"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 0)
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "1000"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 60)
+        finally:
+            if previous is None:
+                os.environ.pop("NEWS_TOPIC_COOLDOWN", None)
+            else:
+                os.environ["NEWS_TOPIC_COOLDOWN"] = previous
+
 
 if __name__ == "__main__":
     unittest.main()
