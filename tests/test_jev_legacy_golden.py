@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -53,6 +54,71 @@ class LegacyRunnerGoldenTests(unittest.TestCase):
             self.assertEqual(record[field], expected, field)
         self.assertNotIn("player_policy", record)
         self.assertNotIn("run_id", record)
+
+    def test_existing_run_dispatches_post_finalizer_x(self):
+        """The command/history x must be the decision after the finalizer."""
+        strategy = types.SimpleNamespace(
+            decide=lambda _gs, _analysis: {"x": -1.0, "reason": "initial"}
+        )
+        move = {
+            "state": "MOVE",
+            "score": 0,
+            "pieces": [],
+            "makeSorenCount": 0,
+            "next": {"type": 1},
+            "nextNext": {"type": 2},
+        }
+        gameover = {
+            "state": "GAMEOVER",
+            "score": 0,
+            "pieces": [],
+            "makeSorenCount": 0,
+        }
+        dispatched = []
+        recorded = []
+
+        def capture_record(_stream, _turn, _gs, decision, _analysis, **_kwargs):
+            recorded.append(dict(decision))
+
+        def finalize(_strategy, decision, _analysis, _gs):
+            return dict(decision, x=1.0, reason="final")
+
+        with tempfile.TemporaryDirectory() as directory:
+            history = str(Path(directory) / "latest.jsonl")
+            with (
+                patch.dict(os.environ, {"SOREN_PLAYER_POLICY": "existing"}, clear=False),
+                patch.object(runner, "HISTORY_DIR", directory),
+                patch.object(runner, "HISTORY_FILE", history),
+                patch.object(runner, "STOP_FILE", str(Path(directory) / "stop")),
+                patch.object(runner, "load_strategy_module", return_value=strategy),
+                patch.object(runner, "get_strategy_hash", return_value="strategy-hash"),
+                patch.object(runner, "get_strategy_file_hash", return_value="file-hash"),
+                patch.object(runner, "strategy_fast_drop_deadline_contact_enabled", return_value=False),
+                patch.object(
+                    runner,
+                    "wait_for_move_state",
+                    side_effect=[(move, True), (gameover, False)],
+                ),
+                patch.object(runner, "has_deadline_contact", return_value=False),
+                patch.object(
+                    runner,
+                    "build_analysis",
+                    return_value={"results": [], "same_type": [], "reactor": {}, "deadline": {}},
+                ),
+                patch.object(runner, "enforce_deadline_safety", side_effect=lambda decision, *_args: decision),
+                patch.object(runner, "apply_strategy_final_decision", side_effect=finalize),
+                patch.object(runner, "record_turn", side_effect=capture_record),
+                patch.object(runner, "commands_empty", return_value=True),
+                patch.object(runner, "write_drop_command", side_effect=dispatched.append),
+                patch.object(runner, "wait_commands_done", return_value=True),
+                patch.object(runner.time, "sleep", return_value=None),
+            ):
+                result = runner.run_game()
+
+        self.assertEqual(result["turns"], 1)
+        self.assertEqual(dispatched, [1.0])
+        self.assertEqual(recorded[0]["x"], 1.0)
+        self.assertEqual(recorded[0]["reason"], "final")
 
     def test_outcome_unknown_ack_is_terminal_and_never_waits_for_timeout(self):
         # The bridge writes `outcome_unknown` when it dispatched a drop but

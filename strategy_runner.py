@@ -3478,6 +3478,8 @@ def run_game():
                 decision["x"] = drop_x
                 decision = enforce_deadline_safety(decision, analysis, gs, strategy)
                 decision = apply_strategy_final_decision(strategy, decision, analysis, gs)
+                # Dispatch and history must reflect the post-finalizer decision.
+                drop_x = float(decision["x"])
             else:
                 drop_x = float(decision["x"])
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, drop_x))
