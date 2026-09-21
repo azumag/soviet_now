@@ -11,7 +11,9 @@ source lib/outbound_queue.sh 2>/dev/null || true
 
 EVENT_MSG="${1:-}"
 _log() { echo "[twitch_clip $(date '+%H:%M:%S')] $*" >&2; }
-CLIP_POLL_MAX="${TWITCH_CLIP_POLL_MAX:-12}"
+# Create Clip は非同期で、Get Clips に現れるまで最大60秒かかり得る。
+# 既定12回 (約36秒) だと、Create成功後に公開URLを捨てることがある。
+CLIP_POLL_MAX="${TWITCH_CLIP_POLL_MAX:-20}"
 CLIP_POLL_INTERVAL_SEC="${TWITCH_CLIP_POLL_INTERVAL_SEC:-3}"
 
 # --- 環境変数チェック ---
@@ -63,7 +65,7 @@ if [ -z "$clip_id" ]; then
 fi
 _log "clip created: id=$clip_id"
 
-# --- 完了ポーリング（最大15秒） ---
+# --- 完了ポーリング（既定で最大60秒） ---
 clip_url=""
 poll=1
 while [ "$poll" -le "$CLIP_POLL_MAX" ]; do

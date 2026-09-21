@@ -747,12 +747,13 @@ json.dump(d,open(f,'w'))
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
-		# prediction_worker が best_outcome=2 を検知して resolve する
-		HALT_STRATEGY_AFTER_SOVIET=1
+		# prediction_worker が best_outcome=2 を検知して resolve する。
+		# ソ連建国は試合の成功イベントであり、戦略ループの終端ではない。
+		# HALT_STRATEGY_AFTER_SOVIET=1 を明示した運用だけは停止を許可する。
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 		LAST_SOVIET="false"
-		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
+		log "[CONTINUE] ソ連建国達成後も通常のstrategy/retryを継続"
 	elif [ "$LAST_RUSSIA" = "true" ] && [ "${LAST_RUSSIA_ANNOUNCED:-false}" != "true" ]; then
 		handle_russia_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
 		LAST_RUSSIA="false"

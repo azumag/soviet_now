@@ -3379,39 +3379,9 @@ def run_game():
                     os.makedirs("tmp/markers", exist_ok=True)
                     with open("tmp/markers/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
-                    log("ソ連建国フラグ記録完了（読み上げはキュー順で継続）")
-                    # 建国後は戦略実行を停止し、これ以上コマンド送信しない
-                    try:
-                        with open(COMMANDS, "w") as f:
-                            f.write("")
-                    except Exception:
-                        pass
-                    decision = {"x": 0.0, "reason": "soviet created -> strategy halted"}
-                    analysis = {"results": [], "same_type": [], "reactor": {}}
-                    delta = score - prev_score
-                    if player_policy == POLICY_EXISTING:
-                        record_turn(
-                            history_f,
-                            turn,
-                            gs,
-                            decision,
-                            analysis,
-                            russia_created=russia_created,
-                            soviet_created=True,
-                            strategy_hash=strategy_hash,
-                            score_delta=delta,
-                        )
-                    log("HALT: 建国達成により strategy_runner を停止（操作なし）")
-                    return finish_result({
-                        "score": score,
-                        "turns": turn,
-                        "state": get_state_field(gs),
-                        "pieces": len(pieces),
-                        "russia_created": russia_created,
-                        "russia_announced": russia_announced,
-                        "soviet_created": True,
-                        "final_types": [p.get("type", 0) for p in pieces],
-                    })
+                    # 建国は試合の終端ではない。検知・記録・祝賀トリガーは一度だけ実行し、
+                    # このターンも通常の解析・判断・DROPへ進めて同じ盤面を継続する。
+                    log("ソ連建国フラグ記録完了（同一試合の操作を継続）")
 
             # 盤面解析
             analysis = build_analysis(gs)

@@ -922,7 +922,8 @@ while true; do
 	check_and_harvest_improvement
 	queue_early_escape_lock_if_needed || true
 
-	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
+	# 明示的な運用停止フラグがある場合だけ strategy を止め、コメント系を維持する。
+	# ソ連建国そのものでは自動停止しない。
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] strategy停止中: コメント返し/読み上げのみ継続"
 		sleep 5
@@ -1142,7 +1143,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		cleanup_tmp_files
 	fi
 
-	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
+	# 明示的な運用停止フラグがある場合だけ retry/次ゲーム操作を止める。
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 		log "[HALT] retry・次ゲーム操作を停止"
