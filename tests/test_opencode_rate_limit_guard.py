@@ -88,6 +88,10 @@ class ProbeTests(unittest.TestCase):
             root=pathlib.Path(d); (root/'lib').mkdir()
             shutil.copy(ROOT/'probe_free_slot.sh', root/'probe_free_slot.sh')
             shutil.copy(GUARD, root/'lib'/GUARD.name)
+            shutil.copy(ROOT/'lib'/'ai_generate.sh', root/'lib'/'ai_generate.sh')
+            queue_cli = root/'lib'/'ai_generation_queue_cli.sh'
+            shutil.copy(ROOT/'lib'/'ai_generation_queue_cli.sh', queue_cli)
+            queue_cli.chmod(0o755)
             stub=root/'cli'
             stub.write_text('#!/bin/sh\nif [ "$PROBE_RESULT" = ok ]; then echo はい; else echo "model banner" >&2; fi\n')
             stub.chmod(0o755)
