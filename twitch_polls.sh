@@ -47,16 +47,18 @@ mkdir -p "$STATE_DIR" 2>/dev/null || true
 # docich#39: Authorization/Client-Id を argv に載せない。
 # curl の `-K -` (config from stdin) でヘッダを渡す。stdin は argv とは別の
 # FD なので /proc/*/cmdline (macOSでは `ps` のcmdline相当) に出ない。
+# docich#71: `_curl_secure_run` (env -i + 最小allowlist) で実行し、
+# export済みsecretの environ 継承も断つ。
 _request() {
 	local method="$1" url="$2" output="$3" payload="${4:-}" code cfg
 	cfg=$(_curl_cfg_build header "Authorization: Bearer ${TOKEN}" header "Client-Id: ${CLIENT_ID}")
 	if [ -n "$payload" ]; then
-		code=$(printf '%s' "$cfg" | curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
+		code=$(printf '%s' "$cfg" | _curl_secure_run -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
 			-H "Content-Type: application/json" \
 			-d "$payload" \
 			-K - 2>/dev/null || echo 000)
 	else
-		code=$(printf '%s' "$cfg" | curl -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
+		code=$(printf '%s' "$cfg" | _curl_secure_run -sS --max-time 20 -o "$output" -w '%{http_code}' -X "$method" "$url" \
 			-K - 2>/dev/null || echo 000)
 	fi
 	case "$code" in ''|*[!0-9]*) code=000 ;; esac
