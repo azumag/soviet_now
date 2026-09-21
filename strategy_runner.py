@@ -86,6 +86,7 @@ BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3
 
 _received_signal = None
 _fire_and_forget_processes = []
+_reaping_fire_and_forget_processes = False
 
 STOP_FILE = "tmp/stop"
 
@@ -222,7 +223,7 @@ def notify_deadline_crossing_overlay(turn, score, decision, analysis):
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        _fire_and_forget_processes.append(proc)
+        _track_fire_and_forget_process(proc)
     except Exception as err:
         log(f"WARN: deadline overlay notify failed: {err}")
 
@@ -290,23 +291,52 @@ def notify_actual_deadline_contact_overlay(turn, score, decision, before_analysi
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        _fire_and_forget_processes.append(proc)
+        _track_fire_and_forget_process(proc)
     except Exception as err:
         log(f"WARN: actual deadline overlay notify failed: {err}")
 
 
 def _reap_fire_and_forget_processes():
-    """Non-blocking cleanup for best-effort side-effect subprocesses."""
-    if not _fire_and_forget_processes:
+    """Non-blocking cleanup for best-effort side-effect subprocesses.
+
+    ``Popen.poll()`` is intentionally used here instead of relying on the
+    child being reparented to init.  The latter eventually removes a zombie,
+    but leaves a zombie in the runner's process table until then.  This method
+    is also called from the SIGCHLD handler so a notification that finishes
+    while the runner is waiting for the next game state is reaped immediately.
+    """
+    global _reaping_fire_and_forget_processes
+    if _reaping_fire_and_forget_processes or not _fire_and_forget_processes:
         return
-    alive = []
-    for proc in _fire_and_forget_processes:
-        try:
-            if proc.poll() is None:
-                alive.append(proc)
-        except Exception:
-            continue
-    _fire_and_forget_processes[:] = alive[-16:]
+    _reaping_fire_and_forget_processes = True
+    try:
+        alive = []
+        for proc in _fire_and_forget_processes:
+            try:
+                if proc.poll() is None:
+                    alive.append(proc)
+            except Exception:
+                continue
+        # Do not truncate live processes: dropping a Popen reference before it
+        # exits removes the only owner that can reap it.
+        _fire_and_forget_processes[:] = alive
+    finally:
+        _reaping_fire_and_forget_processes = False
+
+
+def _track_fire_and_forget_process(proc):
+    """Register a detached side-effect process and reap completed children."""
+    _fire_and_forget_processes.append(proc)
+    _reap_fire_and_forget_processes()
+    return proc
+
+
+def _handle_child_signal(_signum, _frame):
+    """Reap tracked Popen children as soon as the kernel reports completion."""
+    _reap_fire_and_forget_processes()
+
+
+signal.signal(signal.SIGCHLD, _handle_child_signal)
 
 
 def _float_or_none(value):
@@ -703,12 +733,13 @@ def trigger_russia_celebration_now(score, turn):
         f"handle_russia_celebration '{score}' '{turn}' '{game_num}'"
     )
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["/bin/bash", "-lc", cmd],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        _track_fire_and_forget_process(proc)
         return True
     except Exception as e:
         log(f"WARNING: failed to trigger russia celebration: {e}")
@@ -729,12 +760,13 @@ def trigger_soviet_clip_now(score, turn):
         f"_create_twitch_clip '☭ ソ連建国! score={score} (Game #{game_num})' '{game_num}' 0 'soviet'"
     )
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["/bin/bash", "-lc", cmd],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        _track_fire_and_forget_process(proc)
         return True
     except Exception as e:
         log(f"WARNING: failed to trigger soviet clip: {e}")
