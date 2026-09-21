@@ -54,8 +54,8 @@ _soviet_hold_active() {
 	since=$(cat "$hold_file" 2>/dev/null || echo 0)
 	case "$since" in ''|*[!0-9]*) rm -f "$hold_file" 2>/dev/null || true; return 1 ;; esac
 	now=$(date +%s)
-	hold_sec="${SOVIET_HOLD_SEC:-600}"
-	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	hold_sec="${SOVIET_HOLD_SEC:-0}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=0 ;; esac
 	if [ "$hold_sec" -gt 0 ] && [ $((now - since)) -lt "$hold_sec" ]; then
 		return 0
 	fi
@@ -71,8 +71,8 @@ _soviet_hold_remaining() {
 	since=$(cat "$hold_file" 2>/dev/null || echo 0)
 	case "$since" in ''|*[!0-9]*) echo 0; return 1 ;; esac
 	now=$(date +%s)
-	hold_sec="${SOVIET_HOLD_SEC:-600}"
-	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	hold_sec="${SOVIET_HOLD_SEC:-0}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=0 ;; esac
 	rem=$((hold_sec - (now - since)))
 	if [ "$rem" -gt 0 ]; then echo "$rem"; else echo 0; fi
 }
