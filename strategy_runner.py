@@ -726,7 +726,7 @@ def trigger_soviet_clip_now(score, turn):
     cmd = (
         "cd . && "
         "source ./eloop_lib.sh && "
-        f"_create_twitch_clip '☭ ソ連建国! score={score} (Game #{game_num})' '{game_num}'"
+        f"_create_twitch_clip '☭ ソ連建国! score={score} (Game #{game_num})' '{game_num}' 0 'soviet'"
     )
     try:
         subprocess.Popen(

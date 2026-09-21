@@ -22,6 +22,9 @@ class SovietContinuationTest(unittest.TestCase):
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")
         game_state = (REPO_ROOT / "core/game_state.sh").read_text(encoding="utf-8")
         clip_script = (REPO_ROOT / "twitch_clip.sh").read_text(encoding="utf-8")
+        clip_queue = (REPO_ROOT / "core/version.sh").read_text(encoding="utf-8")
+        clip_worker = (REPO_ROOT / "workers/chat_worker.sh").read_text(encoding="utf-8")
+        strategy_runner = (REPO_ROOT / "strategy_runner.py").read_text(encoding="utf-8")
         success_block = loop[loop.index('if [ "$LAST_SOVIET" = "true" ]'):]
         success_block = success_block[: success_block.index('elif [ "$LAST_RUSSIA"')]
 
@@ -30,6 +33,13 @@ class SovietContinuationTest(unittest.TestCase):
         self.assertIn('SOVIET_HOLD_SEC="${SOVIET_HOLD_SEC:-0}"', config)
         self.assertIn('hold_sec="${SOVIET_HOLD_SEC:-0}"', game_state)
         self.assertIn('TWITCH_CLIP_POLL_MAX:-20', clip_script)
+        self.assertIn('SOVIET_CELEBRATION_BLUESKY_ENABLED="${SOVIET_CELEBRATION_BLUESKY_ENABLED:-1}"', config)
+        self.assertIn('event_kind="${4:-generic}"', clip_queue)
+        self.assertIn('event_kind', clip_worker)
+        self.assertIn('"soviet"', loop[loop.index('_create_twitch_clip "☭ ソ連建国!'):])
+        self.assertIn("0 'soviet'", strategy_runner)
+        self.assertIn('EVENT_KIND="${2:-generic}"', clip_script)
+        self.assertIn('--clip-id "$clip_id"', clip_script)
 
     def test_runner_keeps_dropping_after_soviet_is_created(self):
         states = iter(

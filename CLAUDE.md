@@ -122,7 +122,8 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 | ファイル | 役割 |
 |---------|------|
-| `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
+| `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿（ソ連建国時は公開確認後にBluesky告知） |
+| `tools/bluesky_post.py` | AT Protocol投稿。Twitchクリップは`--clip-id`で冪等記録 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
 | `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel/autovote/cleanup, azumagdev自動投票) |
@@ -233,6 +234,8 @@ TWITCH_BROADCASTER_ID=<Helix /users APIで取得>
 - `!clip` コマンド: デーモン再起動が必要 (`./twitch_chat.sh stop && ./twitch_chat.sh start`)
 - 同一ゲーム内で複数イベント発火時はデデュプ（最初の1クリップのみ）
 - 配信オフライン時やAPI失敗時はサイレントにスキップ
+- ソ連建国クリップのBluesky告知は `SOVIET_CELEBRATION_BLUESKY_ENABLED=1`（既定値）で有効。認証は `BLUESKY_HANDLE` / `BLUESKY_APP_PASSWORD` または `~/.config/soren/bluesky.json`
+- BlueskyはTwitchの公開URL確認後だけ投稿し、`tmp/state/bluesky_clips/<clip-id>.json`で同じクリップの二重投稿を防ぐ。Bluesky失敗でもTwitchクリップ・チャットは継続
 
 ## 作業表示・報告
 このリポジトリで が調査・修正・テスト・検証を行う間は、OBS の eventOverlay 内の常設作業表示を使ってください。

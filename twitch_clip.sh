@@ -2,7 +2,7 @@
 # 探索モード (EXPLORE_MODE=1) では Twitch クリップ作成を行わない
 [ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_clip.sh - Twitchクリップ自動作成 + チャット投稿
-# Usage: ./twitch_clip.sh "イベントメッセージ"
+# Usage: ./twitch_clip.sh "イベントメッセージ" [イベント種別]
 cd "$(dirname "$0")"
 source lib/outbound_queue.sh 2>/dev/null || true
 
@@ -10,6 +10,7 @@ source lib/outbound_queue.sh 2>/dev/null || true
 [ -z "${TWITCH_CLIENT_ID:-}" ] && [ -f .env ] && set -a && . ./.env && set +a
 
 EVENT_MSG="${1:-}"
+EVENT_KIND="${2:-generic}"
 _log() { echo "[twitch_clip $(date '+%H:%M:%S')] $*" >&2; }
 # Create Clip は非同期で、Get Clips に現れるまで最大60秒かかり得る。
 # 既定12回 (約36秒) だと、Create成功後に公開URLを捨てることがある。
@@ -92,4 +93,30 @@ fi
 # --- チャット投稿 ---
 chat_msg="${EVENT_MSG:+${EVENT_MSG} | }${clip_url}"
 enqueue_chat_message "$chat_msg" "twitch_clip"
+
+# ソ連建国クリップは、Twitch側で公開URLまで確認できた後だけBlueskyへ投稿する。
+# ユーザーの !clip やハイスコア等の一般クリップは対象外にする。
+if [ "$EVENT_KIND" = "soviet" ]; then
+    if [ "${SOVIET_CELEBRATION_BLUESKY_ENABLED:-1}" != "1" ]; then
+        _log "Bluesky skip: SOVIET_CELEBRATION_BLUESKY_ENABLED!=1"
+    else
+        bluesky_output=$(python3 ./tools/bluesky_post.py \
+            --text "$EVENT_MSG" \
+            --link "$clip_url" \
+            --card-title "$EVENT_MSG" \
+            --card-description "ソ連建国のTwitchクリップ" \
+            --tags "${SOVIET_CELEBRATION_BLUESKY_TAGS:-ソ連建国}" \
+            --clip-id "$clip_id" \
+            --state-dir "${TMP_STATE_DIR:-tmp/state}/bluesky_clips" 2>&1)
+        bluesky_rc=$?
+        while IFS= read -r line; do
+            [ -n "$line" ] && _log "[BLUESKY] $line"
+        done <<<"$bluesky_output"
+        case "$bluesky_rc" in
+            0) _log "Bluesky clip post finished (clip_id=$clip_id)" ;;
+            4) _log "Bluesky skip: credentials are not configured" ;;
+            *) _log "WARN: Bluesky clip post failed (rc=$bluesky_rc, clip_id=$clip_id)" ;;
+        esac
+    fi
+fi
 _log "done: $clip_url"
