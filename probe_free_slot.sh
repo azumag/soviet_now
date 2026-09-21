@@ -32,6 +32,13 @@ for agent in "${_models[@]}"; do
 	state_file="$STATE_DIR/$key"
 	prev=""
 	[ -f "$state_file" ] && prev=$(cat "$state_file" 2>/dev/null)
+	queue_token=""
+	queue_token=$(AI_GENERATION_QUEUE_OWNER_PID="$$" ./lib/ai_generation_queue_cli.sh acquire radio)
+	queue_rc=$?
+	if [ "$queue_rc" -ne 0 ]; then
+		log "[FreeProbe] ${agent} skipped: AI queue unavailable (rc=${queue_rc})"
+		continue
+	fi
 
 	case "$model" in
 	opencode/muse-spark-1.[23]-contributor-free)
@@ -39,11 +46,12 @@ for agent in "${_models[@]}"; do
 			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	*)
-	out=$(timeout --kill-after=5s "$TIMEOUT_SEC" "$opencode_bin" run --model "$model" \
-		'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
+		out=$(timeout --kill-after=5s "$TIMEOUT_SEC" "$opencode_bin" run --model "$model" \
+			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	esac
 	rc=$?
+	[ -n "$queue_token" ] && AI_GENERATION_QUEUE_OWNER_PID="$$" ./lib/ai_generation_queue_cli.sh release radio "$queue_token" >/dev/null 2>&1 || true
 	if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qx 'はい' && ! printf '%s' "$out" | grep -Eiq 'error|unexpected server'; then
 		printf 'ok %s\n' "$(date +%s)" >"$state_file"
 		if [ "${prev%% *}" != "ok" ] && [ -n "$prev" ]; then

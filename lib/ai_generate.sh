@@ -94,6 +94,10 @@ _ai_queue_lock_scope() {
 			return 0
 		fi
 		;;
+	IMPROVE* | IMPROVEMENT*)
+		# 改善は radio と同じ低優先度の共有スロットへ畳む。
+		printf '%s' "improve"
+		return 0
 	esac
 	case "$label" in
 	*:local:*) printf '%s' "local"; return 0 ;;
@@ -169,6 +173,13 @@ _ai_generation_queue_max_wait_sec() {
 		esac
 		printf '%s\n' "$radio_max_wait_sec"
 		;;
+	IMPROVE* | IMPROVEMENT*)
+		local improve_max_wait_sec="${AI_IMPROVE_QUEUE_MAX_WAIT_SEC:-300}"
+		case "$improve_max_wait_sec" in
+		'' | *[!0-9]*) improve_max_wait_sec=300 ;;
+		esac
+		printf '%s\n' "$improve_max_wait_sec"
+		;;
 	*) printf '0\n' ;;
 	esac
 }
@@ -196,8 +207,42 @@ _ai_queue_label() {
 	printf '%s:%s:%s:%s' "$label" "$locality" "$provider" "$model"
 }
 
+# 優先度付き共有スケジューラの論理レーン。
+# - comment: 最優先。低優先度の実行中ジョブとは1件だけ並行可。
+# - radio:   次点。improve と同じ background スロットを使う。
+# - improve: 最低。comment と radio の待機が無い時だけ進める。
+# カスタムロックパスを指定した呼び出しは、既存の単一ロック契約を壊さない
+# ため従来キューへフォールバックする。
+_ai_queue_priority_lane() {
+	local label="${1:-AI}"
+	case "$label" in
+	COMMENT*)
+		[ "${AI_COMMENT_LANE_LOCK:-1}" = "1" ] || return 1
+		printf '%s' "comment"
+		;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		[ "${AI_RADIO_LANE_LOCK:-1}" = "1" ] || return 1
+		printf '%s' "radio"
+		;;
+	IMPROVE* | IMPROVEMENT*)
+		printf '%s' "improve"
+		;;
+	*) return 1 ;;
+	esac
+}
+
+_ai_generation_queue_priority_enabled() {
+	[ -z "${AI_GENERATION_QUEUE_LOCK_DIR:-}" ] || return 1
+	[ -n "$(_ai_queue_priority_lane "${1:-AI}")" ]
+}
+
 AI_GENERATION_QUEUE_GUARD_FD=""
 AI_GENERATION_QUEUE_GUARD_DIR=""
+AI_GENERATION_QUEUE_PRIORITY_REQUEST_DIR=""
+AI_GENERATION_QUEUE_PRIORITY_LANE=""
+AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY=""
+# CLI callers should set AI_GENERATION_QUEUE_OWNER_PID to their long-lived PID;
+# otherwise direct shell callers use BASHPID and stale-owner reaping remains local.
 
 # Serialize lock-directory claim/reap/release.  The generation lock itself is
 # intentionally held for the whole AI call, while this guard is held only for
@@ -252,14 +297,287 @@ _ai_generation_queue_guard_leave() {
 	AI_GENERATION_QUEUE_GUARD_DIR=""
 }
 
+_ai_generation_queue_priority_base_dir() {
+	if [ -n "${ELOOP_LIB_DIR:-}" ]; then
+		printf '%s/tmp/state/.ai_generation_locks\n' "$ELOOP_LIB_DIR"
+	else
+		printf '%s\n' "tmp/state/.ai_generation_locks"
+	fi
+}
+
+_ai_generation_queue_priority_guard_path() {
+	printf '%s/.scheduler\n' "$1"
+}
+
+_ai_generation_queue_priority_slot_dir() {
+	printf '%s/%s\n' "$1" "$2"
+}
+
+_ai_generation_queue_priority_owner_pid() {
+	sed -n 's/^pid=//p' "$1/owner" 2>/dev/null | head -n 1
+}
+
+_ai_generation_queue_priority_owner_lane() {
+	sed -n 's/^lane=//p' "$1/owner" 2>/dev/null | head -n 1
+}
+
+_ai_generation_queue_priority_mtime() {
+	local path="$1" now="${2:-$(date +%s)}" mt
+	mt=$(stat -f %m "$path" 2>/dev/null) \
+		|| mt=$(stat -c %Y "$path" 2>/dev/null) \
+		|| mt="$now"
+	case "$mt" in
+	'' | *[!0-9]*) mt="$now" ;;
+	esac
+	printf '%s\n' "$mt"
+}
+
+# stale owner/request を scheduler guard の内側から回収する。request は
+# pid が死んでいれば即時、slot は既存キューと同じ stale TTL でも回収する。
+_ai_generation_queue_priority_reap_path() {
+	local path="$1" stale_sec="$2" kind="${3:-slot}"
+	local pid now mt age reason=""
+	[ -d "$path" ] || return 1
+	pid=$(_ai_generation_queue_priority_owner_pid "$path")
+	now=$(date +%s)
+	mt=$(_ai_generation_queue_priority_mtime "$path" "$now")
+	age=$((now - mt))
+	case "$pid" in
+	'' | *[!0-9]*) ;;
+	*)
+		if ! kill -0 "$pid" 2>/dev/null; then
+			reason="dead ${kind} owner cleared (pid=${pid})"
+		fi
+		;;
+	esac
+	if [ -z "$reason" ] && [ "$age" -gt "$stale_sec" ]; then
+		reason="stale ${kind} request cleared (age=${age}s)"
+	fi
+	if [ -n "$reason" ]; then
+		rm -rf "$path" 2>/dev/null || true
+		log "[AIQ] ${reason}" >&2
+		return 0
+	fi
+	return 1
+}
+
+_ai_generation_queue_priority_pending_lane() {
+	_ai_generation_queue_priority_owner_lane "$1"
+}
+
+_ai_generation_queue_priority_reap_pending() {
+	local pending_dir="$1" stale_sec="$2" request_dir
+	for request_dir in "$pending_dir"/.*.tmp; do
+		[ -d "$request_dir" ] || continue
+		_ai_generation_queue_priority_reap_path "$request_dir" "$stale_sec" request >/dev/null 2>&1 || true
+	done
+	for request_dir in "$pending_dir"/*; do
+		[ -d "$request_dir" ] || continue
+		_ai_generation_queue_priority_reap_path "$request_dir" "$stale_sec" request >/dev/null 2>&1 || true
+	done
+}
+
+_ai_generation_queue_priority_has_pending_lane() {
+	local pending_dir="$1" lane="$2" request_dir request_lane
+	for request_dir in "$pending_dir"/*; do
+		[ -d "$request_dir" ] || continue
+		request_lane=$(_ai_generation_queue_priority_pending_lane "$request_dir")
+		[ "$request_lane" = "$lane" ] && return 0
+	done
+	return 1
+}
+
+_ai_generation_queue_priority_has_earlier_request() {
+	local pending_dir="$1" request_dir="$2" lane="$3"
+	local current_key request_path request_lane request_key
+	current_key=$(basename "$request_dir")
+	for request_path in "$pending_dir"/*; do
+		[ -d "$request_path" ] || continue
+		[ "$request_path" = "$request_dir" ] && continue
+		request_lane=$(_ai_generation_queue_priority_pending_lane "$request_path")
+		[ "$request_lane" = "$lane" ] || continue
+		request_key=$(basename "$request_path")
+		if [[ "$request_key" < "$current_key" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+_ai_generation_queue_priority_wait_holder_category() {
+	local base="$1" lane="$2" pending_dir="$1/.pending"
+	if [ -d "$base/comment" ] || _ai_generation_queue_priority_has_pending_lane "$pending_dir" comment; then
+		printf '%s\n' "comment"
+	elif [ -d "$base/radio" ]; then
+		printf '%s\n' "radio"
+	elif [ -d "$base/improve" ]; then
+		printf '%s\n' "improve"
+	else
+		printf '%s\n' "$lane"
+	fi
+}
+
+_ai_generation_queue_priority_can_claim() {
+	local base="$1" lane="$2" request_dir="$3" pending_dir="$1/.pending"
+	# comment は低優先度の実行中ジョブとは並行するが、comment 同士はFIFO一件。
+	if [ "$lane" = "comment" ]; then
+		[ ! -d "$base/comment" ] || return 1
+		_ai_generation_queue_priority_has_earlier_request "$pending_dir" "$request_dir" comment && return 1
+		return 0
+	fi
+
+	# radio/improve は共有する background スロット。コメントが実行中または
+	# 待機中なら新しい低優先ジョブを開始しない。
+	[ ! -d "$base/comment" ] || return 1
+	_ai_generation_queue_priority_has_pending_lane "$pending_dir" comment && return 1
+	[ ! -d "$base/radio" ] || return 1
+	[ ! -d "$base/improve" ] || return 1
+	if [ "$lane" = "improve" ]; then
+		# radio が improve より先。後から来た radio も、まだ slot が空けば
+		# improve 待ちを追い越してよい。
+		_ai_generation_queue_priority_has_pending_lane "$pending_dir" radio && return 1
+	fi
+	_ai_generation_queue_priority_has_earlier_request "$pending_dir" "$request_dir" "$lane" && return 1
+	return 0
+}
+
+_ai_generation_queue_priority_cleanup_request() {
+	local request_dir="$1" guard_path="$2"
+	if _ai_generation_queue_guard_enter "$guard_path"; then
+		rm -rf "$request_dir" 2>/dev/null || true
+		_ai_generation_queue_guard_leave
+	else
+		# token はこの呼び出し専用の mkdir で作られているため、guard が
+		# 取れない場合も自分の pending だけは安全に掃除できる。
+		rm -rf "$request_dir" 2>/dev/null || true
+	fi
+}
+
+_ai_generation_queue_enter_priority() {
+	local label="${1:-AI}" lane base pending_dir request_dir request_tmp guard_path slot_dir
+	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}" stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
+	local max_wait_sec waited=0 token owner_summary="" owner_pid="${AI_GENERATION_QUEUE_OWNER_PID:-${BASHPID:-$$}}"
+	AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY=""
+	lane=$(_ai_queue_priority_lane "$label") || return 1
+	base=$(_ai_generation_queue_priority_base_dir)
+	pending_dir="$base/.pending"
+	guard_path=$(_ai_generation_queue_priority_guard_path "$base")
+	max_wait_sec=$(_ai_generation_queue_max_wait_sec "$label")
+	case "$wait_sec" in '' | *[!0-9]*) wait_sec=2 ;; esac
+	[ "$wait_sec" -lt 1 ] && wait_sec=1
+	case "$stale_sec" in '' | *[!0-9]*) stale_sec=900 ;; esac
+	[ "$stale_sec" -lt 60 ] && stale_sec=60
+	case "$owner_pid" in '' | *[!0-9]*) owner_pid="${BASHPID:-$$}" ;; esac
+	mkdir -p "$pending_dir" 2>/dev/null || true
+	token="${BASHPID:-$$}.${RANDOM}.$(date +%s).${lane}"
+	request_dir="$pending_dir/$token"
+	request_tmp="$pending_dir/.${token}.tmp"
+	while ! mkdir "$request_tmp" 2>/dev/null; do
+		token="${BASHPID:-$$}.${RANDOM}.$(date +%s).${lane}"
+		request_dir="$pending_dir/$token"
+		request_tmp="$pending_dir/.${token}.tmp"
+	done
+	{
+		printf 'token=%s\n' "$token"
+		printf 'pid=%s\n' "$owner_pid"
+		printf 'lane=%s\n' "$lane"
+		printf 'label=%s\n' "$label"
+		printf 'requested_at=%s\n' "$(date '+%F %T')"
+	} >"$request_tmp/owner" 2>/dev/null || true
+	mv "$request_tmp" "$request_dir" 2>/dev/null || {
+		rm -rf "$request_tmp" "$request_dir" 2>/dev/null || true
+		AI_GENERATION_QUEUE_LAST_TOKEN=""
+		return 1
+	}
+	AI_GENERATION_QUEUE_PRIORITY_REQUEST_DIR="$request_dir"
+	AI_GENERATION_QUEUE_PRIORITY_LANE="$lane"
+
+	while :; do
+		_ai_generation_queue_guard_enter "$guard_path" || {
+			_ai_generation_queue_priority_cleanup_request "$request_dir" "$guard_path"
+			AI_GENERATION_QUEUE_LAST_TOKEN=""
+			AI_GENERATION_QUEUE_PRIORITY_REQUEST_DIR=""
+			AI_GENERATION_QUEUE_PRIORITY_LANE=""
+			return 1
+		}
+		_ai_generation_queue_priority_reap_path "$base/comment" "$stale_sec" slot >/dev/null 2>&1 || true
+		_ai_generation_queue_priority_reap_path "$base/radio" "$stale_sec" slot >/dev/null 2>&1 || true
+		_ai_generation_queue_priority_reap_path "$base/improve" "$stale_sec" slot >/dev/null 2>&1 || true
+		_ai_generation_queue_priority_reap_pending "$pending_dir" "$stale_sec"
+		if [ -d "$request_dir" ] && _ai_generation_queue_priority_can_claim "$base" "$lane" "$request_dir"; then
+			slot_dir=$(_ai_generation_queue_priority_slot_dir "$base" "$lane")
+			if mkdir "$slot_dir" 2>/dev/null; then
+				{
+					printf 'token=%s\n' "$token"
+					printf 'pid=%s\n' "$owner_pid"
+					printf 'lane=%s\n' "$lane"
+					printf 'label=%s\n' "$label"
+					printf 'priority=%s\n' "$([ "$lane" = comment ] && echo 0 || [ "$lane" = radio ] && echo 10 || echo 20)"
+					printf 'started_at=%s\n' "$(date '+%F %T')"
+				} >"$slot_dir/owner" 2>/dev/null || true
+				rm -rf "$request_dir" 2>/dev/null || true
+				_ai_generation_queue_guard_leave
+				AI_GENERATION_QUEUE_LAST_TOKEN="$token"
+				AI_GENERATION_QUEUE_PRIORITY_REQUEST_DIR=""
+				[ "$waited" -gt 0 ] && log "[AIQ:${label}] priority=${lane} slot acquired after ${waited}s" >&2
+				return 0
+			fi
+		fi
+		owner_summary=$(_ai_generation_queue_priority_wait_holder_category "$base" "$lane")
+		_ai_generation_queue_guard_leave
+		if [ "$waited" -eq 0 ] || [ $((waited % 30)) -eq 0 ]; then
+			log "[AIQ:${label}] priority=${lane} queued: waiting for ${owner_summary} slot" >&2
+		fi
+		if [ "$max_wait_sec" -gt 0 ] && [ "$waited" -ge "$max_wait_sec" ]; then
+			log "[AIQ:${label}] generation slot wait exceeded ${max_wait_sec}s (priority=${lane}, holder=${owner_summary})" >&2
+			AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY="$owner_summary"
+			_ai_generation_queue_priority_cleanup_request "$request_dir" "$guard_path"
+			AI_GENERATION_QUEUE_LAST_TOKEN=""
+			AI_GENERATION_QUEUE_PRIORITY_REQUEST_DIR=""
+			AI_GENERATION_QUEUE_PRIORITY_LANE=""
+			return "$AI_QUEUE_GIVEUP_RC"
+		fi
+		sleep "$wait_sec"
+		waited=$((waited + wait_sec))
+	done
+}
+
+_ai_generation_queue_leave_priority() {
+	local token="${1:-}" label="${2:-AI}" lane base slot_dir guard_path current_token=""
+	[ -n "$token" ] || return 0
+	lane=$(_ai_queue_priority_lane "$label") || return 0
+	base=$(_ai_generation_queue_priority_base_dir)
+	slot_dir=$(_ai_generation_queue_priority_slot_dir "$base" "$lane")
+	guard_path=$(_ai_generation_queue_priority_guard_path "$base")
+	_ai_generation_queue_guard_enter "$guard_path" || {
+		log "[AIQ:${label}] priority scheduler guard unavailable; skip unsafe release" >&2
+		return 1
+	}
+	if [ -d "$slot_dir" ]; then
+		current_token=$(sed -n 's/^token=//p' "$slot_dir/owner" 2>/dev/null | head -n 1)
+		if [ "$current_token" = "$token" ]; then
+			rm -rf "$slot_dir" 2>/dev/null || true
+		else
+			log "[AIQ:${label}] priority slot owner changed; skip release" >&2
+		fi
+	fi
+	_ai_generation_queue_guard_leave
+	return 0
+}
+
 _ai_generation_queue_enter() {
 	local label="${1:-AI}"
+	AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY=""
+	if _ai_generation_queue_priority_enabled "$label"; then
+		_ai_generation_queue_enter_priority "$label"
+		return $?
+	fi
 	local lock_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}"
 	local stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
 	local max_wait_sec
 	max_wait_sec=$(_ai_generation_queue_max_wait_sec "$label")
-	local waited=0 token now mt age owner_summary="" owner_pid="" reap_reason=""
+	local waited=0 token now mt age owner_summary="" owner_pid="${AI_GENERATION_QUEUE_OWNER_PID:-${BASHPID:-$$}}" reap_reason=""
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
 
 	case "$wait_sec" in
@@ -270,6 +588,7 @@ _ai_generation_queue_enter() {
 	'' | *[!0-9]*) stale_sec=900 ;;
 	esac
 	[ "$stale_sec" -lt 60 ] && stale_sec=60
+	case "$owner_pid" in '' | *[!0-9]*) owner_pid="${BASHPID:-$$}" ;; esac
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	token="${BASHPID:-$$}:$RANDOM:$(date +%s)"
 
@@ -281,7 +600,7 @@ _ai_generation_queue_enter() {
 		if mkdir "$lock_dir" 2>/dev/null; then
 			{
 				printf 'token=%s\n' "$token"
-				printf 'pid=%s\n' "${BASHPID:-$$}"
+				printf 'pid=%s\n' "$owner_pid"
 				printf 'label=%s\n' "$label"
 				printf 'started_at=%s\n' "$(date '+%F %T')"
 			} >"$lock_dir/owner" 2>/dev/null || true
@@ -318,7 +637,7 @@ _ai_generation_queue_enter() {
 			if mkdir "$lock_dir" 2>/dev/null; then
 				{
 					printf 'token=%s\n' "$token"
-					printf 'pid=%s\n' "${BASHPID:-$$}"
+					printf 'pid=%s\n' "$owner_pid"
 					printf 'label=%s\n' "$label"
 					printf 'started_at=%s\n' "$(date '+%F %T')"
 				} >"$lock_dir/owner" 2>/dev/null || true
@@ -346,6 +665,10 @@ _ai_generation_queue_enter() {
 
 _ai_generation_queue_leave() {
 	local token="${1:-}" label="${2:-AI}"
+	if _ai_generation_queue_priority_enabled "$label"; then
+		_ai_generation_queue_leave_priority "$token" "$label"
+		return $?
+	fi
 	local lock_dir current_token=""
 	[ -n "$token" ] || return 0
 	lock_dir=$(_ai_generation_queue_lock_dir "$label")
@@ -424,7 +747,7 @@ _ai_generation_queue_run() {
 		local _qgate_rc=$?
 		[ "$_qgate_rc" -eq 0 ] || return "$_qgate_rc"
 		;;
-	COMMENT*) ;;
+	COMMENT* | IMPROVE* | IMPROVEMENT*) ;;
 	*)
 		"$@"
 		return $?

@@ -145,7 +145,9 @@ _run_opencode_comment_unqueued() {
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
 		rm -f "$raw_file"
-		_run_opencode_radio "$agent" "$prompt_file"
+		# The caller already owns the comment lane. Re-entering the shared
+		# radio lane here would deadlock when the sandbox fallback is used.
+		_run_opencode_radio_unqueued "$agent" "$prompt_file"
 		return
 	fi
 	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"

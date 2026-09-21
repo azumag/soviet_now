@@ -616,6 +616,15 @@ PY
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_managed_improvement_uses_priority_queue_and_releases_on_exit(self):
+        source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
+        run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]
+        self.assertIn('improve_queue_label="IMPROVE:${cmd_log_tag}:${target}"', run_cmd)
+        self.assertIn('local AI_GENERATION_QUEUE_MAX_WAIT_SEC="$wait_cap"', run_cmd)
+        self.assertIn('_ai_generation_queue_enter "$improve_queue_label"', run_cmd)
+        self.assertIn('_ai_generation_queue_leave "$improve_queue_token" "$improve_queue_label"', run_cmd)
+        self.assertIn('if [ "$rc" -eq "${AI_QUEUE_GIVEUP_RC:-92}" ]; then', source)
+
     def test_run_cmd_streams_prompt_instead_of_passing_it_in_argv(self):
         source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
         run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]

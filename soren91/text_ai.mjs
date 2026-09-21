@@ -5,6 +5,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 const RUNTIME_CONFIG_PATH = join(import.meta.dirname || '.', 'runtime_config.json');
+const PROJECT_DIR = join(import.meta.dirname || '.', '..');
+const AI_QUEUE_SCRIPT = join(PROJECT_DIR, 'lib', 'ai_generation_queue_cli.sh');
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_OPENCODE_AGENT = 'glmflash';
 // opencode CLI に渡す既定のモデルチェーン。運用では AI_COMMON_AGENTS
@@ -54,6 +56,50 @@ export function isOpencodeTimeout(err) {
   return /timed?\s*out|ETIMEDOUT/i.test(String(err.message || ''));
 }
 const DEFAULT_OPENCODE_PERMISSION = '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
+
+function opencodeQueueLane(tag, options = {}) {
+  if (options.queueLane) return String(options.queueLane);
+  const value = String(tag || '').toLowerCase();
+  if (/(^|[_:-])(strategy|improve)([_:-]|$)/.test(value)) return 'improve';
+  if (/(^|[_:-])(radio|jiji|celebration)([_:-]|$)/.test(value)) return 'radio';
+  return 'comment';
+}
+
+function runAiQueueCli(args) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(AI_QUEUE_SCRIPT, args, {
+      cwd: PROJECT_DIR,
+      encoding: 'utf-8',
+      maxBuffer: 64 * 1024,
+      env: { ...process.env, AI_GENERATION_QUEUE_OWNER_PID: String(process.pid) },
+    }, (err, stdout, stderr) => {
+      if (err) {
+        const queueErr = new Error(`opencode queue command failed (code=${err.code ?? 'unknown'})`);
+        queueErr.code = err.code;
+        queueErr.queueStderr = String(stderr || '').slice(0, 300);
+        return reject(queueErr);
+      }
+      resolve(String(stdout || '').trim());
+    });
+    child.stdin?.on('error', () => {});
+  });
+}
+
+async function acquireOpencodeQueue(tag, options = {}) {
+  if (process.env.AI_GENERATION_QUEUE_ENABLED === '0') return null;
+  const lane = opencodeQueueLane(tag, options);
+  const token = await runAiQueueCli(['acquire', lane]);
+  return token ? { lane, token } : null;
+}
+
+async function releaseOpencodeQueue(tag, slot) {
+  if (!slot) return;
+  try {
+    await runAiQueueCli(['release', slot.lane, slot.token]);
+  } catch (err) {
+    console.error(`[${tag}] opencode queue release failed: code=${err?.code ?? 'unknown'}`);
+  }
+}
 
 function readRuntimeConfig() {
   if (!existsSync(RUNTIME_CONFIG_PATH)) return {};
@@ -405,7 +451,7 @@ function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, p
 
 // 通常チェーン (AI_COMMON_AGENTS) を順に試す。opencode CLI の --model は
 // `opencode/<model>` 形式。timeout は通常設定 (RADIO_OPENCODE_TIMEOUT) を流用。
-export async function runOpencodeText(tag, promptText, options = {}) {
+async function runOpencodeTextUnqueued(tag, promptText, options = {}) {
   const config = resolveTextAiConfig();
   const agents = options.opencodeAgent
     ? [options.opencodeAgent] : (config.opencodeModels || []);
@@ -442,6 +488,15 @@ export async function runOpencodeText(tag, promptText, options = {}) {
     }
   }
   throw lastErr || makeProviderError('opencode returned no text for any model');
+}
+
+export async function runOpencodeText(tag, promptText, options = {}) {
+  const queueSlot = await acquireOpencodeQueue(tag, options);
+  try {
+    return await runOpencodeTextUnqueued(tag, promptText, options);
+  } finally {
+    await releaseOpencodeQueue(tag, queueSlot);
+  }
 }
 
 export async function generateTextWithFallbacks(tag, promptText, options = {}) {
