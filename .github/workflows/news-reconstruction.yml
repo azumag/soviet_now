@@ -5,14 +5,21 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'broadcast/radio_engine.sh'
       - 'broadcast/radio_news.sh'
+      - 'broadcast/radio_news_priority.sh'
       - 'broadcast/radio_quality.sh'
       - 'broadcast/radio_state.sh'
       - 'core/config.sh'
       - 'core/phyrogenetic.sh'
+      - 'lib/news_filter.py'
+      - 'lib/news_priority.py'
       - 'lib/radio_mixed_language.py'
       - 'prompts/radio_news.md'
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
+      - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_lane_event_dedup.sh'
+      - 'tests/test_news_political_priority.py'
+      - 'tests/test_news_political_priority.sh'
       - 'tests/test_radio_mixed_language.py'
       - 'tests/test_radio_mixed_language_repair.sh'
       - 'tests/test_news_reconstruction_policy.sh'
@@ -23,14 +30,21 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'broadcast/radio_engine.sh'
       - 'broadcast/radio_news.sh'
+      - 'broadcast/radio_news_priority.sh'
       - 'broadcast/radio_quality.sh'
       - 'broadcast/radio_state.sh'
       - 'core/config.sh'
       - 'core/phyrogenetic.sh'
+      - 'lib/news_filter.py'
+      - 'lib/news_priority.py'
       - 'lib/radio_mixed_language.py'
       - 'prompts/radio_news.md'
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
+      - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_lane_event_dedup.sh'
+      - 'tests/test_news_political_priority.py'
+      - 'tests/test_news_political_priority.sh'
       - 'tests/test_radio_mixed_language.py'
       - 'tests/test_radio_mixed_language_repair.sh'
       - 'tests/test_news_reconstruction_policy.sh'
@@ -44,9 +58,11 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/config.sh core/phyrogenetic.sh tests/test_radio_mixed_language_repair.sh
-      - run: python3 -m unittest -v tests.test_news_body_reconstruction
+      - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_news_priority.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/config.sh core/phyrogenetic.sh tests/test_news_lane_event_dedup.sh tests/test_news_political_priority.sh tests/test_radio_mixed_language_repair.sh
+      - run: python3 -m unittest -v tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_political_priority
       - run: python3 -m unittest -v tests.test_radio_mixed_language
+      - run: bash tests/test_news_lane_event_dedup.sh
+      - run: bash tests/test_news_political_priority.sh
       - run: bash tests/test_news_attribution_policy.sh
       - run: bash tests/test_news_reconstruction_policy.sh
       - run: bash tests/test_radio_mixed_language_repair.sh

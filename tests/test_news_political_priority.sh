@@ -23,6 +23,8 @@ JSON
 
 PAST_NEWS_READ_SOURCES="$TMP/past_sources.txt"
 : >"$PAST_NEWS_READ_SOURCES"
+PAST_NEWS_READ="$TMP/past_titles.txt"
+printf '%s\n' '鹿児島に台風16号、避難所を開設' >"$PAST_NEWS_READ"
 ELOOP_LIB_DIR="$ROOT"
 
 cd "$TMP"
@@ -40,6 +42,13 @@ fi
 result=$(NEWS_POLITICAL_SHARE=0 _random_pick_news_block "$blocks")
 if [ "$result" != $'■ 大手メーカーが新工場を稼働\n経済本文' ]; then
   echo "non-political lane was not selected with NEWS_POLITICAL_SHARE=0" >&2
+  exit 1
+fi
+
+weather_blocks=$'■ 台風17号上陸、沖縄で住宅浸水と避難指示\n天気本文\n\n■ 大手メーカーが新工場を稼働\n経済本文'
+result=$(NEWS_POLITICAL_SHARE=0 _random_pick_news_block "$weather_blocks")
+if [ "$result" != $'■ 大手メーカーが新工場を稼働\n経済本文' ]; then
+  echo "recent weather family was not cooled down when another topic existed" >&2
   exit 1
 fi
 

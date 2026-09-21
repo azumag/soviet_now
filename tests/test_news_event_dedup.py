@@ -53,6 +53,11 @@ NEPAL = [
     "Hundreds missing and at least 8 killed after avalanche triggers deadly flash floods in Nepal - AP News",
     "Hundreds missing, including 291 foreign tourists, after flash flood on Nepal-Tibet border - BBC",
 ]
+STORM_17 = [
+    "台風17号上陸、沖縄で住宅浸水と避難指示",
+    "鹿児島に台風17号、避難所を開設",
+    "台風17号の影響、九州で大規模停電",
+]
 
 
 def same(a, b, corpus=None):
@@ -68,6 +73,15 @@ class FixtureSanityTest(unittest.TestCase):
 
 
 class SameEventTest(unittest.TestCase):
+    def test_numbered_storm_variants_are_the_same_event(self):
+        for title in STORM_17:
+            self.assertIn("storm:台風:17", nf.event_tokens(title))
+        self.assertTrue(same(STORM_17[0], STORM_17[1], corpus=[]))
+        self.assertTrue(same(STORM_17[1], STORM_17[2], corpus=[]))
+
+    def test_different_numbered_storms_are_not_merged(self):
+        self.assertFalse(same(STORM_17[0], "台風18号、沖縄で住宅浸水と避難指示", corpus=[]))
+
     def test_pakistan_variants_are_the_same_event(self):
         self.assertTrue(same(PAKISTAN[0], PAKISTAN[1]))
         self.assertTrue(same(PAKISTAN[1], PAKISTAN[2]))
@@ -161,6 +175,10 @@ class FilterUnreadTest(unittest.TestCase):
         survivors = self.run_filter([], PAKISTAN + NEPAL + HEADLINES)
         self.assertEqual([s for s in survivors if s in PAKISTAN], [PAKISTAN[0]])
         self.assertEqual([s for s in survivors if s in NEPAL], [NEPAL[0]])
+
+    def test_batch_offers_one_headline_per_numbered_storm(self):
+        survivors = self.run_filter([], STORM_17)
+        self.assertEqual(survivors, [STORM_17[0]])
 
     def test_kill_switch_restores_old_behaviour(self):
         survivors = self.run_filter([PAKISTAN[0]], PAKISTAN, env={"NEWS_EVENT_DEDUP": "0"})

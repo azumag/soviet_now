@@ -9,12 +9,26 @@ keeps the existing recency/source-diversity weighting inside that lane.
 from __future__ import annotations
 
 from collections import Counter
+import importlib.util
 import json
 import os
 import random
 import sys
 import unicodedata
 from typing import Any
+
+try:
+    from news_filter import topic_family
+except Exception:
+    _NEWS_FILTER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_filter.py")
+    _NEWS_FILTER_SPEC = importlib.util.spec_from_file_location(
+        "_news_filter_for_priority", _NEWS_FILTER_PATH
+    )
+    if _NEWS_FILTER_SPEC is None or _NEWS_FILTER_SPEC.loader is None:
+        raise ImportError(f"cannot load {_NEWS_FILTER_PATH}")
+    _NEWS_FILTER_MODULE = importlib.util.module_from_spec(_NEWS_FILTER_SPEC)
+    _NEWS_FILTER_SPEC.loader.exec_module(_NEWS_FILTER_MODULE)
+    topic_family = _NEWS_FILTER_MODULE.topic_family
 
 DEFAULT_POLITICAL_SHARE = 0.67
 
@@ -85,6 +99,67 @@ def _parse_blocks(text: str) -> list[list[str]]:
     return blocks
 
 
+def _block_title(block: list[str]) -> str:
+    return block[0][2:].strip() if block and block[0].startswith("■ ") else ""
+
+
+def _block_topic_family(block: list[str], meta: dict[str, Any]) -> str:
+    title = _block_title(block)
+    item = meta.get(title, {}) if isinstance(meta, dict) else {}
+    source_key = (item.get("source_key") or "").strip() if isinstance(item, dict) else ""
+    return topic_family(title, source_key)
+
+
+def topic_cooldown_from_env() -> int:
+    """Return how many recently read topic families should be avoided."""
+    raw = os.environ.get("NEWS_TOPIC_COOLDOWN", "2")
+    try:
+        return min(60, max(0, int(raw)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _read_title_history(path: str, limit: int = 60) -> list[str]:
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        safe_limit = min(60, max(1, int(limit)))
+    except (TypeError, ValueError):
+        safe_limit = 60
+    with open(path, encoding="utf-8", errors="ignore") as handle:
+        titles = [line.strip() for line in handle if line.strip()]
+    return titles[-safe_limit:]
+
+
+def _topic_diverse_indexes(
+    blocks: list[list[str]],
+    candidate_indexes: list[int],
+    recent_titles: list[str],
+    *,
+    meta: dict[str, Any],
+    cooldown: int,
+) -> list[int]:
+    """Prefer a different coarse topic family when an alternative exists."""
+    indexes = list(candidate_indexes)
+    if not indexes or cooldown <= 0 or not recent_titles:
+        return indexes
+
+    recent_families = {
+        topic_family(title)
+        for title in recent_titles[-cooldown:]
+    }
+    blocked = {family for family in recent_families if family != "other"}
+    if not blocked:
+        return indexes
+
+    allowed = [
+        idx for idx in indexes
+        if _block_topic_family(blocks[idx], meta) not in blocked
+    ]
+    # Fail open when the feed has temporarily narrowed to one topic family.
+    return allowed or indexes
+
+
 def _name_to_key(name: str) -> str:
     """Match the legacy radio_news.sh source-family mapping exactly."""
     if name == "ウィキニュース" or name.startswith("Wikinews"):
@@ -128,14 +203,14 @@ def _legacy_weights(
 ) -> list[float]:
     """Return the exact pre-priority picker weights for the supplied blocks."""
     published_values = [
-        _published_ts(meta, block[0][2:].strip() if block and block[0].startswith("■ ") else "")
+        _published_ts(meta, _block_title(block))
         for block in blocks
     ]
     newest_ts = max(published_values) if published_values else 0
 
     weights: list[float] = []
     for block in blocks:
-        title = block[0][2:].strip() if block and block[0].startswith("■ ") else ""
+        title = _block_title(block)
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_name = (item.get("source") or "").strip()
         source_key = _name_to_key(source_name)
@@ -160,6 +235,7 @@ def choose_news_block(
     source_counts: dict[str, int] | None = None,
     political_share: float = DEFAULT_POLITICAL_SHARE,
     rng: Any = random,
+    recent_titles: list[str] | None = None,
 ) -> str:
     """Choose one news block while preserving legacy within-lane weighting."""
     blocks = _parse_blocks(blocks_text)
@@ -172,18 +248,25 @@ def choose_news_block(
 
     political_flags: list[bool] = []
     for block in blocks:
-        title = block[0][2:].strip()
+        title = _block_title(block)
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_key = (item.get("source_key") or "").strip()
         political_flags.append(is_political_title(title, source_key))
 
     # Compute weights across the complete unread pool exactly as the legacy
-    # picker did. Lane selection only restricts which already-weighted entries
-    # may win; it must not change the recency/source-diversity distribution.
+    # picker did. Topic rotation and lane selection only restrict which
+    # already-weighted entries may win.
     weights = _legacy_weights(blocks, meta=meta, source_counts=source_counts)
 
-    political_indexes = [idx for idx, value in enumerate(political_flags) if value]
-    other_indexes = [idx for idx, value in enumerate(political_flags) if not value]
+    topic_indexes = _topic_diverse_indexes(
+        blocks,
+        list(range(len(blocks))),
+        recent_titles or [],
+        meta=meta,
+        cooldown=topic_cooldown_from_env(),
+    )
+    political_indexes = [idx for idx in topic_indexes if political_flags[idx]]
+    other_indexes = [idx for idx in topic_indexes if not political_flags[idx]]
     if political_indexes and other_indexes:
         candidate_indexes = political_indexes if rng.random() < share else other_indexes
     else:
@@ -195,15 +278,20 @@ def choose_news_block(
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print("usage: news_priority.py <past-source-history> <blocks-text>", file=sys.stderr)
+    if len(argv) not in {3, 4}:
+        print(
+            "usage: news_priority.py <past-source-history> <blocks-text> [past-title-history]",
+            file=sys.stderr,
+        )
         return 2
     history_file, blocks_text = argv[1], argv[2]
+    recent_titles = _read_title_history(argv[3]) if len(argv) == 4 else []
     chosen = choose_news_block(
         blocks_text,
         meta=_load_meta(),
         source_counts=_read_source_counts(history_file),
         political_share=political_share_from_env(),
+        recent_titles=recent_titles,
     )
     if chosen:
         print(chosen)

@@ -41,6 +41,88 @@ def key(s: str) -> str:
     return s[:240]
 
 
+_STORM_ID_RE = re.compile(
+    r"(?:台風|typhoon|hurricane|cyclone)\s*(?:第\s*)?([0-9]{1,3})\s*号?",
+    flags=re.IGNORECASE,
+)
+
+
+def _storm_id_tokens(text: str) -> set[str]:
+    """Return stable identifiers for numbered storms in a headline."""
+    tokens: set[str] = set()
+    for match in _STORM_ID_RE.finditer(text or ""):
+        raw = match.group(0).lower()
+        kind = "台風" if "台風" in raw else raw.split()[0]
+        tokens.add(f"storm:{kind}:{int(match.group(1))}")
+    return tokens
+
+
+_TOPIC_FAMILY_TERMS = (
+    (
+        "weather_disaster",
+        (
+            "台風", "豪雨", "大雨", "洪水", "氾濫", "浸水", "土砂災害", "地震", "津波",
+            "山火事", "噴火", "大雪", "熱波", "災害", "避難", "被災", "停電",
+            "typhoon", "hurricane", "cyclone", "flood", "earthquake", "wildfire",
+            "disaster", "evacuat",
+        ),
+    ),
+    (
+        "domestic_politics",
+        (
+            "政府", "国会", "首相", "総理", "内閣", "政党", "選挙", "知事", "市長", "議会",
+            "法案", "政策", "行政", "自治体", "省庁", "予算", "税制", "government",
+            "parliament", "election", "policy", "budget",
+        ),
+    ),
+    (
+        "international_security",
+        (
+            "外交", "外相", "首脳", "停戦", "戦争", "軍", "防衛", "制裁", "国連", "紛争",
+            "中国", "ロシア", "ウクライナ", "中東", "diplomacy", "war ", "military",
+            "sanction", "ceasefire", "conflict", "security",
+        ),
+    ),
+    (
+        "economy_business",
+        (
+            "経済", "景気", "物価", "インフレ", "金利", "為替", "株価", "決算", "企業", "会社",
+            "工場", "投資", "関税", "貿易", "銀行", "economy", "inflation", "interest rate",
+            "business", "company", "trade", "tariff",
+        ),
+    ),
+    (
+        "society_crime",
+        (
+            "事件", "事故", "逮捕", "容疑", "裁判", "判決", "警察", "犯罪", "医療", "病院",
+            "感染", "教育", "学校", "労働", "雇用", "福祉", "crime", "court", "police",
+            "hospital", "health", "education", "labor",
+        ),
+    ),
+    (
+        "environment_energy",
+        (
+            "気候変動", "温暖化", "脱炭素", "排出", "エネルギー", "原発", "環境", "climate",
+            "emissions", "energy",
+        ),
+    ),
+)
+
+
+def topic_family(title: str, source_key: str = "") -> str:
+    """Classify a headline coarsely for rotation, not for factual filtering."""
+    source = (source_key or "").strip().lower()
+    if source in {"nhk_politics", "google_news_jp_politics"}:
+        return "domestic_politics"
+    norm = unicodedata.normalize("NFKC", title or "").strip().lower()
+    if not norm:
+        return "other"
+    for family, terms in _TOPIC_FAMILY_TERMS:
+        if any(term in norm for term in terms):
+            return family
+    return "other"
+
+
 def url_hash(url: str) -> str:
     url = (url or "").strip()
     if not url:
@@ -83,7 +165,7 @@ def event_tokens(title: str) -> set:
     s = unicodedata.normalize("NFKC", s).lower()
     s = s.replace("\u2019", "'")
     s = re.sub(r"'s\b", "", s)
-    tokens = set()
+    tokens = _storm_id_tokens(s)
     for w in re.findall(r"[a-z]+", s):
         if len(w) >= 3 and w not in _EVENT_STOPWORDS:
             tokens.add(w)
@@ -121,6 +203,12 @@ def generic_tokens(titles, ratio: float = 0.10, min_corpus: int = 80) -> frozens
 
 def same_event(a: set, b: set, generic: frozenset = frozenset()) -> bool:
     """内容語の重なりで同一事件かを判定する。"""
+    # A numbered storm is an explicit event identity. Do this before removing
+    # period-generic tokens so a busy typhoon day cannot erase 台風17号's ID.
+    a_storm_ids = {token for token in a if token.startswith("storm:")}
+    b_storm_ids = {token for token in b if token.startswith("storm:")}
+    if a_storm_ids and b_storm_ids:
+        return bool(a_storm_ids & b_storm_ids)
     if generic:
         a = a - generic
         b = b - generic
