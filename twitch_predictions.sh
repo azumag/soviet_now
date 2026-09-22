@@ -784,7 +784,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
+	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
