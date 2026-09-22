@@ -1,14 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildCanvasFfmpegArgs,
   buildCanvasVideoFilter,
   buildChromeArgs,
   canvasSamplesMatch,
+  childExitOutcome,
   computeDriverDeadline,
   computeSessionDeadline,
   evaluateGeometryDrift,
+  FFMPEG_EXIT_WAIT_MS,
   findGameTarget,
   isAllowedCdpPeer,
   isExactGameTargetUrl,
@@ -23,6 +29,8 @@ import {
   validateOptions,
   waitForStableCanvasGeometry,
 } from '../tools/soren91_macos_cdp_host.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function validOptions(overrides = {}) {
   return {
@@ -134,6 +142,52 @@ test('signal shutdown uses conventional exit codes', () => {
   assert.equal(signalExitCode('SIGTERM'), 143);
   assert.equal(signalExitCode('SIGINT'), 130);
   assert.equal(signalExitCode('other'), 143);
+});
+
+test('an already-exited capture/ffmpeg child is never missed by the session race', async () => {
+  // A child that died before the race was armed must resolve immediately:
+  // otherwise a dead capture helper would leave the host waiting for the
+  // session deadline with the broadcast stream frozen (Issue #486).
+  assert.deepEqual(
+    await childExitOutcome({ exitCode: 0, signalCode: null }, 'capture-exit'),
+    { kind: 'capture-exit', value: { code: 0, signal: null } },
+  );
+  assert.deepEqual(
+    await childExitOutcome({ exitCode: null, signalCode: 'SIGKILL' }, 'capture-exit'),
+    { kind: 'capture-exit', value: { code: null, signal: 'SIGKILL' } },
+  );
+});
+
+test('session racers resolve on the requested event (ffmpeg waits for close)', async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const pending = childExitOutcome(child, 'ffmpeg-exit', 'close');
+  // 'exit' fires before the stderr pipe is flushed; the racer must not
+  // settle on it (the tail must be complete when classification runs).
+  child.emit('exit', 1, null);
+  let settled = false;
+  pending.then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  child.emit('close', 1, null);
+  assert.deepEqual(await pending, { kind: 'ffmpeg-exit', value: { code: 1, signal: null } });
+});
+
+test('cdp-host fails the session closed when the capture pipeline dies (Issue #486)', () => {
+  const source = fs.readFileSync(path.join(root, 'tools/soren91_macos_cdp_host.mjs'), 'utf8');
+  // The session end must be classified by the reviewed legacy-session
+  // contract (only an explicit receiver-close signature is a normal end).
+  assert.match(source, /resolveSessionEnd\(/);
+  assert.match(source, /childExitOutcome\(ffmpeg, 'ffmpeg-exit', 'close'\)/);
+  assert.match(source, /childExitOutcome\(capture, 'capture-exit'\)/);
+  assert.match(source, /SOREN91_CDP_HOST_END=\$\{verdict\}/);
+  assert.match(source, /getFfmpegExit: \(\) => ffmpegExit/);
+  // The pre-#486 behavior (log the exit, then keep the host up until the
+  // deadline) must not come back: a dead pipeline has to end the session.
+  assert.doesNotMatch(source, /host continues until deadline\/SIGTERM/);
+  assert.doesNotMatch(source, /await sleep\(Math\.max\(0, sessionDeadline - Date\.now\(\)\)\)/);
+  assert.ok(FFMPEG_EXIT_WAIT_MS > 0);
 });
 
 test('cdp-host output is fixed at 960x540 (full-page 1280x720 is rejected)', () => {
