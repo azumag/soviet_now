@@ -81,6 +81,29 @@ APIキー除去には再起動が必要。親supervisorの環境に残ってい�
 コードを戻す必要がある場合も元の分類器はそのまま残っている。
 本番反映はdocichのowner-only VM control planeを使用する。手動コピー／勝手な再起動はしない。
 
+### docich semantic-decision core への委譲（任意、既定オフ、azumag/docich#882）
+
+`COMMENT_CLASSIFIER_BACKEND=jev` に加えて `DOCICH_SEMANTIC_BACKEND=jev` を明示した
+場合のみ、この分類器はHTTP実装を自前で持たず、docichの
+`src/docich/semantic_decision` にある共通transport (`route='direct'`固定) へ委譲する。
+どちらか一方だけ、または両方とも未設定/`jev`以外なら、この分類器は従来どおり自前の
+`request_once`/`http_worker`/固定`ENDPOINT`のみを使う。Vercel route（`route='vercel'`）は
+本番live canary未実施のため、この分類器からは選べない。
+
+委譲は、このファイルがdocichのcheckout配下 `games/soviet_now/` として動く場合のみ成立する
+（本番配備のレイアウトと同一）。standalone checkout（このリポジトリ自身のCI含む）や
+docich側の`src/docich/semantic_decision/transport.py`が見つからない場合は、
+importせず即座に`invalid_response`として扱い、通常のAPI失敗と同じ経路
+（=このバッチはヒューリスティックへfallback）に進む。旧45/90秒のAIチェーンにも、
+この分類器自身のHTTP実装にも、暗黙のfallbackはしない。
+
+`COMMENT_CLASSIFIER_JEV_MODEL`/`_TIMEOUT_MS`/`_MIN_CONFIDENCE`はこのファイル側の
+purpose設定のままで、docich側のenv（`DOCICH_JEV_ROUTE`等）では上書きされない。
+timeoutは常にこのファイルの`config.timeout_ms`をdocich側へ明示的に渡す。
+
+有効化・無効化は上の「設定」節と同じowner-only VM control planeの再起動契約に従う。
+現時点でこのフラグを本番で有効化した実測・実API canaryはまだない。
+
 ## 計測
 
 有効時だけメタデータJSONLを保存する。本文、投稿者、本文hash、キー、生HTTP body、
@@ -139,6 +162,14 @@ bash -n broadcast/comment_classifier_jev.sh eloop_lib.sh
 GitHub専用CIでLinux/macOSを対象にし、既存のComment reply quality等も維持する。
 実API canary、実コメント200〜500件程度の評価、本番のp95・費用・改善効果は未測定。
 初回の実API応答で公式schema・固定modelが利用可能かを必ず確認する。
+
+`DOCICH_SEMANTIC_BACKEND=jev` 委譲（#882）はmockのみで検証済み: 委譲時の
+`route='direct'`固定・timeout変換・失敗時`invalid_response`化・key非leak、
+未フラグ時に従来の`request_once`が変わらず使われること、docich未同梱の
+standalone checkoutで実際にfallbackすること。azumag/docich側では、この
+soviet_now分類器（`transport=`差し替え）と同一の合成request/response
+goldenで、docichのtransport core自体を検証済み。
+docich実体を同梱した本番レイアウトでの実API canaryはまだ行っていない。
 
 一次資料（2026-09-19確認）:
 - https://docs.typesafe.ai/api

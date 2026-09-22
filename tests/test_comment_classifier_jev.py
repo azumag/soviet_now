@@ -406,6 +406,91 @@ class JevTests(unittest.TestCase):
         self.assertEqual(set(kwargs['env']), {'TYPESAFE_API_KEY', 'LANG'})
         self.assertEqual(kwargs['env']['TYPESAFE_API_KEY'], 'PRIVATE_KEY')
 
+    # -- docich semantic-decision delegation (azumag/docich#882) -----------
+
+    def test_docich_transport_delegates_direct_route_and_rounded_timeout(self):
+        core = Mock()
+        core.request_once.return_value = {'status': 'ok', 'meta': {'route': 'direct'},
+                                          'data': response(self.request)}
+        with patch.dict(sys.modules, {'docich.semantic_decision.transport': core}):
+            result = jev.docich_transport(self.request, 'PRIVATE_KEY', .1)
+        core.request_once.assert_called_once_with(
+            self.request, route='direct', env={'TYPESAFE_API_KEY': 'PRIVATE_KEY'}, timeout_ms=100)
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['data'], response(self.request))
+
+    def test_docich_transport_passes_through_known_failure_statuses(self):
+        for status in jev.COOLDOWNS:
+            core = Mock()
+            core.request_once.return_value = {'status': status, 'retry_after': 12}
+            with self.subTest(status=status), patch.dict(sys.modules, {'docich.semantic_decision.transport': core}):
+                result = jev.docich_transport(self.request, 'k', .1)
+            self.assertEqual(result, {'status': status, 'retry_after': 12})
+
+    def test_docich_transport_rejects_unknown_status_shape(self):
+        core = Mock()
+        core.request_once.return_value = {'status': 'made_up_status'}
+        with patch.dict(sys.modules, {'docich.semantic_decision.transport': core}):
+            result = jev.docich_transport(self.request, 'k', .1)
+        self.assertEqual(result, {'status': 'invalid_response'})
+
+    def test_docich_transport_core_exception_never_leaks_and_is_invalid_response(self):
+        core = Mock()
+        core.request_once.side_effect = RuntimeError('SECRET_DETAIL')
+        with patch.dict(sys.modules, {'docich.semantic_decision.transport': core}):
+            result = jev.docich_transport(self.request, 'PRIVATE_KEY', .1)
+        self.assertEqual(result, {'status': 'invalid_response'})
+        self.assertNotIn('SECRET', jev.dumps(result))
+        self.assertNotIn('PRIVATE_KEY', jev.dumps(result))
+
+    def test_docich_transport_without_nested_docich_is_invalid_response_not_legacy_http(self):
+        # This standalone checkout has no docich sibling tree; the adapter
+        # must fail closed, never fall through to this file's own
+        # request_once/http_worker/ENDPOINT.
+        sys.modules.pop('docich.semantic_decision.transport', None)
+        with patch.object(jev, 'bounded_process', side_effect=AssertionError('must not spawn legacy HTTP')):
+            result = jev.docich_transport(self.request, 'k', .1)
+        self.assertEqual(result, {'status': 'invalid_response'})
+
+    def test_resolve_transport_env_flag_is_exact_and_unset_keeps_legacy(self):
+        self.assertIs(jev._resolve_transport({'DOCICH_SEMANTIC_BACKEND': 'jev'}), jev.docich_transport)
+        self.assertIs(jev._resolve_transport({}), jev.request_once)
+        self.assertIs(jev._resolve_transport({'DOCICH_SEMANTIC_BACKEND': 'legacy'}), jev.request_once)
+        self.assertIs(jev._resolve_transport({'DOCICH_SEMANTIC_BACKEND': 'Jev'}), jev.request_once)
+
+    def test_run_default_unaffected_and_explicit_transport_still_wins(self):
+        env = {'TYPESAFE_API_KEY': 'k', 'COMMENT_CLASSIFIER_JEV_LOG_ENABLED': '0',
+               'COMMENT_CLASSIFIER_JEV_STATE_DIR': str(self.directory)}
+        sentinel = Mock(return_value={'status': 'ok', 'data': response(self.request)})
+        # No DOCICH_SEMANTIC_BACKEND: run() must still resolve this file's own
+        # request_once via _resolve_transport, matching pre-#882 production.
+        with patch.object(jev, 'baseline_from_file', return_value=self.rows), \
+                patch.object(jev, '_resolve_transport', return_value=sentinel) as resolve:
+            jev.run(self.directory / 'unused', env=env)
+        resolve.assert_called_once_with(env)
+        sentinel.assert_called_once()
+        # An explicit transport= caller bypasses env resolution entirely.
+        with patch.object(jev, 'baseline_from_file', return_value=self.rows), \
+                patch.object(jev, '_resolve_transport') as resolve:
+            jev.run(self.directory / 'unused', env=env, transport=sentinel)
+        resolve.assert_not_called()
+
+    def test_run_uses_docich_backend_only_when_flagged(self):
+        core = Mock()
+        core.request_once.return_value = {'status': 'ok', 'data': response(self.request)}
+        env = {'TYPESAFE_API_KEY': 'k', 'DOCICH_SEMANTIC_BACKEND': 'jev',
+               'COMMENT_CLASSIFIER_JEV_LOG_ENABLED': '0',
+               'COMMENT_CLASSIFIER_JEV_STATE_DIR': str(self.directory)}
+        with patch.object(jev, 'baseline_from_file', return_value=self.rows), \
+                patch.dict(sys.modules, {'docich.semantic_decision.transport': core}), \
+                patch.object(jev, 'bounded_process', side_effect=AssertionError('legacy HTTP must not run')):
+            output, event = jev.run(self.directory / 'unused', env=env)
+        self.assertEqual(output[0]['category'], 'stream_bug_report')
+        self.assertEqual(event['status'], 'ok')
+        core.request_once.assert_called_once()
+        self.assertEqual(core.request_once.call_args.kwargs['route'], 'direct')
+        self.assertEqual(core.request_once.call_args.kwargs['env'], {'TYPESAFE_API_KEY': 'k'})
+
     def test_body_stall_and_dns_stall_obey_wall_deadline(self):
         scripts = [
             'jev.socket.getaddrinfo=lambda *a, **k: time.sleep(30)',
