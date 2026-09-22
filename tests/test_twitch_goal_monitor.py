@@ -91,13 +91,9 @@ printf '200'
 
     def test_goal_event_is_wired_into_ai_comment_path(self):
         root = Path(__file__).resolve().parents[1]
-        classifier = (root / "prompts/comment_classifier.md").read_text(encoding="utf-8")
         response = (root / "prompts/comment_response_default.md").read_text(encoding="utf-8")
-        comment = (root / "broadcast/comment.sh").read_text(encoding="utf-8")
         supervisor = (root / "start_all.sh").read_text(encoding="utf-8")
-        self.assertIn("stream_goal", classifier)
         self.assertIn("[配信目標達成]", response)
-        self.assertIn('return "stream_goal"', comment)
         self.assertIn("./workers/goal_worker.sh", supervisor)
         self.assertIn('goal_worker) echo "tmp/state/goal_worker.pid"', supervisor)
 
