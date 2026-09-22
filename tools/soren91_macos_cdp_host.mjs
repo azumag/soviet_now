@@ -32,6 +32,8 @@ import { chromium } from 'playwright';
 import {
   attachPipeGuards,
   buildCaptureArgs,
+  createSessionDeadline,
+  createStderrTail,
   isTailscaleIpv4Hostname,
   parseCaptureHelperStatus,
   startCaptureHelper,
@@ -41,6 +43,7 @@ import {
 import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
+  resolveSessionEnd,
   resolveTapPids,
   startAudioTap,
   stopAudioTap,
@@ -53,6 +56,25 @@ import {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Bounded wait for ffmpeg's exit after a capture racer wins the session race
+// (mirrors the legacy session's default): long enough for the stderr tail to
+// flush the receiver-close signature, short enough to stay fail-fast.
+export const FFMPEG_EXIT_WAIT_MS = 5000;
+
+// Resolves with {kind, value:{code,signal}} when `child` exits. A child that
+// already exited before the session race was armed resolves immediately, so a
+// dead capture helper can never be missed and leave the host waiting for the
+// session deadline (Issue #486). `event` defaults to 'exit'; ffmpeg's racer
+// uses 'close' so its stderr tail is complete before classification.
+export function childExitOutcome(child, kind, event = 'exit') {
+  if (child.exitCode != null || child.signalCode != null) {
+    return Promise.resolve({ kind, value: { code: child.exitCode, signal: child.signalCode } });
+  }
+  return new Promise((resolve) => {
+    child.once(event, (code, signal) => resolve({ kind, value: { code, signal } }));
+  });
+}
 
 function envFlag(env, name, defaultValue) {
   const raw = env?.[name];
@@ -978,16 +1000,28 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
     ffmpeg = spawn(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
-    ffmpeg.stderr?.on('data', (chunk) => { try { process.stderr.write(chunk); } catch {} });
+    // Bounded ffmpeg stderr tail: the session-end classifier needs the
+    // receiver-close signature; the live stream still goes to process.stderr.
+    const ffmpegStderr = createStderrTail();
+    ffmpeg.stderr?.on('data', (chunk) => {
+      try { process.stderr.write(chunk); } catch {}
+      ffmpegStderr.push(chunk);
+    });
     // Pipe guards (Issue #303): when the OCI listener goes away, ffmpeg
     // exits and in-flight frame/PCM writes fail with EPIPE. Without guards
     // the unhandled 'error' event crashes this host (observed 2026-09-13:
     // listener pkill -> ffmpeg SRT I/O error -> EPIPE throw -> orphaned
-    // Chrome/proxy/capture/tap/holder). Guarded errors are benign: the host
-    // stays up until its deadline/SIGTERM and still cleans up.
-    attachPipeGuards({ capture, audiotap, ffmpeg });
-    ffmpeg.on('exit', (code, signal) => {
-      console.error(`[cdp-host] ffmpeg exited code=${code} signal=${signal} (listener may have closed; host continues until deadline/SIGTERM)`);
+    // Chrome/proxy/capture/tap/holder). Guarded errors are benign; the
+    // session race below decides whether the end was a normal consumer close
+    // or a failure to fail closed on.
+    const pipeTracker = attachPipeGuards({ capture, audiotap, ffmpeg });
+    // Latest observed ffmpeg close state for the session-end classifier.
+    // 'close' (not 'exit') fires after the stderr pipe is flushed, so the
+    // marker tail is complete when it is classified (Issue #486).
+    let ffmpegExit = null;
+    ffmpeg.on('close', (code, signal) => {
+      ffmpegExit = { code, signal };
+      console.error(`[cdp-host] ffmpeg closed code=${code} signal=${signal}`);
     });
     capture.stdout.pipe(ffmpeg.stdin);
     if (audiotap) {
@@ -1046,9 +1080,45 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       }
     }, OFFSCREEN_WATCH_MS);
     geometryWatch.unref?.();
-    await sleep(Math.max(0, sessionDeadline - Date.now()));
-    console.log('SOREN91_CDP_HOST_END=deadline');
-    return { ok: true };
+    // Session end is a race between the deadline, ffmpeg's close, and the
+    // capture helper's exit (Issue #486). A capture-side failure (e.g. the
+    // ScreenCaptureKit window disappearing with SCStreamErrorDomain -3815)
+    // must fail the session closed instead of leaving the broadcast stream
+    // frozen on the last frame until the session deadline: ending the session
+    // lets the corner restore the previous game instead of lingering.
+    // Classification reuses the reviewed legacy-session contract
+    // (resolveSessionEnd): only an explicit receiver-close signature in
+    // ffmpeg stderr counts as a normal consumer close; an unexplained or
+    // unobserved exit fails closed.
+    const deadline = createSessionDeadline(Math.max(0, sessionDeadline - Date.now()));
+    const outcome = await Promise.race([
+      deadline.promise,
+      childExitOutcome(ffmpeg, 'ffmpeg-exit', 'close'),
+      childExitOutcome(capture, 'capture-exit'),
+    ]);
+    try {
+      const verdict = await resolveSessionEnd({
+        kind: outcome.kind,
+        value: outcome.value,
+        getStderr: () => ffmpegStderr.text(),
+        getSinkClosed: () => pipeTracker.sinkClosed,
+        getFfmpegExit: () => ffmpegExit,
+        ffmpegWaitMs: FFMPEG_EXIT_WAIT_MS,
+      });
+      if (verdict === 'deadline' || verdict === 'consumer-closed') {
+        console.log(`SOREN91_CDP_HOST_END=${verdict}`);
+        return { ok: true };
+      }
+      throw new Error(
+        `session ended without a consumer close (fail-closed): ${outcome.kind}=${JSON.stringify(outcome.value)}`
+        + (ffmpegExit && outcome.kind !== 'ffmpeg-exit' ? ` ffmpeg-exit=${JSON.stringify(ffmpegExit)}` : ''),
+      );
+    } finally {
+      // Never leave the deadline timer pending: it would hold the event loop
+      // open for the rest of the session after a fail-closed exit (the
+      // Issue #303 hang class the legacy session fixed the same way).
+      deadline.cancel();
+    }
   } finally {
     if (geometryWatch) { clearInterval(geometryWatch); geometryWatch = null; }
     cleanup();
