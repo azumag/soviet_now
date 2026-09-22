@@ -27,9 +27,11 @@ cli_game_active() {
 	# Soren本編はbridge/Unity側が自身のBGMを出す。soren91コーナーもMacから
 	# 送られるゲーム音声(BGM含む)がsoren_nullへ載るため、このworkerは動かさない
 	# (sorengame同様、同じ曲が二重再生になる)。
-	[ -n "$game" ] && [ "$game" != "sorengame" ] && [ "$game" != "soren91" ]
+	# 半熟英雄はRetroArch自身のBGM・効果音を同じ配信sinkへ流す。
+	[ -n "$game" ] && [ "$game" != "sorengame" ] && [ "$game" != "soren91" ] && [ "$game" != "hanjuku-hero" ]
 }
 
+run_bgm_worker() {
 while :; do
 	if cli_game_active; then
 		if ! pgrep -f "$TAG" >/dev/null 2>&1; then
@@ -40,3 +42,8 @@ while :; do
 	fi
 	sleep 10
 done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	run_bgm_worker
+fi
