@@ -1601,7 +1601,7 @@ main_terms = (
 )
 soren91_terms = (
     "メリケン", "メリケンai", "soren91", "[soren91]", "対戦版", "91人",
-    "おじゃま", "hold", "next", "nextnext", "順位", "相手", "試合", "盤面タイプ"
+    "おじゃま", "試合", "盤面タイプ"
 )
 
 strategy_terms_norm = tuple(term.lower().replace(" ", "") for term in strategy_terms)
@@ -1698,6 +1698,10 @@ def looks_like_strategy_advice(raw: str) -> bool:
 
 def detect_mode(raw: str) -> str:
     norm = raw.lower().replace(" ", "")
+    if norm.startswith("[main]") or norm.startswith("[soren]"):
+        return "main"
+    if norm.startswith("[soren91]"):
+        return "soren91"
     has_main = has_any(norm, main_terms_norm)
     has_soren91 = has_any(norm, soren91_terms_norm)
     if has_soren91 and not has_main:
@@ -2912,10 +2916,20 @@ _detect_strategy_advice_target_mode() {
 	local normalized=""
 	normalized=$(printf '%s' "$advice_item" | tr '[:upper:]' '[:lower:]')
 	case "$normalized" in
-	*"[soren91]"* | *"メリケン"* | *"メリケンai"* | *"soren91"* | *"対戦版"* | *"おじゃま"* | *"hold"* | *"next"* | *"順位"* | *"相手"* | *"盤面タイプ"*)
+	"[main]"* | "[soren]"*)
+		printf '%s' "main"
+		return
+		;;
+	"[soren91]"*)
+		printf '%s' "soren91"
+		return
+		;;
+	esac
+	case "$normalized" in
+	*"メリケン"* | *"メリケンai"* | *"soren91"* | *"対戦版"* | *"おじゃま"* | *"盤面タイプ"*)
 		printf '%s' "soren91"
 		;;
-	*"[main]"* | *"[soren]"* | *"中華ai"* | *"strategy.py"*)
+	*"中華ai"* | *"strategy.py"*)
 		printf '%s' "main"
 		;;
 	*)
@@ -2951,14 +2965,16 @@ _append_advice_item_to_file() {
 	log "[COMMENT] ${log_label}追記 → $advice_file"
 }
 
-_append_strategy_advice_item() {
+_append_strategy_advice_item_at_target() {
 	local advice_item="$1"
-	local fallback_mode="${2:-main}"
+	local target_mode="${2:-main}"
 	local source="${3:-comment_reply}"
 	local received_epoch="${4:-}"
+	case "$target_mode" in
+	main | soren91) ;;
+	*) target_mode="main" ;;
+	esac
 	advice_item=$(_strip_strategy_advice_mode_prefix "$advice_item")
-	local target_mode=""
-	target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$fallback_mode")
 	case "${received_epoch:-}" in
 	'' | *[!0-9]*) received_epoch="" ;;
 	esac
@@ -2970,6 +2986,18 @@ _append_strategy_advice_item() {
 	_append_advice_item_to_file "$advice_file" \
 		"$advice_item [source=${source} received=${received_epoch:-unknown}]" \
 		"戦略アドバイス(${target_mode})"
+}
+
+# 互換caller向けの薄いresolver。本文からのtarget解決はprefixを除去する前に
+# 一度だけ行い、実際のappendは確定済みtargetへ委譲する。
+_append_strategy_advice_item() {
+	local advice_item="$1"
+	local fallback_mode="${2:-main}"
+	local source="${3:-comment_reply}"
+	local received_epoch="${4:-}"
+	local target_mode=""
+	target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$fallback_mode")
+	_append_strategy_advice_item_at_target "$advice_item" "$target_mode" "$source" "$received_epoch"
 }
 
 _append_comment_advice_item() {
@@ -2989,8 +3017,8 @@ _append_structured_strategy_advice_at_intake() {
 	while IFS= read -r candidate; do
 		[ -n "$candidate" ] || continue
 		case "$fallback_mode" in
-		soren91) _append_strategy_advice_item "$candidate" "soren91" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
-		*) _append_strategy_advice_item "$candidate" "main" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		soren91) _append_strategy_advice_item_at_target "$candidate" "soren91" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
+		*) _append_strategy_advice_item_at_target "$candidate" "main" "comment_intake" "${COMMENT_ADVICE_INTAKE_EPOCH:-}" ;;
 		esac
 	done <<<"$candidates"
 	log "[COMMENT] 機械抽出した戦略指示を受付時に保存 (${fallback_mode})"
@@ -4097,7 +4125,9 @@ RETRYCOMMENT
 			fi
 			if [ "$_allow_advice_append" = "1" ]; then
 				if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-					_append_strategy_advice_item "$advice_item" "$_comment_mode_generated"
+					local _advice_target_mode=""
+					_advice_target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$_comment_mode_generated")
+					_append_strategy_advice_item_at_target "$advice_item" "$_advice_target_mode"
 				fi
 				if [ -n "$comment_advice_item" ] && [ "$comment_advice_item" != "（アドバイスなし）" ] && [ "$comment_advice_item" != "なし" ] && [[ "$comment_advice_item" != なし* ]] && [[ "$comment_advice_item" != （アドバイスなし）* ]]; then
 					_append_comment_advice_item "$comment_advice_item"
@@ -4108,13 +4138,13 @@ RETRYCOMMENT
 				if [ -n "$strategy_advice_candidates_main" ]; then
 					while IFS= read -r advice_line; do
 						[ -n "$advice_line" ] || continue
-						_append_strategy_advice_item "$advice_line" "main"
+						_append_strategy_advice_item_at_target "$advice_line" "main"
 					done <<<"$strategy_advice_candidates_main"
 				fi
 				if [ -n "$strategy_advice_candidates_soren91" ]; then
 					while IFS= read -r advice_line; do
 						[ -n "$advice_line" ] || continue
-						_append_strategy_advice_item "$advice_line" "soren91"
+						_append_strategy_advice_item_at_target "$advice_line" "soren91"
 					done <<<"$strategy_advice_candidates_soren91"
 				fi
 				if [ -n "$comment_advice_candidates" ]; then
