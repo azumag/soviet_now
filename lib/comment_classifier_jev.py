@@ -2,8 +2,14 @@
 """Optional, text-only Jev classifier. No generation, shared backoff or bot actions.
 
 The HTTP subprocess is disposable: its wall-clock budget includes DNS and body
-reads. Production always uses the fixed TypeSafe HTTPS endpoint; mocks are only
-in tests. The unchanged shell heuristic remains the owner of fallback/language.
+reads. By default this file still owns the fixed TypeSafe HTTPS endpoint;
+mocks are only in tests. When ``DOCICH_SEMANTIC_BACKEND=jev`` is set AND this
+file is deployed nested under docich (azumag/docich#882), the request instead
+goes through the reviewed docich semantic-decision core, still ``direct``
+route only. This file never implements a second, independent copy of the
+Vercel route, and unset/other values keep this file's own unchanged transport
+as the pre-cutover rollback path. The unchanged shell heuristic remains the
+owner of fallback/language.
 """
 from __future__ import annotations
 
@@ -301,6 +307,52 @@ def request_once(request, key, timeout):
         return {'status': 'network_error'}
 
 
+def _load_docich_core():
+    """Import the reviewed docich transport only from a nested deployment tree.
+
+    This file must stay runnable/testable standalone (azumag/soviet_now has
+    its own history and CI): it is never a hard package dependency, and it
+    never adds an unreviewed directory to sys.path. The only accepted layout
+    is the current one, docich cloning this repo at games/soviet_now/.
+    """
+    module = sys.modules.get('docich.semantic_decision.transport')
+    if module is not None:
+        return module
+    src = Path(__file__).resolve().parents[3] / 'src'
+    if not (src / 'docich' / 'semantic_decision' / 'transport.py').is_file():
+        raise ImportError('docich_core_unavailable')
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from docich.semantic_decision import transport as module
+    return module
+
+
+def docich_transport(request, key, timeout):
+    """Delegate the HTTP call to the docich semantic-decision core (#882).
+
+    Only the reviewed ``direct`` route is exposed here; a route switch to
+    Vercel is a separate, later reviewed gate with its own live canary. Any
+    import/attribute/shape failure becomes ``invalid_response``, exactly like
+    any other transport failure -- it must never fall through to this file's
+    own retired HTTP implementation, and the caller (gated_request) already
+    treats that the same as an ordinary API failure: heuristic rows only.
+    """
+    try:
+        core = _load_docich_core()
+        result = core.request_once(request, route='direct', env={'TYPESAFE_API_KEY': key},
+                                   timeout_ms=round(timeout * 1000))
+    except Exception:
+        return {'status': 'invalid_response'}
+    if not isinstance(result, dict) or result.get('status') not in {'ok', *COOLDOWNS}:
+        return {'status': 'invalid_response'}
+    return result
+
+
+def _resolve_transport(env):
+    """Pick this file's own HTTP path unless docich delegation is explicit."""
+    return docich_transport if env.get('DOCICH_SEMANTIC_BACKEND') == 'jev' else request_once
+
+
 @contextmanager
 def locked_file(path):
     """Nonblocking process-wide gate, also usable for bounded telemetry rotation."""
@@ -483,8 +535,11 @@ def append_metrics(event, directory):
         pass
 
 
-def run(path, *, root=ROOT, env=None, transport=request_once):
+def run(path, *, root=ROOT, env=None, transport=None):
     env = os.environ if env is None else env
+    # An explicit transport= caller (tests, and this file's own recursive
+    # tooling) always wins; production resolves docich delegation from env.
+    transport = _resolve_transport(env) if transport is None else transport
     started = time.monotonic()
     rows = baseline_from_file(path, root)
     heuristic_ms = (time.monotonic() - started) * 1000
