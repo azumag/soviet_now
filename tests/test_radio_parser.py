@@ -64,6 +64,43 @@ ON_AIR_SCRIPT_START
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(body, "こんばんは。こちらだけが読み上げ対象です。")
 
+    def test_strict_boundary_preserves_news_lead_without_final_period(self):
+        raw = """ON_AIR_SCRIPT_START
+政府は、新しい災害対策を発表しました
+その結果、避難所の運営が変わりました。
+===SUMMARY===
+災害対策
+"""
+        result, body, _, _ = self.run_parser(raw)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            body,
+            "政府は、新しい災害対策を発表しました\n"
+            "その結果、避難所の運営が変わりました。",
+        )
+
+    def test_strict_boundary_preserves_news_lead_with_many_commas(self):
+        raw = """ON_AIR_SCRIPT_START
+政府は、自治体と、学校と、病院と、協議を始めました。
+これを受けて、避難計画を見直します。
+===SUMMARY===
+政府は、自治体と、学校と、病院と、協議を始めました。
+"""
+        result, body, _, _ = self.run_parser(raw)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(body.startswith("政府は、自治体と、学校と、病院と、協議を始めました。"))
+
+    def test_strict_boundary_removes_explicit_summary_header_only(self):
+        raw = """ON_AIR_SCRIPT_START
+要約: これは読み上げ対象外です
+要するに、支援の対象が広がりました。
+===SUMMARY===
+支援の対象
+"""
+        result, body, _, _ = self.run_parser(raw)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(body, "要するに、支援の対象が広がりました。")
+
     def test_strict_mode_rejects_missing_boundary(self):
         raw = """Let me search for the latest information.
 こんばんは。これは境界のない原稿です。
