@@ -125,6 +125,7 @@ export class LoopMetrics {
     this.observations++;
     const reason = String(state?.perception?.reason || 'non-move');
     const key = [...REASONS].reverse().find(r => reason === r || reason.startsWith(r + '-')) || 'other';
+    this.reasons[key]++;
     if (this.profileOpen) {
       const bucket = this.profileOpen;
       bucket.observations++;
