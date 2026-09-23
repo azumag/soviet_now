@@ -9,6 +9,7 @@ export const CAPTURE_PROFILE_STAGES = ['geometryBefore', 'screenshot', 'imageVal
 const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-frame',
   'preview-changed', 'board-moving', 'stable', 'stable-slow-advance', 'non-move', 'other'];
 const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
+const OBSERVATION_CAPTURE_CAPACITY = 16;
 const zeros = names => Object.fromEntries(names.map(name => [name, 0]));
 const rounded = n => Math.round(n * 10) / 10;
 const PROFILE_CAPACITY = 128;
@@ -45,6 +46,7 @@ export class LoopMetrics {
     this.profileOpen = null;
     this.profileActive = new Set();
     this.profileLastInput = null;
+    this.profilePendingCapture = null;
   }
   begin(game, turn) {
     if (this.game !== game) {
@@ -53,6 +55,7 @@ export class LoopMetrics {
       // Never turn an inter-round wait or the first drop into a complete interval.
       this.profileOpen = null;
       this.profileLastInput = null;
+      this.profilePendingCapture = null;
     }
     if (this.game !== game || this.turn !== turn) {
       this.startedAt = this.now();
@@ -86,6 +89,7 @@ export class LoopMetrics {
     if (!STAGES.includes(stage)) throw new TypeError('Unknown latency stage');
     const start = this.now();
     this._profileSettle(start);
+    if (stage === 'capture') this.profilePendingCapture = null;
     const token = { stage, inputMs: 0, inputBucket: null };
     this.profileActive.add(token);
     if (this.profileOpen) this.profileOpen.phaseCalls[stage]++;
@@ -112,6 +116,10 @@ export class LoopMetrics {
       parsed[key] = n;
     }
     for (const key of CAPTURE_PROFILE_STAGES) bucket.captureStageMs[key] += parsed[key];
+    // Keep only the most recent successful capture until observe() consumes it.
+    // This correlates existing timing with the existing sanitized reason without
+    // adding a capture, wait, state payload, path or free-form error to telemetry.
+    this.profilePendingCapture = parsed;
   }
   observe(state) {
     this.observations++;
@@ -128,6 +136,20 @@ export class LoopMetrics {
       // changing gameplay. This is not treated as authoritative game acceptance.
       const rawTransition = String(state?.perception?.queueTransition || 'unknown');
       const transition = QUEUE_TRANSITIONS.includes(rawTransition) ? rawTransition : 'unknown';
+      const captureStageMs = this.profilePendingCapture;
+      this.profilePendingCapture = null;
+      if (captureStageMs) {
+        if (bucket.observationCaptureRecords.length >= OBSERVATION_CAPTURE_CAPACITY) {
+          bucket.observationCaptureRecords.shift();
+          bucket.observationCaptureDropped++;
+        }
+        bucket.observationCaptureRecords.push({
+          observation: bucket.observations,
+          reason: key,
+          queueTransition: transition,
+          captureStageMs: Object.fromEntries(CAPTURE_PROFILE_STAGES.map(stage => [stage, rounded(captureStageMs[stage])])),
+        });
+      }
       const acceptance = bucket.dropAcceptance;
       acceptance.observations++;
       acceptance.transitionCounts[transition]++;
@@ -139,6 +161,8 @@ export class LoopMetrics {
         acceptance.confirmObservation = acceptance.observations;
         acceptance.confirmReason = key;
       }
+    } else {
+      this.profilePendingCapture = null;
     }
   }
   holdSent() {
@@ -175,6 +199,10 @@ export class LoopMetrics {
         endedAtMs: Date.now(), durationMs, stageMs, captureStageMs, phaseCalls: { ...bucket.phaseCalls },
         observations: bucket.observations, holds: bucket.holds, errors: bucket.errors,
         reasonCounts: { ...bucket.reasonCounts },
+        observationCaptureRecords: bucket.observationCaptureRecords.map(record => ({
+          ...record, captureStageMs: { ...record.captureStageMs },
+        })),
+        observationCaptureDropped: bucket.observationCaptureDropped,
         dropAcceptance: {
           confirmed: bucket.dropAcceptance.confirmed,
           confirmLatencyMs: bucket.dropAcceptance.confirmLatencyMs,
@@ -194,11 +222,13 @@ export class LoopMetrics {
       stageMs: zeros(DROP_PROFILE_STAGES), captureStageMs: zeros(CAPTURE_PROFILE_STAGES),
       phaseCalls: zeros([...STAGES, 'holdInput']),
       observations: 0, holds: 0, errors: 0, reasonCounts: zeros(REASONS),
+      observationCaptureRecords: [], observationCaptureDropped: 0,
       dropAcceptance: {
         confirmed: false, confirmLatencyMs: null, confirmObservation: null, confirmReason: null,
         observations: 0, transitionCounts: zeros(QUEUE_TRANSITIONS),
       },
     };
+    this.profilePendingCapture = null;
     // A measured operation crossing a boundary touches both intervals.
     for (const token of this.profileActive) this.profileOpen.phaseCalls[token.stage]++;
     this.profileLastInput = null;
@@ -238,6 +268,9 @@ export class LoopMetrics {
           stageMs: { ...record.stageMs }, captureStageMs: { ...record.captureStageMs },
           phaseCalls: { ...record.phaseCalls },
           reasonCounts: { ...record.reasonCounts },
+          observationCaptureRecords: record.observationCaptureRecords.map(item => ({
+            ...item, captureStageMs: { ...item.captureStageMs },
+          })),
           dropAcceptance: { ...record.dropAcceptance,
             transitionCounts: { ...record.dropAcceptance.transitionCounts } } })),
       },
