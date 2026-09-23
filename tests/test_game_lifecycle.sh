@@ -474,7 +474,7 @@ game_lifecycle_restore_loop
 watchdog_root="$test_root/watchdog"
 mkdir -p "$watchdog_root/lib" "$watchdog_root/tmp/state/game_lifecycle"
 cp "$repo_root/soviet_watchdog.sh" "$watchdog_root/"
-cp "$repo_root/lib/game_lifecycle.sh" "$repo_root/lib/game_lifecycle.py" "$watchdog_root/lib/"
+cp "$repo_root/lib/game_lifecycle.sh" "$repo_root/lib/game_lifecycle.py" "$repo_root/lib/game_terminal.py" "$watchdog_root/lib/"
 python3 - "$watchdog_root/tmp/state/game_lifecycle/request.json" "$watchdog_root/tmp/state/game_lifecycle/ack.json" <<'PY'
 import json
 import sys

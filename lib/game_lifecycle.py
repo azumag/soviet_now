@@ -25,6 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from game_terminal import is_terminal as is_terminal_game_state
+
 
 SCHEMA_VERSION = 1
 LIFECYCLE_DIR = Path("tmp/state/game_lifecycle")
@@ -123,7 +125,12 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _read_game_snapshot(root: Path) -> dict[str, Any]:
-    state = _json_object(root / "game_state.json") or {}
+    state_path = root / "game_state.json"
+    state = _json_object(state_path) or {}
+    try:
+        state_mtime = state_path.stat().st_mtime
+    except OSError:
+        state_mtime = None
     runner = _json_object(root / "tmp/state/main_strategy_runner_active.json") or {}
     pid = runner.get("pid")
     runner_alive = False
@@ -140,6 +147,11 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         pass
     return {
         "state": str(state.get("state", "")),
+        "terminal": is_terminal_game_state(
+            state,
+            state_mtime=state_mtime,
+            founding_seen=(root / "tmp/markers/.soviet_created").exists(),
+        ),
         "score": state.get("score"),
         "pieces": len(state.get("pieces", [])) if isinstance(state.get("pieces"), list) else None,
         "game_count": game_count,
@@ -564,7 +576,7 @@ def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) 
         ):
             return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
         snapshot = _read_game_snapshot(store.root)
-        if snapshot.get("state") != "GAMEOVER" or snapshot.get("runner_alive"):
+        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
             return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
         marker = {
             "schema": SCHEMA_VERSION,
@@ -620,9 +632,9 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
             return _emit({"request": request, "ack": next_ack}, RC_EXPIRED)
 
         snapshot = _read_game_snapshot(store.root)
-        # STOP is a temporary state during founding animations, not a safe
-        # handover boundary, even if the previous runner has already exited.
-        if snapshot.get("state") != "GAMEOVER" or snapshot.get("runner_alive"):
+        # A quiet non-founding STOP is also a boundary.  Fresh STOP remains
+        # protected because it can precede the founding counter increment.
+        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
             next_ack = _base_ack(
                 request,
                 "waiting",
