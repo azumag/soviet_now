@@ -17,6 +17,17 @@ _ai_dispatch() {
 	local label="$1" agent="$2" _prompt="$3" timeout_override="${4:-}"
 	printf '%s|%s|%s|%s\n' "$label" "$agent" "$timeout_override" "${OPENCODE_ABORT_RETRY:-unset}" >>"$ATTEMPT_LOG"
 	case "$agent" in
+	greedy)
+		# Unlike ``slow`` (which caps its own sleep at 1s), a greedy candidate
+		# really spends whatever timeout it was handed. This is the fixture for
+		# azumag/docich#993 要件2: without a per-candidate cap it swallows the
+		# whole remaining chain budget and the fallback never dispatches.
+		local greedy_delay="${timeout_override:-1}"
+		[[ "$greedy_delay" =~ ^[0-9]+$ ]] || greedy_delay=1
+		[ "$greedy_delay" -lt 1 ] && greedy_delay=1
+		sleep "$greedy_delay"
+		return 1
+		;;
 	slow)
 		local delay="${timeout_override:-1}"
 		[ "$delay" -gt 1 ] && delay=1
@@ -238,6 +249,40 @@ if [ -n "$policy_line" ] && [ -n "$budget_line" ] && [ "$budget_line" -gt "$poli
 	pass 'runtime loads radio budget after ai_generate policy'
 else
 	fail_case 'runtime load order keeps radio budget after ai_generate policy'
+fi
+
+# 11. azumag/docich#993 要件2: a single slow prepass candidate must not spend
+# the whole window before the fallback list is reached. Before the per-candidate
+# cap, ``greedy`` was handed the entire remaining budget, burned it, and the
+# second candidate was skipped before reaching provider dispatch.
+: >"$ATTEMPT_LOG"
+RADIO_PREPASS_TOTAL_BUDGET_SEC=4
+unset OPENCODE_ABORT_RETRY
+start=$(date +%s)
+prepass_out=$(ai_generate_list 'RADIO:news:prepass' "$prompt" 'greedy,success' 2>/dev/null || true)
+elapsed=$(( $(date +%s) - start ))
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+first_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+if [ "$prepass_out" = ok ] && [ "$lines" -eq 2 ] \
+	&& [ "$first_timeout" -ge 1 ] && [ "$first_timeout" -le 2 ] \
+	&& [ "$elapsed" -le 4 ]; then
+	pass 'slow first prepass candidate still leaves the fallback a real dispatch'
+else
+	fail_case "prepass per-candidate cap (out=$prepass_out lines=$lines first_timeout=$first_timeout elapsed=$elapsed)"
+fi
+
+# 12. azumag/docich#993 要件1/7: the per-candidate cap never extends the chain
+# total budget -- the whole run still finishes inside the same wall-clock window.
+: >"$ATTEMPT_LOG"
+RADIO_PREPASS_TOTAL_BUDGET_SEC=3
+start=$(date +%s)
+ai_generate_list 'RADIO:news:prepass' "$prompt" 'greedy,greedy,success' >/dev/null 2>&1 || true
+elapsed=$(( $(date +%s) - start ))
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+if [ "$elapsed" -le 3 ]; then
+	pass 'prepass wall-clock stays inside the total budget with the per-candidate cap'
+else
+	fail_case "prepass wall-clock exceeded total budget (lines=$lines elapsed=$elapsed)"
 fi
 
 printf '# pass=%d fail=%d\n' "$ok" "$fail"
