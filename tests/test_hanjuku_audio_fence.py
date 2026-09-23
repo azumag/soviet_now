@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('fence', ROOT / 'lib/hanjuku_audio_fence.py')
@@ -58,6 +59,18 @@ class HanjukuAudioFenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(list((self.root / 'queue').glob('*.txt'))), 1)
         self.assertEqual(len(list((self.root / 'queue').glob('*.json'))), 0)
+
+    def test_expiry_boundary_matches_docich_max_age_120_seconds(self):
+        now = 1_800_000_000.0
+        with patch.object(fence.time, 'time', return_value=now):
+            for ttl in (5, 61, 119.9, 120):
+                with self.subTest(ttl=ttl):
+                    value = dict(self.identity, expires_at=now + ttl)
+                    self.assertEqual(fence.validate(value), value)
+            for ttl in (0, 120.1, 121):
+                with self.subTest(ttl=ttl):
+                    with self.assertRaises(ValueError):
+                        fence.validate(dict(self.identity, expires_at=now + ttl))
 
     def test_identity_terminal_corruption_and_expiry_fail_closed(self):
         for change in ({'lease_id': 'other'}, {'runtime_id': 'g4-aaaaaa'}, {'generation': 4},
@@ -150,7 +163,7 @@ _play_comment_queue
         self.assertFalse(fence.sidecar(queue_target).exists())
 
     def test_invalid_enqueue_cannot_publish_unfenced_or_inject_path(self):
-        for source, value in [('hanjuku_commentary', ''), ('other', json.dumps(self.identity)),
+        for source, value in [('hanjuku:commentary', ''), ('hanjuku_commentary', ''), ('other', json.dumps(self.identity)),
                               ('../evil', ''), ('hanjuku_commentary', json.dumps(dict(self.identity, path='/tmp/no')) )]:
             result = self.shell('source "$1/lib/outbound_queue.sh"; enqueue_audio_text text "$2" "" "$3"', ROOT, source, value)
             self.assertNotEqual(result.returncode, 0)
@@ -217,6 +230,38 @@ _play_comment_queue
         debug = (self.root / 'tmp/.say_queue/debug.log').read_text()
         self.assertNotIn('say開始 (attempt=', debug)
         self.assertFalse((self.root / 'tmp/.say_queue/lock').exists())
+
+    def test_legacy_unfenced_queue_is_dropped_without_say(self):
+        target = self.root / 'queue/comment_announce_123_hanjuku:commentary.txt'
+        target.write_text('旧世代の実況です。')
+        Path(str(target) + '.speaker').write_text('7')
+        self.assertTrue(fence.required(target))
+        with self.assertRaises(OSError):
+            fence.check(self.canonical, target)
+        result = self.consume_queue()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'spoken').exists())
+        self.assertFalse(target.exists())
+        self.assertFalse(Path(str(target) + '.speaker').exists())
+
+    def test_legacy_unfenced_txt_and_claimed_items_cannot_launch_player(self):
+        script = (ROOT / 'say_enqueue.sh').read_text()
+        launcher = script[script.index('_hanjuku_audio_allowed() {'):script.index('# Linux 専用: paplay')]
+        helper = self.root / 'lib'
+        helper.mkdir()
+        (helper / 'hanjuku_audio_fence.py').symlink_to(ROOT / 'lib/hanjuku_audio_fence.py')
+        for suffix in ('.txt', '.playing'):
+            with self.subTest(suffix=suffix):
+                target = self.root / ('comment_announce_123_hanjuku:commentary' + suffix)
+                target.write_text('旧世代の実況です。')
+                self.assertTrue(fence.required(target))
+                with self.assertRaises(OSError):
+                    fence.check(self.canonical, target)
+                allowed = self.shell(launcher + '\nCONTENT_FILE="$1"; _hanjuku_audio_allowed', target)
+                self.assertEqual(allowed.returncode, 75, allowed.stderr)
+                result = self.shell(launcher + '\nCONTENT_FILE="$1"; _launch_bg_exec "" touch started; wait "$!"', target)
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertFalse((self.root / 'started').exists())
 
     def test_actual_say_launcher_uses_fence_after_synthesis(self):
         # Use the real common player launcher, without TTS/network dependencies.

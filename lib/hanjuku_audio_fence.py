@@ -28,7 +28,8 @@ def validate(value):
     if not isinstance(value['lease_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value['lease_id']):
         raise ValueError('invalid lease')
     expiry = value['expires_at']
-    if type(expiry) not in (float, int) or not math.isfinite(expiry) or not time.time() < expiry <= time.time() + 60:
+    now = time.time()
+    if type(expiry) not in (float, int) or not math.isfinite(expiry) or not now < expiry <= now + 120:
         raise ValueError('expired or excessive lifetime')
     return value
 
@@ -50,7 +51,9 @@ def sidecar(target):
 
 
 def required(target):
-    return '_hanjuku_commentary.' in Path(target).name or sidecar(target).exists() or sidecar(target).is_symlink()
+    name = Path(target).name
+    return (any(source in name for source in ('_hanjuku_commentary.', '_hanjuku:commentary.'))
+            or sidecar(target).exists() or sidecar(target).is_symlink())
 
 
 def active(canonical, value):

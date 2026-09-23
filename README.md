@@ -24,9 +24,11 @@ Web UIプロセスが終了してからPAPER通知を有効にします。旧wri
 
 `enqueue_audio_text TEXT hanjuku_commentary SPEAKER FENCE_JSON` は、半熟英雄だけに
 実行世代を固定した実況を積みます。第4引数は `game` (`hanjuku-hero`)、`runtime_id`、
-`generation` (整数)、`lease_id`、`expires_at` (Unix秒、現在から最大60秒) の5項目のJSONです。
+`generation` (整数)、`lease_id`、`expires_at` (Unix秒、現在から最大120秒) の5項目のJSONです。
 本文公開前に `.runtime_fence.json` を保存し、metadataの欠落・破損・期限切れは破棄します。
 通常の3引数呼び出しは従来どおりです。
+旧source `hanjuku:commentary` の既存 `.txt` / `.playing` もfenceを必須とし、
+metadataがない旧実況は読み上げず破棄します。旧sourceへの新規投入も拒否します。
 
 参照先は `SOREN_ACTIVE_GAME_CONTEXT_FILE`（既定
 `/home/ubuntu/docich/run-soren-live/game_switch.json`）と、その親の

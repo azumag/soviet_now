@@ -1395,7 +1395,7 @@ BEGIN {
 _hanjuku_audio_allowed() {
 	local base="$CONTENT_FILE" required=0
 	case "$base" in *.txt) base="${base%.txt}" ;; *.playing) base="${base%.playing}" ;; esac
-	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing) required=1 ;; esac
+	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) required=1 ;; esac
 	[ -e "${base}.runtime_fence.json" ] || [ -L "${base}.runtime_fence.json" ] && required=1
 	[ "$required" -eq 1 ] || return 0
 	python3 ./lib/hanjuku_audio_fence.py check \
@@ -1408,7 +1408,7 @@ _launch_bg_exec() {
 	local fence_base="$CONTENT_FILE"
 	case "$fence_base" in *.txt) fence_base="${fence_base%.txt}" ;; *.playing) fence_base="${fence_base%.playing}" ;; esac
 	local fence_path="${fence_base}.runtime_fence.json" fenced=0
-	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing) fenced=1 ;; esac
+	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) fenced=1 ;; esac
 	[ -e "$fence_path" ] || [ -L "$fence_path" ] && fenced=1
 	if [ "$fenced" -eq 1 ]; then
 		# The helper rechecks after TTS/queue waits immediately before spawning,

@@ -385,7 +385,7 @@ outbound_queue_consume_once() {
 # この関数で queue に書いて audio_worker に再生を委譲する。
 
 # enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE] [RUNTIME_FENCE_JSON]
-# Hanjuku-only fence: game/runtime_id/generation/lease_id/expires_at (<=60s).
+# Hanjuku-only fence: game/runtime_id/generation/lease_id/expires_at (<=120s).
 #   テキストを comment queue に積む。audio_worker の _play_comment_queue が再生する。
 enqueue_audio_text() {
 	local text="${1:-}"
@@ -393,7 +393,7 @@ enqueue_audio_text() {
 	local speaker_override="${3:-}"
 	local runtime_fence="${4:-}" encoded_fence=""
 	# Source becomes a filename component; never accept paths or shell syntax.
-	case "$source" in ''|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
+	case "$source" in ''|hanjuku:commentary|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
 	if [ -n "$runtime_fence" ] || [ "$source" = hanjuku_commentary ]; then
 		[ "$source" = hanjuku_commentary ] && [ -n "$runtime_fence" ] || return 1
 		encoded_fence=$(python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" encode "$runtime_fence") || return 1
