@@ -162,6 +162,13 @@ def is_summaryish_edge_line(line):
         return True
     return False
 
+def is_discardable_edge_line(line):
+    if script_pos:
+        # Inside an explicit on-air boundary, only labeled metadata is safe
+        # to discard. A spoken sentence can contain commas or match SUMMARY.
+        return bool(summary_like_header.match(line))
+    return is_summaryish_edge_line(line)
+
 body_lines = []
 if script_pos:
     body_end = summary_pos[0] if summary_pos else len(main_lines)
@@ -171,13 +178,6 @@ if script_pos:
 elif segments:
     best = max(segments, key=score_segment)
     body_lines = [line for line in best if line and not line.startswith("===")]
-
-if body_lines:
-    head = body_lines[0]
-    if ("," in head or "\u3001" in head) and not re.search(r"[。.!?！？]", head):
-        body_lines = body_lines[1:]
-    elif head.count(",") + head.count("\u3001") >= 4 and len(head) <= 180 and len(body_lines) >= 2:
-        body_lines = body_lines[1:]
 
 body = "\n".join(body_lines).strip()
 body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
@@ -221,17 +221,17 @@ while clean_body_lines:
     if head.startswith(meta_prefixes):
         clean_body_lines = clean_body_lines[1:]
         continue
-    if is_summaryish_edge_line(head):
+    if is_discardable_edge_line(head):
         clean_body_lines = clean_body_lines[1:]
         continue
     break
-if clean_body_lines:
+if clean_body_lines and not script_pos:
     head = clean_body_lines[0]
     if ("," in head or "\u3001" in head) and not re.search(r"[。.!?！？]", head):
         clean_body_lines = clean_body_lines[1:]
     elif head.count(",") + head.count("\u3001") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
         clean_body_lines = clean_body_lines[1:]
-while clean_body_lines and is_summaryish_edge_line(clean_body_lines[-1]):
+while clean_body_lines and is_discardable_edge_line(clean_body_lines[-1]):
     clean_body_lines = clean_body_lines[:-1]
 body = "\n".join(clean_body_lines).strip()
 
