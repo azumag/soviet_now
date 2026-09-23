@@ -28,7 +28,10 @@ test('pairs each successful capture with the sanitized observation reason withou
   f.m.observe({ perception: { reason: 'board-moving', queueTransition: 'advanced' } });
   f.m.dropSent();
 
-  const record = f.m.flush('drop-sent').dropProfile.records[0];
+  const snapshot = f.m.flush('drop-sent');
+  const record = snapshot.dropProfile.records[0];
+  assert.equal(snapshot.reasonCounts['preview-changed'], 1);
+  assert.equal(snapshot.reasonCounts['board-moving'], 1);
   assert.deepEqual(record.captureStageMs, stages(30, 145, 3, 42));
   assert.equal(record.stageMs.capture, 220);
   assert.equal(record.phaseCalls.capture, 2);
@@ -62,6 +65,8 @@ test('failed or malformed captures cannot reuse an earlier capture association o
   assert.deepEqual(record.observationCaptureRecords, []);
   assert.equal(record.reasonCounts.other, 1);
   assert.equal(record.reasonCounts['board-moving'], 1);
+  assert.equal(snapshot.reasonCounts.other, 1);
+  assert.equal(snapshot.reasonCounts['board-moving'], 1);
   assert.equal(JSON.stringify(snapshot).includes('private-token'), false);
 });
 
