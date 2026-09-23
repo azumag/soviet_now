@@ -55,7 +55,7 @@ test('rotates when a terminal game restarts into MOVE', () => {
   assert.equal(restarted.phase, 'MOVE');
 });
 
-test('STOP also counts as a terminal phase', () => {
+test('founding STOP returns to MOVE within the same game', () => {
   const generate = counter();
   const start = nextGameInstanceId({ currentPhase: 'MOVE', generate });
   const restarted = nextGameInstanceId({
@@ -64,8 +64,8 @@ test('STOP also counts as a terminal phase', () => {
     currentId: start.gameInstanceId,
     generate,
   });
-  assert.equal(restarted.rotated, true);
-  assert.notEqual(restarted.gameInstanceId, start.gameInstanceId);
+  assert.equal(restarted.rotated, false);
+  assert.equal(restarted.gameInstanceId, start.gameInstanceId);
 });
 
 test('does not rotate within the same game', () => {
