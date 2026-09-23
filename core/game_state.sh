@@ -2,10 +2,22 @@
 
 
 is_game_over() {
-	local s
-	s=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('state',''))" 2>/dev/null)
-	# STOP is also used during the founding animation on the current board.
-	[ "$s" = "GAMEOVER" ]
+	python3 - "$GAME_STATE" "${TMP_MARKERS_DIR:-tmp/markers}/.soviet_created" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+
+from lib.game_terminal import is_terminal
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+if not is_terminal(
+    state,
+    state_mtime=os.path.getmtime(sys.argv[1]),
+    founding_seen=os.path.exists(sys.argv[2]),
+):
+    raise SystemExit(1)
+PY
 }
 
 is_move_state() {

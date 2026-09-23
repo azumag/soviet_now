@@ -249,6 +249,19 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(boundary.returncode, 0)
             self.assertEqual(payload["ack"]["status"], "boundary")
 
+    def test_quiet_non_founding_stop_is_a_lifecycle_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            state_path = root / "game_state.json"
+            state_path.write_text(json.dumps({"state": "STOP", "score": 1470, "makeSorenCount": 0}))
+            old = time.time() - 31
+            os.utime(state_path, (old, old))
+            boundary, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(boundary.returncode, 0)
+            self.assertEqual(payload["ack"]["status"], "boundary")
+
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

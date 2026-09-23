@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -14,9 +16,41 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 import strategy_runner
+from lib.game_terminal import STOP_QUIET_SECONDS, is_terminal
 
 
 class SovietContinuationTest(unittest.TestCase):
+    def test_quiet_non_founding_stop_is_terminal_but_founding_stop_is_not(self):
+        stop = {"state": "STOP", "score": 1470, "makeSorenCount": 0}
+        self.assertFalse(is_terminal(stop, state_mtime=100, now=100 + STOP_QUIET_SECONDS - 1))
+        self.assertTrue(is_terminal(stop, state_mtime=100, now=100 + STOP_QUIET_SECONDS))
+        self.assertFalse(is_terminal(stop, state_mtime=None, now=1000))
+        self.assertFalse(is_terminal(stop, state_mtime=100, now=1000, founding_seen=True))
+        self.assertFalse(is_terminal({**stop, "makeSorenCount": 1}, state_mtime=100, now=1000))
+
+    def test_runner_ends_quiet_non_founding_stop(self):
+        stop = {"state": "STOP", "score": 1470, "makeSorenCount": 0}
+        with mock.patch.object(strategy_runner, "load_game_state", return_value=stop), mock.patch.object(
+            strategy_runner.os.path, "getmtime", return_value=100.0
+        ), mock.patch.object(strategy_runner.time, "time", return_value=131.0):
+            state, is_move = strategy_runner.wait_for_move_state(False)
+        self.assertIs(state, stop)
+        self.assertFalse(is_move)
+
+    def test_outer_loop_recognizes_quiet_non_founding_stop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "game_state.json"
+            state_path.write_text(json.dumps({"state": "STOP", "score": 1470, "makeSorenCount": 0}))
+            old = int(time.time()) - STOP_QUIET_SECONDS - 1
+            os.utime(state_path, (old, old))
+            env = {**os.environ, "GAME_STATE": str(state_path), "TMP_MARKERS_DIR": temp}
+            command = "source core/game_state.sh; is_game_over"
+            result = subprocess.run(["bash", "-c", command], cwd=REPO_ROOT, env=env, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            (Path(temp) / ".soviet_created").touch()
+            result = subprocess.run(["bash", "-c", command], cwd=REPO_ROOT, env=env, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+
     def test_soviet_success_does_not_enable_automatic_loop_halt(self):
         loop = (REPO_ROOT / "eloop.sh").read_text(encoding="utf-8")
         config = (REPO_ROOT / "core/config.sh").read_text(encoding="utf-8")

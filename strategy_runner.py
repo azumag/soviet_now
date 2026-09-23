@@ -27,6 +27,7 @@ import time
 import uuid
 
 from lib.country_names import country_named_reason
+from lib.game_terminal import is_terminal as is_terminal_game_state
 
 # --- 定数 ---
 GAME_STATE = "game_state.json"
@@ -3190,7 +3191,7 @@ def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_sta
 
 
 def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT, on_state=None):
-    """Wait for MOVE. STOP also occurs during founding, so is not terminal."""
+    """Wait for MOVE or a confirmed terminal state of the current game."""
     settle_count = 0
     start = time.time()
     settle_force_at = 0.0  # MOVE確認後に初めてセット
@@ -3210,7 +3211,15 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
         if on_state is not None:
             on_state(gs)
 
-        if state == "GAMEOVER":
+        try:
+            state_mtime = os.path.getmtime(GAME_STATE)
+        except OSError:
+            state_mtime = None
+        if is_terminal_game_state(
+            gs,
+            state_mtime=state_mtime,
+            founding_seen=os.path.exists("tmp/markers/.soviet_created"),
+        ):
             return gs, False
 
         if state != "MOVE":
@@ -3374,7 +3383,11 @@ def run_game():
 
             if not is_move:
                 final_state = get_state_field(gs) if gs else "UNKNOWN"
-                if final_state != "GAMEOVER":
+                try:
+                    state_mtime = os.path.getmtime(GAME_STATE)
+                except OSError:
+                    state_mtime = None
+                if not is_terminal_game_state(gs or {}, state_mtime=state_mtime, founding_seen=soviet_created):
                     # Never turn animation/unknown state into bookkeeping,
                     # a round boundary, retry, or a command on a stale board.
                     log(f"[WAIT] 非終端状態 {final_state}。盤面を保持して再観測します")
