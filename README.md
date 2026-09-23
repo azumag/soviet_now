@@ -20,6 +20,28 @@ docichのWeb UI/PAPER通知writerも同じプロトコルを使用します。�
 Web UIプロセスが終了してからPAPER通知を有効にします。旧writerとの同時稼働は未対応です。
 この変更だけで通知・読み上げ・paper workerを有効化することはありません。
 
+## 半熟英雄の実況音声
+
+`enqueue_audio_text TEXT hanjuku_commentary SPEAKER FENCE_JSON` は、半熟英雄だけに
+実行世代を固定した実況を積みます。第4引数は `game` (`hanjuku-hero`)、`runtime_id`、
+`generation` (整数)、`lease_id`、`expires_at` (Unix秒、現在から最大120秒) の5項目のJSONです。
+本文公開前に `.runtime_fence.json` を保存し、metadataの欠落・破損・期限切れは破棄します。
+通常の3引数呼び出しは従来どおりです。
+旧source `hanjuku:commentary` の既存 `.txt` / `.playing` もfenceを必須とし、
+metadataがない旧実況は読み上げず破棄します。旧sourceへの新規投入も拒否します。
+
+参照先は `SOREN_ACTIVE_GAME_CONTEXT_FILE`（既定
+`/home/ubuntu/docich/run-soren-live/game_switch.json`）と、その親の
+`runtimes/<runtime_id>/hanjuku_run.json` に固定し、JSON内のパスを受け付けません。
+claim時、TTS待機後の実プレイヤー起動直前、再生中100ms間隔で、canonicalのready/active、
+4項目のidentity、非terminal/playingを確認します。起動時だけ既存game-switch shared lockを
+使い、再生中はゲーム切替を妨げません。失効時はその実況が起動した子プロセス群だけを
+停止・waitし、`played.log` に `skipped_hanjuku_fence` を記録します。
+
+`audio_worker` は毎pollでモジュールを再sourceし、`say_enqueue.sh` は都度起動されるため、
+この関数変更の反映に共通音声workerの再起動は不要です。既に始まった旧版の読み上げが
+なくなったことと、次の実況でfenceが有効になったことは配備後に別途検証します。
+
 ## アーキテクチャ
 
 ```

@@ -384,12 +384,20 @@ outbound_queue_consume_once() {
 # soren_loop / eloop / improve から直接 say_enqueue.sh を呼ばず、
 # この関数で queue に書いて audio_worker に再生を委譲する。
 
-# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE]
+# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE] [RUNTIME_FENCE_JSON]
+# Hanjuku-only fence: game/runtime_id/generation/lease_id/expires_at (<=120s).
 #   テキストを comment queue に積む。audio_worker の _play_comment_queue が再生する。
 enqueue_audio_text() {
 	local text="${1:-}"
 	local source="${2:-unknown}"
 	local speaker_override="${3:-}"
+	local runtime_fence="${4:-}" encoded_fence=""
+	# Source becomes a filename component; never accept paths or shell syntax.
+	case "$source" in ''|hanjuku:commentary|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
+	if [ -n "$runtime_fence" ] || [ "$source" = hanjuku_commentary ]; then
+		[ "$source" = hanjuku_commentary ] && [ -n "$runtime_fence" ] || return 1
+		encoded_fence=$(python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" encode "$runtime_fence") || return 1
+	fi
 	[ -n "$text" ] || return 1
 	if ! _comment_audio_claim_enqueue_key "$text"; then
 		return 0
@@ -400,16 +408,21 @@ enqueue_audio_text() {
 
 	local ts
 	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
-	local filename="comment_announce_${ts}_${source}.txt"
+	local filename="comment_announce_${ts}_${BASHPID:-$$}_${RANDOM}_${source}.txt"
 	local tmpfile="${queue_dir}/.${filename}.tmp"
 	local destfile="${queue_dir}/${filename}"
 
-	printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || return 1
-	mv "$tmpfile" "$destfile" 2>/dev/null || return 1
-
-	# speaker override が指定されていたらサイドカーファイルに保存
+	local fencefile="${destfile%.txt}.runtime_fence.json"
+	# Publish metadata first: a consumer must never see unfenced Hanjuku text.
+	if [ -n "$encoded_fence" ]; then
+		printf '%s\n' "$encoded_fence" > "$fencefile" 2>/dev/null || return 1
+	fi
 	if [ -n "$speaker_override" ]; then
 		printf '%s' "$speaker_override" > "${destfile}.speaker" 2>/dev/null || true
+	fi
+	if ! printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || ! mv "$tmpfile" "$destfile" 2>/dev/null; then
+		rm -f "$tmpfile" "$fencefile" "${destfile}.speaker"
+		return 1
 	fi
 	return 0
 }

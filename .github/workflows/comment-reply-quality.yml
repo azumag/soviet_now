@@ -12,6 +12,10 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
+      - 'lib/hanjuku_audio_fence.py'
+      - 'lib/outbound_queue.sh'
+      - 'say_enqueue.sh'
+      - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - '.github/workflows/comment-reply-quality.yml'
@@ -28,6 +32,10 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
+      - 'lib/hanjuku_audio_fence.py'
+      - 'lib/outbound_queue.sh'
+      - 'say_enqueue.sh'
+      - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - '.github/workflows/comment-reply-quality.yml'
@@ -47,6 +55,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Intent, rendering, output validation, history and translation
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich
+      - name: Hanjuku runtime-bound narration
+        run: python3 -m unittest -v tests.test_hanjuku_audio_fence
       - name: Raid and country-name regression tests
         run: python3 -m unittest tests.test_raid_research tests.test_country_stage_names
       - name: Shell syntax and comment delivery contracts

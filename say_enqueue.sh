@@ -1392,9 +1392,31 @@ BEGIN {
 }'
 }
 
+_hanjuku_audio_allowed() {
+	local base="$CONTENT_FILE" required=0
+	case "$base" in *.txt) base="${base%.txt}" ;; *.playing) base="${base%.playing}" ;; esac
+	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) required=1 ;; esac
+	[ -e "${base}.runtime_fence.json" ] || [ -L "${base}.runtime_fence.json" ] && required=1
+	[ "$required" -eq 1 ] || return 0
+	python3 ./lib/hanjuku_audio_fence.py check \
+		"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" "$CONTENT_FILE"
+}
+
 _launch_bg_exec() {
 	local cleanup_file="$1"
 	shift
+	local fence_base="$CONTENT_FILE"
+	case "$fence_base" in *.txt) fence_base="${fence_base%.txt}" ;; *.playing) fence_base="${fence_base%.playing}" ;; esac
+	local fence_path="${fence_base}.runtime_fence.json" fenced=0
+	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) fenced=1 ;; esac
+	[ -e "$fence_path" ] || [ -L "$fence_path" ] && fenced=1
+	if [ "$fenced" -eq 1 ]; then
+		# The helper rechecks after TTS/queue waits immediately before spawning,
+		# and owns only its own player process group while monitoring the fence.
+		set -- python3 ./lib/hanjuku_audio_fence.py play \
+			"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" \
+			"$CONTENT_FILE" -- "$@"
+	fi
 	nohup bash -c '
 		trap "" INT TERM
 		cleanup_file="$1"
@@ -1951,6 +1973,7 @@ _stream_launch_voicevox_chunk() {
 _stream_wait_voicevox_chunk() {
 	local play_pid="$1" expected_sec="${2:-0}"
 	if ! _wait_for_player_pid "$play_pid" "$expected_sec" 0; then
+		_hanjuku_audio_allowed || return 75
 		if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
 			&& _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
@@ -1992,6 +2015,7 @@ _stream_wait_voicevox_chunk() {
 # やり直さず、失敗したチャンクだけを再生する。
 _stream_retry_voicevox_playback() {
 	local wav_file="$1" retry=1 backoff="$SAY_RETRY_SLEEP_SEC" play_rc=1
+	_hanjuku_audio_allowed || return 75
 	if [ "$retry" -gt "$SAY_RETRY_MAX" ]; then
 		_log "ストリーミングチャンク異常終了 → 再試行上限"
 		return 1
@@ -2003,6 +2027,7 @@ _stream_retry_voicevox_playback() {
 		[ "$backoff" -gt "$SAY_RETRY_MAX_SLEEP_SEC" ] && backoff="$SAY_RETRY_MAX_SLEEP_SEC"
 	fi
 	while true; do
+		_hanjuku_audio_allowed || return 75
 		if _stream_launch_voicevox_chunk "$wav_file"; then
 			_stream_wait_voicevox_chunk "$STREAM_PLAY_PID" "$STREAM_EXPECTED_SEC"
 			play_rc=$?
@@ -2588,6 +2613,7 @@ _play_with_retry() {
 	SAY_FORCE_DIRECT=0
 	GOOGLE_TTS_FAILED=0
 	while true; do
+		_hanjuku_audio_allowed || return 75
 		local attempt=$((retry + 1))
 		_set_current_source "playing"
 		_log "say開始 (attempt=${attempt}, rate=${RATE})"
@@ -2638,6 +2664,7 @@ _play_with_retry() {
 			say_rc="$PLAYER_WAIT_RC"
 			elapsed="$PLAYER_WAIT_ELAPSED"
 		fi
+		_hanjuku_audio_allowed || return 75
 		if [ "$timed_out" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
 			&& _partial_playback_already_heard "$elapsed" \
 			&& { [ "$say_rc" -ne 0 ] || _is_truncated_playback "$elapsed" "$expected_sec"; }; then
@@ -3133,7 +3160,11 @@ fi
 # ロック解放（say完了後）
 _release_lock
 
-if [ "$PLAYBACK_FAILED" -eq 1 ]; then
+if ! _hanjuku_audio_allowed; then
+	_log "半熟英雄実況を破棄 (runtime fence失効)"
+	_append_played_log "skipped_hanjuku_fence"
+	PLAYBACK_FAILED=1
+elif [ "$PLAYBACK_FAILED" -eq 1 ]; then
 	_log "say終了 (一部失敗あり)"
 	_append_played_log "failed"
 else
