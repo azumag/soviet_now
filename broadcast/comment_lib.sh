@@ -1,6 +1,22 @@
 # broadcast/comment_lib.sh - コメント再生・生成の関数ライブラリ (source される)
 
 
+_comment_runtime_fence_path() {
+	local base="$1"
+	case "$base" in *.txt) base="${base%.txt}" ;; *.playing) base="${base%.playing}" ;; esac
+	printf '%s.runtime_fence.json' "$base"
+}
+
+_comment_runtime_fence_valid() {
+	local target="$1" fence
+	fence=$(_comment_runtime_fence_path "$target")
+	case "$target" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing) ;; *)
+		[ -e "$fence" ] || [ -L "$fence" ] || return 0 ;;
+	esac
+	python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" check \
+		"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" "$target"
+}
+
 _recover_orphan_comment_playing_files() {
 	# コメント用 say_enqueue が動作中なら .playing は現役の可能性が高いので触らない
 	if pgrep -f "say_enqueue.sh --no-preempt .*\\.comment_queue/.*\\.playing" >/dev/null 2>&1; then
@@ -59,6 +75,7 @@ _comment_read_speaker_override() {
 
 _comment_clear_speaker_sidecars() {
 	local target="$1" original="${2:-}" sidecar
+	rm -f "$(_comment_runtime_fence_path "$target")"
 	while IFS= read -r sidecar; do
 		[ -n "$sidecar" ] || continue
 		rm -f "$sidecar" 2>/dev/null || true
@@ -260,6 +277,13 @@ _play_comment_queue() {
 	_recover_orphan_comment_playing_files
 	for qf in $(_comment_queue_ordered_files); do
 		if [ -f "$qf" ]; then
+			if ! _comment_runtime_fence_valid "$qf"; then
+				_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+				_comment_clear_generation_meta "$qf" 2>/dev/null || true
+				_comment_clear_speaker_sidecars "$qf" 2>/dev/null || true
+				rm -f "$qf"
+				continue
+			fi
 			local expected_mode="" current_mode=""
 			expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
 			current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
@@ -357,7 +381,9 @@ _play_comment_queue() {
 				local _cw_context_label=""
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
 				local _cw_playback_ok=0
-				if _comment_has_bilingual_speech "$playing_file"; then
+				if ! _comment_runtime_fence_valid "$playing_file"; then
+					: # switched/terminated after claim; clean up without speaking
+				elif _comment_has_bilingual_speech "$playing_file"; then
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語翻訳 → 日本語返信の順で再生: $playing_file" >>tmp/.say_queue/debug.log
 					if _comment_play_bilingual_speech "$playing_file" "$_cw_vo_speaker" "$_cw_context_label"; then
 						_cw_playback_ok=1
