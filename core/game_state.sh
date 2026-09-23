@@ -4,7 +4,8 @@
 is_game_over() {
 	local s
 	s=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('state',''))" 2>/dev/null)
-	[ "$s" = "GAMEOVER" ] || [ "$s" = "STOP" ]
+	# STOP is also used during the founding animation on the current board.
+	[ "$s" = "GAMEOVER" ]
 }
 
 is_move_state() {

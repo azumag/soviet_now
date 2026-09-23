@@ -831,6 +831,9 @@ if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
 	_game_lifecycle_startup_rc=0
 	game_lifecycle_resume_pending || _game_lifecycle_startup_rc=$?
 	case "$_game_lifecycle_startup_rc" in
+	4)
+		log "[GAME-LIFECYCLE] startup 試合終了待ち → retryを送らず同じ盤面の操作を再開"
+		;;
 	0)
 		STOP_REQUESTED=1
 		trap - EXIT
@@ -853,17 +856,21 @@ if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
 fi
 
 # MOVE状態待ち
-# 起動直後に前回試合の STOP/GAMEOVER が残っている場合は、ただ MOVE を待つと
+# 起動直後に前回試合の GAMEOVER が残っている場合は、ただ MOVE を待つと
 # retry が送られず停止したように見えるため、明示的に次ゲームへ進める。
-if is_game_over; then
-	log "[STARTUP] GAMEOVER/STOP 検出 → retry送信"
+if [ "${_game_lifecycle_startup_rc:-1}" -eq 4 ]; then
+	# Boundary waiting is not a completed game. The player observes the live
+	# board again, even if its transient STOP state outlasts wait_for_move.
+	wait_rc=0
+elif is_game_over; then
+	log "[STARTUP] GAMEOVER 検出 → retry送信"
 	send_retry
 	wait_rc=$?
 else
 	wait_for_move
 	wait_rc=$?
 	if [ "$wait_rc" -ne 0 ] && is_game_over; then
-		log "[STARTUP] MOVE待機中に GAMEOVER/STOP 検出 → retry送信"
+		log "[STARTUP] MOVE待機中に GAMEOVER 検出 → retry送信"
 		send_retry
 		wait_rc=$?
 	fi

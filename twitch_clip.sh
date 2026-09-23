@@ -12,10 +12,13 @@ source lib/outbound_queue.sh 2>/dev/null || true
 EVENT_MSG="${1:-}"
 EVENT_KIND="${2:-generic}"
 _log() { echo "[twitch_clip $(date '+%H:%M:%S')] $*" >&2; }
-# Create Clip は非同期で、Get Clips に現れるまで最大60秒かかり得る。
-# 既定12回 (約36秒) だと、Create成功後に公開URLを捨てることがある。
+# Create Clip は非同期。作成応答だけでは成功にせず、Get Clips で確認する。
+# rc=75 は未作成と判明した一時障害、78 は設定/認証、1 は結果不明/未確認。
+# rc=1 を自動で再POSTすると同じ建国クリップを重複作成するおそれがある。
 CLIP_POLL_MAX="${TWITCH_CLIP_POLL_MAX:-20}"
 CLIP_POLL_INTERVAL_SEC="${TWITCH_CLIP_POLL_INTERVAL_SEC:-3}"
+CLIP_CONNECT_TIMEOUT_SEC=5
+CLIP_REQUEST_TIMEOUT_SEC=10
 
 # --- 環境変数チェック ---
 # クリップ作成は TWITCH_CLIP_TOKEN を優先する (clips:edit 付きトークン用。
@@ -29,7 +32,7 @@ CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
 if [ -z "$TOKEN" ] || [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
     _log "SKIP: missing env vars"
-    exit 0
+    exit 78
 fi
 TOKEN="${TOKEN#oauth:}"
 
@@ -41,28 +44,40 @@ _json_get() {
 # --- クリップ作成 ---
 # HTTPステータスも記録する（offline と scope不足/認証失敗の切り分け用）
 clip_http_code=""
-response=$(curl -s -w '\n%{http_code}' -X POST \
+response=$(curl -s --connect-timeout "$CLIP_CONNECT_TIMEOUT_SEC" \
+    --max-time "$CLIP_REQUEST_TIMEOUT_SEC" -w '\n%{http_code}' -X POST \
     "https://api.twitch.tv/helix/clips?broadcaster_id=${BROADCASTER_ID}" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Client-Id: ${CLIENT_ID}" 2>/dev/null)
+clip_curl_rc=$?
+if [ "$clip_curl_rc" -ne 0 ]; then
+    _log "WARN: clip create transport failed (rc=$clip_curl_rc)"
+    case "$clip_curl_rc" in
+        5|6|7) exit 75 ;; # proxy/DNS/connect failure: request was not accepted
+        *) exit 1 ;; # timeout/response loss: outcome may be ambiguous
+    esac
+fi
 clip_http_code=$(printf '%s' "$response" | tail -n 1)
 response=$(printf '%s' "$response" | sed '$d')
 case "$clip_http_code" in
     2*) ;;
     *)
         _log "WARN: clip create failed (http=${clip_http_code:-conn-fail}; offline?/scope clips:edit?/token?)"
-        exit 0
+        case "$clip_http_code" in
+            429|503) exit 75 ;;
+            *) exit 78 ;;
+        esac
         ;;
 esac
 if [ -z "$response" ]; then
     _log "WARN: clip create failed (http=${clip_http_code}, empty body)"
-    exit 0
+    exit 1
 fi
 
 clip_id=$(printf '%s' "$response" | _json_get "['data'][0]['id']")
 if [ -z "$clip_id" ]; then
     _log "WARN: no clip id in response"
-    exit 0
+    exit 1
 fi
 _log "clip created: id=$clip_id"
 
@@ -71,7 +86,8 @@ clip_url=""
 poll=1
 while [ "$poll" -le "$CLIP_POLL_MAX" ]; do
     sleep "$CLIP_POLL_INTERVAL_SEC"
-    clip_info=$(curl -sf \
+    clip_info=$(curl -sf --connect-timeout "$CLIP_CONNECT_TIMEOUT_SEC" \
+        --max-time "$CLIP_REQUEST_TIMEOUT_SEC" \
         "https://api.twitch.tv/helix/clips?id=${clip_id}" \
         -H "Authorization: Bearer ${TOKEN}" \
         -H "Client-Id: ${CLIENT_ID}" 2>/dev/null)
@@ -87,7 +103,7 @@ done
 # Get Clips で確認できなかった場合は投稿しない（dead link防止）
 if [ -z "$clip_url" ]; then
     _log "WARN: clip not confirmed after polling, skipping chat post"
-    exit 0
+    exit 1
 fi
 
 # --- チャット投稿 ---

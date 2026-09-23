@@ -1081,6 +1081,10 @@ PY
 		_game_lifecycle_rc=0
 		game_lifecycle_after_game || _game_lifecycle_rc=$?
 		case "$_game_lifecycle_rc" in
+		4)
+			log "[GAME-LIFECYCLE] 試合は継続中 → 同じ盤面の操作へ戻る"
+			return 0
+			;;
 		0)
 			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 			STOP_REQUESTED=1
@@ -1124,6 +1128,12 @@ prepare_next_game() {
 		_game_lifecycle_resume_rc=0
 		game_lifecycle_resume_pending || _game_lifecycle_resume_rc=$?
 		case "$_game_lifecycle_resume_rc" in
+		4)
+			# A boundary wait still owns a live board. Do not let the normal
+			# MOVE timeout or STOP check below turn it into a reset.
+			log "[GAME-LIFECYCLE] 試合終了待ち → retryを送らず同じ盤面を継続"
+			return 0
+			;;
 		0)
 			STOP_REQUESTED=1
 			trap - EXIT
@@ -1151,8 +1161,13 @@ prepare_next_game() {
 	if is_game_over; then
 		send_retry
 	else
-		wait_for_move || {
+		local move_rc=0
+		wait_for_move || move_rc=$?
+		[ "$move_rc" -eq 130 ] && return 130
+		# A MOVE timeout is not evidence that this board has ended. STOP
+		# includes founding animations; only a confirmed GAMEOVER may reset.
+		if [ "$move_rc" -ne 0 ] && is_game_over; then
 			send_retry
-		}
+		fi
 	fi
 }

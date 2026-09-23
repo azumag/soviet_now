@@ -152,6 +152,12 @@ class GameLifecycleBrokerTests(unittest.TestCase):
                 "run_id": run_id,
             }
             (lifecycle / "player_state.json").write_text(json.dumps(state), encoding="utf-8")
+            for live_state in ("STOP", "MOVE"):
+                self.write_state(root, live_state)
+                waiting, waiting_payload = self.run_broker(root, "mark-jev-one-game")
+                self.assertEqual(waiting.returncode, 1, live_state)
+                self.assertEqual(waiting_payload["status"], "waiting")
+                self.assertFalse((lifecycle / "jev_one_game.json").exists())
             self.write_state(root, "GAMEOVER")
 
             parked, parked_payload = self.run_broker(root, "mark-jev-one-game")
@@ -220,6 +226,28 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             committed, _ = self.run_broker(root, "commit-player", "--request-id", request_id)
             self.assertEqual(committed.returncode, 0)
             self.assertFalse((lifecycle / "jev_one_game.json").exists())
+
+    def test_founding_stop_and_resumed_move_keep_same_board_until_gameover(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            for live_state in ("STOP", "MOVE"):
+                board = json.dumps({"state": live_state, "score": 6111, "pieces": [{"type": 16}]})
+                (root / "game_state.json").write_text(board, encoding="utf-8")
+                waiting, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+                self.assertEqual(waiting.returncode, 1, live_state)
+                self.assertEqual(payload["ack"]["status"], "waiting")
+                self.assertEqual(payload["ack"]["snapshot"]["state"], live_state)
+                stopped, _ = self.run_broker(root, "stop", "--request-id", request_id)
+                self.assertEqual(stopped.returncode, 1)
+                self.assertFalse((root / "tmp/state/game_lifecycle/control.json").exists())
+                self.assertEqual((root / "game_state.json").read_text(encoding="utf-8"), board)
+
+            self.write_state(root, "GAMEOVER")
+            boundary, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(boundary.returncode, 0)
+            self.assertEqual(payload["ack"]["status"], "boundary")
 
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

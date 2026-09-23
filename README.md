@@ -36,6 +36,15 @@ soren91/                   ← 91人対戦版 (メリケンAI) 自動プレイ�
     └── soren91_control.sh ← 親ループからの起動・停止・手動メリケンモード管理
 ```
 
+ソ連建国時は `makeSorenCount` の増加を観測してクリップをキューへ送ります。
+建国演出の `STOP` は試合終了ではありません。プレイ用プロセスと盤面を保持して
+既定300秒待ち、最新盤面を読み直して同じ試合の操作を再開します。
+`SOVIET_CELEBRATION_PAUSE_SEC` で0〜300秒に短縮でき、停止ファイルや終了シグナルは
+待機中も有効です。ゲームの `GAMEOVER` を確認するまでretryや切替境界へ進みません。
+クリップの公開URLを確認できない場合は成功扱いせず `tmp/clip_queue/failed/` と
+`tmp/debug/twitch_clip.log` に結果を残します。作成結果が不明な通信切断では、重複を
+避けるため自動で作り直しません。
+
 ## AI ループ
 
 ### soren_loop.sh — Self-Improving Strategy Loop (推奨)

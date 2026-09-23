@@ -564,7 +564,7 @@ def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) 
         ):
             return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
         snapshot = _read_game_snapshot(store.root)
-        if snapshot.get("state") not in {"GAMEOVER", "STOP"} or snapshot.get("runner_alive"):
+        if snapshot.get("state") != "GAMEOVER" or snapshot.get("runner_alive"):
             return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
         marker = {
             "schema": SCHEMA_VERSION,
@@ -620,7 +620,9 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
             return _emit({"request": request, "ack": next_ack}, RC_EXPIRED)
 
         snapshot = _read_game_snapshot(store.root)
-        if snapshot.get("state") not in {"GAMEOVER", "STOP"} or snapshot.get("runner_alive"):
+        # STOP is a temporary state during founding animations, not a safe
+        # handover boundary, even if the previous runner has already exited.
+        if snapshot.get("state") != "GAMEOVER" or snapshot.get("runner_alive"):
             next_ack = _base_ack(
                 request,
                 "waiting",

@@ -13,8 +13,8 @@
 1. bridge が `player_policy_v1` capability を、現在の `soviet_local.mjs` PID
    とともに広告する。
 2. `request` は現試合を止めず、broker の同一 request identity を保存する。
-3. `boundary` は runner が終了し、`game_state.json` が `GAMEOVER` または
-   `STOP` になった後だけ `prepared` を返す。
+3. `boundary` は runner が終了し、`game_state.json` が `GAMEOVER` に
+   なった後だけ `prepared` を返す。建国演出の `STOP` は同じ試合の途中である。
 4. `commit-player` が player generation をCASで1つ進め、privateな
    `player_state.json` を atomic replace する。失敗時は次試合を開始しない。
 5. 次に起動した loop/bridge はこの snapshot から policy、run、generation を
