@@ -84,7 +84,7 @@ _ai_dispatch() {
 		;;
 	radio:*:prepass*)
 		deadline="${AI_PREPASS_CHAIN_DEADLINE_EPOCH:-}"
-		cap="${AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_EPOCH:-}"
+		cap="${AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_SEC:-}"
 		budget_kind="prepass"
 		;;
 	radio:*)
@@ -121,13 +121,14 @@ _ai_dispatch() {
 		# dispatched (azumag/docich#993). The chain deadline above is untouched --
 		# the total wall-clock budget still bounds the run -- this only caps one
 		# dispatch so later candidates keep a real chance to reach the provider.
-		# Live main and mixed-language repair deliberately carry no cap: their own
-		# budgets are their reviewed contract (azumag/docich#993 要件5).
+		# The cap is a *duration*, not an absolute deadline: every candidate is
+		# allowed the same per-candidate budget, so a slow first candidate cannot
+		# shrink (or clamp to 1s) the window the second one receives. Live main and
+		# mixed-language repair deliberately carry no cap: their own budgets are
+		# their reviewed contract (azumag/docich#993 要件5).
 		effective="$remaining"
-		if [[ "$cap" =~ ^[0-9]+$ ]]; then
-			local cap_remaining=$((cap - now))
-			[ "$cap_remaining" -lt 1 ] && cap_remaining=1
-			[ "$cap_remaining" -lt "$effective" ] && effective="$cap_remaining"
+		if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -ge 1 ] && [ "$cap" -lt "$effective" ]; then
+			effective="$cap"
 		fi
 		case "$timeout_override" in
 		'' | *[!0-9]*) timeout_override="$effective" ;;
@@ -203,12 +204,14 @@ _ai_generate_list_with_radio_budget() {
 		export "$deadline_var=$(( $(date +%s) + budget ))"
 	fi
 	if [ "$deadline_var" = "AI_PREPASS_CHAIN_DEADLINE_EPOCH" ]; then
-		# Half of the chain budget is the most a single prepass candidate may take,
-		# so a slow first candidate cannot spend the window the fallback list needs
-		# (azumag/docich#993 要件2). Scoped to this chain only (local + export:
-		# visible to the command-substitution _ai_dispatch below, restored on
-		# return); prepass-only, so main and mixed repair budgets are unchanged.
-		local -x AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_EPOCH=$(( $(date +%s) + (budget + 1) / 2 ))
+		# A duration (not an epoch) shared by every candidate of this chain: one
+		# slow prepass candidate cannot spend the window the fallback list needs
+		# (azumag/docich#993 要件2), and later candidates still get the full
+		# per-candidate budget rather than whatever wall-clock is left. Scoped to
+		# this chain only (local + export: visible to the command-substitution
+		# _ai_dispatch below, restored on return); prepass-only, so main and
+		# mixed repair budgets are unchanged (要件5).
+		local -x AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_SEC=$(( (budget + 1) / 2 ))
 	fi
 	if _ai_generate_list_without_radio_budget "$@"; then
 		rc=0

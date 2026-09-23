@@ -255,20 +255,28 @@ fi
 # the whole window before the fallback list is reached. Before the per-candidate
 # cap, ``greedy`` was handed the entire remaining budget, burned it, and the
 # second candidate was skipped before reaching provider dispatch.
+#
+# The review that followed made the regression explicit: asserting ``lines=2``
+# alone cannot catch the *absolute-deadline* variant of the cap, where the
+# second candidate only survives because it is clamped to 1s. So pin the
+# timeout each candidate actually received (budget=6 -> per-candidate cap 3):
+# first ~3s, and the second still gets a real window afterwards.
 : >"$ATTEMPT_LOG"
-RADIO_PREPASS_TOTAL_BUDGET_SEC=4
+RADIO_PREPASS_TOTAL_BUDGET_SEC=6
 unset OPENCODE_ABORT_RETRY
 start=$(date +%s)
 prepass_out=$(ai_generate_list 'RADIO:news:prepass' "$prompt" 'greedy,success' 2>/dev/null || true)
 elapsed=$(( $(date +%s) - start ))
 lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
 first_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+second_timeout=$(awk -F'|' 'NR==2 {print $3}' "$ATTEMPT_LOG")
 if [ "$prepass_out" = ok ] && [ "$lines" -eq 2 ] \
-	&& [ "$first_timeout" -ge 1 ] && [ "$first_timeout" -le 2 ] \
-	&& [ "$elapsed" -le 4 ]; then
+	&& [ "$first_timeout" -ge 2 ] && [ "$first_timeout" -le 3 ] \
+	&& [ "$second_timeout" -ge 2 ] \
+	&& [ "$elapsed" -le 6 ]; then
 	pass 'slow first prepass candidate still leaves the fallback a real dispatch'
 else
-	fail_case "prepass per-candidate cap (out=$prepass_out lines=$lines first_timeout=$first_timeout elapsed=$elapsed)"
+	fail_case "prepass per-candidate cap (out=$prepass_out lines=$lines first_timeout=$first_timeout second_timeout=$second_timeout elapsed=$elapsed)"
 fi
 
 # 12. azumag/docich#993 要件1/7: the per-candidate cap never extends the chain
