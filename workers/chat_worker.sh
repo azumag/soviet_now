@@ -215,30 +215,57 @@ _consume_outbound_queue() {
 # --- Clip queue 消化 ---
 _process_clip_queue() {
 	local queue_file
+	local failed_dir="$CLIP_QUEUE_DIR/failed"
+	mkdir -p "$failed_dir" || return 1
 	for queue_file in "$CLIP_QUEUE_DIR"/*.json; do
 		[ -f "$queue_file" ] || continue
 
 		# JSON パース
-		local event_msg game_id delay event_kind
-		eval "$(python3 -c "
+		local event_msg game_id delay event_kind attempts parsed
+		parsed=$(python3 -c "
 import json, sys, shlex
 d = json.load(open(sys.argv[1]))
+assert isinstance(d, dict)
+assert str(d.get('game_id', '')).isdigit() or not d.get('game_id')
+assert isinstance(d.get('event_msg', ''), str)
+assert isinstance(d.get('event_kind', 'generic'), str)
+assert isinstance(d.get('delay', 0), int) and 0 <= d.get('delay', 0) <= 300
+assert isinstance(d.get('attempts', 0), int) and 0 <= d.get('attempts', 0) <= 3
 print(f'event_msg={shlex.quote(d.get(\"event_msg\",\"\"))}')
-print(f'game_id={shlex.quote(d.get(\"game_id\",\"\"))}')
+print(f'game_id={shlex.quote(str(d.get(\"game_id\",\"\")))}')
 print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
 print(f'event_kind={shlex.quote(d.get(\"event_kind\",\"generic\"))}')
-" "$queue_file" 2>/dev/null)" || {
-			_log "WARN: clip parse failed: $(basename "$queue_file") → skip"
-			mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
+print(f'attempts={d.get(\"attempts\",0)}')
+" "$queue_file" 2>/dev/null) || {
+			_log "WARN: clip parse failed: $(basename "$queue_file") → failed"
+			mv "$queue_file" "$failed_dir/" 2>/dev/null || true
 			continue
 		}
+		eval "$parsed"
 
-		# 同一ゲームのデデュプ (marker ベース)
+		# ソ連建国は同じ試合の一般クリップに抑止されない。
+		# ソ連建国済みなら、その後のハイスコア等は従来どおり抑止する。
+		local clip_marker=""
 		if [ -n "$game_id" ]; then
-			local clip_marker="$TMP_MARKERS_DIR/.twitch_clip_game_${game_id}"
+			clip_marker="$TMP_MARKERS_DIR/.twitch_clip_game_${game_id}"
+			if [ "$event_kind" = "soviet" ]; then
+				clip_marker="${clip_marker}_soviet"
+			elif [ -d "${clip_marker}_soviet" ]; then
+				_log "clip skip: Soviet clip already claimed for game $game_id"
+				if [ -f "${clip_marker}_soviet/failed_rc" ]; then
+					mv "$queue_file" "$failed_dir/" 2>/dev/null || true
+				else
+					mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || true
+				fi
+				continue
+			fi
 			if ! mkdir "$clip_marker" 2>/dev/null; then
 				_log "clip skip: already claimed for game $game_id"
-				mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
+				if [ -f "$clip_marker/failed_rc" ]; then
+					mv "$queue_file" "$failed_dir/" 2>/dev/null || true
+				else
+					mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || true
+				fi
 				continue
 			fi
 		fi
@@ -248,14 +275,45 @@ print(f'event_kind={shlex.quote(d.get(\"event_kind\",\"generic\"))}')
 			_log "clip waiting ${delay}s (game=${game_id:-?})"
 			local waited=0
 			while [ "$waited" -lt "$delay" ]; do
-				[ -f tmp/stop ] && return 0
+				if [ -f tmp/stop ]; then
+					[ -z "$clip_marker" ] || rmdir "$clip_marker" 2>/dev/null || true
+					return 0
+				fi
 				sleep 1
 				waited=$((waited + 1))
 			done
 		fi
 
 		_log "clip creating: ${event_msg} (game=${game_id:-?})"
-		./twitch_clip.sh "$event_msg" "$event_kind" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
+		local clip_rc=0
+		./twitch_clip.sh "$event_msg" "$event_kind" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || clip_rc=$?
+		attempts=$((attempts + 1))
+		if [ "$clip_rc" -eq 75 ] && [ "$attempts" -lt 3 ]; then
+			# 未作成と判明した一時障害だけ次のtickで再試行する。
+			# POST timeoutなど結果不明の失敗は、自動再作成しない。
+			if python3 - "$queue_file" "$attempts" <<'PY'
+import json, os, sys
+path, attempts = sys.argv[1:]
+with open(path) as f:
+    event = json.load(f)
+event.update(attempts=int(attempts), delay=0)
+temporary = path + '.retry'
+with open(temporary, 'w') as f:
+    json.dump(event, f, ensure_ascii=False)
+os.replace(temporary, path)
+PY
+			then
+				[ -z "$clip_marker" ] || rmdir "$clip_marker" 2>/dev/null || true
+				_log "clip retry scheduled (game=${game_id:-?}, attempt=$attempts/3)"
+				return 0
+			fi
+		fi
+		if [ "$clip_rc" -ne 0 ]; then
+			_log "WARN: clip failed (game=${game_id:-?}, rc=$clip_rc, attempts=$attempts)"
+			[ -z "$clip_marker" ] || printf '%s\n' "$clip_rc" > "$clip_marker/failed_rc"
+			mv "$queue_file" "$failed_dir/" 2>/dev/null || true
+			continue
+		fi
 
 		mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
 	done

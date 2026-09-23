@@ -42,8 +42,26 @@ class SovietContinuationTest(unittest.TestCase):
         self.assertIn('--clip-id "$clip_id"', clip_script)
 
     def test_runner_keeps_dropping_after_soviet_is_created(self):
+        self._check_runner_continuation(0)
+
+    def test_runner_holds_five_minutes_then_reobserves_same_board(self):
+        self._check_runner_continuation(300)
+
+    def test_configured_hold_cannot_exceed_five_minutes(self):
+        self._check_runner_continuation(900)
+
+    def test_nonterminal_timeout_keeps_same_game_open(self):
+        self._check_runner_continuation(0, prelude=[
+            ({"state": "STOP", "score": 95, "makeSorenCount": 0}, False),
+            (None, False),
+        ])
+
+    def test_stop_file_interrupts_celebration_without_drop(self):
+        self._check_runner_continuation(300, interrupt=True)
+
+    def _check_runner_continuation(self, pause, prelude=None, interrupt=False):
         states = iter(
-            [
+            (prelude or []) + [
                 ({"state": "MOVE", "score": 100, "makeSorenCount": 1}, True),
                 ({"state": "MOVE", "score": 110, "makeSorenCount": 1}, True),
                 ({"state": "GAMEOVER", "score": 120, "makeSorenCount": 1}, False),
@@ -51,6 +69,13 @@ class SovietContinuationTest(unittest.TestCase):
         )
         decisions = []
         drops = []
+        clock = [0.0]
+        drop_times = []
+
+        def advance(seconds):
+            clock[0] += seconds
+            if interrupt and clock[0] >= 1:
+                Path("tmp/stop").touch()
         strategy = types.SimpleNamespace(
             decide=lambda game_state, analysis: decisions.append(game_state) or {"x": 0.5}
         )
@@ -83,31 +108,64 @@ class SovietContinuationTest(unittest.TestCase):
                     strategy_runner, "enrich_game_state_deadline_fields"
                 ), mock.patch.object(
                     strategy_runner, "trigger_soviet_clip_now"
-                ), mock.patch.object(
+                ) as clip, mock.patch.object(
                     strategy_runner, "commands_empty", return_value=True
                 ), mock.patch.object(
                     strategy_runner, "wait_commands_done", return_value=True
                 ), mock.patch.object(
                     strategy_runner,
                     "write_drop_command",
-                    side_effect=lambda x: drops.append(x),
-                ), mock.patch.object(strategy_runner.time, "sleep"):
+                    side_effect=lambda x: (drops.append(x), drop_times.append(clock[0])),
+                ), mock.patch.dict(os.environ, {"SOVIET_CELEBRATION_PAUSE_SEC": str(pause)}), mock.patch.object(
+                    strategy_runner.time, "monotonic", side_effect=lambda: clock[0]
+                ), mock.patch.object(strategy_runner.time, "sleep", side_effect=advance):
+                    if interrupt:
+                        with self.assertRaises(KeyboardInterrupt):
+                            strategy_runner.run_game()
+                        self.assertEqual(drops, [])
+                        self.assertEqual(decisions, [])
+                        clip.assert_called_once_with(100, 1)
+                        self.assertEqual(clock[0], 1)
+                        return
                     result = strategy_runner.run_game()
 
                 self.assertTrue(result["soviet_created"])
                 self.assertEqual(result["state"], "GAMEOVER")
-                self.assertEqual(result["turns"], 2)
-                self.assertEqual(len(decisions), 2)
-                self.assertEqual(drops, [0.5, 0.5])
+                expected_turns = 1 if pause else 2
+                self.assertEqual(result["turns"], expected_turns)
+                self.assertEqual(len(decisions), expected_turns)
+                self.assertEqual(drops, [0.5] * expected_turns)
+                clip.assert_called_once_with(100, 1)
+                if pause:
+                    self.assertEqual(drop_times, [300.0])
+                    self.assertEqual(decisions[0]["score"], 110)
+                self.assertFalse(Path("commands.txt").exists())
 
                 history = [
                     json.loads(line)
                     for line in Path("game_history/latest.jsonl").read_text().splitlines()
                 ]
-                self.assertEqual(len(history), 2)
+                self.assertEqual(len(history), expected_turns)
                 self.assertTrue(history[0]["soviet_created"])
             finally:
                 os.chdir(old_cwd)
+
+    def test_founding_stop_is_observed_until_same_board_returns_to_move(self):
+        states = [
+            {"state": "STOP", "score": 5839, "makeSorenCount": 0},
+            {"state": "STOP", "score": 6111, "makeSorenCount": 1},
+            {"state": "MOVE", "score": 6111, "makeSorenCount": 1},
+        ]
+        observed = []
+        with mock.patch.object(strategy_runner, "load_game_state", side_effect=states), mock.patch.object(
+            strategy_runner, "is_board_settled", return_value=True
+        ), mock.patch.object(strategy_runner, "SETTLE_REQUIRED", 1), mock.patch.object(
+            strategy_runner.os.path, "exists", return_value=False
+        ), mock.patch.object(strategy_runner.time, "sleep"):
+            state, is_move = strategy_runner.wait_for_move_state(False, on_state=observed.append)
+        self.assertTrue(is_move)
+        self.assertEqual(state, states[-1])
+        self.assertEqual(observed, states)
 
 
 if __name__ == "__main__":

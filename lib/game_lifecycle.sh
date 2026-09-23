@@ -882,6 +882,9 @@ print(f"{request_id}\t{status}")
 PY
 }
 
+# Return 4 when the current game is still live: callers must resume that board
+# without sending retry. Return 3 only after a confirmed boundary parks the
+# next game; waiting for that boundary must never disable the current player.
 game_lifecycle_after_game() {
 	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
 	local request_id ack_status boundary_output boundary_rc pair
@@ -892,8 +895,8 @@ game_lifecycle_after_game() {
 	[ -n "$ack_status" ] || return 1
 	case "$ack_status" in
 	accepted|waiting)
-		boundary_output=$(_game_lifecycle_cli boundary --request-id "$request_id" 2>/dev/null)
-		boundary_rc=$?
+		boundary_rc=0
+		boundary_output=$(_game_lifecycle_cli boundary --request-id "$request_id" 2>/dev/null) || boundary_rc=$?
 		case "$boundary_rc" in
 		0)
 			# Re-read both records together and confirm the request did not
@@ -903,12 +906,11 @@ game_lifecycle_after_game() {
 			ack_status="${pair#*$'\t'}"
 			;;
 		1)
-			# The current one-game unit is not terminal yet.  Keep the outer
-			# loop from retrying, but do not stop resources or improvements;
-			# an explicit cancel can remove this park and resume the game.
-			_game_lifecycle_log "試合終了境界をまだ確認できないため次ゲームを保留 (request=$request_id)"
-			_game_lifecycle_pause_loop "$request_id" || true
-			return 3
+			# The runner can finish before the asynchronous game snapshot
+			# settles (including the founding animation). Parking here also
+			# stops the player, so the requested boundary can never arrive.
+			_game_lifecycle_log "試合終了境界を待機中。同じ盤面の操作を継続 (request=$request_id)"
+			return 4
 			;;
 		2|3|4)
 			_game_lifecycle_log "試合終了境界要求を完了できません。通常運転へ戻します (request=$request_id rc=$boundary_rc output=${boundary_output:-none})"

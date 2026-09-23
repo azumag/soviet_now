@@ -8,9 +8,13 @@ on:
       - 'soren_loop.sh'
       - 'core/config.sh'
       - 'core/game_state.sh'
+      - 'core/version.sh'
+      - 'workers/chat_worker.sh'
       - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
       - 'tests/test_soviet_continuation.py'
+      - 'tests/test_twitch_clip_delivery.py'
+      - 'tests/test_settle_wait.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -27,9 +31,13 @@ on:
       - 'soren_loop.sh'
       - 'core/config.sh'
       - 'core/game_state.sh'
+      - 'core/version.sh'
+      - 'workers/chat_worker.sh'
       - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
       - 'tests/test_soviet_continuation.py'
+      - 'tests/test_twitch_clip_delivery.py'
+      - 'tests/test_settle_wait.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
@@ -51,6 +59,7 @@ jobs:
       - run: >-
           python3 -m unittest
           tests.test_soviet_continuation
+          tests.test_twitch_clip_delivery tests.test_settle_wait
           tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_strategy_hash
           tests.test_policy_bundle tests.test_v747_endgame_merge
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether

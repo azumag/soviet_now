@@ -69,30 +69,47 @@ update_best() {
 }
 
 # Twitch クリップ作成（キュー書き込み → clip_worker が処理）
-# 同一ゲームで複数イベント発火時は最初の1回のみ
+# 同一ゲームは原則1回。ソ連建国だけは先行する一般イベントに抑止されない。
 CLIP_QUEUE_DIR="tmp/clip_queue"
 mkdir -p "$CLIP_QUEUE_DIR" 2>/dev/null || true
 _TWITCH_CLIP_GAME=""
+_TWITCH_CLIP_KIND=""
 _create_twitch_clip() {
 	local event_msg="$1" game_id="${2:-}" delay="${3:-0}" event_kind="${4:-generic}"
-	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
-	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
-	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
-	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ]; then
+	if [ "${TWITCH_CLIP_ENABLED:-0}" != "1" ]; then
+		log "[CLIP] skip: TWITCH_CLIP_ENABLED!=1"
+		return 0
+	fi
+	if [ -z "${TWITCH_CLIENT_ID:-}" ] || [ -z "${TWITCH_BROADCASTER_ID:-}" ]; then
+		log "[CLIP] skip: missing client/broadcaster configuration"
+		return 1
+	fi
+	# 建国後のハイスコアは抑止し、先行する一般イベントは建国を妨げない。
+	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ] && \
+		{ [ "$event_kind" != "soviet" ] || [ "$_TWITCH_CLIP_KIND" = "soviet" ]; }; then
 		log "[CLIP] skip: already clipped for game $game_id"
 		return 0
 	fi
-	[ -n "$game_id" ] && _TWITCH_CLIP_GAME="$game_id"
 	# キューにイベントファイルを書き込み (clip_worker が消化)
 	local ts
 	ts=$(date '+%s%N' 2>/dev/null || date '+%s')
-	local queue_file="${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.json"
-	printf '{"event_msg":"%s","game_id":"%s","delay":%s,"event_kind":"%s"}\n' \
-		"$(printf '%s' "$event_msg" | sed 's/"/\\"/g')" \
-		"${game_id:-}" \
-		"${delay:-0}" \
-		"${event_kind}" \
-		> "$queue_file"
+	local queue_file
+	queue_file=$(mktemp "${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.XXXXXX") || return 1
+	# JSONを完成させてから公開する。workerに書きかけを拾わせず、同時発火も上書きしない。
+	if ! python3 - "$event_msg" "$game_id" "$delay" "$event_kind" > "$queue_file" <<'PY'
+import json, sys
+message, game, delay, kind = sys.argv[1:]
+print(json.dumps(dict(event_msg=message, game_id=game, delay=int(delay), event_kind=kind), ensure_ascii=False))
+PY
+	then
+		rm -f "$queue_file"
+		return 1
+	fi
+	mv "$queue_file" "${queue_file}.json" || { rm -f "$queue_file"; return 1; }
+	if [ -n "$game_id" ]; then
+		_TWITCH_CLIP_GAME="$game_id"
+		_TWITCH_CLIP_KIND="$event_kind"
+	fi
 	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s, kind=${event_kind})"
 }
 

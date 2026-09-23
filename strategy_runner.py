@@ -760,12 +760,15 @@ def trigger_soviet_clip_now(score, turn):
         f"_create_twitch_clip '☭ ソ連建国! score={score} (Game #{game_num})' '{game_num}' 0 'soviet'"
     )
     try:
-        proc = subprocess.Popen(
-            ["/bin/bash", "-lc", cmd],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        debug_dir = os.environ.get("TMP_DEBUG_DIR", "tmp/debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        with open(os.path.join(debug_dir, "twitch_clip.log"), "a") as clip_log:
+            proc = subprocess.Popen(
+                ["/bin/bash", "-lc", cmd],
+                stdout=clip_log,
+                stderr=clip_log,
+                start_new_session=True,
+            )
         _track_fire_and_forget_process(proc)
         return True
     except Exception as e:
@@ -3186,8 +3189,8 @@ def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_sta
     return decision
 
 
-def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT):
-    """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
+def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CONTACT, on_state=None):
+    """Wait for MOVE. STOP also occurs during founding, so is not terminal."""
     settle_count = 0
     start = time.time()
     settle_force_at = 0.0  # MOVE確認後に初めてセット
@@ -3204,8 +3207,10 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
             continue
 
         state = get_state_field(gs)
+        if on_state is not None:
+            on_state(gs)
 
-        if state in ("GAMEOVER", "STOP"):
+        if state == "GAMEOVER":
             return gs, False
 
         if state != "MOVE":
@@ -3240,9 +3245,9 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
 
         time.sleep(POLL_INTERVAL)
 
-    log("TIMEOUT: MOVE状態待ちタイムアウト — 強制 settled 扱いで続行")
+    log("TIMEOUT: MOVE状態待ちタイムアウト — MOVE以外には入力せず再観測")
     gs = load_game_state()
-    return gs, True
+    return gs, bool(gs and get_state_field(gs) == "MOVE")
 
 
 def run_game():
@@ -3320,6 +3325,25 @@ def run_game():
     prev_russia_count = 0
     prev_actual_deadline_contact = False
     last_decision = {}
+    soviet_resume_at = 0.0
+
+    def observe_soviet(gs):
+        nonlocal soviet_created, soviet_resume_at
+        if soviet_created or gs.get("makeSorenCount", 0) <= 0:
+            return
+        soviet_created = True
+        score = gs.get("score", 0)
+        log(
+            f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} "
+            f"makeSorenCount={gs.get('makeSorenCount', 0)}"
+        )
+        trigger_soviet_clip_now(score, turn + 1)
+        os.makedirs("tmp/markers", exist_ok=True)
+        with open("tmp/markers/.soviet_created", "w") as flag_f:
+            flag_f.write(f"{turn + 1}\n")
+        pause_sec = min(300.0, max(0.0, _env_float("SOVIET_CELEBRATION_PAUSE_SEC", 300.0)))
+        soviet_resume_at = time.monotonic() + pause_sec
+        log(f"[SOVIET] 同じ盤面で祝賀待機 ({pause_sec:g}s)。待機後は操作を再開します")
 
     # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
     try:
@@ -3342,11 +3366,20 @@ def run_game():
                 raise KeyboardInterrupt("stop file")
 
             # MOVE状態待ち
-            gs, is_move = wait_for_move_state(deadline_fast_drop_enabled)
+            gs, is_move = wait_for_move_state(deadline_fast_drop_enabled, on_state=observe_soviet)
+            # Include the final timeout/terminal observation as well. The
+            # callback also catches founding during STOP before MOVE returns.
+            if gs:
+                observe_soviet(gs)
 
             if not is_move:
-                # GAMEOVER or TIMEOUT
                 final_state = get_state_field(gs) if gs else "UNKNOWN"
+                if final_state != "GAMEOVER":
+                    # Never turn animation/unknown state into bookkeeping,
+                    # a round boundary, retry, or a command on a stale board.
+                    log(f"[WAIT] 非終端状態 {final_state}。盤面を保持して再観測します")
+                    time.sleep(POLL_INTERVAL)
+                    continue
                 final_score = gs.get("score", 0) if gs else 0
                 log(f"END s={final_score} t={turn} ({final_state})")
                 return finish_result({
@@ -3359,6 +3392,16 @@ def run_game():
                     "soviet_created": soviet_created,
                     "final_types": [p.get("type", 0) for p in gs.get("pieces", [])] if gs else [],
                 })
+
+            if time.monotonic() < soviet_resume_at:
+                # Keep this runner and its immutable strategy alive. Never
+                # send retry, stop the bridge, or release the round boundary.
+                while time.monotonic() < soviet_resume_at:
+                    if os.path.exists(STOP_FILE):
+                        raise KeyboardInterrupt("stop file")
+                    time.sleep(min(1.0, max(0.0, soviet_resume_at - time.monotonic())))
+                log("[SOVIET] 祝賀待機終了。同じ盤面を再観測して操作を再開します")
+                continue
 
             current_deadline_contact = has_deadline_contact(gs)
             if current_deadline_contact and not prev_actual_deadline_contact:
@@ -3396,24 +3439,6 @@ def run_game():
                     flag_f.write(f"{turn}|{score}\n")
                 log("ロシア建国フラグ記録完了")
                 russia_announced = trigger_russia_celebration_now(score, turn)
-
-            # ソ連建国検知（リアルタイム・1試合1回限り）
-            # Runtime 上ではソ連は piece type ではなく makeSorenCount で確実に検知する。
-            if not soviet_created:
-                if gs.get("makeSorenCount", 0) > 0:
-                    soviet_created = True
-                    log(
-                        f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} "
-                        f"makeSorenCount={gs.get('makeSorenCount', 0)}"
-                    )
-                    trigger_soviet_clip_now(score, turn)
-                    # フラグファイル作成（eloop.shが参照）
-                    os.makedirs("tmp/markers", exist_ok=True)
-                    with open("tmp/markers/.soviet_created", "w") as flag_f:
-                        flag_f.write(f"{turn}\n")
-                    # 建国は試合の終端ではない。検知・記録・祝賀トリガーは一度だけ実行し、
-                    # このターンも通常の解析・判断・DROPへ進めて同じ盤面を継続する。
-                    log("ソ連建国フラグ記録完了（同一試合の操作を継続）")
 
             # 盤面解析
             analysis = build_analysis(gs)

@@ -89,7 +89,14 @@ _game_lifecycle_cli() {
 	local command="${1:-}"
 	printf '%s\n' "$command" >>"$events"
 	case "$command" in
-	boundary) set_ack boundary; return 0 ;;
+	boundary)
+		if [ "${mock_boundary_waiting:-0}" -eq 1 ]; then
+			set_ack waiting
+			return 1
+		fi
+		set_ack boundary
+		return 0
+		;;
 	stop) set_ack stop_requested; return 0 ;;
 	finish) set_ack stopped; return 0 ;;
 	cancel) set_ack cancelled; return 0 ;;
@@ -98,6 +105,96 @@ _game_lifecycle_cli() {
 }
 _game_lifecycle_wait_resource() { printf '%s\n' stopped >"$resource_status_file"; return 0; }
 
+# A runner exit is not itself a game boundary. A founding animation can leave
+# the same board alive, and waiting for its actual end must keep the player
+# running. Neither the normal preparation nor startup may send retry/reset.
+source "$repo_root/eloop.sh"
+STRATEGY_FILE="$test_root/strategy.py"
+printf 'same-strategy\n' >"${STRATEGY_FILE}.game_snapshot"
+printf '{"state":"STOP","score":6111,"pieces":[{"type":16}]}\n' >"$test_root/game_state.json"
+cp "$test_root/game_state.json" "$test_root/original_game_state.json"
+is_game_over() { printf 'is_game_over\n' >>"$events"; return 0; }
+wait_for_move() { printf 'wait_for_move\n' >>"$events"; return 1; }
+send_retry() { printf 'retry\n' >>"$events"; return 0; }
+mock_boundary_waiting=1
+for live_status in accepted waiting; do
+	write_lifecycle_pair "$live_status"
+	: >"$events"
+	live_rc=0
+	game_lifecycle_after_game || live_rc=$?
+	[ "$live_rc" -eq 4 ]
+	[ "$(game_lifecycle_ack_status)" = "waiting" ]
+	[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+	[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+	[ ! -e "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" ]
+	prepare_next_game
+	[ "$(wc -l <"$events" | tr -d ' ')" -eq 2 ]
+	[ "$(grep -cx boundary "$events")" -eq 2 ]
+	[ "$(cat "${STRATEGY_FILE}.game_snapshot")" = same-strategy ]
+	cmp "$test_root/game_state.json" "$test_root/original_game_state.json"
+done
+
+# Run the real startup recovery/wait block without starting the supervisor or
+# any worker. A lingering transient STOP must go straight to the same-board
+# runner, even if the normal MOVE wait would have timed out.
+python3 - "$repo_root/soren_loop.sh" "$test_root/startup.sh" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("# Controller crash recovery must run")
+end = source.index('_abort_if_interrupted "$wait_rc"', start)
+Path(sys.argv[2]).write_text(source[start:end])
+PY
+: >"$events"
+(
+	source "$test_root/startup.sh"
+	[ "$wait_rc" -eq 0 ]
+)
+[ "$(cat "$events")" = boundary ]
+[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+cmp "$test_root/game_state.json" "$test_root/original_game_state.json"
+
+# Waiting also leaves an operator's existing pause exactly as it was.
+printf 'operator\n' >"$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+live_rc=0
+game_lifecycle_after_game || live_rc=$?
+[ "$live_rc" -eq 4 ]
+[ "$(cat "$GAME_LIFECYCLE_LOOP_PAUSE_FILE")" = operator ]
+[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+unset mock_boundary_waiting
+
+# The normal path, with no lifecycle request, must also preserve a transient
+# STOP (or a MOVE timeout) instead of treating the timeout as permission to
+# reset. An actual GAMEOVER remains eligible for retry; interruption propagates.
+(
+	source "$repo_root/core/game_state.sh"
+	GAME_STATE="$test_root/game_state.json"
+	GAME_LIFECYCLE_ENABLED=0
+	wait_for_move() { printf 'wait_for_move\n' >>"$events"; return "${mock_move_rc:-1}"; }
+	send_retry() { printf 'retry\n' >>"$events"; return 0; }
+	for live_state in STOP MOVE; do
+		printf '{"state":"%s","score":6111,"pieces":[{"type":16}]}\n' "$live_state" >"$GAME_STATE"
+		! is_game_over
+		: >"$events"
+		prepare_next_game
+		[ "$(cat "$events")" = wait_for_move ]
+	done
+	printf '{"state":"GAMEOVER"}\n' >"$GAME_STATE"
+	is_game_over
+	: >"$events"
+	prepare_next_game
+	[ "$(cat "$events")" = retry ]
+	printf '{"state":"STOP"}\n' >"$GAME_STATE"
+	mock_move_rc=130
+	: >"$events"
+	interrupt_rc=0
+	prepare_next_game || interrupt_rc=$?
+	[ "$interrupt_rc" -eq 130 ]
+	[ "$(cat "$events")" = wait_for_move ]
+)
+: >"$events"
 write_lifecycle_pair accepted
 
 # A successful boundary waits for the resource stop and then pauses only the
