@@ -1076,11 +1076,14 @@ fi
 # environment even after .env has been corrected, so sanitize every model
 # list when this file is sourced.  This keeps reloads fail-closed without
 # requiring a restart of the shared streaming/overlay services.
+# Keep this path in the current shell: frequently sourced workers must not
+# launch a subshell and tr for every model token.
 _remove_retired_minimax_agents() {
-    local input="${1:-}" output="" token normalized
+    local input="${1:-}" output="" token
     local -a tokens=()
     local old_ifs="$IFS"
-    [ -n "$input" ] || { printf '%s' ""; return 0; }
+    _retired_model_value=""
+    [ -n "$input" ] || return 0
     IFS=','
 	read -r -a tokens <<< "$input"
 	IFS="$old_ifs"
@@ -1088,9 +1091,8 @@ _remove_retired_minimax_agents() {
 		token="${token#"${token%%[![:space:]]*}"}"
 		token="${token%"${token##*[![:space:]]}"}"
 		[ -n "$token" ] || continue
-		normalized=$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')
-		case "$normalized" in
-		*minimax*) continue ;;
+		case "$token" in
+		*[mM][iI][nN][iI][mM][aA][xX]*) continue ;;
 		esac
 		if [ -n "$output" ]; then
 			output="$output,$token"
@@ -1098,7 +1100,7 @@ _remove_retired_minimax_agents() {
 			output="$token"
 		fi
 	done
-	printf '%s' "$output"
+	_retired_model_value="$output"
 }
 
 # Remove retired credentials/overrides from the current shell as well as from
@@ -1120,7 +1122,7 @@ for _retired_model_var in \
 	RADIO_FACT_CHECK_TERTIARY RADIO_FACT_CHECK_QUINARY \
 	BATCH_COMMENTARY_AGENTS; do
 	if [ -n "${!_retired_model_var+x}" ]; then
-		_retired_model_value="$(_remove_retired_minimax_agents "${!_retired_model_var}")"
+		_remove_retired_minimax_agents "${!_retired_model_var}"
 		printf -v "$_retired_model_var" '%s' "$_retired_model_value"
 		export "$_retired_model_var"
 	fi

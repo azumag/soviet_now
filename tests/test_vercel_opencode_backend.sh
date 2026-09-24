@@ -37,7 +37,7 @@ export OPENCODE_CALLS="$TMP/calls"
 # A stale supervisor environment must not re-enable the retired provider on a
 # worker reload.  core/config.sh is the shared fail-closed boundary.
 (
-  AI_COMMON_AGENTS='opencode:good,vercel:minimax/minimax-m3-free,opencode:tail'
+  AI_COMMON_AGENTS='opencode:good,vercel:MiNiMaX/MiNiMaX-m3-free,opencode:tail'
   RADIO_AGENTS='codex:minimax-m3,opencode:good'
   MINIMAX_API_KEY='redacted-test'
   MINIMAX_BASE_URL='https://example.invalid'
