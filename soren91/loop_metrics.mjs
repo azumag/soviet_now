@@ -9,10 +9,21 @@ export const CAPTURE_PROFILE_STAGES = ['geometryBefore', 'screenshot', 'imageVal
 const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-frame',
   'preview-changed', 'board-moving', 'stable', 'stable-slow-advance', 'non-move', 'other'];
 const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
+const SAFE_FAILURE_CLASSES = new Set([
+  'capture-budget-exhausted', 'capture-session-busy', 'capture-timeout',
+  'capture-invalid-geometry', 'capture-invalid-png', 'capture-invalid-image',
+  'capture-pixel-scale-mismatch', 'capture-geometry-changed',
+  'input-stale-observation', 'input-calibration-mismatch', 'input-geometry-changed',
+]);
 const OBSERVATION_CAPTURE_CAPACITY = 16;
 const zeros = names => Object.fromEntries(names.map(name => [name, 0]));
 const rounded = n => Math.round(n * 10) / 10;
 const PROFILE_CAPACITY = 128;
+
+function safeFailureClass(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return SAFE_FAILURE_CLASSES.has(message) ? message : 'other';
+}
 
 export function writeMetricsAtomically(path, value) {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -38,6 +49,7 @@ export class LoopMetrics {
     this.lastDrop = null;
     this.intervals = [];
     this.lastWrite = -Infinity;
+    this.lastFailure = null;
     // Independent of the legacy turn-scoped metrics. No extra timer or I/O.
     this.profileSession = randomUUID();
     this.profileRecords = [];
@@ -49,6 +61,9 @@ export class LoopMetrics {
     this.profilePendingCapture = null;
   }
   begin(game, turn) {
+    // begin() is the boundary of one gameplay-loop attempt. A recovered error
+    // must not be reported again by a later successful attempt on the same turn.
+    this.lastFailure = null;
     if (this.game !== game) {
       this.lastDrop = null;
       this.intervals = [];
@@ -97,6 +112,11 @@ export class LoopMetrics {
       const result = await action();
       if (stage === 'capture') this._captureStages(result?.captureStageMs);
       return result;
+    } catch (error) {
+      // Keep only fixed enums. Raw error text can include host paths, URLs or
+      // provider details and must never be written to the metrics sidecar.
+      this.lastFailure = { stage, errorClass: safeFailureClass(error) };
+      throw error;
     }
     finally {
       const end = this.now();
@@ -241,14 +261,19 @@ export class LoopMetrics {
     this.lastWrite = now;
     const sorted = [...this.intervals].sort((a, b) => a - b);
     const percentile = p => sorted.length ? rounded(sorted[Math.ceil(sorted.length * p) - 1]) : null;
+    const normalizedOutcome = ['observe', 'hold-sent', 'drop-sent', 'error'].includes(outcome) ? outcome : 'error';
     const value = {
       schemaVersion: 1, updatedAtMs: Date.now(), game: this.game, turn: this.turn,
-      outcome: ['observe', 'hold-sent', 'drop-sent', 'error'].includes(outcome) ? outcome : 'error',
+      outcome: normalizedOutcome,
       observations: this.observations, holds: this.holds,
       elapsedMs: rounded(Math.max(0, now - this.startedAt)),
       sinceDropSentMs: this.lastDrop == null ? null : rounded(now - this.lastDrop),
       stageMs: Object.fromEntries(STAGES.map(s => [s, rounded(this.stages[s])])),
       reasonCounts: { ...this.reasons },
+      // One bounded, sanitized failure label makes telemetry-only evidence useful
+      // when a game dies before the first drop. Successful/recovered attempts do
+      // not retain an earlier failure from the same turn.
+      lastFailure: normalizedOutcome === 'error' && this.lastFailure ? { ...this.lastFailure } : null,
       dropSentIntervalMs: { samples: sorted.length,
         last: this.intervals.length ? rounded(this.intervals.at(-1)) : null,
         p50: percentile(0.5), p95: percentile(0.95), max: sorted.length ? rounded(sorted.at(-1)) : null },
