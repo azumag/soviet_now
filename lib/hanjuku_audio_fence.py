@@ -16,7 +16,7 @@ import time
 KEYS = ('game', 'runtime_id', 'generation', 'lease_id')
 
 
-def validate(value):
+def validate(value, *, enforce_expiry=True):
     if not isinstance(value, dict) or set(value) != {*KEYS, 'expires_at'}:
         raise ValueError('invalid fence keys')
     if value['game'] != 'hanjuku-hero':
@@ -28,9 +28,13 @@ def validate(value):
     if not isinstance(value['lease_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value['lease_id']):
         raise ValueError('invalid lease')
     expiry = value['expires_at']
-    now = time.time()
-    if type(expiry) not in (float, int) or not math.isfinite(expiry) or not now < expiry <= now + 120:
-        raise ValueError('expired or excessive lifetime')
+    if type(expiry) not in (float, int) or not math.isfinite(expiry):
+        raise ValueError('invalid lifetime')
+    # The wall clock bounds when a queued line may *start*; see check().
+    if enforce_expiry:
+        now = time.time()
+        if not now < expiry <= now + 120:
+            raise ValueError('expired or excessive lifetime')
     return value
 
 
@@ -56,8 +60,8 @@ def required(target):
             or sidecar(target).exists() or sidecar(target).is_symlink())
 
 
-def active(canonical, value):
-    validate(value)
+def active(canonical, value, *, enforce_expiry=True):
+    validate(value, enforce_expiry=enforce_expiry)
     state = read(canonical)
     runtime = state.get('active')
     if state.get('phase') != 'ready' or not isinstance(runtime, dict):
@@ -75,15 +79,66 @@ def active(canonical, value):
         raise ValueError('terminal or inactive run')
 
 
-@contextlib.contextmanager
-def locked(canonical):
+def _switch_lock(canonical):
     path = canonical.parent / 'locks' / 'game-switch.lock'
     if path.is_symlink() or path.parent.is_symlink():
         raise ValueError('unsafe lock')
+    return path
+
+
+# Two things must not cut a line that is already speaking (measured on
+# production 2026-09-25, both producing mid-sentence cuts):
+#  * a coordinator tick takes the exclusive switch lock for a moment (two
+#    ~100ms bursts per minute from the FIFO and rotation timers), which made
+#    this helper exit 75 while playback was in progress;
+#  * wall-clock expiry, which is a start gate (check()) and not a kill switch.
+# A failure that outlasts both budgets is a real transition or a lost run and
+# still drops the player, so the fence stays fail-closed.
+LOCK_BURST_S = 0.5
+MONITOR_GRACE_S = 1.0
+
+
+@contextlib.contextmanager
+def locked(canonical, *, budget_s=0.0):
+    path = _switch_lock(canonical)
+    deadline = time.monotonic() + budget_s
     # Read-only existing lock: an absent canonical control plane fails closed.
-    with path.open('rb') as stream:
-        fcntl.flock(stream.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    while True:
+        stream = path.open('rb')
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            break
+        except OSError:
+            stream.close()
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.05)
+    try:
         yield
+    finally:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        stream.close()
+
+
+def monitor(canonical, value):
+    """Re-check liveness while the child speaks; one bad reading never cuts.
+
+    Identity, phase and terminal state are still enforced, but only once they
+    stay failed across the grace window. Expiry is deliberately not checked
+    here: it already gated starting this line (check()).
+    """
+    deadline = time.monotonic() + MONITOR_GRACE_S
+    while True:
+        try:
+            with locked(canonical, budget_s=LOCK_BURST_S):
+                active(canonical, value, enforce_expiry=False)
+            return
+        except InterruptedError:
+            raise
+        except (OSError, ValueError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.2)
 
 
 def check(canonical, target):
@@ -116,9 +171,11 @@ def play(canonical, target, command):
         while child.poll() is None:
             time.sleep(.1)
             # Do not hold the switch lock while playback is in progress. A
-            # transition/terminal/expiry drops only this narration's player.
-            with locked(canonical):
-                active(canonical, value)
+            # transition or a lost/terminal run drops only this narration's
+            # player, and only after the grace window: neither a brief
+            # exclusive burst nor the wall-clock expiry cuts a line already
+            # speaking (expiry gates starting it, see check()).
+            monitor(canonical, value)
         return child.returncode
     finally:
         if child is not None and child.poll() is None:
