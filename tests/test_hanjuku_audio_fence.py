@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -106,6 +107,65 @@ class HanjukuAudioFenceTests(unittest.TestCase):
             with self.assertRaises(BlockingIOError):
                 fence.check(self.canonical, self.target)
             self.assertLess(time.monotonic() - started, .2)
+
+    def _sleeper(self, name, seconds=30):
+        player = self.root / name
+        player.write_text('import os, time\nfrom pathlib import Path\n'
+                          f'Path("{name}.started").write_text(str(os.getpid()))\n'
+                          f'time.sleep({seconds})\n')
+        return [sys.executable, str(ROOT / 'lib/hanjuku_audio_fence.py'), 'play',
+                str(self.canonical), str(self.target), '--', sys.executable, str(player)]
+
+    def _wait_for(self, path, timeout=3):
+        deadline = time.monotonic() + timeout
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        return path.exists()
+
+    def test_expiry_gates_start_but_never_cuts_a_line_already_playing(self):
+        stale = dict(self.identity, expires_at=time.time() - 1)
+        fence.sidecar(self.target).write_text(json.dumps(stale))
+        with self.assertRaises(ValueError):
+            fence.check(self.canonical, self.target)
+        # The in-flight re-check only needs liveness, so a line that already
+        # started speaks to the end instead of being cut at the deadline.
+        fence.active(self.canonical, stale, enforce_expiry=False)
+        fence.sidecar(self.target).write_text(json.dumps(dict(self.identity, expires_at=time.time() + .8)))
+        proc = subprocess.Popen(self._sleeper('expiry_player'), cwd=self.root)
+        try:
+            self.assertTrue(self._wait_for(self.root / 'expiry_player.started'))
+            time.sleep(2)                       # past expires_at
+            self.assertIsNone(proc.poll(), 'expiry must not cut a line already speaking')
+            self.set_state(terminal='game_over')  # a real fence loss still stops it
+            self.assertEqual(proc.wait(timeout=6), 75)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_brief_exclusive_hold_is_tolerated_and_a_sustained_one_drops_the_player(self):
+        import fcntl
+        lock_path = self.state / 'locks/game-switch.lock'
+        proc = subprocess.Popen(self._sleeper('burst_player'), cwd=self.root)
+        try:
+            self.assertTrue(self._wait_for(self.root / 'burst_player.started'))
+            with lock_path.open('rb') as burst:
+                fcntl.flock(burst.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                release = threading.Timer(.2, lambda: fcntl.flock(burst.fileno(), fcntl.LOCK_UN))
+                release.start()
+                time.sleep(1.2)                 # coordinator-tick sized burst
+                release.join()
+            self.assertIsNone(proc.poll(), 'a momentary exclusive hold must not cut playback')
+            with lock_path.open('rb') as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertEqual(proc.wait(timeout=8), 75)
+                owned = int((self.root / 'burst_player.started').read_text())
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(owned, 0)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     def test_enqueue_contract_publishes_and_claim_cleanup_removes_sidecar(self):
         result = self.shell('source "$1/lib/outbound_queue.sh"; enqueue_audio_text text hanjuku_commentary 7 "$2"', ROOT, json.dumps(self.identity))
