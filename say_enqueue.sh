@@ -105,18 +105,20 @@ SPEAKING_GRACE_SEC="${SPEAKING_GRACE_SEC:-3}"
 _speaking_enter() {
 	local _reason="${1:-tts}"
 	mkdir -p "$(dirname "$SPEAKING_STATE_FILE")" 2>/dev/null || true
-	python3 - "$SPEAKING_STATE_FILE" "$_reason" <<'PY' 2>/dev/null || true
-import json, sys, time, os
+	SPEAKING_ENTERED=1
+	python3 - "$SPEAKING_STATE_FILE" "$_reason" "${MY_TOKEN:-}" "${BASHPID:-$$}" <<'PY' 2>/dev/null || true
+import fcntl, json, sys, time, os
 from pathlib import Path
-path, reason = sys.argv[1], sys.argv[2] if len(sys.argv)>2 else "tts"
-state={"speaking": True, "since": int(time.time()), "reason": reason, "pid": os.getpid()}
-# atomic write
-tmp = str(path) + ".tmp"
+path, reason, token, pid = sys.argv[1:]
+state={"speaking": True, "since": int(time.time()), "reason": reason, "pid": int(pid), "token": token}
 os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(state, f, ensure_ascii=False)
-    f.write("\n")
-os.replace(tmp, path)
+with open(path + ".guard", "a+") as guard:
+    fcntl.flock(guard, fcntl.LOCK_EX)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
 PY
 	# Twitch広告スヌーズを非同期で試行（失敗してもTTSは継続）
 	if [ -f "lib/twitch_ads.sh" ]; then
@@ -144,29 +146,31 @@ PY
 	SPEAKING_POLL_PID=$!
 }
 _speaking_leave() {
-	# grace期間後にキュー残を確認し、残があれば speaking を維持
+	# speaking は実再生中だけを表す。待機項目は再生開始時に自分で enter する。
 	local _grace="${SPEAKING_GRACE_SEC:-3}"
 	case "$_grace" in ''|*[!0-9]*) _grace=3 ;; esac
 	[ -n "${SPEAKING_POLL_PID:-}" ] && kill "$SPEAKING_POLL_PID" 2>/dev/null || true
 	wait "${SPEAKING_POLL_PID:-}" 2>/dev/null || true
 	SPEAKING_POLL_PID=""
-	# 連続キュー対策: tmp/.comment_queue と tmp/.say_queue の残をチェック
+	[ "${SPEAKING_ENTERED:-0}" = 1 ] || return 0
 	if [ "$_grace" -gt 0 ]; then
 		sleep "$_grace" 2>/dev/null || true
 	fi
-	local _cq="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
-	local _sq="tmp/.say_queue" _queued_content
-	if ls "$_cq"/comment_*.txt 2>/dev/null | grep -q .; then
-		return 0
-	fi
-	# _cleanup removes MY_CONTENT after this check. It is this invocation's
-	# already-played text, not another item waiting to be spoken.
-	for _queued_content in "$_sq"/*.txt; do
-		[ -f "$_queued_content" ] || continue
-		[ "$_queued_content" = "${MY_CONTENT:-}" ] && continue
-		return 0
-	done
-	rm -f "$SPEAKING_STATE_FILE" 2>/dev/null || true
+	# A newer playback may have entered while this process was cleaning up.
+	# Serialize enter/leave and remove only this invocation's marker.
+	python3 - "$SPEAKING_STATE_FILE" "${MY_TOKEN:-}" <<'PY' 2>/dev/null || true
+import fcntl, json, sys
+from pathlib import Path
+path, token = Path(sys.argv[1]), sys.argv[2]
+with open(str(path) + ".guard", "a+") as guard:
+    fcntl.flock(guard, fcntl.LOCK_EX)
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        sys.exit(0)
+    if token and state.get("token") == token:
+        path.unlink(missing_ok=True)
+PY
 }
 # speaking状態は _cleanup でクリア（既存 trap と統合）
 # _speaking_leave は _cleanup 内で呼ばれる
@@ -460,6 +464,7 @@ fi
 MY_TOKEN="${BASHPID:-$$}_${RANDOM}_$(date +%s)"
 MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
+SPEAKING_ENTERED=0
 LOCK_HELD=0
 VOICEVOX_SYNTH_LOCK_HELD=0
 VOICEVOX_STREAM_HB_PID=""
