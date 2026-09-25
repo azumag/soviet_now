@@ -92,10 +92,10 @@ def _switch_lock(canonical):
 #    ~100ms bursts per minute from the FIFO and rotation timers), which made
 #    this helper exit 75 while playback was in progress;
 #  * wall-clock expiry, which is a start gate (check()) and not a kill switch.
-# A failure that outlasts both budgets is a real transition or a lost run and
-# still drops the player, so the fence stays fail-closed.
+# Only lock acquisition gets a short grace budget. Once the shared lock is
+# held, canonical identity/phase/terminal loss is authoritative and must stop
+# the owned player immediately.
 LOCK_BURST_S = 0.5
-MONITOR_GRACE_S = 1.0
 
 
 @contextlib.contextmanager
@@ -121,24 +121,15 @@ def locked(canonical, *, budget_s=0.0):
 
 
 def monitor(canonical, value):
-    """Re-check liveness while the child speaks; one bad reading never cuts.
+    """Re-check liveness while the child speaks.
 
-    Identity, phase and terminal state are still enforced, but only once they
-    stay failed across the grace window. Expiry is deliberately not checked
-    here: it already gated starting this line (check()).
+    A brief exclusive switch-lock burst is tolerated while acquiring the
+    shared lock. After acquisition, identity, phase and terminal state are
+    authoritative and fail closed immediately. Expiry is deliberately not
+    checked here: it already gated starting this line (check()).
     """
-    deadline = time.monotonic() + MONITOR_GRACE_S
-    while True:
-        try:
-            with locked(canonical, budget_s=LOCK_BURST_S):
-                active(canonical, value, enforce_expiry=False)
-            return
-        except InterruptedError:
-            raise
-        except (OSError, ValueError):
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(.2)
+    with locked(canonical, budget_s=LOCK_BURST_S):
+        active(canonical, value, enforce_expiry=False)
 
 
 def check(canonical, target):
@@ -172,9 +163,9 @@ def play(canonical, target, command):
             time.sleep(.1)
             # Do not hold the switch lock while playback is in progress. A
             # transition or a lost/terminal run drops only this narration's
-            # player, and only after the grace window: neither a brief
-            # exclusive burst nor the wall-clock expiry cuts a line already
-            # speaking (expiry gates starting it, see check()).
+            # player immediately once the shared lock is acquired. A brief
+            # exclusive burst is tolerated during lock acquisition, and
+            # wall-clock expiry never cuts a line already speaking.
             monitor(canonical, value)
         return child.returncode
     finally:
