@@ -18,6 +18,7 @@ on:
       - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
+      - 'tests/test_say_speaking_state.sh'
       - '.github/workflows/comment-reply-quality.yml'
   push:
     branches: [main]
@@ -38,6 +39,7 @@ on:
       - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
+      - 'tests/test_say_speaking_state.sh'
       - '.github/workflows/comment-reply-quality.yml'
 permissions:
   contents: read
@@ -62,6 +64,6 @@ jobs:
       - name: Shell syntax and comment delivery contracts
         run: |
           bash -n broadcast/comment.sh broadcast/comment_lib.sh broadcast/comment_quality.sh broadcast/comment_runtime_policy.sh broadcast/radio_engine.sh
-          for test in tests/test_comment_advice_routing.sh tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_runtime_policy.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh tests/test_crypto_paper_playback_dedup_exempt.sh; do
+          for test in tests/test_comment_advice_routing.sh tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_runtime_policy.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh tests/test_crypto_paper_playback_dedup_exempt.sh tests/test_say_speaking_state.sh; do
             bash "$test"
           done
