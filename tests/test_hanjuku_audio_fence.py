@@ -108,6 +108,23 @@ class HanjukuAudioFenceTests(unittest.TestCase):
                 fence.check(self.canonical, self.target)
             self.assertLess(time.monotonic() - started, .2)
 
+    def test_monitor_fence_loss_is_immediate_after_shared_lock(self):
+        cases = (
+            ('lease', lambda: self.set_state(lease='replacement')),
+            ('terminal', lambda: self.set_state(terminal='game_over')),
+            ('phase', lambda: self.set_state(phase='draining')),
+        )
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                self.set_state()
+                mutate()
+                started = time.monotonic()
+                with patch.object(fence.time, 'sleep') as sleep:
+                    with self.assertRaises(ValueError):
+                        fence.monitor(self.canonical, self.identity)
+                    sleep.assert_not_called()
+                self.assertLess(time.monotonic() - started, .2)
+
     def _sleeper(self, name, seconds=30):
         player = self.root / name
         player.write_text('import os, time\nfrom pathlib import Path\n'
