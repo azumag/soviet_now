@@ -86,16 +86,13 @@ def _switch_lock(canonical):
     return path
 
 
-# Two things must not cut a line that is already speaking (measured on
-# production 2026-09-25, both producing mid-sentence cuts):
-#  * a coordinator tick takes the exclusive switch lock for a moment (two
-#    ~100ms bursts per minute from the FIFO and rotation timers), which made
-#    this helper exit 75 while playback was in progress;
-#  * wall-clock expiry, which is a start gate (check()) and not a kill switch.
-# A failure that outlasts both budgets is a real transition or a lost run and
-# still drops the player, so the fence stays fail-closed.
+# Two things must not cut a line that is already speaking:
+#  * a coordinator tick may hold the exclusive switch lock for a short burst;
+#  * wall-clock expiry is a start gate (check()), not a playback kill switch.
+# Retry only bounded lock acquisition. Once the shared lock is held, canonical
+# runtime identity is authoritative: phase, lease, generation, runtime, or
+# terminal loss must stop playback immediately.
 LOCK_BURST_S = 0.5
-MONITOR_GRACE_S = 1.0
 
 
 @contextlib.contextmanager
@@ -121,24 +118,15 @@ def locked(canonical, *, budget_s=0.0):
 
 
 def monitor(canonical, value):
-    """Re-check liveness while the child speaks; one bad reading never cuts.
+    """Re-check liveness while the child speaks.
 
-    Identity, phase and terminal state are still enforced, but only once they
-    stay failed across the grace window. Expiry is deliberately not checked
-    here: it already gated starting this line (check()).
+    A brief exclusive game-switch lock burst is tolerated by locked(). Once
+    the shared lock is acquired, any identity, phase, or terminal mismatch is
+    a real fence loss and propagates immediately. Expiry is deliberately not
+    checked here: it already gated starting this line (check()).
     """
-    deadline = time.monotonic() + MONITOR_GRACE_S
-    while True:
-        try:
-            with locked(canonical, budget_s=LOCK_BURST_S):
-                active(canonical, value, enforce_expiry=False)
-            return
-        except InterruptedError:
-            raise
-        except (OSError, ValueError):
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(.2)
+    with locked(canonical, budget_s=LOCK_BURST_S):
+        active(canonical, value, enforce_expiry=False)
 
 
 def check(canonical, target):
