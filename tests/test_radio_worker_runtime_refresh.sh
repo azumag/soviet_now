@@ -13,6 +13,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Exercise the scanner without starting production worker code. A large module
+# set must still need only two cksum processes, while content changes with the
+# same size/mtime and path-set changes remain observable.
+source <(sed -n '/^_runtime_source_signature() {/,/^}/p' workers/radio_worker.sh)
+mkdir -p "$ROOT/signature/core" "$ROOT/signature/lib"
+(
+	cd "$ROOT/signature"
+	printf 'root\n' >eloop_lib.sh
+	for ((i=0; i<96; i++)); do printf 'old\n' >"core/module $i.sh"; done
+	cksum() {
+		printf 'call\n' >>"$ROOT/signature-calls"
+		command cksum "$@"
+	}
+	first=$(_runtime_source_signature)
+	[ "$(wc -l <"$ROOT/signature-calls" | tr -d ' ')" = 2 ]
+	[ "$first" = "$(_runtime_source_signature)" ]
+	touch -r 'core/module 0.sh' reference
+	printf 'new\n' >'core/module 0.sh'
+	touch -r reference 'core/module 0.sh'
+	changed=$(_runtime_source_signature)
+	[ "$first" != "$changed" ]
+	printf 'extra\n' >lib/added.sh
+	[ "$changed" != "$(_runtime_source_signature)" ]
+	rm lib/added.sh
+	[ "$changed" = "$(_runtime_source_signature)" ]
+	mv 'core/module 0.sh' 'core/renamed.sh'
+	renamed=$(_runtime_source_signature)
+	[ "$changed" != "$renamed" ]
+	ln -s ../eloop_lib.sh lib/ignored.sh
+	[ "$renamed" = "$(_runtime_source_signature)" ]
+	rm eloop_lib.sh
+	[ "$renamed" != "$(_runtime_source_signature)" ]
+)
+
 mkdir -p "$ROOT/workers" "$ROOT/lib" "$ROOT/tmp/state" "$ROOT/logs"
 cp workers/radio_worker.sh "$ROOT/workers/radio_worker.sh"
 cat >"$ROOT/lib/background_priority.sh" <<'EOF'

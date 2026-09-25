@@ -43,17 +43,19 @@ POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 # deploy 後も古い timeout/provider policy を使い続ける。eloop_lib.sh が読み込む
 # runtime shell 群の内容 signature も監視し、projection-only 更新を検知する。
 _runtime_source_signature() {
-	local dir file
+	local dir file LC_ALL=C
+	local -a files=(eloop_lib.sh)
+	for dir in core lib broadcast strategy; do
+		[ -d "$dir" ] || continue
+		while IFS= read -r file; do
+			files+=("$file")
+		done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print 2>/dev/null | LC_ALL=C sort)
+	done
 	{
-		printf '%s ' 'eloop_lib.sh'
-		cksum eloop_lib.sh 2>/dev/null || printf '%s\n' 'missing'
-		for dir in core lib broadcast strategy; do
-			[ -d "$dir" ] || continue
-			while IFS= read -r file; do
-				printf '%s ' "$file"
-				cksum "$file" 2>/dev/null || printf '%s\n' 'missing'
-			done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print 2>/dev/null | LC_ALL=C sort)
-		done
+		# Keep paths in the signature even if a file disappears during the scan.
+		# Batch all content checks into one process instead of forking per file.
+		printf '%s\0' "${files[@]}"
+		cksum "${files[@]}" 2>/dev/null || printf '%s\n' 'missing'
 	} | cksum | awk '{print $1 ":" $2}'
 }
 
