@@ -155,13 +155,17 @@ _speaking_leave() {
 		sleep "$_grace" 2>/dev/null || true
 	fi
 	local _cq="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
-	local _sq="tmp/.say_queue"
+	local _sq="tmp/.say_queue" _queued_content
 	if ls "$_cq"/comment_*.txt 2>/dev/null | grep -q .; then
 		return 0
 	fi
-	if ls "$_sq"/*.txt 2>/dev/null | grep -q .; then
+	# _cleanup removes MY_CONTENT after this check. It is this invocation's
+	# already-played text, not another item waiting to be spoken.
+	for _queued_content in "$_sq"/*.txt; do
+		[ -f "$_queued_content" ] || continue
+		[ "$_queued_content" = "${MY_CONTENT:-}" ] && continue
 		return 0
-	fi
+	done
 	rm -f "$SPEAKING_STATE_FILE" 2>/dev/null || true
 }
 # speaking状態は _cleanup でクリア（既存 trap と統合）
