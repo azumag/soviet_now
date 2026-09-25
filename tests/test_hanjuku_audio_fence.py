@@ -108,6 +108,21 @@ class HanjukuAudioFenceTests(unittest.TestCase):
                 fence.check(self.canonical, self.target)
             self.assertLess(time.monotonic() - started, .2)
 
+    def test_monitor_does_not_retry_after_authoritative_fence_loss(self):
+        cases = (
+            ('lease replacement', dict(lease='replacement')),
+            ('terminal run', dict(terminal='game_over')),
+            ('draining phase', dict(phase='draining')),
+        )
+        for label, state in cases:
+            with self.subTest(label=label):
+                self.set_state(**state)
+                with patch.object(fence.time, 'sleep') as sleep:
+                    with self.assertRaises(ValueError):
+                        fence.monitor(self.canonical, self.identity)
+                sleep.assert_not_called()
+                self.set_state()
+
     def _sleeper(self, name, seconds=30):
         player = self.root / name
         player.write_text('import os, time\nfrom pathlib import Path\n'
