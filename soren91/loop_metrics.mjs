@@ -16,6 +16,7 @@ const SAFE_FAILURE_CLASSES = new Set([
   'input-stale-observation', 'input-calibration-mismatch', 'input-geometry-changed',
 ]);
 const OBSERVATION_CAPTURE_CAPACITY = 16;
+const FAILURE_HISTORY_CAPACITY = 16;
 const zeros = names => Object.fromEntries(names.map(name => [name, 0]));
 const rounded = n => Math.round(n * 10) / 10;
 const PROFILE_CAPACITY = 128;
@@ -50,6 +51,9 @@ export class LoopMetrics {
     this.intervals = [];
     this.lastWrite = -Infinity;
     this.lastFailure = null;
+    this.recentFailures = [];
+    this.failureTotal = 0;
+    this.failureEvicted = 0;
     // Independent of the legacy turn-scoped metrics. No extra timer or I/O.
     this.profileSession = randomUUID();
     this.profileRecords = [];
@@ -115,7 +119,13 @@ export class LoopMetrics {
     } catch (error) {
       // Keep only fixed enums. Raw error text can include host paths, URLs or
       // provider details and must never be written to the metrics sidecar.
-      this.lastFailure = { stage, errorClass: safeFailureClass(error) };
+      const failure = { stage, errorClass: safeFailureClass(error) };
+      this.lastFailure = failure;
+      this.recentFailures.push({ sequence: ++this.failureTotal, game: this.game, turn: this.turn, ...failure });
+      if (this.recentFailures.length > FAILURE_HISTORY_CAPACITY) {
+        this.recentFailures.shift();
+        this.failureEvicted++;
+      }
       throw error;
     }
     finally {
@@ -274,6 +284,11 @@ export class LoopMetrics {
       // when a game dies before the first drop. Successful/recovered attempts do
       // not retain an earlier failure from the same turn.
       lastFailure: normalizedOutcome === 'error' && this.lastFailure ? { ...this.lastFailure } : null,
+      failureHistory: {
+        schemaVersion: 1, capacity: FAILURE_HISTORY_CAPACITY,
+        total: this.failureTotal, evicted: this.failureEvicted,
+        records: this.recentFailures.map(record => ({ ...record })),
+      },
       dropSentIntervalMs: { samples: sorted.length,
         last: this.intervals.length ? rounded(this.intervals.at(-1)) : null,
         p50: percentile(0.5), p95: percentile(0.95), max: sorted.length ? rounded(sorted.at(-1)) : null },
