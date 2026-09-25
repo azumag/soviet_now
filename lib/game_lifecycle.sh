@@ -561,6 +561,37 @@ _game_lifecycle_is_prediction_worker_pid() {
 	echo "$command_line" | grep -Eq '(^|[[:space:]/])workers/prediction_worker[.]sh([[:space:]]|$)'
 }
 
+# The pause marker written below is exactly what makes prediction_worker.sh
+# exit on its own ("pause file detected → exit"), so the recorded PID routinely
+# turns into a zombie between the read and the verification, and kill -0 still
+# succeeds on a zombie.  Reuse infra/cleanup.sh's arbitrage when it is sourced
+# and fall back to the same rule locally, so a stop this pause caused itself is
+# never reported as prediction_stop_failed.  2026-09-25: one such false failure
+# aborted the sorengame→nethack switch and left the rotation in
+# recovery_required for hours.
+_game_lifecycle_pid_gone_or_zombie() {
+	local pid="$1" stat_text="" state=""
+	case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+	if command -v _pid_gone_or_zombie >/dev/null 2>&1; then
+		_pid_gone_or_zombie "$pid"
+		return $?
+	fi
+	if ! kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	stat_text=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+	if [ -n "$stat_text" ]; then
+		# comm (2nd field, in parens) may contain spaces: strip through ") ".
+		state=${stat_text##*) }
+		state=${state%% *}
+		[ "$state" = "Z" ] && return 0
+		return 1
+	fi
+	stat_text=$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)
+	case "$stat_text" in ''|Z*) return 0 ;; esac
+	return 1
+}
+
 _game_lifecycle_pause_predictions() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
@@ -594,23 +625,35 @@ _game_lifecycle_pause_predictions_locked() {
 	}
 	if [ -n "$pid" ]; then
 		if ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
-			if kill -0 "$pid" 2>/dev/null; then
+			# Gone-or-zombie is the stop this pause asked for: the marker
+			# written above is what made the worker exit, and a supervised
+			# shell stays a zombie until its supervisor reaps it.  Only a live
+			# PID owned by an unrelated command (reuse) refuses the pause.
+			if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
 				_game_lifecycle_restore_predictions_locked
 				return 1
 			fi
 		else
 			pid_started=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
 			pid_started_now=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
-			if [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
+			if _game_lifecycle_pid_gone_or_zombie "$pid"; then
+				# It already exited on the marker, so no signal is needed and
+				# an empty lstart must not be read as a broken PID file.
+				:
+			elif [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
 				_game_lifecycle_restore_predictions_locked
 				return 1
-			fi
-			kill -TERM "$pid" 2>/dev/null || true
-			local waited=0
-			while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
-			if kill -0 "$pid" 2>/dev/null; then
-				_game_lifecycle_restore_predictions_locked
-				return 1
+			else
+				kill -TERM "$pid" 2>/dev/null || true
+				local waited=0
+				# Poll the settled state instead of bare kill -0: a worker that
+				# exits here stays a zombie until its supervisor reaps it, and
+				# that must count as stopped rather than burn the whole budget.
+				while ! _game_lifecycle_pid_gone_or_zombie "$pid" && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+				if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
+					_game_lifecycle_restore_predictions_locked
+					return 1
+				fi
 			fi
 		fi
 	fi
