@@ -5,11 +5,18 @@
 # every 5 minutes. No admin rights needed; it does NOT create a service
 # (Session 0 has no GPU/audio session) and does NOT touch the firewall.
 #
-#   powershell -ExecutionPolicy Bypass -File infra\local\windows\soren91\install.ps1 -FfmpegBin C:\path\to\ffmpeg.exe
+#
+# Game audio never plays on this PC's speakers: the renderer runs a dedicated
+# Chrome for Testing (downloaded here from Google's CfT bucket) whose per-app output is
+# routed to -AudioSink, a render endpoint nobody listens to (an unused
+# virtual cable). The process loopback still captures it for the stream.
+#
+#   powershell -ExecutionPolicy Bypass -File infra\local\windows\soren91\install.ps1 [-FfmpegBin C:\path\to\ffmpeg.exe] [-AudioSink "CABLE-A Input (VB-Audio Cable A)"]
 #   powershell -ExecutionPolicy Bypass -File infra\local\windows\soren91\install.ps1 -Uninstall
 param(
   [string]$FfmpegBin = '',
   [int]$Port = 19191,
+  [string]$AudioSink = 'CABLE-A Input (VB-Audio Cable A)',
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -37,10 +44,39 @@ if ($octets.Count -ne 4 -or [int]$octets[0] -ne 100 -or [int]$octets[1] -lt 64 -
   throw "no Tailscale IPv4 detected (got '$tailscaleIp')"
 }
 if (-not $FfmpegBin) { $FfmpegBin = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source }
+# winget adds its Links dir to PATH only for shells started after the install.
+$wingetFfmpeg = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links\ffmpeg.exe'
+if (-not $FfmpegBin -and (Test-Path $wingetFfmpeg)) { $FfmpegBin = $wingetFfmpeg }
 if (-not $FfmpegBin -or -not (Test-Path $FfmpegBin)) { throw 'ffmpeg with libsrt is required: pass -FfmpegBin' }
 $protocols = & $FfmpegBin -hide_banner -protocols 2>$null
 if (-not ($protocols -match '^\s*srt\s*$')) { throw "$FfmpegBin lacks SRT protocol support" }
 $node = (Get-Command node -ErrorAction Stop).Source
+
+$sinkEndpoint = Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue |
+  Where-Object { $_.FriendlyName -ceq $AudioSink -and $_.Status -eq 'OK' -and $_.InstanceId -like 'SWD\MMDEVAPI\{0.0.0.*' }
+if (@($sinkEndpoint).Count -ne 1) { throw "audio sink '$AudioSink' is not exactly one active playback device (pass -AudioSink)" }
+
+# Dedicated Chrome for Testing (same channel as the operator's Stable). The
+# per-app audio routing sticks to this executable path only.
+$cft = (Invoke-RestMethod 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json').channels.Stable
+$cftUrl = ($cft.downloads.chrome | Where-Object platform -eq 'win64').url
+if ($cft.version -notmatch '^\d+(\.\d+){3}$' -or $cftUrl -notlike 'https://storage.googleapis.com/chrome-for-testing-public/*') {
+  throw 'unexpected Chrome for Testing manifest'
+}
+$chromeRoot = Join-Path $stateDir 'chrome'
+$chromeDir = Join-Path $chromeRoot "$($cft.version)\chrome-win64"
+$chromeBin = Join-Path $chromeDir 'chrome.exe'
+if (-not (Test-Path $chromeBin)) {
+  New-Item -ItemType Directory -Force (Split-Path -Parent $chromeDir) | Out-Null
+  $zip = Join-Path $chromeRoot "chrome-win64-$($cft.version).zip"
+  $ProgressPreference = 'SilentlyContinue'
+  Invoke-WebRequest -UseBasicParsing $cftUrl -OutFile $zip
+  Expand-Archive -Force $zip (Split-Path -Parent $chromeDir)
+  Remove-Item -Force $zip
+}
+# Chrome for Testing builds are not Authenticode-signed and Google publishes no
+# hashes; integrity rests on HTTPS from the pinned storage.googleapis.com path.
+if (-not (Test-Path $chromeBin)) { throw "Chrome for Testing missing at $chromeBin" }
 
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'tools\soren91_windows_helpers_build.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'helper build failed' }
@@ -68,6 +104,9 @@ if ($LASTEXITCODE -ne 0) { throw 'failed to restrict env file ACL' }
   "SOREN91_LOCAL_AGENT_TOKEN=$token",
   'SOREN91_LOCAL_SESSION_MODE=cdp-host',
   "SOREN91_LOCAL_FFMPEG_BIN=$FfmpegBin",
+  "SOREN91_CDP_CHROME_BIN=$chromeBin",
+  "SOREN91_LOCAL_AUDIO_SINK=$AudioSink",
+  "SOREN91_LOCAL_AUDIO_SINK_DIR=$chromeDir",
   "SOREN91_NODE_BIN=$node"
 ) | Set-Content -Path $envFile -Encoding ASCII
 

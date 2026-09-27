@@ -15,6 +15,7 @@ import {
   assertOwnedBrowserPid,
   buildChromeArgs,
   buildFfmpegArgs,
+  buildLoopbackArgs,
   defaults,
   detectChromeBin,
   framesDue,
@@ -36,6 +37,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const SRT = 'srt://100.71.107.106:19192?mode=caller';
 const base = () => ({ ...defaults({}), bindIp: '100.64.0.3', srtUrl: SRT });
 const profile = path.join(os.tmpdir(), `${PROFILE_DIR_PREFIX}1700000000000`);
+const CFT_DIR = 'C:\\Users\\op\\AppData\\Local\\soren91\\chrome\\154.0.8037.57\\chrome-win64';
+const sink = () => ({
+  chromeBin: `${CFT_DIR}\\chrome.exe`, audioSink: 'CABLE-A Input (VB-Audio Cable A)', audioSinkDir: CFT_DIR,
+});
 
 test('options: proxy binds only a Tailscale IPv4 and output is fixed 960x540', () => {
   assert.equal(validateOptions(base(), 'win32').proxyPort, 19093);
@@ -51,7 +56,7 @@ test('options: proxy binds only a Tailscale IPv4 and output is fixed 960x540', (
 test('options: --execute is Windows-only and needs a reviewed SRT caller URL', () => {
   assert.throws(() => validateOptions({ ...base(), execute: true }, 'darwin'), /Windows-only/);
   assert.throws(() => validateOptions({ ...base(), execute: true, srtUrl: '' }, 'win32'), /SOREN91_LOCAL_SRT_URL/);
-  assert.equal(validateOptions({ ...base(), execute: true }, 'win32').execute, true);
+  assert.equal(validateOptions({ ...base(), ...sink(), execute: true }, 'win32').execute, true);
   for (const srtUrl of [
     'srt://8.8.8.8:19192?mode=caller',
     'srt://100.71.107.106:19192?mode=listener',
@@ -83,6 +88,34 @@ test('chrome: always headless with a dedicated profile and loopback-only DevTool
   ]) {
     assert.throws(() => buildChromeArgs(base(), dir), /dedicated/);
   }
+});
+
+test('audio: game audio is routed off the speakers, only for a dedicated Chrome (fail-closed)', () => {
+  const run = { ...base(), execute: true };
+  // No sink configured: refuse rather than play the game on this PC's speakers.
+  assert.throws(() => validateOptions(run, 'win32'), /SOREN91_LOCAL_AUDIO_SINK/);
+  assert.throws(() => validateOptions({ ...run, ...sink(), audioSinkDir: '' }, 'win32'), /SOREN91_LOCAL_AUDIO_SINK/);
+  // The routing persists per executable path: never the operator's Chrome.
+  assert.throws(() => validateOptions({
+    ...run, ...sink(), chromeBin: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    audioSinkDir: 'C:\\Program Files\\Google\\Chrome\\Application',
+  }, 'win32'), /dedicated Chrome/);
+  assert.throws(() => validateOptions({ ...run, ...sink(), chromeBin: 'C:\\other\\chrome.exe' }, 'win32'), /under SOREN91_LOCAL_AUDIO_SINK_DIR/);
+  assert.throws(() => validateOptions({ ...run, ...sink(), audioSinkDir: `${CFT_DIR}-evil` }, 'win32'), /under/);
+  assert.equal(validateOptions({ ...run, ...sink(), audioSinkDir: `${CFT_DIR}\\` }, 'win32').execute, true);
+  // Without audio there is nothing to route.
+  assert.equal(validateOptions({ ...run, audio: false }, 'win32').audio, false);
+  // Dry runs are not blocked.
+  assert.equal(validateOptions(base(), 'win32').execute, false);
+
+  assert.deepEqual(buildLoopbackArgs({ ...base(), ...sink() }, 11, 22), [
+    '--pid', '11', '--expect-image', 'chrome.exe', '--parent-pid', '22',
+    '--sink-endpoint', 'CABLE-A Input (VB-Audio Cable A)', '--sink-allowed-dir', CFT_DIR,
+  ]);
+  assert.deepEqual(buildLoopbackArgs(base(), 11, 22), ['--pid', '11', '--expect-image', 'chrome.exe', '--parent-pid', '22']);
+  const env = defaults({ SOREN91_LOCAL_AUDIO_SINK: ' CABLE-A Input (VB-Audio Cable A) ', SOREN91_LOCAL_AUDIO_SINK_DIR: CFT_DIR });
+  assert.equal(env.audioSink, 'CABLE-A Input (VB-Audio Cable A)');
+  assert.equal(env.audioSinkDir, CFT_DIR);
 });
 
 test('chrome: binary override wins, otherwise the first installed candidate', () => {
@@ -348,4 +381,17 @@ test('loopback binary: refuses a target that is not the expected image (fail-clo
   assert.match(result.stderr, /target image mismatch/);
   assert.equal(result.stdout, '');
   assert.equal(spawnSync(loopbackBin, [], { windowsHide: true }).status, 2);
+});
+
+test('loopback binary: never routes audio of an executable outside the sink dir (fail-closed)', { skip: !helpersBuilt && 'helpers not built' }, () => {
+  const run = (extra) => spawnSync(loopbackBin, ['--pid', String(process.pid), '--duration-sec', '1', ...extra], {
+    encoding: 'utf8', windowsHide: true, timeout: 15_000,
+  });
+  const outside = run(['--sink-endpoint', 'CABLE-A Input (VB-Audio Cable A)', '--sink-allowed-dir', path.join(os.tmpdir(), 'not-node')]);
+  assert.equal(outside.status, 2);
+  assert.match(outside.stderr, /refusing to route/);
+  assert.equal(outside.stdout, '');
+  const half = run(['--sink-endpoint', 'CABLE-A Input (VB-Audio Cable A)']);
+  assert.equal(half.status, 2);
+  assert.match(half.stderr, /go together/);
 });

@@ -115,6 +115,11 @@ export function defaults(env = process.env) {
     audio: envFlag(env, 'SOREN91_LOCAL_AUDIO_LOOPBACK', true),
     audioGain: Number(env.SOREN91_LOCAL_AUDIO_GAIN || 1.0),
     audioFilter: String(env.SOREN91_LOCAL_AUDIO_FILTER || '').trim(),
+    // Render endpoint the dedicated Chrome plays into instead of this PC's
+    // speakers (an unused virtual cable), and the directory that Chrome lives
+    // in. Windows remembers the routing per executable path.
+    audioSink: String(env.SOREN91_LOCAL_AUDIO_SINK || '').trim(),
+    audioSinkDir: String(env.SOREN91_LOCAL_AUDIO_SINK_DIR || '').trim(),
     loopbackBin: env.SOREN91_LOCAL_LOOPBACK_BIN
       || path.join(here, 'windows', 'bin', 'soren91_process_loopback.exe'),
     windowAuditBin: env.SOREN91_LOCAL_WINDOW_AUDIT_BIN
@@ -185,8 +190,37 @@ export function validateOptions(options, platform = process.platform) {
   if ((options.execute || options.reapOrphans) && platform !== 'win32') {
     throw new Error('--execute/--reap-orphans are Windows-only');
   }
+  if (options.execute && options.audio) validateAudioSink(options);
   if (options.srtUrl) validateSrtUrl(options.srtUrl);
   return options;
+}
+
+const OPERATOR_CHROME_TAIL = '\\google\\chrome\\application\\chrome.exe';
+
+// Process loopback captures after the session mute, so the game cannot be
+// muted at the source; it is routed to an endpoint nobody listens to instead.
+// That per-app routing persists by executable path, so it must only ever be
+// set for a dedicated Chrome (Chrome for Testing), never the operator's.
+export function validateAudioSink(options) {
+  if (!options.audioSink || !options.audioSinkDir) {
+    throw new Error(
+      'audio needs SOREN91_LOCAL_AUDIO_SINK and SOREN91_LOCAL_AUDIO_SINK_DIR '
+      + '(otherwise the game plays on this PC\'s speakers); set SOREN91_LOCAL_AUDIO_LOOPBACK=0 to stream without audio',
+    );
+  }
+  const chrome = path.win32.resolve(options.chromeBin).toLowerCase();
+  const dir = `${path.win32.resolve(options.audioSinkDir).toLowerCase().replace(/\\+$/, '')}\\`;
+  if (chrome.endsWith(OPERATOR_CHROME_TAIL)) {
+    throw new Error('audio sink routing needs a dedicated Chrome (SOREN91_CDP_CHROME_BIN), not the installed Google Chrome');
+  }
+  if (!chrome.startsWith(dir)) throw new Error('SOREN91_CDP_CHROME_BIN must live under SOREN91_LOCAL_AUDIO_SINK_DIR');
+  return options;
+}
+
+export function buildLoopbackArgs(options, chromePid, parentPid) {
+  const args = ['--pid', String(chromePid), '--expect-image', 'chrome.exe', '--parent-pid', String(parentPid)];
+  if (options.audioSink) args.push('--sink-endpoint', options.audioSink, '--sink-allowed-dir', options.audioSinkDir);
+  return args;
 }
 
 export function parseArgs(argv, env = process.env) {
@@ -791,9 +825,9 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     });
 
     if (options.audio) {
-      loopback = spawn(options.loopbackBin, [
-        '--pid', String(chrome.pid), '--expect-image', 'chrome.exe', '--parent-pid', String(process.pid),
-      ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      loopback = spawn(options.loopbackBin, buildLoopbackArgs(options, chrome.pid, process.pid), {
+        stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      });
       guard(loopback.stdout);
       guard(ffmpeg.stdio[3]);
       loopback.stdout.pipe(ffmpeg.stdio[3]);
