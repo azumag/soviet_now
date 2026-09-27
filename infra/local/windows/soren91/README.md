@@ -14,6 +14,7 @@ windows / mac) and talks to both through the same local-agent contract.
 | audio helper | `tools/windows/soren91_process_loopback.cs` | ApplicationLoopback of **our Chrome's process tree only** → s16le 48k stereo |
 | window audit | `tools/windows/soren91_window_audit.cs` | lists visible top-level windows of our Chrome tree (no pixels, no titles) |
 | helper build | `tools/soren91_windows_helpers_build.ps1` | builds both helpers with the in-box .NET Framework `csc.exe` into `tools/windows/bin/` (gitignored) |
+| resident setup | `install.ps1` → scheduled task `\soren91\Soren91LocalAgent` → `soren91_agent_launch.vbs` (hidden) → `soren91_agent_supervisor.ps1` | per-user, at logon + every 5 min (IgnoreNew); supervisor restarts the agent 5s after any exit; env/token in `%LOCALAPPDATA%\soren91\agent.env` (owner-only ACL); log in `%LOCALAPPDATA%\soren91\logs\agent.log` |
 
 ## Session pipeline (no screen coordinates anywhere)
 
@@ -73,8 +74,10 @@ standing in for the OCI bot through the `:19093` proxy.
 
 ## Not verified yet / operator decisions
 
-- **Residency** (logon autostart, recovery after kill) is written but not
-  installed or measured.
+- **Residency**: the task is registered on this desktop, but the running
+  supervisor instance could not read the env file (it was started from a
+  sandboxed shell). Logon autostart and kill recovery are not measured yet;
+  restart the task (or sign out/in) and check `logs\agent.log`.
 - **Firewall**: Windows Defender Firewall blocks inbound TCP to `node.exe`
   by default (`NotifyOnListen=True`, no rule exists). The VM cannot reach
   19191/19093 until an administrator adds a rule, e.g. (elevated):
