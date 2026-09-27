@@ -2,7 +2,14 @@
 const observations = new WeakMap();
 
 export const DEFAULT_MAX_STALE_MS = 15_000;
-export const DEFAULT_SINGLE_FRAME_ADVANCE_MS = 2_500;
+// Remote (Mac renderer) captures cost ~2.2-2.4s each, so consecutive
+// observations sit just BELOW the old 2500ms guard: the slow-cadence fast
+// path almost never fired and every turn fell back to the strict two-frame
+// stability gate, which re-observed 4-6 times per drop (measured 11-16s
+// turns vs 3.7s when the fast path did fire). The advance evidence already
+// proves a piece was consumed; 1.2s matches the game-side minimum drop
+// spacing (DROP_COOLDOWN_MS) and stays env-overridable.
+export const DEFAULT_SINGLE_FRAME_ADVANCE_MS = 1_200;
 
 export function maxStaleMs(env = process.env) {
   const raw = Number(env?.SOREN91_OBSERVATION_MAX_STALE_MS);

@@ -1526,7 +1526,7 @@ async function gameLoop(page, calibration, gameNumber) {
       latency.observe(boardState);
       // ランク追跡
       if (boardState.rank != null) lastKnownRank = boardState.rank;
-      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}`);
+      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}, trans=${boardState.perception?.queueTransition ?? '?'}, gapMs=${Math.round(boardState.perception?.frameGapMs ?? -1)}`);
 
       // soren91 では GAMEOVER を独立終了イベントにせず、
       // WAITING/ランキング遷移として既存のラウンド終了ロジックに流す。

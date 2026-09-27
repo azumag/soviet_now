@@ -34,7 +34,7 @@ function withRemoteCdp(fn) {
 }
 
 test('remote slow-cadence queue shift can confirm a new turn in one observation', () => withRemoteCdp(() => {
-  assert.equal(DEFAULT_SINGLE_FRAME_ADVANCE_MS, 2500);
+  assert.equal(DEFAULT_SINGLE_FRAME_ADVANCE_MS, 1200);
   assert.equal(slowCadenceFastPathEnabled(), true);
   const c = cal();
   const q = [piece(1), piece(2), piece(3)];
@@ -47,6 +47,24 @@ test('remote slow-cadence queue shift can confirm a new turn in one observation'
   assert.equal(next.nextPieces[1].type, 3);
   assert.equal(next.nextPieces[1].temporalSource, 'shifted');
   assert.equal(next.holdKnownEmpty, true);
+}));
+
+test('remote slow-cadence fast path fires across the measured ~2.4s capture gap', () => withRemoteCdp(() => {
+  // The old 2500ms guard sat just above the measured remote capture gap
+  // (~2.2-2.4s), so the fast path never fired and the strict two-frame gate
+  // re-observed 4-6 times per drop. An advance with >=1.2s must confirm.
+  const c = cal();
+  const q = [piece(1), piece(2), piece(3)];
+  gateObservation(board([], q[0], { nextPieces: q }), c, 1000);
+  const advanced = board([piece(1)], piece(2), { nextPieces: [piece(2), null, piece(4)] });
+  const fast = gateObservation(advanced, c, 2300); // gap 1300ms
+  assert.equal(fast.state, 'MOVE', JSON.stringify(fast.perception));
+  assert.equal(fast.perception.reason, 'stable-slow-advance-temporal-next-hold-empty');
+
+  const cSlow = cal();
+  gateObservation(board([], q[0], { nextPieces: q }), cSlow, 1000);
+  const tooEarly = gateObservation(advanced, cSlow, 2100); // gap 1100ms < floor
+  assert.equal(tooEarly.state, 'DROP');
 }));
 
 test('local fast cadence still requires stable board confirmation', () => {
