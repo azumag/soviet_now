@@ -1505,6 +1505,16 @@ _radio_generate_and_play() {
 	else
 		radio_repair_agents="$radio_agents_list"
 	fi
+	# The main host also speaks over other games. Discard legacy Soren score
+	# context before prepass, generation and repair snapshots are constructed.
+	local active_game_context
+	if ! active_game_context=$(python3 "${ELOOP_LIB_DIR:-.}/lib/radio_game_context.py" \
+		"$prompt_file" "${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"); then
+		log "[RADIO:${corner_name}] active game context failed; generation skipped"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
+	log "[RADIO:${corner_name}] active game context=${active_game_context}"
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
 	# --- attempt loop: 生成+パース+ノーマライズ を品質チェックのリライト分だけ繰り返す ---
