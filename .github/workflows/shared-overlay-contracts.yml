@@ -7,9 +7,15 @@ on:
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
       - 'lib/shared_overlay.mjs'
+      - 'lib/direct_overlay.mjs'
+      - 'lib/direct_broadcast_overlay.mjs'
+      - 'lib/twica_overlay_proxy.mjs'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_direct_overlay.mjs'
+      - 'tests/test_twica_overlay_layout.mjs'
+      - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
   push:
@@ -19,9 +25,15 @@ on:
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
       - 'lib/shared_overlay.mjs'
+      - 'lib/direct_overlay.mjs'
+      - 'lib/direct_broadcast_overlay.mjs'
+      - 'lib/twica_overlay_proxy.mjs'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_direct_overlay.mjs'
+      - 'tests/test_twica_overlay_layout.mjs'
+      - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
 
@@ -46,8 +58,14 @@ jobs:
           bash -n tests/test_shared_overlay_service.sh
           node --check shared_overlay.mjs
           node --check lib/shared_overlay.mjs
-      - name: Run shared overlay regression
-        run: node --test tests/test_shared_overlay.mjs
+          node --check lib/direct_overlay.mjs
+      - name: Run shared and TwiCa overlay regressions
+        run: >-
+          node --test
+          tests/test_shared_overlay.mjs
+          tests/test_direct_overlay.mjs
+          tests/test_twica_overlay_layout.mjs
+          tests/test_twica_overlay_proxy.mjs
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
       - name: Run game lifecycle shell regression
