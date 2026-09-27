@@ -555,7 +555,11 @@ html[data-soren-neutral="1"] .toast {
     const head = lines.findIndex((line) => line.includes('SOREN/'));
     if (head < 0) return null;
     let start = head;
-    while (start > 0 && !lines[start].includes('\u250c')) start -= 1;
+    while (start > 0 && !lines[start].includes('\u250c')) {
+      start -= 1;
+      // A closed preceding box is unrelated to this unboxed corner header.
+      if (lines[start].includes('\u2514')) return null;
+    }
     if (!lines[start].includes('\u250c')) return null;
     let end = head;
     while (end < lines.length - 1 && !lines[end].includes('\u2514')) end += 1;

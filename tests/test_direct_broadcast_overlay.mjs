@@ -935,3 +935,24 @@ test('prediction panel shows exact range and excluded current game, then disappe
   assert.equal(app.documentElement.dataset.predictionActive, '0');
   assert.equal(app.prediction.textContent, '');
 });
+
+
+test('unboxed corner charts after an AI box stay visible in the live sidebar', async () => {
+  const lines = ['┌─────────────┐', '│ AI 429 wait │', '└─────────────┘', '',
+    'SOREN/CORNER: RETRO / robots / 進行中', 'Stats: count=4 mean=10',
+    '┌ SCORE TIMELINE ┐', '│ ▁▃▅█ │', '└───────────────┘', 'SCORE DISTRIBUTION'];
+  const overlay = await runBroadcastOverlayScript({
+    version: 1, updatedAt: 1780000090,
+    feeds: {
+      showStatusG: { label: 'SHOW-STATUS-G', text: lines.join('\n'),
+        segments: lines.map((t) => [{ t, c: '#00ff00' }]), lineCount: lines.length },
+      showStatus: { label: 'SHOW-STATUS', text: 'Backend: fixture', lineCount: 1 },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  });
+  const rendered = overlay.feedG.children.map((line) => line.children.map((span) => span.textContent).join('')).join('\n');
+  assert.match(rendered, /Stats: count=4/);
+  assert.match(rendered, /SCORE TIMELINE/);
+  assert.match(rendered, /▁▃▅█/);
+  assert.match(rendered, /SCORE DISTRIBUTION/);
+});

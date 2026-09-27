@@ -1138,3 +1138,46 @@ test('shared overlay unit is installable for boot (always on)', () => {
   );
   assert.match(readme, /systemctl enable --now soren-shared-overlay\.service/);
 });
+
+
+test('current corner statistics survive lifecycle masking with chart segments', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-corner-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const context = path.join(temp, 'game_switch.json');
+  const config = fixtureConfig(temp, context);
+  for (const [game, heading] of [
+    ['robots', 'RETRO / robots'], ['hanjuku-hero', 'RETRO / hanjuku-hero'],
+    ['nethack', 'NETHACK / expedition 3'], ['soren91', 'SOREN91 / soren91'],
+    ['paper-view', 'PAPER / dashboard'], ['sorengame', 'JEV / sorengame'],
+  ]) {
+    fs.writeFileSync(context, JSON.stringify({ active: { game }, phase: 'ready' }));
+    fs.writeFileSync(path.join(temp, 'stats.html'), `<pre>SOREN/CORNER: ${heading} / 進行中\nStats: count=4 mean=10\nSCORE TIMELINE\n<span style="color:#00ff00">▁▃▅█</span>\nSCORE DISTRIBUTION</pre>`);
+    const state = buildSharedBroadcastOverlayState(config);
+    assert.equal(state.feeds.showStatusG.generic, undefined, game);
+    assert.match(state.feeds.showStatusG.text, /Stats: count=4/);
+    assert.match(state.feeds.showStatusG.text, /SCORE DISTRIBUTION/);
+    assert.ok(state.feeds.showStatusG.segments.flat().some((s) => s.t.includes('▁▃▅█')));
+    assert.equal(state.feeds.improve.active, false);
+    assert.match(state.feeds.showStatus.text, /Backend: fixture/);
+  }
+});
+
+
+test('corner stats mask another game, missing context, or conflicting headers', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-stale-corner-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const context = path.join(temp, 'game_switch.json');
+  const config = fixtureConfig(temp, context);
+  for (const [game, heading] of [
+    ['robots', 'RETRO / bastet / 進行中'], ['sorengame', 'RETRO / robots / 進行中'],
+    [null, 'RETRO / robots / 進行中'], ['robots', 'STATE CONFLICT'],
+    ['robots', 'RETRO / robots / 進行中\nSOREN/CORNER: RETRO / bastet / 進行中'],
+    ['robots', 'NETHACK / expedition 3 / 進行中'],
+  ]) {
+    fs.writeFileSync(context, JSON.stringify({ active: game ? { game } : null }));
+    fs.writeFileSync(path.join(temp, 'stats.html'), `<pre>SOREN/CORNER: ${heading}\nStats: old-score=999</pre>`);
+    const state = buildSharedBroadcastOverlayState(config);
+    assert.equal(state.feeds.showStatusG.generic, true);
+    assert.doesNotMatch(state.feeds.showStatusG.text, /999/);
+  }
+});
