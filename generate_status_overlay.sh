@@ -132,6 +132,11 @@ def hide_header_box(text):
         return None
     start = head
     while start > 0 and "\u250c" not in lines[start]:
+        # An unboxed corner heading follows a *closed* AI-backoff box.
+        # Crossing its bottom border would hide the corner's stats/timeline
+        # all the way to the chart's own bottom border.
+        if "\u2514" in lines[start]:
+            return None
         start -= 1
     if "\u250c" not in lines[start]:
         return None

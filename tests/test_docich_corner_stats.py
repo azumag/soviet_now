@@ -1,5 +1,8 @@
 import json
 import io
+import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -42,7 +45,7 @@ class DocichCornerStatsTest(unittest.TestCase):
         self._state("retro_corner.json", status="completed", game="robots")
         self.assertIsNone(load_active_corner(self.root))
 
-    def test_retro_history_is_scoped_to_current_corner_start(self):
+    def test_retro_history_keeps_same_game_across_visits_and_counts_session(self):
         started = "2026-09-21T00:00:00+00:00"
         self._state(
             "retro_corner.json",
@@ -53,7 +56,7 @@ class DocichCornerStatsTest(unittest.TestCase):
         log = self.root / "scores/ninvaders.jsonl"
         log.parent.mkdir(parents=True)
         rows = [
-            {"ts": _epoch("2026-09-20T23:59:00"), "game": "ninvaders", "score": 999999},
+            {"ts": _epoch("2026-09-20T23:59:00"), "game": "ninvaders", "score": 100},
             {"ts": _epoch("2026-09-21T00:01:00"), "game": "ninvaders", "score": 10},
             {"ts": _epoch("2026-09-21T00:02:00"), "game": "ninvaders", "score": 20},
             {"ts": _epoch("2026-09-21T00:03:00"), "game": "ninvaders", "score": 30},
@@ -80,9 +83,12 @@ class DocichCornerStatsTest(unittest.TestCase):
 
         corner = load_active_corner(self.root)
         self.assertEqual(corner["kind"], "retro")
-        self.assertEqual([row["score"] for row in corner["scores"]], [10, 20, 30])
+        self.assertEqual([row["score"] for row in corner["scores"]], [100, 10, 20, 30])
+        self.assertEqual(corner["session_matches"], 3)
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
-        self.assertIn("Recent30: 10 20 30", rendered)
+        self.assertIn("Last8: 100 10 20 30", rendered)
+        self.assertIn("this corner matches 3/3", rendered)
+        self.assertIn("mean=40 median=25", rendered)
         self.assertIn("Strategy: #1", rendered)
         self.assertNotIn("999999", rendered)
 
@@ -112,33 +118,49 @@ class DocichCornerStatsTest(unittest.TestCase):
         self._state(
             "nethack_corner.json",
             game="nethack",
-            run_id="run-1",
+            run_id="00000000-0000-4000-8000-000000000001",
             run_status="active",
             run_score=42,
             run_turns=120,
             run_max_depth=4,
         )
-        _write_json(self.root / "nethack/current.json", {"expedition": 7, "status": "active", "score": 42, "turns": 120, "max_depth": 4})
-        _write_json(self.root / "nethack/runs/old.json", {"score": 12, "finished_at": "2026-09-20T00:00:00+00:00"})
+        _write_json(self.root / "nethack/current.json", {"schema_version": 1, "run_id": "00000000-0000-4000-8000-000000000001"})
+        _write_json(self.root / "nethack/runs/00000000-0000-4000-8000-000000000001.json", {"run_id": "00000000-0000-4000-8000-000000000001", "expedition": 7, "status": "active", "score": 42, "turns": 120, "max_depth": 4})
+        _write_json(self.root / "nethack/runs/old.json", {"score": 12, "status": "dead", "last_finished_at": "2026-09-20T00:00:00+00:00"})
         corner = load_active_corner(self.root)
-        self.assertEqual(corner["scores"], [12, 42])
+        self.assertEqual(corner["scores"], [12])
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
         self.assertIn("expedition 7", rendered)
         self.assertIn("score=42", rendered)
 
-    def test_soren91_and_jev_are_non_score_corner_views(self):
-        self._state("soren91_corner.json", game="soren91")
-        corner = load_active_corner(self.root)
+    def test_soren91_reads_confirmed_rank_history(self):
+        self._state("soren91_corner.json", game="soren91", started_at=200)
+        for i, rank in enumerate([12, 4, 1, None, -1, 92, True]):
+            _write_json(self.root / f"soren91/tmp/summaries/game_{i:04}.json",
+                        {"rank": rank, "timestamp": 100 + i * 100})
+        corner = load_active_corner(self.root, soren_root=self.root)
+        self.assertEqual([r["score"] for r in corner["scores"]], [12, 4, 1])
+        self.assertEqual(corner["session_matches"], 2)
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
-        self.assertIn("rank-based", rendered)
-        self.assertIn("not applicable", rendered)
+        self.assertIn("Rank Timeline", rendered)
+        self.assertIn("Rank Distribution", rendered)
+        self.assertIn("best=1", rendered)
+        self.assertIn("wins=1 / lower rank is better", rendered)
+        plot, colors = sd._render_timeline_grid([50, 1], 5, 3, 1, 50, lower_is_better=True)
+        self.assertEqual(plot[0][-1], "*")
+        self.assertEqual(colors[0][-1], sd.gradient_color(50, 1, 50))
 
-        (self.root / "soren91_corner.json").unlink()
+    def test_jev_reads_own_reports_not_mixed_soren_history(self):
         self._state("jev_corner.json", game="sorengame", policy="jev", player_generation=3)
-        corner = load_active_corner(self.root)
+        (self.root / "score_history.txt").write_text("999999\n")
+        _write_json(self.root / "tmp/jev_player/runs/run-1/report.json",
+                    {"status": "completed", "finished_at": 100, "summary": {"score": 80}})
+        corner = load_active_corner(self.root, soren_root=self.root)
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
         self.assertIn("policy=jev generation=3", rendered)
-        self.assertIn("not applicable", rendered)
+        self.assertIn("1 reports / best=80", rendered)
+        self.assertIn("may include interrupted runs", rendered)
+        self.assertNotIn("999999", rendered)
 
     def test_multiple_active_corners_fail_closed(self):
         self._state("retro_corner.json", game="robots")
@@ -148,6 +170,86 @@ class DocichCornerStatsTest(unittest.TestCase):
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
         self.assertIn("STATE CONFLICT", rendered)
         self.assertNotIn("Score Distribution", rendered)
+
+    def test_retro_filters_other_games_and_bad_rows_but_keeps_long_history(self):
+        self._state("retro_corner.json", game="robots", started_at=200)
+        log = self.root / "scores/robots.jsonl"
+        log.parent.mkdir()
+        rows = [{"game": "robots", "score": i, "ts": i} for i in range(250)]
+        rows += [{"game": "other", "score": 999999, "ts": 300},
+                 {"game": "robots", "score": True}, {"game": "robots", "score": "NaN"}]
+        log.write_text("\n".join(json.dumps(row) for row in rows) + "\n{partial")
+        corner = load_active_corner(self.root)
+        self.assertEqual(len(corner["scores"]), 250)
+        self.assertEqual(corner["session_matches"], 50)
+        text = "\n".join(sd.render_docich_corner_stats(corner))
+        self.assertIn("250 results / best=249", text)
+        self.assertIn("mean=124.5 median=124.5", text)
+        self.assertIn("(last 100 games; old -> now)", text)
+        self.assertNotIn("999999", text)
+
+    def test_nethack_completed_current_run_is_counted_once(self):
+        run_id = "00000000-0000-4000-8000-000000000001"
+        self._state("nethack_corner.json", run_id=run_id)
+        _write_json(self.root / "nethack/current.json", {"schema_version": 1, "run_id": run_id})
+        _write_json(self.root / f"nethack/runs/{run_id}.json",
+                    {"run_id": run_id, "expedition": 7, "status": "dead", "score": 42,
+                     "last_finished_at": 200})
+        _write_json(self.root / "nethack/runs/older.json",
+                    {"status": "ascended", "score": 100, "last_finished_at": 100})
+        _write_json(self.root / "nethack/runs/suspended.json",
+                    {"status": "suspended", "score": 123456})
+        corner = load_active_corner(self.root)
+        self.assertEqual(corner["scores"], [100, 42])
+        self.assertEqual(corner["run"]["expedition"], 7)
+
+    def test_nethack_does_not_read_a_different_current_run(self):
+        self._state("nethack_corner.json", run_id="expected", run_score=10)
+        _write_json(self.root / "nethack/current.json", {"run_id": "../../unrelated"})
+        self.assertEqual(load_active_corner(self.root)["run"]["score"], 10)
+
+    def test_distribution_covers_small_large_negative_and_constant_scores(self):
+        for scores in ([0, 1, 2, 3, 4, 5], [100000, 200000], [-10, -5, 0], [7, 7]):
+            with self.subTest(scores=scores):
+                lines = sd.render_corner_distribution(scores)
+                counts = [int(re.sub(r"\x1b\[[0-9;]*m", "", line).split()[-1]) for line in lines[1:]]
+                self.assertEqual(sum(counts), len(scores))
+                self.assertLessEqual(max(sd.ansi_display_width(line) for line in lines), sd.W)
+        small = "\n".join(sd.render_corner_distribution([0, 1, 2, 3, 4, 5]))
+        self.assertNotIn("500", small)
+
+    def test_one_or_two_results_are_visible_and_empty_is_explicit(self):
+        for scores in ([1], [1, 2]):
+            text = "\n".join(sd._corner_score_panels(scores))
+            self.assertIn("Score Timeline", text)
+            self.assertNotIn("not enough data", text)
+            self.assertIn("*", text)
+        self.assertIn("no completed results", "\n".join(sd._corner_score_panels([])))
+
+    def _render_html(self, raw):
+        script = (REPO_ROOT / "generate_status_overlay.sh").read_text()
+        python = script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        output = self.root / "overlay.html"
+        subprocess.run([sys.executable, "-", str(output), "560", "820"],
+                       input=python, text=True, cwd=REPO_ROOT, check=True,
+                       env={**os.environ, "STATUS_OVERLAY_RAW": raw})
+        return output.read_text()
+
+    def test_html_does_not_hide_corner_graph_after_closed_backoff_box(self):
+        backoff = ["┌── AI BACKOFF ──┐", "│ no backoff    │", "└───────────────┘", ""]
+        corner = {"kind": "retro", "label": "RETRO", "status": "active", "game": "robots",
+                  "scores": [{"score": score} for score in [2, 10, 5, 30]],
+                  "session_matches": 4, "target_matches": 4}
+        raw = "\n".join(backoff + sd.render_docich_corner_stats(corner))
+        html = self._render_html(raw)
+        self.assertNotIn('<span class="rail-only">', html)
+        self.assertIn("Score Timeline", html)
+        self.assertIn("Stats: 4 results", html)
+
+    def test_html_still_hides_regular_soren_header_box(self):
+        html = self._render_html("┌───────────────┐\n│ SOREN/OBS    │\n└───────────────┘\nScore Timeline")
+        self.assertIn('<span class="rail-only">', html)
+        self.assertIn('</span>\nScore Timeline', html)
 
     def test_bad_active_schema_fails_closed(self):
         _write_json(self.root / "retro_corner.json", {"schema_version": 99, "status": "active", "game": "robots"})

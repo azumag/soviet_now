@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import statistics
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from glob import glob
@@ -2490,7 +2491,7 @@ def _colorize_plot_row(chars, colors):
     return "".join(out)
 
 
-def _render_timeline_grid(samples, width, height, lo, hi):
+def _render_timeline_grid(samples, width, height, lo, hi, *, lower_is_better=False):
     """Render ordered samples as a readable polyline colored by score value."""
     grid = [[" "] * width for _ in range(height)]
     color_grid = [[None] * width for _ in range(height)]
@@ -2505,11 +2506,15 @@ def _render_timeline_grid(samples, width, height, lo, hi):
     for index, value in enumerate(samples):
         x = round(index * (width - 1) / max(len(samples) - 1, 1))
         normalized = min(max((value - lo) / score_range, 0), 1)
+        if lower_is_better:
+            normalized = 1 - normalized
         y = height - 1 - round(normalized * (height - 1))
         points.append((x, y))
 
     for index, ((x0, y0), (x1, y1)) in enumerate(zip(points, points[1:])):
         seg_val = (samples[index] + samples[index + 1]) / 2
+        if lower_is_better:
+            seg_val = hi + lo - seg_val
         seg_color = gradient_color(seg_val, lo, hi)
         _draw_timeline_segment(grid, x0, y0, x1, y1, seg_color, color_grid)
     marker_step = max(len(points) // 8, 1)
@@ -2518,24 +2523,26 @@ def _render_timeline_grid(samples, width, height, lo, hi):
             continue
         if 0 <= y < height and 0 <= x < width:
             grid[y][x] = "*"
-            color_grid[y][x] = gradient_color(samples[index], lo, hi)
+            value = hi + lo - samples[index] if lower_is_better else samples[index]
+            color_grid[y][x] = gradient_color(value, lo, hi)
     return ["".join(row) for row in grid], color_grid
 
 
-def render_score_timeline(scores, chart_w=42, chart_h=7):
+def render_score_timeline(scores, chart_w=42, chart_h=7, *, min_samples=3, lower_is_better=False):
     """Render the score history as a browser-safe text timeline.
 
     The graph keeps a y-scale and an explicit left-to-right ``old -> now``
     direction while avoiding Braille glyphs, which become dense blocks in the
     tiny OBS/browser feed.
     """
-    label_w = 5  # "XXXXX"
+    label_w = max(5, max((len(str(s)) for s in scores[-100:]), default=0))
     width = max(int(chart_w), 1)
     height = max(int(chart_h), 3)
     sep = "│"
     heading = f"  {BOLD}Score Timeline{RST}"
 
-    if len(scores) < 3:
+    width = min(width, max(1, W - label_w - 1))
+    if len(scores) < min_samples:
         placeholder = f"{'':>{label_w}}{sep} {'(not enough data)':^{width}}"
         return [heading, placeholder, f"{'':>{label_w}}{sep}{' ' * width}"]
 
@@ -2543,14 +2550,14 @@ def render_score_timeline(scores, chart_w=42, chart_h=7):
     lo = min(window)
     hi = max(window)
     samples = _bucket_score_window(window, width)
-    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi)
+    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi, lower_is_better=lower_is_better)
     n = len(window)
     lines = [f"{heading} {DIM}(last {n} games; old -> now){RST}"]
     for row, (plot_row, color_row) in enumerate(zip(plot, color_rows)):
         if row == 0:
-            label = f"{hi:>{label_w}}"
+            label = f"{lo if lower_is_better else hi:>{label_w}}"
         elif row == height - 1:
-            label = f"{lo:>{label_w}}"
+            label = f"{hi if lower_is_better else lo:>{label_w}}"
         else:
             label = " " * label_w
         lines.append(f"{C_GREY}{label}{RST}{sep}{_colorize_plot_row(plot_row, color_row)}")
@@ -3158,6 +3165,62 @@ def _corner_fill_line(fill):
     return f"{symbol} {side} {_corner_short(notional, "?", 12)}"
 
 
+def _corner_number(value):
+    return f"{value:.1f}".removesuffix(".0") if abs(value) < 1_000_000 else f"{value:.3g}"
+
+
+def render_corner_distribution(scores, *, rank=False):
+    """Integer bins covering this game's actual range, including negatives."""
+    title = "Rank Distribution" if rank else "Score Distribution"
+    lines = [f"  {BOLD}{title}{RST} (last {len(scores)})"]
+    if not scores:
+        return lines + ["  No completed results yet"]
+    lo, hi = min(scores), max(scores)
+    step = max(1, (hi - lo + 6) // 6)
+    bands = [(start, min(start + step - 1, hi)) for start in range(lo, hi + 1, step)]
+    counts = [sum(start <= score <= end for score in scores) for start, end in bands]
+    labels = [str(start) if start == end else f"{start}..{end}" for start, end in bands]
+    label_w = max(map(len, labels))
+    bar_w = max(1, min(30, W - label_w - 9))
+    for label, count in zip(labels, counts):
+        lines.append(f" {label:>{label_w}}│{block_bar(count, max(counts), bar_w, C_CYAN)} {count:>5}")
+    return lines
+
+
+def _corner_score_panels(values, *, rank=False, reports=False):
+    scores = [value for value in values if type(value) is int]
+    noun = "reports" if reports else "results"
+    if not scores:
+        return [f"Stats: no completed {noun} yet", "  History will appear after a result is recorded."]
+    best = min(scores) if rank else max(scores)
+    lines = [
+        f"Stats: {len(scores)} {noun} / best={_corner_number(best)}",
+        f"  mean={_corner_number(statistics.mean(scores))} median={_corner_number(statistics.median(scores))}",
+    ]
+    recent = scores[-30:]
+    lines.append(f"Recent30: n={len(recent)} mean={_corner_number(statistics.mean(recent))}")
+    if len(scores) > 30:
+        previous = scores[-60:-30]
+        delta = statistics.mean(recent) - statistics.mean(previous)
+        lines.append(f"  vs previous {len(previous)}: {delta:+.1f}")
+    if rank:
+        lines.append(f"  wins={scores.count(1)} / lower rank is better")
+    if reports:
+        # Older JEV reports finalize on errors too and do not distinguish
+        # them from game-over. Do not present these as completed matches.
+        lines.append("  Reported scores; may include interrupted runs")
+    lines.append("")
+    timeline = render_score_timeline(scores, min_samples=1, lower_is_better=rank)
+    timeline[0] = timeline[0].replace("Score Timeline", "Rank Timeline" if rank else "Score Timeline")
+    if reports:
+        timeline[0] = timeline[0].replace("games", "reports")
+    lines += timeline
+    lines.append("")
+    lines += render_corner_distribution(scores[-100:], rank=rank)
+    lines.append("Last8: " + " ".join(_corner_number(s) for s in scores[-8:]))
+    return fit_dashboard_lines(lines)
+
+
 def render_docich_corner_stats(corner):
     """Render a corner-owned stats feed without consulting Soren score history."""
     if not isinstance(corner, dict):
@@ -3192,19 +3255,13 @@ def render_docich_corner_stats(corner):
             if isinstance(item, dict) and isinstance(item.get("score"), int)
         ]
         target = _corner_int(corner.get("target_matches"))
-        progress = f"{len(score_values)}/{target}" if target != "--" else str(len(score_values))
+        matches = _corner_int(corner.get("session_matches"))
+        progress = f"{matches}/{target}" if target != "--" else matches
         lines += [
             f"SOREN/CORNER: {label} / {game} / {status}",
-            f"Live: matches {progress}",
-            f"  Score Timeline [{game}]",
+            f"Live: this corner matches {progress}",
         ]
-        timeline = render_score_timeline(score_values)
-        if timeline:
-            lines += timeline[1:]
-        lines.append("")
-        distribution = render_score_distribution(score_values)
-        lines += distribution
-        lines.append(f"Recent30: {_corner_recent(scores)}")
+        lines += _corner_score_panels(score_values)
         ranking = corner.get("strategy_ranking") if isinstance(corner.get("strategy_ranking"), list) else []
         if ranking:
             top = ranking[:3]
@@ -3231,13 +3288,8 @@ def render_docich_corner_stats(corner):
         lines += [
             f"SOREN/CORNER: {label} / expedition {expedition} / {status}",
             f"Live: run={run_status} score={score} turns={turns} depth={depth}",
-            "  Score Timeline [NetHack runs]",
         ]
-        timeline = render_score_timeline([int(value) for value in scores if isinstance(value, int)])
-        lines += timeline[1:]
-        lines.append("")
-        lines += render_score_distribution([int(value) for value in scores if isinstance(value, int)])
-        lines.append(f"Recent30: {_corner_recent([{'score': value} for value in scores])}")
+        lines += _corner_score_panels(scores)
         return lines
 
     if kind == "paper":
@@ -3263,10 +3315,10 @@ def render_docich_corner_stats(corner):
         game = _corner_short(corner.get("game"), "soren91", 20)
         lines += [
             f"SOREN/CORNER: {label} / {game} / {status}",
-            "Live: rank-based session; numeric score is not applicable",
-            "Strategy: ranking / placement",
-            "Recent30: placement history is supplied by the Soren91 runtime",
+            f"Live: this corner results {_corner_int(corner.get('session_matches'))}",
         ]
+        scores = corner.get("scores") or []
+        lines += _corner_score_panels([item["score"] for item in scores], rank=True)
         return lines
 
     if kind == "jev":
@@ -3276,9 +3328,9 @@ def render_docich_corner_stats(corner):
         lines += [
             f"SOREN/CORNER: {label} / {game} / {status}",
             f"Live: player policy={policy} generation={generation}",
-            "Strategy: bounded player-policy decision scope",
-            "Recent30: numeric score is not applicable",
         ]
+        scores = corner.get("scores") or []
+        lines += _corner_score_panels([item["score"] for item in scores], reports=True)
         return lines
 
     return [
