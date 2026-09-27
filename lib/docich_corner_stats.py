@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Mapping
 
@@ -56,7 +57,7 @@ def _read_json(path: Path) -> tuple[dict[str, object] | None, str | None]:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None, None
-    except OSError:
+    except (OSError, UnicodeError):
         return None, "unreadable"
     try:
         value = json.loads(text)
@@ -153,7 +154,6 @@ def _score_history(root: Path, state: Mapping[str, object]) -> list[dict[str, ob
     game = _safe_game(state.get("game"))
     if game is None:
         return []
-    started_at = _parse_timestamp(state.get("started_at"))
     path = root / "scores" / f"{game}.jsonl"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -172,14 +172,16 @@ def _score_history(root: Path, state: Mapping[str, object]) -> list[dict[str, ob
         if score is None:
             continue
         timestamp = _parse_timestamp(item.get("ts"))
-        # When a corner start boundary is available, an unparseable timestamp
-        # is not safe to treat as a current score.  This is the important
-        # guard against leaking a previous game's history into the corner.
-        if started_at is not None and (timestamp is None or timestamp < started_at):
-            continue
         history.append({"score": score, "ts": timestamp, "order": order})
     history.sort(key=lambda item: (item.get("ts") is not None, item.get("ts") or 0, item["order"]))
-    return history[-100:]
+    return history
+
+
+def _session_count(history: list[dict], state: Mapping[str, object]) -> int | None:
+    started = _parse_timestamp(state.get("started_at"))
+    if started is None:
+        return None
+    return sum(row.get("ts") is not None and row["ts"] >= started for row in history)
 
 
 def _strategy_ranking(root: Path, game: str) -> list[dict[str, object]]:
@@ -256,7 +258,17 @@ def _paper_snapshot(root: Path) -> dict[str, object]:
 
 def _nethack_snapshot(root: Path, state: Mapping[str, object]) -> dict[str, object]:
     current, _error = _read_json(root / "nethack" / "current.json")
-    run = dict(current) if current is not None else {}
+    # current.json is a run-id pointer, not a copy of the run body.
+    run = {}
+    run_id = current.get("run_id") if current else None
+    try:
+        valid_id = isinstance(run_id, str) and str(uuid.UUID(run_id)) == run_id
+    except ValueError:
+        valid_id = False
+    if valid_id and state.get("run_id") in (None, run_id):
+        body, _error = _read_json(root / "nethack" / "runs" / f"{run_id}.json")
+        if body and body.get("run_id") == run_id:
+            run = dict(body)
     for source, target in (
         ("run_id", "run_id"),
         ("expedition", "expedition"),
@@ -276,28 +288,60 @@ def _nethack_snapshot(root: Path, state: Mapping[str, object]) -> dict[str, obje
         paths = []
     for path in paths:
         item, _error = _read_json(path)
-        if item is None or _int_value(item.get("score")) is None:
+        if (item is None or _int_value(item.get("score")) is None
+                or item.get("status") not in {"dead", "ascended", "ended", "ended_unknown"}):
             continue
         try:
             item["_mtime"] = path.stat().st_mtime
         except OSError:
             item["_mtime"] = 0
         history.append(item)
-    history.sort(key=lambda item: _parse_timestamp(item.get("finished_at")) or float(item.get("_mtime") or 0))
+    history.sort(key=lambda item: _parse_timestamp(item.get("last_finished_at")) or float(item.get("_mtime") or 0))
     scores = [_int_value(item.get("score")) for item in history]
-    current_score = _int_value(run.get("score"))
-    if current_score is not None:
-        scores.append(current_score)
+    # The current run can already be in runs/. Never count it twice or mix
+    # an active/suspended expedition into completed-run statistics.
     return {"run": run, "history": history[-20:], "scores": [s for s in scores if s is not None]}
 
 
-def load_active_corner(state_dir: str | os.PathLike[str] | None = None) -> dict[str, object] | None:
+def _soren91_history(soren_root: Path) -> list[dict[str, object]]:
+    history = []
+    for path in (soren_root / "soren91" / "tmp" / "summaries").glob("game_*.json"):
+        item, _error = _read_json(path)
+        if item is None:
+            continue
+        rank = _int_value(item.get("rank"))
+        timestamp = _parse_timestamp(item.get("timestamp"))
+        if rank is None or not 1 <= rank <= 91 or timestamp is None:
+            continue
+        history.append({"score": rank, "ts": timestamp})
+    return sorted(history, key=lambda row: row["ts"])
+
+
+def _jev_history(soren_root: Path) -> list[dict[str, object]]:
+    history = []
+    for path in (soren_root / "tmp" / "jev_player" / "runs").glob("*/report.json"):
+        item, _error = _read_json(path)
+        if item is None or item.get("status") != "completed":
+            continue
+        summary = item.get("summary")
+        if not isinstance(summary, dict):
+            continue
+        score = _int_value(summary.get("score"))
+        timestamp = _parse_timestamp(item.get("finished_at"))
+        if score is not None and timestamp is not None:
+            history.append({"score": score, "ts": timestamp})
+    return sorted(history, key=lambda row: row["ts"])
+
+
+def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
+                       soren_root: str | os.PathLike[str] | None = None) -> dict[str, object] | None:
     """Return one active corner snapshot, or ``None`` for ordinary Soren mode.
 
     Multiple active corner states are represented as a conflict snapshot so
     the renderer can fail closed instead of choosing one arbitrarily.
     """
     root = resolve_state_dir(state_dir)
+    soren = Path(soren_root) if soren_root is not None else Path(__file__).resolve().parents[1]
     entries = _active_states(root)
     if not entries:
         return None
@@ -316,6 +360,7 @@ def load_active_corner(state_dir: str | os.PathLike[str] | None = None) -> dict[
     if kind == "retro":
         snapshot["game"] = _safe_game(state.get("game")) or "unknown"
         snapshot["scores"] = _score_history(root, state)
+        snapshot["session_matches"] = _session_count(snapshot["scores"], state)
         snapshot["target_matches"] = _int_value(state.get("target_matches"))
         snapshot["strategy_ranking"] = _strategy_ranking(root, snapshot["game"])
     elif kind == "paper":
@@ -324,8 +369,11 @@ def load_active_corner(state_dir: str | os.PathLike[str] | None = None) -> dict[
         snapshot.update(_nethack_snapshot(root, state))
     elif kind == "soren91":
         snapshot["game"] = _safe_game(state.get("game")) or "soren91"
+        snapshot["scores"] = _soren91_history(soren)
+        snapshot["session_matches"] = _session_count(snapshot["scores"], state)
     elif kind == "jev":
         snapshot["game"] = _safe_game(state.get("game")) or "sorengame"
         snapshot["policy"] = state.get("policy")
         snapshot["player_generation"] = _int_value(state.get("player_generation"))
+        snapshot["scores"] = _jev_history(soren)
     return snapshot
