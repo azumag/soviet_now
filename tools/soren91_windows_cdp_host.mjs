@@ -209,7 +209,7 @@ export function profileMarker(profileDir) {
 }
 
 export function buildChromeArgs(options, profileDir) {
-  if (!profileDir || !path.basename(profileDir).startsWith(PROFILE_DIR_PREFIX)) {
+  if (!profileDir || !path.win32.basename(profileDir).startsWith(PROFILE_DIR_PREFIX)) {
     throw new Error(`profileDir must be a dedicated ${PROFILE_DIR_PREFIX}* directory (fail-closed)`);
   }
   return [
@@ -385,7 +385,7 @@ export function selectOwnedProcesses(processes, { tmpDir = os.tmpdir(), profileD
   const list = Array.isArray(processes) ? processes : [];
   const needle = profileDir
     ? profileMarker(profileDir).toLowerCase()
-    : profileMarker(path.join(tmpDir, PROFILE_DIR_PREFIX)).toLowerCase();
+    : profileMarker(path.win32.join(tmpDir, PROFILE_DIR_PREFIX)).toLowerCase();
   return list.filter((entry) => {
     const commandLine = String(entry?.commandLine || '').toLowerCase().replace(/"/g, '');
     return Number.isInteger(entry?.pid) && entry.pid > 0 && commandLine.includes(needle);
@@ -438,7 +438,7 @@ export function reapOrphans({
       // Every owned process was killed above, so nothing still uses these;
       // the grace only spares a directory a session is creating right now.
       if (Number.isFinite(createdAt) && now() - createdAt < graceMs) continue;
-      try { rmImpl(path.join(tmpDir, name)); removed.push(name); } catch {}
+      try { rmImpl(path.win32.join(tmpDir, name)); removed.push(name); } catch {}
     }
   }
   return { killed, removed };
@@ -593,7 +593,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     if (!(await portIsFree(options.cdpPort))) {
       throw new Error(`127.0.0.1:${options.cdpPort} is already in use; refusing to attach to a Chrome this host did not spawn`);
     }
-    profileDir = path.join(options.tmpDir, `${PROFILE_DIR_PREFIX}${Date.now()}`);
+    profileDir = path.win32.join(options.tmpDir, `${PROFILE_DIR_PREFIX}${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
     chrome = spawn(options.chromeBin, buildChromeArgs(options, profileDir), {
       stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true,

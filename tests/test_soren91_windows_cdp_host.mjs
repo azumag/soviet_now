@@ -239,7 +239,7 @@ test('reaper: kills owned processes and removes stale profile dirs only', () => 
     rmImpl: (dir) => removed.push(dir),
   });
   assert.deepEqual(killed, [10]);
-  assert.deepEqual(removed, [path.join(tmpDir, `${PROFILE_DIR_PREFIX}${now - 999_999}`)]);
+  assert.deepEqual(removed, [path.win32.join(tmpDir, `${PROFILE_DIR_PREFIX}${now - 999_999}`)]);
   assert.deepEqual(result.killed, [10]);
 });
 
