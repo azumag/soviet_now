@@ -31,6 +31,13 @@ _comment_runtime_policy_capture \
 	_comment_runtime_policy_base_generate_comment_response \
 	'_comment_runtime_policy_base_generate_comment_response' || true
 
+# Card-gacha notifications reach chat as either ASCII "[tier] card" (current
+# Twica production format), legacy fullwidth "【tier】card", or the multi-draw
+# summary "N連ガチャで ...を獲得しました". Every detection point must accept all
+# forms; keying on 【...】 alone silently missed 100% of live notifications.
+_COMMENT_CARD_ACQUIRED_RE='が[[:space:]]*(【[^】]{1,80}】|\[[^]]{1,80}\])[^を]{0,240}を獲得しました'
+_COMMENT_CARD_MULTI_RE='が[[:space:]]*[0-9]+[[:space:]]*連ガチャで[^を]{0,160}を獲得しました'
+
 _append_comment_reply_contract() {
 	local out_file="$1"
 	_comment_runtime_policy_base_append_comment_reply_contract "$out_file" || return 1
@@ -39,6 +46,7 @@ _append_comment_reply_contract() {
 【視聴者の呼称・連続カード通知の最終契約】
 - 視聴者本人の名前を呼ぶときは、必ず「同志○○」の形にしてください。「○○さん」「○○様」「○○くん」「○○ちゃん」のような通常の敬称で呼ばないでください。これは通常モード・メリケンAIモードとも共通です。
 - カードガチャ通知で実際にカードを獲得した人物を呼ぶ場合も「同志○○」と呼んでください。通知を投稿したbot/配信者名ではなく、本文の「AがBを獲得しました」のAが獲得者です。
+- カード獲得通知は「[コモン]」のような半角角括弧のことも「【コモン】」のような全角括弧のことも、また「N連ガチャで…を獲得しました」というまとめ通知のこともあります。いずれも同じカードガチャ獲得通知として扱ってください。
 - 今回の返信対象が、同じ視聴者による連続したカードガチャ獲得通知だけで2件以上ある場合は例外的に、1件ずつ同じ挨拶を繰り返さず、獲得カードをまとめて1段落で返してください。「同志A」と最初に1回呼び、今回引いたカード群への反応をまとめます。各カードを百科事典のように個別解説せず、特に面白い1〜2点へ絞ってください。
 - カード通知と通常コメントが混在する場合、別視聴者の通知が混ざる場合、または質問・訂正が含まれる場合は、上のまとめ例外を使わず、元の1コメント1段落・順序維持の契約を守ってください。
 COMMENTRUNTIMEPOLICY
@@ -84,7 +92,7 @@ for raw in batch_lines:
         add_name(head)
     # Card-gacha posts are often emitted by a bot; the actual viewer is the
     # person before "が【...】...を獲得しました", not the posting account.
-    for match in re.finditer(r"(?:^|\s)(.{1,64}?)\s*が\s*【[^】]{1,80}】.{0,320}?を獲得しました", body):
+    for match in re.finditer(r"(?:^|\s)(.{1,64}?)\s*が\s*(?:【[^】]{1,80}】|\[[^\]]{1,80}\]|(?:[0-9]+\s*連ガチャで)).{0,320}?を獲得しました", body):
         candidate = match.group(1).strip()
         if candidate and not any(ch in candidate for ch in "、。！？!?：:【】"):
             add_name(candidate)
@@ -208,7 +216,7 @@ _comment_debounce_signature() {
 _comment_debounce_is_card_batch() {
 	local path="$1"
 	[ -s "$path" ] || return 1
-	grep -Eq 'が[[:space:]]*【[^】]{1,80}】.{0,320}を獲得しました' "$path" 2>/dev/null
+	grep -Eq "$_COMMENT_CARD_ACQUIRED_RE|$_COMMENT_CARD_MULTI_RE" "$path" 2>/dev/null
 }
 
 _comment_debounce_now() {
@@ -266,11 +274,119 @@ _comment_debounce_wait() {
 	done
 }
 
+# Normalized identity of the card recipient when the batch is made up of
+# nothing but card notifications from one viewer. Empty output means "do not
+# consolidate" (mixed content, multiple viewers, or malformed lines).
+_comment_debounce_card_consolidation_key() {
+	local path="$1"
+	[ -s "$path" ] || return 1
+	python3 - "$path" <<'PY' 2>/dev/null
+import re
+import sys
+import unicodedata
+
+path = sys.argv[1]
+
+CARD_RE = re.compile(r"が\s*(?:【[^】]{1,80}】|\[[^\]]{1,80}\])\s*[^を]{0,360}?を獲得しました")
+MULTI_RE = re.compile(r"が\s*[0-9]+\s*連ガチャで\s*[^を]{0,200}?を獲得しました")
+PREFIX_RE = re.compile(r"^(?:\[(?:BITS|SUB|視聴記録)\]\s*)+", re.IGNORECASE)
+VIEWER_RE = re.compile(
+    r"^\s*@?(?P<viewer>.{1,64}?)\s*が\s*(?:【[^】]{1,80}】|\[[^\]]{1,80}\]|[0-9]+\s*連ガチャで)"
+)
+
+try:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = [line.strip() for line in f if line.strip()]
+except OSError:
+    raise SystemExit(1)
+if not lines:
+    raise SystemExit(1)
+
+viewers = set()
+for line in lines:
+    body = PREFIX_RE.sub("", line)
+    if not (CARD_RE.search(body) or MULTI_RE.search(body)):
+        raise SystemExit(1)
+    match = VIEWER_RE.match(body)
+    if not match:
+        raise SystemExit(1)
+    name = match.group("viewer").strip().lstrip("@")
+    name = unicodedata.normalize("NFKC", name)
+    name = re.sub(r"\s+", " ", name).strip().casefold()
+    if not name:
+        raise SystemExit(1)
+    viewers.add(name)
+if len(viewers) != 1:
+    raise SystemExit(1)
+sys.stdout.write(next(iter(viewers)))
+PY
+}
+
+_comment_card_hold_state_path() {
+	printf '%s/comment_card_hold_%s' "${COMMENT_CARD_HOLD_STATE_DIR:-tmp/state}" "$1"
+}
+
+_comment_card_hold_clear() {
+	rm -f "$(_comment_card_hold_state_path "$1")" 2>/dev/null || true
+}
+
+# Non-blocking carry-over for consecutive single draws by one viewer. The
+# second-scale debounce cannot catch production draws, which are tens of
+# seconds to minutes apart, so a card-only same-viewer batch is held across
+# worker ticks until the viewer stops drawing (quiet window) or the hard
+# ceiling is reached. Returns 0 = generate now, 1 = keep holding this tick.
+# Holding never blocks the worker loop, so outbound chat/clip consumption
+# keeps running while cards accumulate.
+_comment_card_consolidation_gate() {
+	local source="$1" outfile key state_file quiet max now sig
+	local s_key="" s_sig="" s_started="" s_last=""
+	[ "${COMMENT_CARD_CONSOLIDATE_ENABLED:-1}" = "1" ] || return 0
+	outfile=$(_comment_debounce_outfile "$source") || return 0
+	[ -s "$outfile" ] || {
+		_comment_card_hold_clear "$source"
+		return 0
+	}
+	key=$(_comment_debounce_card_consolidation_key "$outfile" 2>/dev/null || true)
+	if [ -z "$key" ]; then
+		_comment_card_hold_clear "$source"
+		return 0
+	fi
+	quiet=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_QUIET_SEC:-20}" 20 300)
+	max=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_MAX_SEC:-180}" 180 600)
+	[ "$max" -lt "$quiet" ] && max="$quiet"
+	state_file=$(_comment_card_hold_state_path "$source")
+	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
+	now=$(_comment_debounce_now)
+	sig=$(_comment_debounce_signature "$outfile")
+	if [ -f "$state_file" ]; then
+		IFS=$'\t' read -r s_key s_sig s_started s_last <"$state_file" 2>/dev/null || true
+	fi
+	case "$s_started" in '' | *[!0-9]*) s_started="" ;; esac
+	case "$s_last" in '' | *[!0-9]*) s_last="" ;; esac
+	if [ "$s_key" = "$key" ] && [ -n "$s_started" ]; then
+		if [ "$s_sig" != "$sig" ]; then
+			s_last="$now"
+			printf '%s\t%s\t%s\t%s\n' "$key" "$sig" "$s_started" "$s_last" >"$state_file"
+		fi
+	else
+		s_started="$now"
+		s_last="$now"
+		printf '%s\t%s\t%s\t%s\n' "$key" "$sig" "$s_started" "$s_last" >"$state_file"
+	fi
+	if [ $((now - s_last)) -ge "$quiet" ] || [ $((now - s_started)) -ge "$max" ]; then
+		_comment_card_hold_clear "$source"
+		return 0
+	fi
+	return 1
+}
+
 generate_comment_response() {
 	local source="${1:-twitch}"
 	# Debounce before the base function takes its pending snapshot. New arrivals
 	# reset the quiet window, bounded by COMMENT_DEBOUNCE_MAX_SEC. Card bursts get
-	# a slightly wider default window so consecutive draws land in one prompt.
+	# a slightly wider default window so consecutive draws land in one prompt;
+	# card-only same-viewer batches are then carried over across ticks.
 	_comment_debounce_wait "$source" || return 0
+	_comment_card_consolidation_gate "$source" || return 0
 	_comment_runtime_policy_base_generate_comment_response "$@"
 }
