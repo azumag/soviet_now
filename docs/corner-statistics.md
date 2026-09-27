@@ -45,3 +45,19 @@ Pythonの読み取り処理は毎回起動されるが、HTML変換関数は既�
 配信エンコーダ・ゲーム・共通音声を再起動しない。
 反映後は対象workerの新PIDと共通基盤PID維持、実際のコーナーの履歴・
 推移・分布・周囲の枠を確認する。ローカルのサンプル表示は実機受入と区別する。
+
+
+## 共通配信の実表示経路
+
+共通配信は `generate_soren_overlay.sh` が出力するSTATS HTMLを
+`lib/shared_overlay.mjs` 経由で読み取る。現在のcanonical gameと
+`SOREN/CORNER`見出しが一致する場合だけコーナー統計を通す。
+別ゲーム・不明・複数見出しは従来の待機表示へ戻し、Soren改善状態は隠す。
+PAPERはpaper-view、NetHackはnethackとして照合する。
+
+配信サイドバーのヘッダー除去は、閉じた直前のAI枠をまたがない。
+統計HTMLだけでなく、このshared state APIと配信画面を確認する。
+`shared_overlay.mjs` の変更は常駐Nodeプロセスに残るため、canonical
+配備後に共通表示serviceの対象を確認して反映する必要がある。
+ゲーム・配信encoder・共通audioを再起動せず、表示serviceの入替方法と
+周囲枠・実コーナー統計の復帰を別途検証する。
