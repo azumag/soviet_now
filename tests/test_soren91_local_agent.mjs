@@ -4,6 +4,8 @@
 // Runs on any platform: the target platform is always passed explicitly.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import {
   authorized,
   backendForPlatform,
@@ -16,6 +18,7 @@ import {
   sessionScriptForPlatform,
   spawnScriptForMode,
   stopProcessTree,
+  taskkillTree,
   validateOptions,
   validateStartSrtUrl,
 } from '../tools/soren91_local_agent.mjs';
@@ -68,7 +71,8 @@ test('backend and session script follow the platform', () => {
   assert.equal(backendForPlatform('win32'), 'local-windows');
   assert.match(sessionScriptForPlatform('darwin', '/base'), /soren91_macos_session\.mjs$/);
   assert.match(sessionScriptForPlatform('win32', '/base'), /soren91_windows_session\.mjs$/);
-  assert.ok(sessionScriptForPlatform('darwin', '/base').startsWith('/base'));
+  // path.join uses the host separator (\base on Windows, /base elsewhere).
+  assert.ok(sessionScriptForPlatform('darwin', '/base').startsWith(path.join('/base')));
 });
 
 test('Bearer token comparison rejects missing and wrong tokens', () => {
@@ -301,7 +305,8 @@ test('spawn target follows the mode; default stays the self-playing session', ()
   assert.match(spawnScriptForMode('darwin', 'session', '/base'), /soren91_macos_session\.mjs$/);
   assert.match(spawnScriptForMode('win32', 'session', '/base'), /soren91_windows_session\.mjs$/);
   assert.match(spawnScriptForMode('darwin', 'cdp-host', '/base'), /soren91_macos_cdp_host\.mjs$/);
-  assert.throws(() => spawnScriptForMode('win32', 'cdp-host', '/base'), /macOS-only/);
+  assert.match(spawnScriptForMode('win32', 'cdp-host', '/base'), /soren91_windows_cdp_host\.mjs$/);
+  assert.throws(() => spawnScriptForMode('linux', 'cdp-host', '/base'), /macOS\/Windows-only/);
   assert.throws(() => spawnScriptForMode('darwin', 'bogus', '/base'), /unknown.*mode/);
   // buildSessionArgs keeps its legacy 2-arg shape and gains an optional mode.
   const legacy = buildSessionArgs('darwin', '/base');
@@ -318,9 +323,12 @@ test('createServer rejects a misconfigured mode at startup, not at first start',
     () => createServer(options, { platform: 'darwin', mode: 'bogus', spawnImpl: () => stubSpawn() }),
     /unknown.*mode/,
   );
-  assert.throws(
+  assert.doesNotThrow(
     () => createServer(options, { platform: 'win32', mode: 'cdp-host', spawnImpl: () => stubSpawn() }),
-    /macOS-only/,
+  );
+  assert.throws(
+    () => createServer(options, { platform: 'linux', mode: 'cdp-host', spawnImpl: () => stubSpawn() }),
+    /unsupported platform/,
   );
   assert.throws(
     () => createServer(options, {
@@ -429,4 +437,150 @@ test('stop does not escalate once the child has exited', async () => {
 test('stop is a no-op without a live child', () => {
   assert.doesNotThrow(() => stopProcessTree(null, 'darwin'));
   assert.doesNotThrow(() => stopProcessTree({ exitCode: 0, kill: () => { throw new Error('must not kill'); } }, 'darwin'));
+});
+
+// --- Windows cdp-host (staged stop, hidden console, orphan sweep) ---
+
+test('win32 stop: stdin close first, taskkill /T /F only after the grace period', async () => {
+  const killed = [];
+  let ended = false;
+  const child = { pid: 777, exitCode: null, signalCode: null, stdin: { destroyed: false, end() { ended = true; } } };
+  stopProcessTree(child, 'win32', { killGraceMs: 30, taskkillImpl: (pid) => killed.push(pid) });
+  assert.equal(ended, true);
+  assert.deepEqual(killed, []);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual(killed, [777]);
+});
+
+test('win32 stop: no taskkill when the child exits within the grace period', async () => {
+  const killed = [];
+  const child = { pid: 778, exitCode: null, signalCode: null, stdin: { destroyed: false, end() { child.exitCode = 143; } } };
+  stopProcessTree(child, 'win32', { killGraceMs: 30, taskkillImpl: (pid) => killed.push(pid) });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual(killed, []);
+});
+
+test('win32 stop: a child without a stdin pipe is taskkilled immediately (legacy session)', () => {
+  const killed = [];
+  stopProcessTree({ pid: 779, exitCode: null }, 'win32', { taskkillImpl: (pid) => killed.push(pid) });
+  assert.deepEqual(killed, [779]);
+});
+
+test('HTTP: win32 cdp-host spawns the Windows host hidden with a stdin stop channel', async () => {
+  const seen = [];
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const { server } = createServer(options, {
+    platform: 'win32',
+    mode: 'cdp-host',
+    reapImpl: async () => {},
+    spawnImpl: (bin, args, spawnOptions) => { seen.push({ args, spawnOptions }); return stubSpawn(); },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const auth = { authorization: `Bearer ${LONG_TOKEN}` };
+    const status = await (await fetch(`${base}/v1/status`, { headers: auth })).json();
+    assert.equal(status.backend, 'local-windows');
+    assert.equal(status.mode, 'cdp-host');
+    assert.equal(status.driverState, 'idle');
+    const res = await fetch(`${base}/v1/start`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ srtUrl: 'srt://100.71.107.106:19192?mode=caller' }),
+    });
+    assert.equal(res.status, 202);
+    assert.match(seen[0].args[0], /soren91_windows_cdp_host\.mjs$/);
+    assert.deepEqual(seen[0].args.slice(1), ['--execute']);
+    assert.equal(seen[0].spawnOptions.stdio[0], 'pipe');
+    assert.equal(seen[0].spawnOptions.stdio[1], 'pipe');
+    assert.equal(seen[0].spawnOptions.windowsHide, true);
+    assert.equal(seen[0].spawnOptions.env.SOREN91_LOCAL_SRT_URL, 'srt://100.71.107.106:19192?mode=caller');
+    const second = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
+    assert.equal(second.status, 409);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('HTTP: win32 cdp-host start waits for the previous session orphan sweep', async () => {
+  const events = [];
+  let exitHandler = null;
+  let releaseReap = null;
+  const makeChild = () => ({
+    pid: 880, exitCode: null, stdout: { on() { return this; } },
+    once(event, fn) { if (event === 'exit') exitHandler = fn; }, kill() { return true; },
+  });
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const { server } = createServer(options, {
+    platform: 'win32',
+    mode: 'cdp-host',
+    reapImpl: () => { events.push('reap-start'); return new Promise((resolve) => { releaseReap = () => { events.push('reap-end'); resolve(); }; }); },
+    spawnImpl: () => { events.push('spawn'); return makeChild(); },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const auth = { authorization: `Bearer ${LONG_TOKEN}` };
+  try {
+    assert.equal((await fetch(`${base}/v1/start`, { method: 'POST', headers: auth })).status, 202);
+    exitHandler(1, null); // session ended -> sweep starts
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const pending = fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(events, ['spawn', 'reap-start']);
+    releaseReap();
+    assert.equal((await pending).status, 202);
+    assert.deepEqual(events, ['spawn', 'reap-start', 'reap-end', 'spawn']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// Real process trees (Windows only): a child that ignores the stdin stop
+// request is force-stopped together with its grandchild; nothing survives.
+const isWin = process.platform === 'win32';
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+async function waitFor(predicate, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return predicate();
+}
+function spawnTree(ignoreStdin) {
+  const script = `
+    const { spawn } = require('node:child_process');
+    const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    console.log('GRANDCHILD=' + grandchild.pid);
+    ${ignoreStdin ? "process.stdin.on('data', () => {});" : "process.stdin.on('end', () => { grandchild.kill(); process.exit(143); }); process.stdin.resume();"}
+    setInterval(() => {}, 1000);
+  `;
+  const child = spawn(process.execPath, ['-e', script], { stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true });
+  return new Promise((resolve) => {
+    let text = '';
+    child.stdout.on('data', (chunk) => {
+      text += chunk;
+      const match = text.match(/GRANDCHILD=(\d+)/);
+      if (match) resolve({ child, grandchildPid: Number(match[1]) });
+    });
+  });
+}
+
+test('win32 real tree: stuck child and its grandchild are gone after taskkill escalation', { skip: !isWin }, async () => {
+  const { child, grandchildPid } = await spawnTree(true);
+  assert.ok(alive(child.pid) && alive(grandchildPid));
+  stopProcessTree(child, 'win32', { killGraceMs: 300, taskkillImpl: taskkillTree });
+  assert.ok(await waitFor(() => !alive(child.pid) && !alive(grandchildPid)), 'process tree must be fully stopped');
+});
+
+test('win32 real tree: graceful child stops itself on stdin close without taskkill', { skip: !isWin }, async () => {
+  const { child, grandchildPid } = await spawnTree(false);
+  const killed = [];
+  const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+  stopProcessTree(child, 'win32', { killGraceMs: 5000, taskkillImpl: (pid) => { killed.push(pid); taskkillTree(pid); } });
+  assert.equal(await exited, 143);
+  assert.ok(await waitFor(() => !alive(grandchildPid)));
+  assert.deepEqual(killed, []);
 });
