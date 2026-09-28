@@ -26,6 +26,10 @@ out=$(_opencode_rotation_gate_run echo ran)
 _opencode_rotation_gate_run sh -c 'echo gate_stderr_probe >&2' 2>"$TMP/gate_err.txt"
 grep -q gate_stderr_probe "$TMP/gate_err.txt" || fail "gate swallowed command stderr"
 
+# 1c. non-Bash caller wrapper also executes while holding the shared gate.
+out=$(bash "$ROOT/lib/opencode_rotation_gate_exec.sh" echo exec_ran)
+[ "$out" = "exec_ran" ] || fail "exec wrapper returned '$out'"
+
 # 2. 無効化時はゲートを通さず実行する
 out=$(OPENCODE_ROTATION_GATE_ENABLED=0 _opencode_rotation_gate_run echo ran_disabled)
 [ "$out" = "ran_disabled" ] || fail "disabled run returned '$out'"
@@ -54,6 +58,10 @@ _opencode_rotation_gate_run echo should_not_run >"$TMP/out.txt" 2>/dev/null
 rc=$?
 [ "$rc" = "124" ] || fail "expected rc=124 while blocked, got $rc"
 [ ! -s "$TMP/out.txt" ] || fail "command ran while rotation held the gate"
+bash "$ROOT/lib/opencode_rotation_gate_exec.sh" echo exec_should_not_run >"$TMP/exec_out.txt" 2>/dev/null
+exec_rc=$?
+[ "$exec_rc" = "124" ] || fail "exec wrapper expected rc=124 while blocked, got $exec_rc"
+[ ! -s "$TMP/exec_out.txt" ] || fail "exec wrapper ran command while rotation held the gate"
 kill "$locker" 2>/dev/null
 wait "$locker" 2>/dev/null
 
@@ -82,9 +90,9 @@ PY
 )
 	[ "$rows" = "new" ] || fail "retention kept wrong sessions: '$rows'"
 
-	# 6. default-XDG DB は全 writer が gate 参加するまで rotation しない。
-	# soren91/text_ai.mjs / probe_free_slot.sh の direct opencode run が残る間、
-	# 排他 flock だけでは新規 writer を止められないため #404 の競合を再発させない。
+	# 6. default-XDG DB は writer gate の本番反映を確認するまで staged-off。
+	# このPRで残存writerをgateへ収束させても、旧長命プロセスが消えた証拠を
+	# owner-only diagnosticsで確認するまでは #404 の競合を再発させない。
 	export HOME="$TMP/home"
 	default_db="$HOME/.local/share/opencode/opencode.db"
 	mkdir -p "$(dirname "$default_db")"
@@ -106,7 +114,7 @@ PY
 	[ "$default_rows" = "old_default" ] || fail "default DB was mutated before all writers were gated: '$default_rows'"
 	grep -q 'default DB has ungated writers; skip rotation' "$TMP/default_err.txt" || fail "default DB skip reason missing"
 
-	# Explicit enable is reserved for the follow-up that gates every default-XDG writer.
+	# Explicit enable is reserved for the post-deploy follow-up after old writers are drained.
 	OPENCODE_DEFAULT_DB_RETENTION_ENABLED=1 ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$default_db" >/dev/null 2>&1
 	default_rows=$(python3 - "$default_db" <<'PY'
 import sqlite3, sys
