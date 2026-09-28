@@ -195,6 +195,28 @@ else
 	not_ok 'hard ceiling did not release the batch'
 fi
 
+# Defaults match production: draws by one viewer ~2 minutes apart (observed
+# 2026-09-28 08:48 -> 08:50) must still be answered as one paragraph.
+unset COMMENT_CARD_CONSOLIDATE_QUIET_SEC COMMENT_CARD_CONSOLIDATE_MAX_SEC
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+printf '3000\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default window released the first draw at once' || pass 'default window holds the first draw'
+printf '3120\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [レア] カードB を獲得しました. Lv.2' >>"$_gate_file"
+_comment_card_consolidation_gate twitch && not_ok 'default window released before a draw 2 minutes later' || pass 'a draw 2 minutes later joins the held batch'
+printf '3269\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default window released before 150s of quiet' || pass 'default window keeps holding under 150s of quiet'
+printf '3270\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && pass 'default window releases after 150s of quiet' || not_ok 'default window held past 150s of quiet'
+# Default ceiling: continuous draws are released after 420s at the latest.
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+for _t in 4000 4100 4200 4300 4400; do
+	printf '%s\n' "$_t" >"$_gate_clock"
+	printf '%s\n' "dociai: @alice が [コモン] カード$_t を獲得しました. Lv.1" >>"$_gate_file"
+	_comment_card_consolidation_gate twitch && break
+done
+[ "$(cat "$_gate_clock")" = 4400 ] && pass 'default ceiling releases continuous draws at 420s' || not_ok "default ceiling released at $(cat "$_gate_clock")"
+
 # Static integration: eloop_lib must source the policy after comment.sh.
 comment_line=$(grep -n 'broadcast/comment.sh' eloop_lib.sh | head -1 | cut -d: -f1)
 policy_line=$(grep -n 'broadcast/comment_runtime_policy.sh' eloop_lib.sh | head -1 | cut -d: -f1)
