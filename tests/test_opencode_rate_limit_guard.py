@@ -89,16 +89,26 @@ class ProbeTests(unittest.TestCase):
             shutil.copy(ROOT/'probe_free_slot.sh', root/'probe_free_slot.sh')
             shutil.copy(GUARD, root/'lib'/GUARD.name)
             shutil.copy(ROOT/'lib'/'ai_generate.sh', root/'lib'/'ai_generate.sh')
+            shutil.copy(ROOT/'lib'/'opencode_db_retention.sh', root/'lib'/'opencode_db_retention.sh')
+            shutil.copy(ROOT/'lib'/'opencode_rotation_gate_exec.sh', root/'lib'/'opencode_rotation_gate_exec.sh')
             queue_cli = root/'lib'/'ai_generation_queue_cli.sh'
             shutil.copy(ROOT/'lib'/'ai_generation_queue_cli.sh', queue_cli)
             queue_cli.chmod(0o755)
             stub=root/'cli'
             stub.write_text('#!/bin/sh\nif [ "$PROBE_RESULT" = ok ]; then echo はい; else echo "model banner" >&2; fi\n')
             stub.chmod(0o755)
-            env=dict(os.environ,OPENCODE_BIN=str(stub),FREE_PROBE_MODELS='opencode:muse-spark-1.3-contributor-free',PROBE_RESULT='empty')
+            gate = root/'gate.lock'
+            env=dict(
+                os.environ,
+                OPENCODE_BIN=str(stub),
+                OPENCODE_ROTATION_GATE=str(gate),
+                FREE_PROBE_MODELS='opencode:muse-spark-1.3-contributor-free',
+                PROBE_RESULT='empty',
+            )
             def probe():
                 return subprocess.run(['bash',str(root/'probe_free_slot.sh')],env=env,text=True,capture_output=True,timeout=5)
             first=probe(); self.assertIn('down',first.stdout)
+            self.assertTrue(gate.exists(), 'probe bypassed the shared OpenCode rotation gate')
             env['PROBE_RESULT']='ok'
             recovered=probe(); self.assertIn('RECOVERED',recovered.stdout)
             healthy=probe(); self.assertNotIn('RECOVERED',healthy.stdout)
