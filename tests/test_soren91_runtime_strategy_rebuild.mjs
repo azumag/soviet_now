@@ -67,6 +67,40 @@ test('remote slow-cadence fast path fires across the measured ~2.4s capture gap'
   assert.equal(tooEarly.state, 'DROP');
 }));
 
+test('remote single-evidence advance confirms when only queue[0] is freshly read', () => withRemoteCdp(() => {
+  // The strict cross-slot evidence is often unavailable on the remote cadence
+  // (only queue[0] detected per frame): a conflict-free queue[0] change after
+  // >=1.2s must still confirm the new turn in one observation.
+  const c = cal();
+  const prev = board([], piece(1), { nextPieces: [piece(1), null, null] });
+  gateObservation(prev, c, 1000);
+  const cur = board([piece(1)], piece(2), { nextPieces: [piece(2), null, null] });
+  const fast = gateObservation(cur, c, 2400); // gap 1400ms, evidence 1, no conflict
+  assert.equal(fast.state, 'MOVE', JSON.stringify(fast.perception));
+  assert.match(fast.perception.reason, /^stable-slow-advance/);
+}));
+
+test('remote single-evidence advance is rejected on conflicting slots or when disabled', () => withRemoteCdp(() => {
+  const conflictCal = cal();
+  gateObservation(board([], piece(1), { nextPieces: [piece(1), piece(2), null] }), conflictCal, 1000);
+  const conflicting = board([piece(1)], piece(3), { nextPieces: [piece(3), null, null] });
+  const blocked = gateObservation(conflicting, conflictCal, 2400); // p[1]=2 vs c[0]=3 -> conflict
+  assert.equal(blocked.state, 'DROP');
+
+  const old = process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE;
+  process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE = '0';
+  try {
+    const offCal = cal();
+    gateObservation(board([], piece(1), { nextPieces: [piece(1), null, null] }), offCal, 1000);
+    const single = gateObservation(
+      board([piece(1)], piece(2), { nextPieces: [piece(2), null, null] }), offCal, 2400);
+    assert.equal(single.state, 'DROP');
+  } finally {
+    if (old == null) delete process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE;
+    else process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE = old;
+  }
+}));
+
 test('local fast cadence still requires stable board confirmation', () => {
   const old = process.env.SOREN91_REMOTE_CDP_URL;
   delete process.env.SOREN91_REMOTE_CDP_URL;

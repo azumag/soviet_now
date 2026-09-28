@@ -21,6 +21,21 @@ export function singleFrameAdvanceMs(env = process.env) {
   return Number.isFinite(raw) && raw >= 1000 ? raw : DEFAULT_SINGLE_FRAME_ADVANCE_MS;
 }
 
+// The strict 'advanced' classification needs cross-slot evidence (>=2). On the
+// remote cadence that evidence is often unavailable (only queue[0] is freshly
+// detected each frame), so turns fell back to the strict two-frame gate and
+// re-observed 2-3 times per drop even after the 1.2s time floor was fixed.
+// A conflict-free single-evidence advance (queue[0] changed, no contradicting
+// slot) is the same post-drop signal the game itself gives; it only widens the
+// SLOW-CADENCE readiness fast path (queue data stabilization still uses the
+// strict transition), so the temporal-next filling is unchanged. Kill switch:
+// SOREN91_ADVANCE_SINGLE_EVIDENCE=0.
+export function singleEvidenceAdvanceEnabled(env = process.env) {
+  const explicit = String(env?.SOREN91_ADVANCE_SINGLE_EVIDENCE || '').trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(explicit)) return false;
+  return true;
+}
+
 export function slowCadenceFastPathEnabled(env = process.env) {
   const explicit = String(env?.SOREN91_SINGLE_FRAME_ADVANCE || '').trim().toLowerCase();
   if (['0', 'false', 'no', 'off'].includes(explicit)) return false;
@@ -63,23 +78,32 @@ function rawQueue(state) {
   return queue;
 }
 
+/** Conflict-free queue-advance evidence between two observations. */
+export function queueAdvanceEvidence(previousQueue, currentQueue) {
+  const p = Array.isArray(previousQueue) ? previousQueue : [];
+  const c = Array.isArray(currentQueue) ? currentQueue : [];
+  let evidence = 0;
+  let conflict = 0;
+  if (previewType(p[1]) != null && previewType(c[0]) != null) {
+    if (previewType(p[1]) === previewType(c[0])) evidence += 2;
+    else conflict += 2;
+  }
+  if (previewType(p[2]) != null && previewType(c[1]) != null) {
+    if (previewType(p[2]) === previewType(c[1])) evidence += 2;
+    else conflict += 1;
+  }
+  if (previewType(p[0]) != null && previewType(c[0]) != null && previewType(p[0]) !== previewType(c[0])) {
+    evidence += 1;
+  }
+  return { evidence, conflict };
+}
+
 function classifyQueueTransition(previousQueue, currentQueue) {
   if (!previousQueue || previousQueue.length === 0) return 'unknown';
   const p = previousQueue;
   const c = currentQueue;
-  let advanceEvidence = 0;
-  let advanceConflict = 0;
-  if (previewType(p[1]) != null && previewType(c[0]) != null) {
-    if (previewType(p[1]) === previewType(c[0])) advanceEvidence += 2;
-    else advanceConflict += 2;
-  }
-  if (previewType(p[2]) != null && previewType(c[1]) != null) {
-    if (previewType(p[2]) === previewType(c[1])) advanceEvidence += 2;
-    else advanceConflict += 1;
-  }
-  if (previewType(p[0]) != null && previewType(c[0]) != null && previewType(p[0]) !== previewType(c[0])) {
-    advanceEvidence += 1;
-  }
+  const { evidence: advanceEvidence, conflict: advanceConflict } =
+    queueAdvanceEvidence(previousQueue, currentQueue);
   if (advanceEvidence >= 2 && advanceConflict === 0) return 'advanced';
   let sameEvidence = 0;
   let sameConflict = 0;
@@ -173,7 +197,9 @@ export function gateObservation(state, calibration, now = Date.now()) {
   else if (!previous || !previous.usable || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
   else if (gapMs > maxStaleMs()) reason = 'confirm-frame';
   else {
-    slowAdvanceUsed = transition === 'advanced'
+    const advance = queueAdvanceEvidence(previous?.nextPieces, detectedQueue);
+    slowAdvanceUsed = (transition === 'advanced'
+        || (singleEvidenceAdvanceEnabled() && advance.evidence >= 1 && advance.conflict === 0))
       && slowCadenceFastPathEnabled()
       && gapMs >= singleFrameAdvanceMs();
     if (slowAdvanceUsed) {
