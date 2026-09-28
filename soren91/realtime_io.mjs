@@ -13,6 +13,27 @@ export function boundedMs(value, fallback, min = 200, max = 5000) {
     ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
+// Per-capture wall-clock budget. Measured remote capture cost is ~1.9s p50 /
+// 4.6s p95 per frame, so the old 3s default tripped consecutive
+// capture-timeouts under load and the bot stopped for the rest of the corner
+// (2026-09-29). 6s default, env up to 9s.
+export function captureTimeoutMs(env = process.env, fallback = 6000) {
+  return boundedMs(env?.SOREN91_CAPTURE_TIMEOUT_MS, fallback, 200, 9000);
+}
+
+// Consecutive-error policy: transient remote-capture slowness must not end the
+// run. Back off exponentially (bounded) and only stop after a generous limit.
+export function captureErrorBackoffMs(consecutive, env = process.env) {
+  const max = boundedMs(env?.SOREN91_ERROR_BACKOFF_MAX_MS, 15000, 1000, 60000);
+  const step = Math.max(1, Number(consecutive) || 1);
+  return Math.min(1000 * 2 ** (step - 1), max);
+}
+
+export function captureErrorLimit(env = process.env) {
+  const raw = Number(env?.SOREN91_ERROR_LIMIT);
+  return Number.isFinite(raw) && raw >= 1 ? Math.min(Math.floor(raw), 200) : 30;
+}
+
 /** A duration is a wall-clock budget, not a number of slow screenshots. */
 export function probeBudget(durationMs, intervalMs, now = () => performance.now()) {
   const duration = boundedMs(durationMs, 1200, 40, 5000);

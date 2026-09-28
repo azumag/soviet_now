@@ -20,6 +20,12 @@
 - 変更: 既定を 1200ms（ゲーム側の最小投下間隔 `DROP_COOLDOWN_MS` と同値、env上書き可）へ。高速パスの成立条件（キュー前進の証拠）は不変で、時間下限だけを実測cadenceに合わせる。判定ログへ `trans=` と `gapMs=` を追加。
 - 配備後実測（session 0912fbe7、10区間）: 投下間隔 p50 11.5→6.6秒、観測 4→2回、capture mean_calls 2.4。まだ2観測のターンが残るため、高速パスの前進証拠を「**矛盾なし・証拠1以上**」まで許容（`SOREN91_ADVANCE_SINGLE_EVIDENCE=0` で無効化）。キュー安定化は従来の厳格分類のままで、時間的NEXT補完は変えない（readinessのみ緩和）。
 
+## captureタイムアウトによるbot停止 (2026-09-29)
+
+- 現象: 手動Meriken枠で投下1〜2回の後に `capture-timeout` が連続し、11回目で「Too many consecutive errors, stopping」→ botが終了。コーナーは残り時間そのまま更新されない（視聴者には白/停止画面）。
+- 実測: リモート撮影コストは p50 約1.9秒/枚・p95 4.6秒（#519配備後の dropProfile）。既定予算3秒では負荷時に超えやすい。リトライは1秒固定・上限10回だった。
+- 変更: capture予算の既定を **3000→6000ms**（env `SOREN91_CAPTURE_TIMEOUT_MS` で最大9000）。連続エラーは**指数バックオフ**（1s→2s→…最大15s、`SOREN91_ERROR_BACKOFF_MAX_MS`）で再試行し、停止上限を **30回**（`SOREN91_ERROR_LIMIT`）へ。一時的な負荷でコーナーが死なないようにする。
+
 ## 配備前の確認
 
 - 本番VMの `soren91/main.mjs` には 2026-09-17 時点で手動パッチ (CDP captureScreenshot) が入っている。PR #371 をマージして配備する場合、VMパッチとの差分を確認してから置換する。無確認上書きはしない。
