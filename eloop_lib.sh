@@ -66,6 +66,8 @@ if [ "${EXPLORE_MODE:-0}" != "1" ]; then
 	source "$ELOOP_LIB_DIR/broadcast/comment_runtime_policy.sh"
 	source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
 	source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
+	# Optional docich screen context wraps only the COMMENT generation call.
+	source "$ELOOP_LIB_DIR/broadcast/comment_screen_context.sh"
 fi
 # Layer 4: インフラ
 source "$ELOOP_LIB_DIR/infra/cleanup.sh"
