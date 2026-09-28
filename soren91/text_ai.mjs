@@ -7,6 +7,7 @@ import { tmpdir } from 'os';
 const RUNTIME_CONFIG_PATH = join(import.meta.dirname || '.', 'runtime_config.json');
 const PROJECT_DIR = join(import.meta.dirname || '.', '..');
 const AI_QUEUE_SCRIPT = join(PROJECT_DIR, 'lib', 'ai_generation_queue_cli.sh');
+const OPENCODE_ROTATION_GATE_EXEC = join(PROJECT_DIR, 'lib', 'opencode_rotation_gate_exec.sh');
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const DEFAULT_OPENCODE_AGENT = 'glmflash';
 // opencode CLI に渡す既定のモデルチェーン。運用では AI_COMMON_AGENTS
@@ -419,7 +420,7 @@ export function runGeminiText(tag, promptText, options = {}) {
 function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, parseOutput }) {
   return new Promise((resolve, reject) => {
     const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_text_'));
-    const child = execFile('opencode', ['run', '--format', 'json', '--model', model], {
+    const child = execFile('bash', [OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--format', 'json', '--model', model], {
       encoding: 'utf-8',
       timeout: timeoutMs,
       cwd: tempDir,

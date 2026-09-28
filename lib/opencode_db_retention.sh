@@ -101,12 +101,11 @@ _opencode_db_retention_rotate() {
 	default_db="${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
 	for db in "$@"; do
 		[ -f "$db" ] || continue
-		# The default-XDG DB is also written by production-reachable direct
-		# OpenCode callers that do not yet participate in this flock contract
-		# (notably soren91/text_ai.mjs and probe_free_slot.sh). Rotating it while
-		# one of those writers starts would reintroduce the #404 TOCTOU race.
-		# Keep the mutation disabled by default until the writer inventory is
-		# complete and every default-XDG producer holds the shared gate.
+		# The remaining production-reachable default-XDG writers are routed
+		# through the shared gate by the writer-gating change, but retention stays
+		# staged-off by default until owner-only production diagnostics prove old
+		# long-lived processes have drained. Enabling it before that confirmation
+		# could reintroduce the #404 TOCTOU race during a rolling deploy.
 		if [ "$db" = "$default_db" ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-0}" != "1" ]; then
 			log "[OPENCODE:retention] default DB has ungated writers; skip rotation" >&2
 			continue
