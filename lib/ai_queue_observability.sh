@@ -13,6 +13,7 @@ _ai_queue_observability_holder_category() {
 	[ -n "$raw" ] || { printf '%s\n' "unknown"; return 0; }
 	normalized="${raw,,}"
 	case "$normalized" in
+	radio_prepass|radio_main|news|jiji|celebration|other|unknown) printf '%s\n' "$normalized" ;;
 	radio:*prepass*) printf '%s\n' "radio_prepass" ;;
 	radio*) printf '%s\n' "radio_main" ;;
 	news*) printf '%s\n' "news" ;;
@@ -62,7 +63,12 @@ _ai_generation_queue_enter() {
 	finished=$(date +%s)
 	wait_sec=$(_ai_queue_observability_wait_sec "$started" "$finished")
 	holder_category="${AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY:-}"
-	if [ -z "$holder_category" ]; then
+	if [ -n "$holder_category" ]; then
+		# The priority scheduler stores its coarse lane (radio/comment/improve).
+		# Normalize it through the same fixed-category mapper as lock-owner labels
+		# before publishing; otherwise valid giveups become malformed telemetry.
+		holder_category=$(_ai_queue_observability_holder_category "$holder_category")
+	else
 		lock_dir=$(_ai_generation_queue_lock_dir "$label")
 		if [ -r "$lock_dir/owner" ]; then
 			owner_label=$(sed -n 's/^label=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
