@@ -62,7 +62,9 @@ _ai_generation_queue_enter() {
 	finished=$(date +%s)
 	wait_sec=$(_ai_queue_observability_wait_sec "$started" "$finished")
 	holder_category="${AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY:-}"
-	if [ -z "$holder_category" ]; then
+	if [ -n "$holder_category" ]; then
+		holder_category=$(_ai_queue_observability_holder_category "$holder_category")
+	else
 		lock_dir=$(_ai_generation_queue_lock_dir "$label")
 		if [ -r "$lock_dir/owner" ]; then
 			owner_label=$(sed -n 's/^label=//p' "$lock_dir/owner" 2>/dev/null | head -n 1)
