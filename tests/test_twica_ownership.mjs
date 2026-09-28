@@ -27,6 +27,8 @@ test('ownership is opt-in; malformed and symlink records never grant a consumer'
 });
 test('binding accepts top-frame bounded ACK metadata only and unregisters on close', async () => {
   const d=fixture(); const frame={}; let callback, close; let installs=0;
+  const oldFlag=process.env.DOCICH_TWICA_COMMON_ENABLED;
+  process.env.DOCICH_TWICA_COMMON_ENABLED='1';
   const page={mainFrame:()=>frame, exposeBinding:async (_n,cb)=>{callback=cb;},
     addInitScript:async()=>installs++,evaluate:async()=>{},once:(_n,cb)=>{close=cb;}};
   const config={twicaOwnership:{enabled:true,directory:d},surfaces:[{key:'twica',elementId:'t',srcUrl:'http://127.0.0.1/t',style:{}}]};
@@ -45,7 +47,11 @@ test('binding accepts top-frame bounded ACK metadata only and unregisters on clo
     callback({frame},{generation:'b'.repeat(32),state:'legacy',frames:2});
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(d,'consumers',filename))),saved);
     close(); assert.equal(twicaGuardHealth().guards,0);
-  } finally { fs.rmSync(d,{recursive:true,force:true}); }
+  } finally {
+    if (oldFlag === undefined) delete process.env.DOCICH_TWICA_COMMON_ENABLED;
+    else process.env.DOCICH_TWICA_COMMON_ENABLED=oldFlag;
+    fs.rmSync(d,{recursive:true,force:true});
+  }
 });
 test('browser retirement removes iframe rather than hiding it; rollback installs once', async () => {
   let choice={mode:'legacy',generation:'a'.repeat(32)}; const nodes=new Map(), timers=[]; const acknowledgements=[];
@@ -74,4 +80,17 @@ test('normal and shared installers delegate only TwiCa, preserving proxy metadat
   const shell=fs.readFileSync(new URL('../direct_stream.sh',import.meta.url),'utf8');
   assert.match(shell,/docich\.twica_stream --runner/);
   assert.match(shell,/exec python3 "\$SCRIPT_DIR\/lib\/direct_stream.py" "\$@"/);
+});
+test('an upgraded idle proxy does not block renderer recovery during non-Soren games', () => {
+  const previous = process.env.DOCICH_TWICA_COMMON_ENABLED;
+  try {
+    process.env.DOCICH_TWICA_COMMON_ENABLED = '1';
+    assert.equal(twicaGuardHealth().guards, 0);
+    assert.equal(twicaGuardHealth().guard_ready, true);
+    process.env.DOCICH_TWICA_COMMON_ENABLED = '0';
+    assert.equal(twicaGuardHealth().guard_ready, false);
+  } finally {
+    if (previous === undefined) delete process.env.DOCICH_TWICA_COMMON_ENABLED;
+    else process.env.DOCICH_TWICA_COMMON_ENABLED = previous;
+  }
 });
