@@ -101,13 +101,12 @@ _opencode_db_retention_rotate() {
 	default_db="${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
 	for db in "$@"; do
 		[ -f "$db" ] || continue
-		# The remaining production-reachable default-XDG writers are routed
-		# through the shared gate by the writer-gating change, but retention stays
-		# staged-off by default until owner-only production diagnostics prove old
-		# long-lived processes have drained. Enabling it before that confirmation
-		# could reintroduce the #404 TOCTOU race during a rolling deploy.
-		if [ "$db" = "$default_db" ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-0}" != "1" ]; then
-			log "[OPENCODE:retention] default DB has ungated writers; skip rotation" >&2
+		# All production-reachable default-XDG writers now participate in this
+		# shared gate, and the gated revision has been deployed/drained through
+		# the owner-only production path. Retention is therefore enabled by
+		# default; keep an explicit emergency opt-out without bypassing the gate.
+		if [ "$db" = "$default_db" ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-1}" != "1" ]; then
+			log "[OPENCODE:retention] default DB retention disabled; skip rotation" >&2
 			continue
 		fi
 		before=$(wc -c <"$db" 2>/dev/null | tr -d ' ')
