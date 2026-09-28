@@ -2285,8 +2285,8 @@ _build_category_prompt() {
 	# Map sub-categories to their template names
 	local template_category="$category"
 	case "$category" in
-	game_question | game_status) template_category="game" ;;
-	strategy_advice | comment_advice | general_question) template_category="default" ;;
+	game_question | game_status | strategy_advice) template_category="game" ;;
+	comment_advice | general_question) template_category="default" ;;
 	subscription | stream_goal | bits | other) template_category="default" ;;
 	esac
 	local template_file="$ELOOP_LIB_DIR/prompts/comment_response_${template_category}.md"
