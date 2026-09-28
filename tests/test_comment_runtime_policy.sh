@@ -210,12 +210,16 @@ printf '3270\n' >"$_gate_clock"
 _comment_card_consolidation_gate twitch && pass 'default window releases after 150s of quiet' || not_ok 'default window held past 150s of quiet'
 # Default ceiling: continuous draws are released after 420s at the latest.
 printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
-for _t in 4000 4100 4200 4300 4400; do
+printf '4000\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default ceiling released the first draw at once' || pass 'default ceiling starts holding'
+for _t in 4100 4200 4300 4400 4419; do
 	printf '%s\n' "$_t" >"$_gate_clock"
 	printf '%s\n' "dociai: @alice が [コモン] カード$_t を獲得しました. Lv.1" >>"$_gate_file"
-	_comment_card_consolidation_gate twitch && break
+	_comment_card_consolidation_gate twitch && not_ok "default ceiling released early at $_t" || :
 done
-[ "$(cat "$_gate_clock")" = 4400 ] && pass 'default ceiling releases continuous draws at 420s' || not_ok "default ceiling released at $(cat "$_gate_clock")"
+printf '4420\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [コモン] カード4420 を獲得しました. Lv.1' >>"$_gate_file"
+_comment_card_consolidation_gate twitch && pass 'default ceiling releases continuous draws at 420s' || not_ok 'default ceiling held past 420s'
 
 # Static integration: eloop_lib must source the policy after comment.sh.
 comment_line=$(grep -n 'broadcast/comment.sh' eloop_lib.sh | head -1 | cut -d: -f1)
