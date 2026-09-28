@@ -90,9 +90,7 @@ PY
 )
 	[ "$rows" = "new" ] || fail "retention kept wrong sessions: '$rows'"
 
-	# 6. default-XDG DB は writer gate の本番反映を確認するまで staged-off。
-	# このPRで残存writerをgateへ収束させても、旧長命プロセスが消えた証拠を
-	# owner-only diagnosticsで確認するまでは #404 の競合を再発させない。
+	# 6. production proof後は default-XDG DB も shared gate の排他内で既定pruneする。
 	export HOME="$TMP/home"
 	default_db="$HOME/.local/share/opencode/opencode.db"
 	mkdir -p "$(dirname "$default_db")"
@@ -102,27 +100,36 @@ con = sqlite3.connect(sys.argv[1])
 con.executescript("create table session(id text primary key, time_created integer);")
 now = int(time.time() * 1000)
 con.execute("insert into session values ('old_default', ?)", (now - 10 * 86400000,))
+con.execute("insert into session values ('new_default', ?)", (now - 86400000,))
 con.commit(); con.close()
 PY
-	ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$default_db" >"$TMP/default_out.txt" 2>"$TMP/default_err.txt"
+	ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$default_db" >/dev/null 2>&1
 	default_rows=$(python3 - "$default_db" <<'PY'
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
 print(",".join(r[0] for r in con.execute("select id from session order by id")))
 PY
 )
-	[ "$default_rows" = "old_default" ] || fail "default DB was mutated before all writers were gated: '$default_rows'"
-	grep -q 'default DB has ungated writers; skip rotation' "$TMP/default_err.txt" || fail "default DB skip reason missing"
+	[ "$default_rows" = "new_default" ] || fail "default DB retention kept wrong sessions: '$default_rows'"
 
-	# Explicit enable is reserved for the post-deploy follow-up after old writers are drained.
-	OPENCODE_DEFAULT_DB_RETENTION_ENABLED=1 ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$default_db" >/dev/null 2>&1
+	# 緊急時は明示opt-outできるが、既定値はenabledのまま。
+	python3 - "$default_db" <<'PY'
+import sqlite3, sys, time
+con = sqlite3.connect(sys.argv[1])
+now = int(time.time() * 1000)
+con.execute("insert into session values ('old_optout', ?)", (now - 10 * 86400000,))
+con.commit(); con.close()
+PY
+	OPENCODE_DEFAULT_DB_RETENTION_ENABLED=0 ELOOP_LIB_DIR="$ROOT" \
+		_opencode_db_retention_rotate 3 "$default_db" >"$TMP/default_disabled_out.txt" 2>"$TMP/default_disabled_err.txt"
 	default_rows=$(python3 - "$default_db" <<'PY'
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
 print(",".join(r[0] for r in con.execute("select id from session order by id")))
 PY
 )
-	[ -z "$default_rows" ] || fail "explicitly enabled default DB retention did not prune old session: '$default_rows'"
+	[ "$default_rows" = "new_default,old_optout" ] || fail "default DB opt-out mutated sessions: '$default_rows'"
+	grep -q 'default DB retention disabled; skip rotation' "$TMP/default_disabled_err.txt" || fail "default DB opt-out reason missing"
 fi
 
 echo "PASS"
