@@ -273,6 +273,24 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             (root/'self/cgroup').write_text('0::/missing\n')
             with self.assertRaises(ValueError):retention.memory_headroom(root,root/'cg')
 
+    def test_prior_freelist_is_reclaimed_before_budgeting_new_prune(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
+            db=Path(td)/'opencode.db';self.make_large_wal_db(db)
+            con=sqlite3.connect(db)
+            con.execute('create table old_scratch(value blob)')
+            con.execute('insert into old_scratch values (zeroblob(4194304))');con.commit()
+            con.execute('drop table old_scratch');con.commit();con.close()
+            before=db.stat();metrics={}
+            with patch.object(retention,'available_bytes',return_value=retention.RESERVE_BYTES+7*1024**2), \
+                 patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
+                 patch.object(retention,'memory_headroom',return_value=10**12):
+                self.assertEqual(retention.rotate(str(db),3,metrics=metrics),1)
+            self.assertEqual(metrics['status'],'completed')
+            self.assertLess(db.stat().st_size,before.st_size)
+            self.assertEqual(db.stat().st_ino,before.st_ino)
+            self.assertEqual(self.counts(db)['session'],1)
+            self.assertEqual(list(Path(ram).iterdir()),[])
+
     def test_memory_copy_requires_explicit_opt_in(self):
         with patch.dict(retention.os.environ,{},clear=True):
             self.assertIsNone(retention.memory_copy_root(Path('/db/opencode.db'),1))
