@@ -17,6 +17,7 @@ import tempfile
 import time
 
 RESERVE_BYTES = 1024 ** 3
+MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
 DEFERRED = 75
 CHILD_TABLES = ('todo', 'session_share', 'session_message', 'session_input', 'session_context_epoch')
 STATUSES = {'running', 'completed', 'gate_timeout', 'disabled', 'deferred', 'failed'}
@@ -29,6 +30,61 @@ class Deferred(Exception):
 def available_bytes(path):
     st = os.statvfs(path)
     return st.f_bavail * st.f_frsize
+
+
+def memory_headroom(proc_root=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
+    """Available RAM, constrained by this process's cgroup and ancestors."""
+    available = None
+    for line in (proc_root / 'meminfo').read_text().splitlines():
+        if line.startswith('MemAvailable:'):
+            available = int(line.split()[1]) * 1024
+    if available is None:
+        raise ValueError('memory accounting unavailable')
+    for line in (proc_root / 'self/cgroup').read_text().splitlines():
+        _, controllers, relative = line.split(':', 2)
+        if controllers == '':
+            base = cgroup_root; names = ('memory.max', 'memory.current')
+        elif 'memory' in controllers.split(','):
+            base = cgroup_root / 'memory'; names = ('memory.limit_in_bytes', 'memory.usage_in_bytes')
+        else:
+            continue
+        if '..' in Path(relative).parts:
+            raise ValueError('unknown cgroup namespace')
+        group = base / relative.lstrip('/')
+        accounted = False
+        while True:
+            limit_file = group / names[0]
+            if limit_file.exists():
+                accounted = True
+                limit = limit_file.read_text().strip()
+                if limit != 'max':
+                    available = min(available, max(0, int(limit) - int((group / names[1]).read_text())))
+            if group == base:
+                break
+            group = group.parent
+        if not accounted:
+            raise ValueError('cgroup memory accounting unavailable')
+    return available
+
+
+def memory_copy_root(db, image_bytes):
+    """Opt-in only: a private tmpfs copy with independent RAM/space reserves."""
+    if os.environ.get('OPENCODE_RETENTION_MEMORY_COMPACTION') != '1':
+        return None
+    root = Path('/dev/shm')
+    try:
+        mounted = any(fields[1:3] == ['/dev/shm', 'tmpfs']
+                      for fields in (line.split() for line in Path('/proc/mounts').read_text().splitlines()))
+        if (not mounted or root.is_symlink() or not root.is_dir()
+                or root.stat().st_dev == db.parent.stat().st_dev):
+            return None
+        if available_bytes(root) < image_bytes + RESERVE_BYTES:
+            return None
+        if memory_headroom() < image_bytes + MEMORY_RESERVE_BYTES:
+            return None
+        return root
+    except (OSError, ValueError):
+        return None
 
 
 def write_result(path, result):
@@ -59,12 +115,20 @@ class Budget:
             timeout = max(0, min(timeout, remaining))
         self.deadline = time.monotonic() + timeout
         self.reason = None
+        self.memory_root = None
 
     def check(self, extra=0):
         if time.monotonic() >= self.deadline:
             self.reason = 'deadline'
         elif available_bytes(self.path) < self.reserve + extra:
             self.reason = 'insufficient_space'
+        elif self.memory_root is not None:
+            try:
+                if (available_bytes(self.memory_root) < self.reserve
+                        or memory_headroom() < MEMORY_RESERVE_BYTES):
+                    self.reason = 'insufficient_memory'
+            except (OSError, ValueError):
+                self.reason = 'memory_unknown'
         if self.reason:
             raise Deferred(self.reason)
 
@@ -111,11 +175,19 @@ def _compact(con, db, budget, metrics):
     pages = _pages(con)
     # VACUUM INTO needs only the output image here. A normal VACUUM also
     # allocates its writeback WAL at the same time, which caused ENOSPC.
-    budget.check(pages['page_count'] * pages['page_size'] + 65536)
+    image_bytes = pages['page_count'] * pages['page_size'] + 65536
+    copy_root = db.parent
+    if available_bytes(db.parent) < 2 * image_bytes + budget.reserve:
+        memory_root = memory_copy_root(db, image_bytes)
+        if memory_root is not None:
+            copy_root = budget.memory_root = memory_root
+    budget.check(0 if budget.memory_root else image_bytes)
+    metrics['compact_storage'] = 'memory' if budget.memory_root else 'disk'
     metrics['stage'] = 'compact_copy'
-    with tempfile.TemporaryDirectory(prefix='.opencode-retention-', dir=db.parent) as td:
+    with tempfile.TemporaryDirectory(prefix='.opencode-retention-', dir=copy_root) as td:
         compact = Path(td) / 'compact.db'
         con.execute('VACUUM INTO ?', (str(compact),))
+        budget.check()
         source = sqlite3.connect(compact.as_uri() + '?mode=ro', uri=True)
         try:
             source.set_progress_handler(budget.progress, 1000)
@@ -125,8 +197,8 @@ def _compact(con, db, budget, metrics):
             metrics['compact_bytes'] = compact.stat().st_size
             # The copy already occupies disk. Budget the writeback separately,
             # using the measured compact page count, not an optimistic estimate.
-            budget.check(_wal_budget(small))
             metrics['stage'] = 'compact_writeback'
+            budget.check(_wal_budget(small))
             source.backup(con, pages=128, progress=budget.backup_progress, sleep=0.05)
         finally:
             source.close()
