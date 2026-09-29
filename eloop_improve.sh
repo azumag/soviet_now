@@ -3412,6 +3412,8 @@ EOF
 	[ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ] && _improve_note "Stage1: user_review.md present; using as high-priority analysis input"
 	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
 	ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
+	_analysis_feedback_refs=()
+	_analysis_feedback_used=0
 	for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
 		_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
 		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
@@ -3425,7 +3427,7 @@ EOF
 		log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
 		run_ai_list "ANALYZE(${_analysis_retry})" "$_improve_effective_agents" \
 			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
-			"${improve_ref_files[@]}"
+			"${improve_ref_files[@]}" "${_analysis_feedback_refs[@]}"
 		_analysis_rc=$?
         if [ "$_analysis_rc" -eq 80 ] || [ "$_analysis_rc" -eq 81 ]; then
             IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
@@ -3449,15 +3451,38 @@ EOF
                 IMPROVE_FAILURE_CODE=analysis_contract_invalid
                 [ "$_analysis_contract_rc" -ne 83 ] || IMPROVE_FAILURE_CODE=analysis_hold
                 VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
-                _improve_note "Stage1: $IMPROVE_FAILURE_CODE → stop before implementation"
                 analysis_ok=false
+                # Reuse at most one existing analysis slot. The host sends only
+                # fixed feedback, preserves the rejected receipt, and validates
+                # a newly generated document with the unchanged evidence gate.
+                if [ "$_analysis_contract_rc" -eq 82 ] &&
+                    [ "${_analysis_feedback_used:-0}" -eq 0 ] &&
+                    [ "$_analysis_retry" -lt "$ANALYSIS_MAX_RETRIES" ] &&
+                    python3 "$HOST_ROOT/strategy/analysis_contract.py" retry-feedback \
+                        --result "$IMPROVE_RUN_RECEIPT_DIR/analysis-check-${_analysis_retry}.json" \
+                        --output "$IMPROVE_RUN_RECEIPT_DIR/analysis-retry-feedback.md"; then
+                    _analysis_feedback_used=1
+                    _analysis_feedback_refs=("$IMPROVE_RUN_RECEIPT_DIR/analysis-retry-feedback.md")
+                    if ! rm -f -- "$ANALYSIS_RESULT_FILE"; then
+                        _improve_note "Stage1: rejected analysis could not be cleared → stop"
+                        break
+                    fi
+                    _improve_note "Stage1: unreachable_plan_condition → one bounded reanalysis with host feedback"
+                    continue
+                fi
+                _improve_note "Stage1: $IMPROVE_FAILURE_CODE → stop before implementation"
                 break
             fi
 			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
 			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
 			analysis_ok=true
+			IMPROVE_FAILURE_CODE=""
+			VALIDATE_ERROR=""
 			break
 		fi
+        # A feedback attempt never creates extra retries after a transport or
+        # empty-output failure, even when the configured analysis limit is higher.
+        [ "${_analysis_feedback_used:-0}" -eq 0 ] || break
 		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
 		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
 	done
