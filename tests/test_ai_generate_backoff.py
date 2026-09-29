@@ -599,6 +599,50 @@ class AiGenerateBackoffTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
 
 
+    def test_invalid_agent_prevents_failure_backoff_only_suppression(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                AI_GENERATION_QUEUE_ENABLED=0
+                AI_BACKOFF_DIR={root / 'rate_backoff'!s}
+                AI_FAILURE_BACKOFF_DIR={root / 'failure_backoff'!s}
+                AI_FAMILY_BACKOFF_DIR={root / 'family_backoff'!s}
+                AI_FAIL_STREAK_DIR={root / 'fail_streak'!s}
+                AI_STATS_DIR={root / 'stats'!s}
+                AI_BACKOFF_FAILURE_SEC=300
+                AI_FAILURE_STREAK_MAX_BACKOFF_SEC=3600
+                source {REPO_ROOT / 'core/helpers.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate_policy.sh'!s}
+                log() {{ :; }}
+                mkdir -p "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAMILY_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
+                _ai_dispatch() {{ return 1; }}
+                agent='opencode:test-shared'
+                ai_generate_list 'RADIO:weather:prepass' {prompt!s} "$agent" >/dev/null 2>&1 || true
+                before_failed=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                before_chain=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                ai_generate_list 'RADIO:weather:prepass' {prompt!s} "$agent,invalid-agent-spec" >/dev/null 2>&1 || true
+                after_failed=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                after_chain=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                printf '%s %s %s %s\n' "$before_failed" "$before_chain" "$after_failed" "$after_chain"
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines()[-1], "1 1 2 2")
+
+
 class AiBackoffStatusScopeTests(unittest.TestCase):
     """COMMENT_AGENTS 全件を見ること (2026-09-10 の実障害)。
 
