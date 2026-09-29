@@ -187,7 +187,7 @@ ai_generate_list() {
 	local validator="${5:-}"
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
-	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0 failure_backoff_only=0
+	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0 failure_backoff_only=0 configured_candidate_count=0
 	local vercel_rate_limit_count=0
 	local vercel_rate_limit_agents=()
 	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
@@ -223,6 +223,7 @@ ai_generate_list() {
 		agent="${agent#"${agent%%[![:space:]]*}"}"
 		agent="${agent%"${agent##*[![:space:]]}"}"
 		[ -z "$agent" ] && continue
+		configured_candidate_count=$((configured_candidate_count + 1))
 		if ! _ai_agent_spec_valid "$agent"; then
 			log "[${label}] invalid agent spec skipped: ${agent}" >&2
 			continue
@@ -341,7 +342,9 @@ ai_generate_list() {
 	if [ "$attempted_count" -eq 0 ] && { [ ${#skipped_rate_backoff[@]} -gt 0 ] || [ ${#skipped_family_backoff[@]} -gt 0 ]; }; then
 		log "[${label}] all available agents include explicit rate-limit or family backoff; retry later" >&2
 		saw_rate_limit=1
-	elif [ "$attempted_count" -eq 0 ] && [ ${#skipped_failure_backoff[@]} -gt 0 ]; then
+	elif [ "$attempted_count" -eq 0 ] \
+		&& [ ${#skipped_failure_backoff[@]} -gt 0 ] \
+		&& [ ${#skipped_failure_backoff[@]} -eq "$configured_candidate_count" ]; then
 		log "[${label}] all agents are in scoped provider-failure backoff; retry later" >&2
 		# The original provider failure already recorded all_failed and its
 		# chain summary. A later call that dispatches no provider at all is a
