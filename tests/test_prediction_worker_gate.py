@@ -240,5 +240,63 @@ fi
         self.assertIn("MIN_GAMES_BEFORE_IMPROVE", self.source)
 
 
+
+class RemotePredictionOwnershipTests(unittest.TestCase):
+    def recover(self, rows):
+        import sys
+        source = _extract_function(PREDICTION_SCRIPT.read_text(), "_recover_remote_active_prediction")
+        marker = 'prediction_id=$(python3 - "$remote_json" <<' + "'PY' 2>/dev/null\n"
+        program = source.split(marker, 1)[1].split("\nPY", 1)[0]
+        result = subprocess.run([sys.executable, "-c", program, json.dumps({"data": rows})],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout) if result.stdout.strip() else None
+
+    def own(self, status="ACTIVE"):
+        labels = ["建国なし", "ロシア建国(ソ連不成立)", "ソ連建国", "粛清"]
+        return {"id": "soren", "title": "次の48試合で建国できる？", "status": status,
+                "outcomes": [{"id": str(i), "title": label} for i, label in enumerate(labels)]}
+
+    def test_recovers_only_soren_active_and_locked(self):
+        for status in ("ACTIVE", "LOCKED"):
+            with self.subTest(status=status):
+                result = self.recover([self.own(status)])
+                self.assertEqual(result["prediction_id"], "soren")
+                self.assertEqual(result["outcome_ids"], ["0", "1", "2", "3"])
+                self.assertTrue(result["recovered"])
+
+    def test_hanjuku_and_unrelated_predictions_are_not_adopted(self):
+        for status in ("ACTIVE", "LOCKED"):
+            row = {"id": "hanjuku", "title": "半熟英雄：どこまでゲーム到達できるか？ #abcdef123456",
+                   "status": status, "outcomes": [{"id": str(i), "title": label} for i, label in
+                   enumerate(["2話突破（新記録）", "1話突破", "1話突破できず"])]}
+            self.assertIsNone(self.recover([row]))
+            row = self.own(status)
+            row["title"] = "別の番組の予想"
+            self.assertIsNone(self.recover([row]))
+
+    def test_rejects_wrong_order_missing_duplicate_and_nonstring_ids(self):
+        cases = []
+        row = self.own(); row["outcomes"].reverse(); cases.append(row)
+        row = self.own(); row["outcomes"].pop(); cases.append(row)
+        row = self.own(); row["outcomes"][1]["id"] = "0"; cases.append(row)
+        row = self.own(); row["outcomes"][0]["id"] = 0; cases.append(row)
+        row = self.own(); row["id"] = True; cases.append(row)
+        row = self.own(); row["title"] = "次の0試合で建国できる？"; cases.append(row)
+        row = self.own(); row["outcomes"] = {}; cases.append(row)
+        for row in cases:
+            with self.subTest(row=row):
+                self.assertIsNone(self.recover([row]))
+
+    def test_legacy_twelve_game_round_and_ended_remote(self):
+        row = self.own(); row["title"] = "次の12試合で建国できる？"
+        self.assertEqual(self.recover([row])["prediction_id"], "soren")
+        for status in ("RESOLVED", "CANCELED"):
+            self.assertIsNone(self.recover([self.own(status)]))
+
+    def test_skips_unrelated_entry_without_claiming_it(self):
+        other = self.own(); other["title"] = "半熟英雄"
+        self.assertEqual(self.recover([None, other, self.own()])["prediction_id"], "soren")
+
 if __name__ == "__main__":
     unittest.main()
