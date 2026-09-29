@@ -187,7 +187,7 @@ ai_generate_list() {
 	local validator="${5:-}"
 	local last_agent_file="${6:-}"
 	local failure_kind_file="${7:-}"
-	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0
+	local _bd agent output rc _rem attempted_count=0 saw_rate_limit=0 failure_backoff_only=0
 	local vercel_rate_limit_count=0
 	local vercel_rate_limit_agents=()
 	local saved_validator="${AI_DISPATCH_VALIDATOR:-}"
@@ -343,6 +343,10 @@ ai_generate_list() {
 		saw_rate_limit=1
 	elif [ "$attempted_count" -eq 0 ] && [ ${#skipped_failure_backoff[@]} -gt 0 ]; then
 		log "[${label}] all agents are in scoped provider-failure backoff; retry later" >&2
+		# The original provider failure already recorded all_failed and its
+		# chain summary. A later call that dispatches no provider at all is a
+		# healthy circuit-breaker skip, not a new model-chain failure.
+		failure_backoff_only=1
 	fi
 
 	log "[${label}] all agents failed (list=${agent_list_raw})" >&2
@@ -357,8 +361,10 @@ ai_generate_list() {
 			resolved_models="$(_ai_resolved_model_from_agent "$agent")"
 		fi
 	done
-	_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
-	_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "all_failed"
+	if [ "$failure_backoff_only" -eq 0 ]; then
+		_ai_stats_record "all_failed" "$label" "" "" "$resolved_models"
+		_ai_chain_summary_record "$label" "$vercel_rate_limit_count" "${#vercel_rate_limit_agents[@]}" 0 "all_failed"
+	fi
 	if [ -n "$failure_kind_file" ]; then
 		if [ "$saw_rate_limit" -eq 1 ]; then
 			printf 'rate_limit\n' >"$failure_kind_file"
