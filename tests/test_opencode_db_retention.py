@@ -177,6 +177,35 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             self.assertEqual(self.counts(db)['session'],2)
             self.assertEqual(metrics['deleted_sessions'],0)
 
+    def test_progress_callback_interrupts_an_active_delete_transaction(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'opencode.db';self.make_large_wal_db(db)
+            con=sqlite3.connect(db)
+            con.execute('create table todo(session_id text, value integer)')
+            con.executemany("insert into todo values ('old',?)",[(n,) for n in range(1000)])
+            con.commit();con.close();metrics={}
+            real=retention.Budget.progress
+            def interrupt(budget):
+                if metrics.get('stage')=='delete':
+                    budget.reason='insufficient_space'
+                    return 1
+                return real(budget)
+            with patch.object(retention.Budget,'progress',interrupt):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            self.assertEqual(self.counts(db)['session'],2)
+            con=sqlite3.connect(db);self.assertEqual(con.execute('select count(*) from todo').fetchone(),(1000,));con.close()
+
+    def test_writeback_budget_failure_cleans_copy_and_keeps_database(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
+            with patch.object(retention,'_wal_budget',side_effect=[10000000,10**18]):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            self.assertEqual(metrics['stage'],'compact_copy')
+            self.assertEqual(self.counts(db)['session'],1)
+            self.assertFalse(list(Path(td).glob('.opencode-retention-*')))
+
     def test_compaction_can_retry_after_prune_already_committed(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db)
