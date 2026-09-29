@@ -1729,7 +1729,8 @@ _filter_unread_jiji_blocks() {
 		"$TMP_HISTORY_DIR/.past_jiji_keys.txt" \
 		"$jiji_tmp" \
 		"$PAST_JIJI_URL_HASHES" \
-		"tmp/google_headlines_meta.json"
+		"tmp/google_headlines_meta.json" \
+		"${PAST_NEWS_READ:-}" "${PAST_NEWS_READ_KEYS:-}" "${PAST_NEWS_URL_HASHES:-}"
 	rm -f "$jiji_tmp"
 }
 

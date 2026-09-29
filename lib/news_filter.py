@@ -3,7 +3,7 @@
 
 Usage:
     python3 news_filter.py title_key <title>
-    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file> [past_url_hash_file] [meta_file]
+    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file> [past_url_hash_file] [meta_file] [peer_titles] [peer_keys] [peer_urls]
     python3 news_filter.py resolve_title <selected_title> <news_file>
 """
 import hashlib
@@ -166,6 +166,7 @@ def event_tokens(title: str) -> set:
     s = s.replace("\u2019", "'")
     s = re.sub(r"'s\b", "", s)
     tokens = _storm_id_tokens(s)
+    tokens.update(_electricity_support_tokens(s))
     for w in re.findall(r"[a-z]+", s):
         if len(w) >= 3 and w not in _EVENT_STOPWORDS:
             tokens.add(w)
@@ -173,6 +174,47 @@ def event_tokens(title: str) -> set:
     for w in re.findall(r"[\u30a1-\u30f6\u30fc]{2,}|[\u4e00-\u9fff]{2,}", s):
         tokens.add(w)
     return tokens
+
+
+def _electricity_support_tokens(s: str) -> set:
+    """Conservative synonym identity; not a general semantic news classifier.
+
+    Require both government and electricity support. Retain explicit stage,
+    amount and month changes so a real follow-up is not treated as a rewording.
+    """
+    if not re.search(r"政府|首相|内閣", s):
+        return set()
+    if not re.search(r"電気(?:料金|代)", s) or not re.search(r"補助|支援", s):
+        return set()
+    # Do not merge different national governments, or opposition with adoption.
+    actor = re.search(r"([\u4e00-\u9fffァ-ヶー]+)(?:の)?政府", s)
+    country = actor.group(1) if actor else "日本"
+    country = {"米": "米国", "アメリカ": "米国", "英": "英国",
+               "イギリス": "英国"}.get(country, country)
+    stages = [name for name, pattern in (
+        ("ended", r"終了|打ち切り|廃止|中止"),
+        ("started", r"開始|実施|再開"),
+        ("extended", r"延長|継続"),
+    ) if re.search(pattern, s)]
+    if re.search(r"反対|否定|撤回|見送り", s):
+        stages = ["opposed"]
+    # Ambiguous or unrelated electricity-policy headlines use lexical matching.
+    if len(stages) != 1:
+        return set()
+    tokens = {"electricity-support:actor:" + country, "electricity-support:subsidy",
+              "electricity-support:stage:" + stages[0]}
+    for detail in re.findall(r"\d+(?:\.\d+)?(?:円|月|年|%)", s):
+        unit = re.search(r"円|月|年|%", detail).group()
+        tokens.add("electricity-support:detail:" + unit + ":" + detail)
+    return tokens
+
+
+def history_lines(path: str) -> list:
+    """Read an existing lane ledger without migrating or modifying it."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        return [line.strip() for line in f if line.strip()]
 
 
 def generic_tokens(titles, ratio: float = 0.10, min_corpus: int = 80) -> frozenset:
@@ -203,6 +245,16 @@ def generic_tokens(titles, ratio: float = 0.10, min_corpus: int = 80) -> frozens
 
 def same_event(a: set, b: set, generic: frozenset = frozenset()) -> bool:
     """内容語の重なりで同一事件かを判定する。"""
+    prefix = "electricity-support:"
+    a_support = {token for token in a if token.startswith(prefix)}
+    b_support = {token for token in b if token.startswith(prefix)}
+    if a_support and b_support:
+        for field in ("actor:", "stage:", "detail:円:", "detail:月:", "detail:年:", "detail:%:"):
+            left = {t for t in a_support if t.startswith(prefix + field)}
+            right = {t for t in b_support if t.startswith(prefix + field)}
+            if left and right and left != right:
+                return False
+        return True
     # A numbered storm is an explicit event identity. Do this before removing
     # period-generic tokens so a busy typhoon day cannot erase 台風17号's ID.
     a_storm_ids = {token for token in a if token.startswith("storm:")}
@@ -235,6 +287,9 @@ def cmd_filter_unread():
     news_file = sys.argv[4]
     past_url_hash_file = sys.argv[5] if len(sys.argv) > 5 else ""
     meta_file = sys.argv[6] if len(sys.argv) > 6 else ""
+    peer_title_file = sys.argv[7] if len(sys.argv) > 7 else ""
+    peer_key_file = sys.argv[8] if len(sys.argv) > 8 else ""
+    peer_url_file = sys.argv[9] if len(sys.argv) > 9 else ""
 
     news_text = ""
     if os.path.exists(news_file):
@@ -270,6 +325,11 @@ def cmd_filter_unread():
             if k:
                 past_url_hashes.add(k)
 
+    peer_titles = history_lines(peer_title_file)
+    past_keys.update(key(title) for title in peer_titles)
+    past_keys.update(history_lines(peer_key_file))
+    past_url_hashes.update(history_lines(peer_url_file))
+
     blocks = []
     current = []
     for line in news_text.splitlines():
@@ -285,16 +345,13 @@ def cmd_filter_unread():
     # 既読見出しの内容語集合 (直近分のみ。古すぎる事件まで弾くと候補が枯れる)
     past_event_tokens = []
     past_titles_for_events: list = []
-    if event_dedup_enabled() and os.path.exists(past_title_file):
+    if event_dedup_enabled():
         try:
             recent_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
         except ValueError:
             recent_limit = 60
-        past_titles_for_events = [
-            ln.strip()
-            for ln in open(past_title_file, encoding="utf-8", errors="ignore")
-            if ln.strip()
-        ][-recent_limit:]
+        past_titles_for_events = history_lines(past_title_file)[-recent_limit:]
+        past_titles_for_events += peer_titles[-recent_limit:]
         past_event_tokens = [
             t for t in (event_tokens(t) for t in past_titles_for_events) if t
         ]
