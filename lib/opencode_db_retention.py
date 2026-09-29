@@ -239,9 +239,17 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
         cutoff = int(time.time() * 1000) - days * 86400000
         old = con.execute('select count(*) from session where time_created < ?', (cutoff,)).fetchone()[0]
         metrics['eligible_sessions'] = old
+        con.set_progress_handler(budget.progress, 1000)
+        compacted_first = False
+        pages = _pages(con)
+        if (old and mode == 'wal' and pages['freelist_count']
+                and available_bytes(db.parent) < budget.reserve + _wal_budget(pages)):
+            # Recover space from an earlier committed prune before budgeting
+            # a full-size WAL just to remove newly expired sessions.
+            _compact(con, db, budget, metrics)
+            compacted_first = True
         if old:
             budget.check(_wal_budget(_pages(con)))
-        con.set_progress_handler(budget.progress, 1000)
         if old:
             metrics['stage'] = 'delete'
             budget.check()
@@ -261,7 +269,9 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                     con.execute('ROLLBACK')
                 raise
         _checkpoint(con)
-        if _pages(con)['freelist_count']:
+        # Keep the new freelist reusable after pressure recovery; avoid
+        # copying the same database twice in one maintenance pass.
+        if _pages(con)['freelist_count'] and not compacted_first:
             if mode == 'wal':
                 _compact(con, db, budget, metrics)
             else:
