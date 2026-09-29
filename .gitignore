@@ -34,3 +34,4 @@ __pycache__/
 
 # Built ScreenCaptureKit capture helper (tools/soren91_window_capture_build.sh)
 tools/macos/bin/
+tools/windows/bin/

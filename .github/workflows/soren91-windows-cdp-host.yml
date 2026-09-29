@@ -1,0 +1,61 @@
+name: Soren91 Windows cdp-host contracts
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/soren91-windows-cdp-host.yml'
+      - 'tools/soren91_windows_cdp_host.mjs'
+      - 'tools/soren91_local_agent.mjs'
+      - 'tools/soren91_macos_cdp_host.mjs'
+      - 'tools/soren91_macos_audio.mjs'
+      - 'tools/soren91_macos_session.mjs'
+      - 'tools/soren91_windows_helpers_build.ps1'
+      - 'tools/windows/**'
+      - 'tests/test_soren91_windows_cdp_host.mjs'
+      - 'tests/test_soren91_local_agent.mjs'
+      - 'infra/local/windows/soren91/**'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout reviewed PR merge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Install Node dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax check
+        run: |
+          node --check tools/soren91_windows_cdp_host.mjs
+          node --check tools/soren91_local_agent.mjs
+      - name: Contract tests (pure; Windows-only checks skip)
+        run: |
+          node --test tests/test_soren91_windows_cdp_host.mjs
+          node --test tests/test_soren91_local_agent.mjs
+
+  contracts-windows:
+    # Real process-tree stop (taskkill /T /F) and the csc-built helpers.
+    # Tailscale-bound proxy checks skip here (no tailnet on the runner).
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - name: Checkout reviewed PR merge
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Install Node dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build Windows helpers with the in-box csc.exe
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/soren91_windows_helpers_build.ps1
+      - name: Contract tests on win32
+        run: |
+          node --test tests/test_soren91_windows_cdp_host.mjs
+          node --test tests/test_soren91_local_agent.mjs

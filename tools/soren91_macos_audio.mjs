@@ -139,11 +139,14 @@ export function isBenignPipeError(error) {
 // closes its stdin, so treating that as a remote-consumer close would mask
 // encoder/muxer failures. Likewise, a generic "muxer" substring is too broad
 // (e.g. queue overflow is a real failure and must stay fail-closed).
+// EIO is spelled "Input/output error" by macOS/glibc strerror and "I/O error"
+// by the Windows CRT; both are the same SRT-output receiver-close signal.
 function hasRemoteConsumerCloseMarker(stderr) {
   const text = String(stderr || '');
+  const eio = '(?:input\\/output|i\\/o) error';
   return /broken pipe/i.test(text)
-    || /error submitting a packet to the muxer:\s*input\/output error/i.test(text)
-    || /av_interleaved_write_frame\(\):\s*input\/output error/i.test(text);
+    || new RegExp(`error submitting a packet to the muxer:\\s*${eio}`, 'i').test(text)
+    || new RegExp(`av_interleaved_write_frame\\(\\):\\s*${eio}`, 'i').test(text);
 }
 
 // Classifies an ffmpeg process exit observed BEFORE the session deadline.
