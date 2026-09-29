@@ -4,7 +4,13 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+locker=""
+cleanup() {
+    if [ -n "$locker" ]; then kill "$locker" 2>/dev/null || true; wait "$locker" 2>/dev/null || true; fi
+    rm -rf "$TMP"
+}
+trap cleanup EXIT INT TERM
+export OPENCODE_RETENTION_STATE_DIR="$TMP/state"
 
 if ! command -v flock >/dev/null 2>&1; then
 	echo "SKIP: flock unavailable"
@@ -62,8 +68,16 @@ bash "$ROOT/lib/opencode_rotation_gate_exec.sh" echo exec_should_not_run >"$TMP/
 exec_rc=$?
 [ "$exec_rc" = "124" ] || fail "exec wrapper expected rc=124 while blocked, got $exec_rc"
 [ ! -s "$TMP/exec_out.txt" ] || fail "exec wrapper ran command while rotation held the gate"
+ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$TMP/missing.db" >/dev/null 2>&1
+retention_rc=$?
+[ "$retention_rc" = 75 ] || fail "blocked retention must return 75, got $retention_rc"
+python3 - "$OPENCODE_RETENTION_STATE_DIR/opencode_db_retention.json" <<'JSON'
+import json,sys
+assert json.load(open(sys.argv[1]))['status']=='gate_timeout'
+JSON
 kill "$locker" 2>/dev/null
 wait "$locker" 2>/dev/null
+locker=""
 
 # 4. 解放後は再び実行できる
 out=$(_opencode_rotation_gate_run echo ran_after)
@@ -131,5 +145,18 @@ PY
 	[ "$default_rows" = "new_default,old_optout" ] || fail "default DB opt-out mutated sessions: '$default_rows'"
 	grep -q 'default DB retention disabled; skip rotation' "$TMP/default_disabled_err.txt" || fail "default DB opt-out reason missing"
 fi
+
+# SQL failures must propagate through the shell wrapper and latest result.
+python3 - "$TMP/invalid.db" <<'SQL'
+import sqlite3,sys
+sqlite3.connect(sys.argv[1]).close()
+SQL
+ELOOP_LIB_DIR="$ROOT" _opencode_db_retention_rotate 3 "$TMP/invalid.db" >/dev/null 2>&1
+retention_rc=$?
+[ "$retention_rc" = 1 ] || fail "invalid DB must fail, got $retention_rc"
+python3 - "$OPENCODE_RETENTION_STATE_DIR/opencode_db_retention.json" <<'JSON'
+import json,sys
+assert json.load(open(sys.argv[1]))['status']=='failed'
+JSON
 
 echo "PASS"
