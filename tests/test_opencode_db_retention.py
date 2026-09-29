@@ -202,7 +202,7 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             with patch.object(retention,'_wal_budget',side_effect=[10000000,10**18]):
                 with self.assertRaises(SystemExit) as raised:retention.rotate(str(db),3,metrics=metrics)
             self.assertEqual(raised.exception.code,75)
-            self.assertEqual(metrics['stage'],'compact_copy')
+            self.assertEqual(metrics['stage'],'compact_writeback')
             self.assertEqual(self.counts(db)['session'],1)
             self.assertFalse(list(Path(td).glob('.opencode-retention-*')))
 
@@ -214,6 +214,68 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             metrics={};self.assertEqual(retention.rotate(str(db),3,metrics=metrics),0)
             self.assertEqual(metrics['freelist_count'],0)
             self.assertLess(metrics['after_bytes'],metrics['before_bytes']//2)
+
+    def test_memory_copy_avoids_consuming_database_filesystem(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
+            db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
+            before=db.stat()
+            # Budget allows one original image, but not two. The copy is put
+            # on the separately accounted RAM root; writeback still uses disk.
+            space=retention.RESERVE_BYTES+before.st_size+100000
+            with patch.object(retention,'available_bytes',return_value=space), \
+                 patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
+                 patch.object(retention,'memory_headroom',return_value=10**12):
+                retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(metrics['compact_storage'],'memory')
+            self.assertEqual(metrics['status'],'completed')
+            self.assertEqual(db.stat().st_ino,before.st_ino)
+            self.assertLess(db.stat().st_size,before.st_size//2)
+            self.assertEqual(self.counts(db)['session'],1)
+            self.assertEqual(list(Path(ram).iterdir()),[])
+
+    def test_memory_pressure_interrupts_copy_and_cleans_private_ram_directory(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
+            db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
+            space=retention.RESERVE_BYTES+db.stat().st_size+100000
+            def available_ram():
+                return 0 if metrics.get('stage')=='compact_copy' else 10**12
+            with patch.object(retention,'available_bytes',return_value=space), \
+                 patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
+                 patch.object(retention,'memory_headroom',side_effect=available_ram):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            self.assertEqual(metrics['reason'],'insufficient_memory')
+            self.assertEqual(self.counts(db)['session'],1)
+            self.assertEqual(list(Path(ram).iterdir()),[])
+            con=sqlite3.connect(db);self.assertEqual(con.execute('pragma integrity_check').fetchone(),('ok',));con.close()
+
+    def test_cgroup_memory_limits_include_ancestor_headroom(self):
+        for version in ('v1','v2'):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as td:
+                base=Path(td);proc=base/'proc';cg=base/'cgroup'
+                (proc/'self').mkdir(parents=True)
+                (proc/'meminfo').write_text('MemAvailable: 10000000 kB\n')
+                if version=='v2':
+                    (proc/'self/cgroup').write_text('0::/parent/child\n')
+                    names=('memory.max','memory.current');mount=cg
+                else:
+                    (proc/'self/cgroup').write_text('7:memory:/parent/child\n')
+                    names=('memory.limit_in_bytes','memory.usage_in_bytes');mount=cg/'memory'
+                (mount/'parent/child').mkdir(parents=True)
+                for group,limit,current in ((mount,9000000000,1000000000),(mount/'parent',7000000000,3000000000),(mount/'parent/child',6000000000,1000000000)):
+                    (group/names[0]).write_text(str(limit));(group/names[1]).write_text(str(current))
+                self.assertEqual(retention.memory_headroom(proc,cg),4000000000)
+
+    def test_unknown_cgroup_memory_limits_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);(root/'self').mkdir()
+            (root/'meminfo').write_text('MemAvailable: 10000000 kB\n')
+            (root/'self/cgroup').write_text('0::/missing\n')
+            with self.assertRaises(ValueError):retention.memory_headroom(root,root/'cg')
+
+    def test_memory_copy_requires_explicit_opt_in(self):
+        with patch.dict(retention.os.environ,{},clear=True):
+            self.assertIsNone(retention.memory_copy_root(Path('/db/opencode.db'),1))
 
     def test_symlink_and_missing_db_fail_without_creating_live_database(self):
         with tempfile.TemporaryDirectory() as td:
