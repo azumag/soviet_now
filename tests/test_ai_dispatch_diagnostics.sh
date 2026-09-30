@@ -60,7 +60,7 @@ jiji_route=$(
 	)
 )
 check '[ "$jiji_route" = "dispatch:RADIO:JIJI_RESEARCH:opencode:muse-spark-test" ]' 'JIJI research のモデルspecは共通AI dispatchへ送る'
-check 'grep -Fq '''opencode run --title "docich:radio_prepass" --agent "$agent"''' "$ROOT/broadcast/radio_corners.sh"' 'legacy JIJI research も固定OpenCode session titleを付与する'
+check 'grep -Fq -- '\''--title "docich:radio_prepass"'\'' "$ROOT/broadcast/radio_corners.sh"' 'legacy JIJI research も固定OpenCode session titleを付与する'
 jiji_primary_count=$(grep -F -c 'research_agents' "$ROOT/broadcast/radio_corners.sh")
 check '[ "$jiji_primary_count" -ge 1 ]' 'JIJI research primaryは有効なprepassモデルspecを使う'
 
