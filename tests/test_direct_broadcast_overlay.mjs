@@ -1003,3 +1003,19 @@ test('unavailable, future or malformed Hanjuku status never becomes fabricated p
     assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x=>x.className.includes('current')).length, 0);
   }
 });
+
+
+test('Hanjuku details distinguish recorded castles, planned work and sent input', async () => {
+  const f = hanjukuFixture();
+  f.feeds.showStatusG.text += '\nゲーム内: 1年11月（最終観測）\n占領記録 5城（現在の城数ではない）'
+    + '\n計画段階: F1（完了未確認）\n保留計画: sortie\n実入力: 125回 / 観測 0秒前';
+  const ui = await runBroadcastOverlayScript(f);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
+  assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /5城.*現在数ではありません/);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '計画 出撃 / F1（完了未確認）');
+  assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /125回/);
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '年月 未確認');
+  assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /—回/);
+  assert.doesNotMatch(ui.feedG.querySelector('.hanjuku-plan').textContent, /F1/);
+});

@@ -3236,10 +3236,12 @@ def render_hanjuku_status(value):
     return [
         "半熟英雄 / 最終観測・記録",
         f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
+        f"  ゲーム内: {num('year')}年{num('month')}月（最終観測）",
         f"  占領記録 {num('captured')}城（現在の城数ではない）",
         f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗",
         f"  画面: {label('screen')} / {label('phase')}",
         f"  計画段階: {label('chart_step')}（完了未確認）",
+        f"  保留計画: {label('pending_plan')}",
         f"  実入力: {num('actions')}回 / 観測 {num('age')}秒前",
         "  将軍HP・卵状態: 未確認",
     ]
