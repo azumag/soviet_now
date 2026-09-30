@@ -15,6 +15,44 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class AiGenerateBackoffTests(unittest.TestCase):
+    def test_opencode_session_title_uses_fixed_metadata_buckets(self) -> None:
+        script = textwrap.dedent(
+            f"""
+            set -u
+            source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+            for label in 'RADIO:weather:prepass' 'RADIO:theme' 'COMMENT:reply' 'IMPROVE:cycle' 'arbitrary user-looking label'; do
+                _opencode_session_title "$label"
+                printf '\\n'
+            done
+            """
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=REPO_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "docich:radio_prepass",
+                "docich:radio_main",
+                "docich:comment",
+                "docich:improvement",
+                "docich:other",
+            ],
+        )
+        source = (REPO_ROOT / "lib/ai_generate.sh").read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            source.count('"${opencode_session_title_args[@]}"'),
+            2,
+            "both OpenCode execution paths must carry the fixed session title",
+        )
+        self.assertIn('opencode_session_title_args=(--title "$session_title")', source)
+
     def test_rate_limit_status_reports_main_and_fallback(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             state_dir = Path(temp_dir)
