@@ -279,7 +279,7 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             (root/'self/cgroup').write_text('0::/missing\n')
             with self.assertRaises(ValueError):retention.memory_headroom(root,root/'cg')
 
-    def test_prior_freelist_is_reclaimed_before_budgeting_new_prune(self):
+    def test_prior_freelist_prunes_before_ram_compaction_under_pressure(self):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db)
             con=sqlite3.connect(db)
@@ -287,12 +287,13 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             con.execute('insert into old_scratch values (zeroblob(4194304))');con.commit()
             con.execute('drop table old_scratch');con.commit();con.close()
             before=db.stat();metrics={}
-            with patch.object(retention,'available_bytes',return_value=retention.RESERVE_BYTES+7*1024**2), \
+            with patch.object(retention,'available_bytes',return_value=retention.RESERVE_BYTES+9*1024**2), \
                  patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
                  patch.object(retention,'memory_headroom',return_value=10**12):
-                self.assertEqual(retention.rotate(str(db),3,metrics=metrics),1)
-            self.assertEqual(metrics['status'],'completed')
-            self.assertLess(db.stat().st_size,before.st_size)
+                with self.assertRaises(SystemExit):retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertEqual(metrics['deleted_sessions'],1)
+            self.assertEqual(db.stat().st_size,before.st_size)
             self.assertEqual(db.stat().st_ino,before.st_ino)
             self.assertEqual(self.counts(db)['session'],1)
             self.assertEqual(list(Path(ram).iterdir()),[])
@@ -314,6 +315,13 @@ class HighWaterWalTests(unittest.TestCase):
     make_db = OpencodeDbRetentionTests.make_db
     counts = OpencodeDbRetentionTests.counts
     make_large_wal_db = RetentionSpaceSafetyTests.make_large_wal_db
+
+    @classmethod
+    def setUpClass(cls):
+        con=sqlite3.connect(':memory:')
+        print('WAL fixture runtime: platform=%s SQLite=%s secure_delete_default=%s' %
+              (sys.platform,sqlite3.sqlite_version,con.execute('pragma secure_delete').fetchone()[0]))
+        con.close()
 
     def fixture(self, db):
         self.make_large_wal_db(db)
@@ -436,6 +444,34 @@ class HighWaterWalTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
                 self.assertEqual(metrics['deleted_sessions'],1)
                 self.assertEqual(metrics['reason'],'bounded_prune_committed')
+
+    def test_ram_copy_available_but_writeback_insufficient_does_not_block_prune(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
+            db=Path(td)/'db';self.fixture(db)
+            with self.pressure(),self.assertRaises(SystemExit):retention.rotate(db,1)
+            con=sqlite3.connect(db);pages=retention._pages(con)
+            self.assertGreater(pages['freelist_count'],0)
+            self.assertGreater((pages['page_count']-pages['freelist_count'])*pages['page_size'],12*1024**2)
+            con.close()
+            with self.pressure(),patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
+                 patch.object(retention,'memory_headroom',return_value=10**12):
+                # Prove the compact copy can be built but measured writeback
+                # fails. No mutations of the live DB have committed here.
+                con=sqlite3.connect(db);con.isolation_level=None;metrics={}
+                try:
+                    with self.assertRaises(retention.Deferred):
+                        retention._compact(con,db,retention.Budget(db.parent),metrics)
+                    self.assertEqual(metrics['stage'],'compact_writeback')
+                finally:con.close()
+                con=sqlite3.connect(db);con.execute("insert into session values ('next-old',0)");con.commit();con.close()
+                metrics={}
+                with patch.object(retention,'_compact',side_effect=AssertionError('precompact blocked prune')) as compact:
+                    with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+                compact.assert_not_called()
+                self.assertEqual(metrics['deleted_sessions'],1)
+                self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertEqual(list(Path(ram).iterdir()),[])
+            self.check_intact(db,1)
 
     def test_nonzero_wal_is_checkpointed_before_installing_limit(self):
         with tempfile.TemporaryDirectory() as td:

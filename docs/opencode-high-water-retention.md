@@ -38,8 +38,9 @@ writers can still consume disk space, as with the existing contract.
   `deleted_sessions`, `selected_sessions`, `remaining_sessions` and freelist.
   Return code 75 / `deferred`, stage `compact_deferred`, reason
   `bounded_prune_committed` explicitly preserves the outstanding compaction.
-- No VACUUM or compact copy is attempted in this fallback. Existing freelist
-  does not force a compact-first attempt when even its output image cannot fit.
+- No VACUUM or compact copy is attempted before or after this fallback, even
+  when a tmpfs copy could fit. Its writeback WAL could still be too large;
+  existing freelist must not block the next expired-session batch on that path.
   Later writers can reuse freed pages, reducing growth; the DB file remains the
   same inode and size. This is **not** proof of increased physical free space.
 - An I/O/size-limit failure rolls the whole selected set back, reports
@@ -52,6 +53,10 @@ writers can still consume disk space, as with the existing contract.
   multiple transactions per invocation, unbounded adaptive retries or a larger
   limit. Capacity expansion or a separately reviewed smaller-batch strategy is
   required for persistent failures. No automatic bypass is provided.
+- Throughput is at most eight sessions per invocation. At an hourly cadence,
+  fifteen newly expired sessions per hour outpace that bound even when every
+  batch succeeds. Cadence is unchanged and catch-up is not established. A
+  committed batch is not a claim that storage exhaustion has been resolved.
 - Post-COMMIT checkpoint/compaction failure must retain the committed deletion
   count; it is never reported as rollback of already committed rows.
 
@@ -66,6 +71,15 @@ They assert all selected children survive on failure, inode/recent payload
 preservation, producer resumption, ungated-writer exclusion, limit/signal/
 automatic-checkpoint restoration, low-space/install failure and result JSON.
 No production data or live mutation is used by these tests.
+
+VM retention Python read-only metadata: SQLite3.45.1, in-memory connection
+secure_delete default=1, compile options SECURE_DELETE/THREADSAFE=1/
+DEFAULT_WAL_AUTOCHECKPOINT=1000/DEFAULT_WAL_SYNCHRONOUS=2. This is not a query of
+the live DB's connection setting or the OpenCode binary's SQLite version.
+Local tests used SQLite3.53.4/default0; fixtures explicitly exercise overflow
+erasure with secure_delete ON. The CI records its own platform/version/default.
+Parent separately verified Linux/SQLite3.53.1 caps and rollback under both
+secure_delete values. These tests are not production recovery proof.
 
 Kernel semantics: [Linux getrlimit(2)](https://man7.org/linux/man-pages/man2/getrlimit.2.html).
 SQLite references: [result codes](https://www.sqlite.org/rescode.html),
@@ -86,6 +100,13 @@ conservative estimated free-space requirement of 20,151,712,456 B, or
 **15,807,109,832 B additional** relative to that free-space sample. Compact output
 size is unknown, so this is not a measured minimum or a guarantee under ongoing
 growth. Cloud/volume changes are not made by this PR.
+
+Read-only block-device comparison: sda=50,010,783,744 B, root sda1 partition=
+48,935,976,448 B, EFI=103,809,536 B, boot=967,836,160 B. Device minus partition
+totals leaves only 3,161,600 B, so there is no multi-GB already allocated but
+unpartitioned area. statvfs root size=47,321,268,224 B; its difference from
+partition size includes filesystem accounting/metadata and is not proof of
+unexpanded free space. No growpart/resize2fs/cloud operation was performed.
 
 ## Cause attribution remains open
 

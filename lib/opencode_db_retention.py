@@ -298,17 +298,10 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
         old = con.execute('select count(*) from session where time_created < ?', (cutoff,)).fetchone()[0]
         metrics['eligible_sessions'] = old
         con.set_progress_handler(budget.progress, 1000)
-        compacted_first = False
         pages = _pages(con)
-        image_bytes = pages['page_count'] * pages['page_size'] + 65536
-        copy_possible = (available_bytes(db.parent) >= budget.reserve + image_bytes
-                         or memory_copy_root(db, image_bytes) is not None)
-        if (old and mode == 'wal' and pages['freelist_count'] and copy_possible
-                and available_bytes(db.parent) < budget.reserve + _wal_budget(pages)):
-            # Recover space from an earlier committed prune before budgeting
-            # a full-size WAL just to remove newly expired sessions.
-            _compact(con, db, budget, metrics)
-            compacted_first = True
+        # Under pressure prune first, even if a RAM copy is possible. A compact
+        # copy may fit tmpfs while its writeback WAL cannot fit this filesystem;
+        # running it first would block every subsequent bounded prune.
         delete_wal_budget = _wal_budget(_pages(con)) if old else 0
         bounded = (old and mode == 'wal'
                    and available_bytes(db.parent) < budget.reserve + delete_wal_budget)
@@ -344,9 +337,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             metrics.update(_pages(con))
             metrics.update(remaining_sessions=old - metrics['deleted_sessions'], stage='compact_deferred')
             raise Deferred('bounded_prune_committed')
-        # Keep the new freelist reusable after pressure recovery; avoid
-        # copying the same database twice in one maintenance pass.
-        if _pages(con)['freelist_count'] and not compacted_first:
+        if _pages(con)['freelist_count']:
             if mode == 'wal':
                 _compact(con, db, budget, metrics)
             else:
