@@ -62,6 +62,17 @@ writers can still consume disk space, as with the existing contract.
 
 ## Regression acceptance
 
+The additive `preflight_phase` field reports fixed enums for input/budget,
+connection, each initial PRAGMA, BEGIN EXCLUSIVE, its COMMIT, journal mode,
+initial checkpoint, page/count reads and delete-budget calculation. `complete`
+means preflight has finished; use the unchanged `stage` for later failures.
+On SQLite BUSY/LOCKED, `sqlite_error_code` contains the basic code (5/6) and
+`sqlite_extended_error_code` the numeric exception code supplied by Python.
+No SQL, exception text, DB data or arguments are recorded. Existing status,
+reason, stage and exit codes retain their meaning. Old allowlist collectors
+ignore the new fields; direct status JSON has the detail. Reused metrics clear
+prior busy codes so a later success cannot inherit a previous failure.
+
 Ubuntu 24.04 History retention CI runs the complete retention and producer gate
 tests. Synthetic SQLite fixtures cover recent sessions, every child table,
 multiple indices, overflow blobs with secure_delete ON, event payloads,

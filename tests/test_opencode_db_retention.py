@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from contextlib import contextmanager
 import os
 import resource
@@ -599,6 +600,153 @@ with r._bounded_wal(con,db,r.Budget(db.parent),{}):
                 with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
             self.assertEqual(metrics['deleted_sessions'],1)
             self.check_intact(db,1)
+
+
+class RetentionPreflightDiagnosticsTests(unittest.TestCase):
+    make_db = OpencodeDbRetentionTests.make_db
+    counts = OpencodeDbRetentionTests.counts
+
+    @staticmethod
+    def sqlite_error(code):
+        error = sqlite3.OperationalError('private SQL/DB/argv must not be recorded')
+        error.sqlite_errorcode = code
+        return error
+
+    def test_each_sqlite_preflight_phase_keeps_busy_classification_and_rows(self):
+        statements = {
+            'busy_timeout': 'PRAGMA busy_timeout=30000',
+            'temp_store': 'PRAGMA temp_store=MEMORY',
+            'synchronous': 'PRAGMA synchronous=FULL',
+            'locking_mode': 'PRAGMA locking_mode=EXCLUSIVE',
+            'begin_exclusive': 'BEGIN EXCLUSIVE',
+            'commit_exclusive': 'COMMIT',
+            'journal_mode': 'PRAGMA journal_mode',
+            'eligible_count': 'select count(*) from session where time_created < ?',
+        }
+        phases = ['connect', *statements, 'checkpoint', 'pages', 'delete_budget']
+        # BUSY, BUSY_RECOVERY, BUSY_SNAPSHOT, LOCKED, LOCKED_SHAREDCACHE.
+        for phase in phases:
+            for code in (5, 261, 517, 6, 262):
+                with self.subTest(phase=phase, code=code), tempfile.TemporaryDirectory() as td:
+                    db = Path(td) / 'db'; self.make_db(db); metrics = {}
+                    connect = sqlite3.connect
+                    pages = retention._pages
+                    calls = 0
+                    error = self.sqlite_error(code)
+
+                    class Connection:
+                        def __init__(self, con):
+                            object.__setattr__(self, '_con', con)
+                        def __getattr__(self, name):
+                            return getattr(self._con, name)
+                        def __setattr__(self, name, value):
+                            setattr(self._con, name, value)
+                        def execute(self, sql, *args):
+                            if sql == statements.get(phase):
+                                raise error
+                            return self._con.execute(sql, *args)
+
+                    def injected_connect(*args, **kwargs):
+                        if phase == 'connect':
+                            raise error
+                        return Connection(connect(*args, **kwargs))
+
+                    def injected_pages(con):
+                        nonlocal calls
+                        calls += 1
+                        if phase == 'pages' or (phase == 'delete_budget' and calls == 2):
+                            raise error
+                        return pages(con)
+
+                    checkpoint = retention._checkpoint
+                    def injected_checkpoint(con):
+                        if phase == 'checkpoint':
+                            raise error
+                        return checkpoint(con)
+
+                    with patch.object(retention.sqlite3, 'connect', injected_connect), \
+                         patch.object(retention, '_pages', injected_pages), \
+                         patch.object(retention, '_checkpoint', injected_checkpoint):
+                        with self.assertRaises(SystemExit) as raised:
+                            retention.rotate(db, 3, metrics=metrics)
+                    self.assertEqual(raised.exception.code, 75)
+                    self.assertEqual(metrics['status'], 'deferred')
+                    self.assertEqual(metrics['reason'], 'sqlite_busy')
+                    self.assertEqual(metrics['stage'], 'preflight')
+                    self.assertEqual(metrics['preflight_phase'], phase)
+                    self.assertIn(phase, retention.PREFLIGHT_PHASES)
+                    self.assertEqual(metrics['sqlite_error_code'], code & 255)
+                    self.assertEqual(metrics['sqlite_extended_error_code'], code)
+                    self.assertEqual(metrics['deleted_sessions'], 0)
+                    self.assertEqual(self.counts(db)['session'], 2)
+                    self.assertNotIn('private', json.dumps(metrics))
+
+    def test_real_wal_reader_busy_is_identified_without_mutation(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'db'; self.make_db(db)
+            reader = sqlite3.connect(db)
+            reader.execute('PRAGMA journal_mode=WAL')
+            reader.execute('BEGIN')
+            reader.execute('select count(*) from session').fetchone()
+            metrics = {}
+            try:
+                with self.assertRaises(SystemExit) as raised:
+                    retention.rotate(db, 3, busy_timeout_ms=1, metrics=metrics)
+                self.assertEqual(raised.exception.code, 75)
+                self.assertEqual(metrics['reason'], 'sqlite_busy')
+                self.assertEqual(metrics['preflight_phase'], 'begin_exclusive')
+                self.assertEqual(metrics['sqlite_error_code'], sqlite3.SQLITE_BUSY)
+                self.assertEqual(metrics['deleted_sessions'], 0)
+            finally:
+                reader.close()
+            self.assertEqual(self.counts(db)['session'], 2)
+
+    def test_nonbusy_sqlite_error_and_non_sqlite_defer_do_not_gain_busy_codes(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'db'; self.make_db(db)
+            for error, reason, rc in ((self.sqlite_error(sqlite3.SQLITE_IOERR), 'sqlite_error', 1),
+                                      (retention.Deferred('deadline'), 'deadline', 75),
+                                      (OSError('private text'), 'filesystem_or_input', 1)):
+                with self.subTest(reason=reason):
+                    metrics = {'sqlite_error_code': 5, 'sqlite_extended_error_code': 517}
+                    with patch.object(retention.sqlite3, 'connect', side_effect=error):
+                        with self.assertRaises(SystemExit) as raised:
+                            retention.rotate(db, 3, metrics=metrics)
+                    self.assertEqual(raised.exception.code, rc)
+                    self.assertEqual(metrics['reason'], reason)
+                    self.assertEqual(metrics['preflight_phase'], 'connect')
+                    self.assertNotIn('sqlite_error_code', metrics)
+                    self.assertNotIn('sqlite_extended_error_code', metrics)
+                    self.assertNotIn('private', json.dumps(metrics))
+
+    def test_success_keeps_legacy_status_and_clears_previous_busy_codes(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'db'; self.make_db(db)
+            metrics = {'sqlite_error_code': 5, 'sqlite_extended_error_code': 517}
+            self.assertEqual(retention.rotate(db, 3, metrics=metrics), 1)
+            legacy = {key: metrics[key] for key in ('version', 'status', 'reason', 'stage',
+                                                    'retention_days', 'eligible_sessions', 'deleted_sessions')}
+            self.assertEqual(legacy, dict(version=1, status='completed', reason='ok', stage='done',
+                                          retention_days=3, eligible_sessions=1, deleted_sessions=1))
+            self.assertEqual(metrics['preflight_phase'], 'complete')
+            self.assertNotIn('sqlite_error_code', metrics)
+            self.assertNotIn('sqlite_extended_error_code', metrics)
+            path = Path(td) / 'status.json'; retention.write_result(path, metrics)
+            self.assertEqual(json.loads(path.read_text()), metrics)
+
+    def test_busy_after_preflight_is_not_labelled_preflight_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'db'; self.make_db(db); metrics = {}
+            with patch.object(retention, '_delete_if_present', side_effect=self.sqlite_error(517)):
+                with self.assertRaises(SystemExit) as raised:
+                    retention.rotate(db, 3, metrics=metrics)
+            self.assertEqual(raised.exception.code, 75)
+            self.assertEqual(metrics['reason'], 'sqlite_busy')
+            self.assertEqual(metrics['stage'], 'delete')
+            self.assertEqual(metrics['preflight_phase'], 'complete')
+            self.assertEqual(metrics['sqlite_extended_error_code'], 517)
+            self.assertEqual(metrics['deleted_sessions'], 0)
+            self.assertEqual(self.counts(db)['session'], 2)
 
 
 if __name__ == '__main__':
