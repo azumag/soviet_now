@@ -3221,6 +3221,30 @@ def _corner_score_panels(values, *, rank=False, reports=False):
     return fit_dashboard_lines(lines)
 
 
+def render_hanjuku_status(value):
+    value = value if isinstance(value, dict) else {}
+    if value.get("availability") != "fresh":
+        reason = "更新待ち（観測が古い）" if value.get("availability") == "stale" else "未確認"
+        return ["半熟英雄 / ゲーム状況", f"  状態: {reason}"]
+    def num(key):
+        v = value.get(key)
+        return str(v) if type(v) is int and v >= 0 else "不明"
+    def label(key):
+        v = value.get(key)
+        # No raw ANSI/control characters from cached game metadata.
+        return _corner_short("".join(c for c in v if c.isprintable()), "不明", 24) if isinstance(v, str) else "不明"
+    return [
+        "半熟英雄 / 最終観測・記録",
+        f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
+        f"  占領記録 {num('captured')}城（現在の城数ではない）",
+        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗",
+        f"  画面: {label('screen')} / {label('phase')}",
+        f"  計画段階: {label('chart_step')}（完了未確認）",
+        f"  実入力: {num('actions')}回 / 観測 {num('age')}秒前",
+        "  将軍HP・卵状態: 未確認",
+    ]
+
+
 def render_docich_corner_stats(corner):
     """Render a corner-owned stats feed without consulting Soren score history."""
     if not isinstance(corner, dict):
@@ -3261,6 +3285,8 @@ def render_docich_corner_stats(corner):
             f"SOREN/CORNER: {label} / {game} / {status}",
             f"Live: this corner matches {progress}",
         ]
+        if corner.get("game") == "hanjuku-hero":
+            lines += render_hanjuku_status(corner.get("hanjuku"))
         lines += _corner_score_panels(score_values)
         ranking = corner.get("strategy_ranking") if isinstance(corner.get("strategy_ranking"), list) else []
         if ranking:

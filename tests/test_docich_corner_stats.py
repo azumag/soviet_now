@@ -286,3 +286,80 @@ class DocichCornerStatsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class HanjukuStatusTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.identity = dict(game='hanjuku-hero', runtime_id='g1-abcdef12', generation=1, lease_id='lease')
+        self.runtime = self.root / 'runtimes' / self.identity['runtime_id']
+        self.state = dict(schema_version=1, status='active', game='hanjuku-hero', bot_identity=self.identity)
+        self.write()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write(self):
+        import time
+        _write_json(self.root / 'retro_corner.json', self.state)
+        _write_json(self.root / 'game_switch.json', dict(phase='ready', active=self.identity))
+        _write_json(self.runtime / 'hanjuku_run.json', dict(self.identity, observed_at=time.time(), phase='field', actions_sent=7))
+        _write_json(self.runtime / 'hanjuku_bot.json', dict(decision_trace=self.identity, screen_kind='world_map', policy=dict(chapter=2, gold=123, captured=['城'], active='F3', stats=dict(wins=2, losses=1))))
+
+    def snapshot(self):
+        return load_active_corner(self.root)
+
+    def test_cached_observations_render_without_score_inference(self):
+        corner = self.snapshot()
+        self.assertEqual(corner['hanjuku']['availability'], 'fresh')
+        rendered = '\n'.join(sd.render_docich_corner_stats(corner))
+        self.assertIn('第2話', rendered)
+        self.assertIn('123G', rendered)
+        self.assertIn('現在の城数ではない', rendered)
+        self.assertIn('計画段階: F3（完了未確認）', rendered)
+        self.assertIn('実入力: 7回', rendered)
+        self.assertIn('将軍HP・卵状態: 未確認', rendered)
+
+    def test_previous_generation_is_unavailable(self):
+        changed = dict(self.identity, generation=2, runtime_id='g2-abcdef12')
+        _write_json(self.root / 'game_switch.json', dict(phase='ready', active=changed))
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+
+    def test_stale_and_future_observation_are_not_live(self):
+        import time
+        for stamp in (time.time() - 60, time.time() + 60, True, float('nan')):
+            with self.subTest(stamp=stamp):
+                _write_json(self.runtime / 'hanjuku_run.json', dict(self.identity, observed_at=stamp))
+                self.assertEqual(self.snapshot()['hanjuku']['availability'], 'stale')
+
+    def test_terminal_malformed_and_symlink_fail_closed(self):
+        _write_json(self.runtime / 'hanjuku_run.json', dict(self.identity, terminal_reason='game_over'))
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+        self.write()
+        target = self.runtime / 'hanjuku_bot.json'
+        target.write_text('x' * 262145)
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+        target.unlink()
+        target.symlink_to(self.root / 'retro_corner.json')
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+
+    def test_missing_numbers_are_unknown_not_zero(self):
+        _write_json(self.runtime / 'hanjuku_bot.json', dict(decision_trace=self.identity, policy=dict(chapter=True, gold=-1)))
+        result = self.snapshot()['hanjuku']
+        self.assertIsNone(result['chapter'])
+        self.assertIsNone(result['gold'])
+        text = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('所持金 不明G', text)
+        self.assertNotIn('0勝', text)
+
+    def test_transition_and_identity_mismatch_fail_closed(self):
+        _write_json(self.root / 'game_switch.json', dict(phase='switching', active=self.identity))
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+        self.write()
+        _write_json(self.runtime / 'hanjuku_bot.json', dict(decision_trace=dict(self.identity, lease_id='old')))
+        self.assertEqual(self.snapshot()['hanjuku']['availability'], 'unavailable')
+
+    def test_renderer_strips_control_characters_and_bounds_lines(self):
+        text = sd.fit_dashboard_lines(sd.render_hanjuku_status(dict(availability='fresh', screen='\x1b[31mBAD\n' * 100)))
+        self.assertNotIn('\x1b', '\n'.join(text))
+        self.assertTrue(all(sd.ansi_display_width(line) <= sd.W for line in text))

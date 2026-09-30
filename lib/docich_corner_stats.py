@@ -17,6 +17,8 @@ import math
 import os
 import re
 import uuid
+import time
+import stat
 from pathlib import Path
 from typing import Mapping
 
@@ -333,6 +335,81 @@ def _jev_history(soren_root: Path) -> list[dict[str, object]]:
     return sorted(history, key=lambda row: row["ts"])
 
 
+def _bounded_state(path: Path, limit=262144):
+    """Fixed-file read; never follow a link or read an unbounded runtime log."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise ValueError("invalid state file")
+        raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("oversized state")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("invalid state shape")
+        return data, info.st_mtime
+
+
+def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
+    """Display only cached observations from the canonical active generation."""
+    unavailable = {"availability": "unavailable"}
+    if state.get("status") != "active":
+        return unavailable
+    try:
+        canonical, _ = _bounded_state(root / "game_switch.json")
+        active = canonical.get("active")
+        if canonical.get("phase") != "ready" or not isinstance(active, dict):
+            return unavailable
+        keys = ("game", "runtime_id", "generation", "lease_id")
+        identity = {key: active.get(key) for key in keys}
+        runtime_id = identity["runtime_id"]
+        match = re.fullmatch(r"g([1-9][0-9]*)-([a-f0-9]{6,32})", runtime_id or "")
+        if (identity["game"] != "hanjuku-hero" or not match
+                or type(identity["generation"]) is not int
+                or int(match[1]) != identity["generation"]
+                or not isinstance(identity["lease_id"], str) or not identity["lease_id"]
+                or state.get("bot_identity") != identity):
+            return unavailable
+        runtime = root / "runtimes" / runtime_id
+        if (root / "runtimes").is_symlink() or runtime.is_symlink():
+            return unavailable
+        run, _ = _bounded_state(runtime / "hanjuku_run.json")
+        bot, bot_at = _bounded_state(runtime / "hanjuku_bot.json")
+        if (any(run.get(key) != value for key, value in identity.items())
+                or not isinstance(bot.get("decision_trace"), dict)
+                or any(bot["decision_trace"].get(key) != value for key, value in identity.items())
+                or run.get("terminal_reason") or run.get("terminal_candidate")):
+            return unavailable
+        now = time.time()
+        observed = run.get("observed_at")
+        if (type(observed) not in (int, float) or not math.isfinite(observed)
+                or not 0 <= now - observed <= 30 or not 0 <= now - bot_at <= 30):
+            return {"availability": "stale"}
+        policy = bot.get("policy") if isinstance(bot.get("policy"), dict) else {}
+        stats = policy.get("stats") if isinstance(policy.get("stats"), dict) else {}
+        number = lambda value: value if type(value) is int and 0 <= value <= 1000000 else None
+        captured = policy.get("captured")
+        chapter = number(policy.get("chapter"))
+        # Chapter and currency are last observations, not predictions or orders.
+        result = {"availability": "fresh", "age": int(now - observed),
+                  "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
+                  "gold": number(policy.get("gold")),
+                  "captured": len(captured) if isinstance(captured, list) else None,
+                  "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
+                  "actions": number(run.get("actions_sent")),
+                  "phase": run.get("phase") if run.get("phase") in {"field", "battle", "title", "name", "unknown"} else None,
+                  "screen": bot.get("screen_kind") if isinstance(bot.get("screen_kind"), str) else None,
+                  "chart_step": policy.get("active") if isinstance(policy.get("active"), str) else None}
+        # Recheck generation after reads; never carry the previous game into a switch.
+        latest, _ = _bounded_state(root / "game_switch.json")
+        if latest.get("phase") != "ready" or latest.get("active") != active:
+            return unavailable
+        return result
+    except (OSError, ValueError, TypeError, OverflowError):
+        return unavailable
+
+
 def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
                        soren_root: str | os.PathLike[str] | None = None) -> dict[str, object] | None:
     """Return one active corner snapshot, or ``None`` for ordinary Soren mode.
@@ -363,6 +440,8 @@ def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
         snapshot["session_matches"] = _session_count(snapshot["scores"], state)
         snapshot["target_matches"] = _int_value(state.get("target_matches"))
         snapshot["strategy_ranking"] = _strategy_ranking(root, snapshot["game"])
+        if snapshot["game"] == "hanjuku-hero":
+            snapshot["hanjuku"] = _hanjuku_snapshot(root, state)
     elif kind == "paper":
         snapshot["paper"] = _paper_snapshot(root)
     elif kind == "nethack":
