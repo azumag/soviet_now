@@ -1139,11 +1139,15 @@ _ai_call_local_llm() {
 _opencode_session_title() {
 	local label="${1:-}"
 	case "$label" in
-	*prepass* | *PREPASS* | *RESEARCH*) printf '%s' "docich:radio_prepass" ;;
-	RADIO* | NEWS* | JIJI* | CELEBRATION*) printf '%s' "docich:radio_main" ;;
 	COMMENT*) printf '%s' "docich:comment" ;;
 	IMPROVE* | IMPROVEMENT* | ROLLBACK-POSTMORTEM*) printf '%s' "docich:improvement" ;;
 	PROBE*) printf '%s' "docich:probe" ;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		case "$label" in
+		*prepass* | *PREPASS* | *RESEARCH*) printf '%s' "docich:radio_prepass" ;;
+		*) printf '%s' "docich:radio_main" ;;
+		esac
+		;;
 	*) printf '%s' "docich:other" ;;
 	esac
 }
