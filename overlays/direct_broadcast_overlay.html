@@ -404,7 +404,7 @@ html[data-soren-neutral="1"] .toast {
 @keyframes thinking-pulse { 0%, 100% { box-shadow: 0 6px 16px rgba(0, 0, 0, .28); } 50% { box-shadow: 0 0 16px rgba(245, 158, 11, .4); } }
 
 /* Hanjuku: readable at the actual 320px broadcast sidebar width. */
-html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 302px; }
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 390px; }
 html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
 .hanjuku-card { box-sizing: border-box; width: 306px; padding: 10px; border: 1px solid #e9b84d; border-radius: 9px; background: linear-gradient(145deg,#202017,#101c2c); color: #f8fafc; font-family: sans-serif; white-space: normal; }
 .hanjuku-card.stale { border-color: #f59e0b; background: #282014; }
@@ -412,6 +412,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
 .hanjuku-badge { border-radius: 4px; padding: 3px 6px; background: #123c36; color: #86efac; font-size: 11px; }
 .stale .hanjuku-badge { background: #713f12; color: #fef08a; }
 .hanjuku-chapter { color: #fde68a; font-size: 38px; line-height: 46px; font-weight: 950; }
+.hanjuku-month { font-size: 14px; color: #cbd5e1; margin-bottom: 7px; }
+.hanjuku-details { margin-top: 8px; border-top: 1px solid #475569; padding-top: 6px; font-size: 12px; line-height: 20px; }
 .hanjuku-dots { display: flex; gap: 4px; margin: 0 0 9px; }
 .hanjuku-dot { width: 20px; height: 6px; border: 1px solid #536170; border-radius: 2px; }
 .hanjuku-dot.current { background: #facc15; border-color: #fef08a; }
@@ -620,6 +622,11 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
     const lines = text.split('\n').map(line => line.trim());
     const pick = pattern => lines.map(line => line.match(pattern)).find(Boolean);
     const values = pick(/^第(\d+|不明)話 \/ 所持金 (\d+|不明)G$/);
+    const calendar = pick(/^ゲーム内: (\d+|不明)年(\d+|不明)月（最終観測）$/);
+    const castles = pick(/^占領記録 (\d+|不明)城/);
+    const plan = pick(/^計画段階: (.{1,24})（完了未確認）$/);
+    const pending = pick(/^保留計画: ([a-z_]+|不明)$/);
+    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前$/);
     const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗$/);
     const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)$/);
     const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
@@ -634,6 +641,12 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
       sortie_confirm:'出撃を確認中', unknown:'画面を確認中'};
     return {fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
       gold:fresh ? number(values?.[2]) : null,
+      year:fresh && number(calendar?.[1]) >= 1 && number(calendar?.[1]) <= 9999 ? number(calendar[1]) : null,
+      month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
+      captured:fresh ? number(castles?.[1]) : null,
+      actions:fresh ? number(inputs?.[1]) : null,
+      plan:fresh && plan?.[1] !== '不明' ? plan?.[1] : null,
+      pending:fresh ? ({monthly:'月次処理', recall:'帰還', repair:'卵修理', sortie:'出撃'}[pending?.[1]] || null) : null,
       wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
       status:fresh ? (labels[screen?.[1]] || '進行状況を確認中') : '最新情報を確認中'};
   }
@@ -649,6 +662,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
     head.appendChild(node('hanjuku-badge', value.fresh ? '進行中' : '要確認'));
     card.appendChild(head);
     card.appendChild(node('hanjuku-chapter', value.chapter === null ? '話数 未確認' : `第 ${value.chapter} 話`));
+    card.appendChild(node('hanjuku-month', value.year === null || value.month === null
+      ? '年月 未確認' : `${value.year}年 ${value.month}月（最終観測）`));
     const dots = node('hanjuku-dots');
     for (let i = 1; i <= 12; i++) dots.appendChild(node(`hanjuku-dot${i === value.chapter ? ' current' : ''}`));
     card.appendChild(dots);
@@ -660,6 +675,11 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
     }
     card.appendChild(kpis);
     card.appendChild(node('hanjuku-status', value.status));
+    const details = node('hanjuku-details');
+    details.appendChild(node('hanjuku-castles', `占領の記録 ${shown(value.captured)}城（現在数ではありません）`));
+    details.appendChild(node('hanjuku-plan', `計画 ${[value.pending, value.plan].filter(Boolean).join(' / ') || '未確認'}（完了未確認）`));
+    details.appendChild(node('hanjuku-inputs', `実際に送った入力 ${shown(value.actions)}回`));
+    card.appendChild(details);
     card.appendChild(node('hanjuku-note', value.fresh ? '取得済み情報を表示 / 将軍HP・卵は未確認' : '観測が古いか取得できません / 数値は非表示'));
     container.replaceChildren(card);
   }

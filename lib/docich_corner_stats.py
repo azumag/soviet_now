@@ -391,10 +391,19 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         number = lambda value: value if type(value) is int and 0 <= value <= 1000000 else None
         captured = policy.get("captured")
         chapter = number(policy.get("chapter"))
+        month = policy.get("month")
+        month_match = re.fullmatch(r"([1-9][0-9]{0,3})-([1-9]|1[0-2])", month) if isinstance(month, str) else None
+        pending = next((label for key, label in (("month_sub", "monthly"), ("recall", "recall"),
+                        ("house", "repair")) if isinstance(policy.get(key), dict) and policy[key]), None)
+        if pending is None and isinstance(policy.get("active"), str) and policy["active"]:
+            pending = "sortie"
         # Chapter and currency are last observations, not predictions or orders.
         result = {"availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
+                  "year": int(month_match[1]) if month_match else None,
+                  "month": int(month_match[2]) if month_match else None,
+                  "pending_plan": pending,
                   "captured": len(captured) if isinstance(captured, list) else None,
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "actions": number(run.get("actions_sent")),

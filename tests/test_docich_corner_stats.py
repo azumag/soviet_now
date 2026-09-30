@@ -320,6 +320,30 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIn('実入力: 7回', rendered)
         self.assertIn('将軍HP・卵状態: 未確認', rendered)
 
+    def test_month_and_pending_plan_are_observations_not_roster_counts(self):
+        path = self.runtime / 'hanjuku_bot.json'
+        data = json.loads(path.read_text())
+        data['policy'].update(month='1-11', house={'phase': 'castle_verify'},
+                              house_eggs={'old_general': {'hp': 1}})
+        _write_json(path, data)
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['year'], result['month']), (1, 11))
+        self.assertEqual(result['pending_plan'], 'repair')
+        self.assertNotIn('general_count', result)
+        rendered = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('1年11月（最終観測）', rendered)
+        self.assertIn('保留計画: repair', rendered)
+
+    def test_invalid_month_stays_unknown(self):
+        path = self.runtime / 'hanjuku_bot.json'
+        for month in ('1-13', '0-2', True, '1-2\n', '10000-2'):
+            data = json.loads(path.read_text())
+            data['policy']['month'] = month
+            _write_json(path, data)
+            result = self.snapshot()['hanjuku']
+            self.assertIsNone(result['month'])
+            self.assertIsNone(result['year'])
+
     def test_previous_generation_is_unavailable(self):
         changed = dict(self.identity, generation=2, runtime_id='g2-abcdef12')
         _write_json(self.root / 'game_switch.json', dict(phase='ready', active=changed))
