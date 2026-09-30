@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import contextmanager
+import os
+import resource
+import signal
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -302,6 +308,261 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
                 with self.assertRaises(SystemExit):retention.rotate(str(invalid),3)
             self.assertEqual(self.counts(db)['session'],2)
             self.assertFalse((Path(td)/'missing.db').exists())
+
+
+class HighWaterWalTests(unittest.TestCase):
+    make_db = OpencodeDbRetentionTests.make_db
+    counts = OpencodeDbRetentionTests.counts
+    make_large_wal_db = RetentionSpaceSafetyTests.make_large_wal_db
+
+    def fixture(self, db):
+        self.make_large_wal_db(db)
+        con = sqlite3.connect(db)
+        con.execute("update session set time_created=? where id='new'", (int(time.time()*1000)-3600000,))
+        con.execute("update part set payload=zeroblob(16777216) where session_id='new'")
+        # Index maintenance and event payloads are inside the same WAL ceiling.
+        con.execute('create index part_session on part(session_id)')
+        con.execute('create index message_session on message(session_id)')
+        con.execute('alter table event add column payload blob')
+        con.execute("update event set payload=zeroblob(1048576) where aggregate_id='old'")
+        for table in retention.CHILD_TABLES:
+            con.execute('create table %s(session_id text, value integer)' % table)
+            con.executemany('insert into %s values (?,1)' % table,[('old',),('new',)])
+        con.commit(); con.close()
+
+    @contextmanager
+    def pressure(self, amount=12*1024**2):
+        connect=sqlite3.connect
+        def erasing_connect(*args, **kwargs):
+            con=connect(*args, **kwargs)
+            # Explicitly dirty overflow pages on DELETE on builds where the
+            # default secure_delete is OFF; a blob alone need not grow WAL.
+            con.execute('pragma secure_delete=on')
+            return con
+        with patch.object(retention, 'available_bytes', return_value=retention.RESERVE_BYTES+amount), \
+             patch.object(retention.sqlite3,'connect',erasing_connect):
+            yield
+
+    def check_intact(self, db, expected=2):
+        self.assertEqual(self.counts(db)['session'], expected)
+        con = sqlite3.connect(db)
+        self.assertEqual(con.execute('pragma integrity_check').fetchone(), ('ok',))
+        self.assertEqual(con.execute('pragma foreign_key_check').fetchall(), [])
+        self.assertEqual(con.execute("select length(payload) from part where session_id='new'").fetchone(), (16777216,))
+        con.execute("insert into session values ('writer-returned',?)", (int(time.time()*1000),))
+        con.commit(); con.close()
+
+    def test_bounded_prune_retains_one_day_and_inode_without_claiming_shrink(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db'; self.fixture(db); before=db.stat(); metrics={}
+            limits=resource.getrlimit(resource.RLIMIT_FSIZE); sig=signal.getsignal(signal.SIGXFSZ)
+            checkpoint=retention._checkpoint
+            observed=[]
+            def verify(con):
+                self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE), limits)
+                self.assertEqual(signal.getsignal(signal.SIGXFSZ), sig)
+                if metrics.get('deleted_sessions'):
+                    self.assertEqual(con.execute('pragma wal_autocheckpoint').fetchone(), (1000,))
+                    observed.append(Path(str(db)+'-wal').stat().st_size)
+                checkpoint(con)
+            with self.pressure(), patch.object(retention, '_checkpoint', verify):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertEqual(metrics['deleted_sessions'],1)
+            self.assertGreater(metrics['freelist_count'],0)
+            self.assertTrue(observed)
+            self.assertLessEqual(max(observed),metrics['wal_limit_bytes'])
+            self.assertEqual(db.stat().st_ino,before.st_ino)
+            self.assertEqual(db.stat().st_size,before.st_size)
+            self.check_intact(db,1)
+            # Result JSON has no leftover process file-size ceiling.
+            result=Path(td)/'result';retention.write_result(result,metrics)
+            self.assertTrue(result.is_file())
+
+    def test_huge_blob_efbig_preserves_every_child_and_restores_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db); before=self.counts(db);metrics={}
+            limits=resource.getrlimit(resource.RLIMIT_FSIZE);sig=signal.getsignal(signal.SIGXFSZ)
+            with self.pressure(6*1024**2):
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['reason'],'bounded_prune_io_error')
+            self.assertTrue(metrics['bounded_prune_blocked'])
+            self.assertEqual(metrics['recovery_action'],'inspect_io_or_add_capacity')
+            self.assertEqual(metrics['deleted_sessions'],0)
+            self.assertEqual(self.counts(db),before)
+            self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE),limits)
+            self.assertEqual(signal.getsignal(signal.SIGXFSZ),sig)
+            con=sqlite3.connect(db)
+            self.assertEqual(con.execute("select length(payload) from part where session_id='old'").fetchone(),(4194304,))
+            self.assertEqual(con.execute("select length(payload) from event where aggregate_id='old'").fetchone(),(1048576,))
+            for table in retention.CHILD_TABLES:
+                self.assertEqual(con.execute('select count(*) from '+table).fetchone(),(2,))
+            con.close();self.check_intact(db)
+
+    def test_trigger_amplification_and_cache_spill_are_capped(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            con.executescript("create table amplified(value blob); create trigger amplify before delete on part begin insert into amplified values(zeroblob(16777216)); end;")
+            con.close();metrics={}
+            with self.pressure():
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['deleted_sessions'],0)
+            self.assertEqual(metrics['reason'],'bounded_prune_io_error')
+            con=sqlite3.connect(db);self.assertEqual(con.execute('select count(*) from amplified').fetchone(),(0,));con.close()
+            self.check_intact(db)
+
+    def test_batch_is_one_transaction_and_preserves_remaining_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            for n in range(20):con.execute('insert into session values (?,0)',('extra-%02d'%n,))
+            con.commit();con.close();metrics={}
+            with self.pressure():
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['eligible_sessions'],21)
+            self.assertEqual(metrics['selected_sessions'],8)
+            self.assertEqual(metrics['deleted_sessions'],8)
+            self.assertEqual(metrics['remaining_sessions'],13)
+            self.assertEqual(self.counts(db)['session'],14)
+
+    def test_prior_freelist_does_not_block_next_bounded_prune(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db)
+            for iteration in range(2):
+                if iteration:
+                    con=sqlite3.connect(db);con.execute("insert into session values ('next-old',0)");con.commit();con.close()
+                metrics={}
+                with self.pressure():
+                    with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+                self.assertEqual(metrics['deleted_sessions'],1)
+                self.assertEqual(metrics['reason'],'bounded_prune_committed')
+
+    def test_nonzero_wal_is_checkpointed_before_installing_limit(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db)
+            con=sqlite3.connect(db)
+            con.execute('pragma wal_autocheckpoint=0')
+            con.execute("insert into session values ('recent-pending-wal',?)",(int(time.time()*1000),))
+            con.commit();self.assertGreater(Path(str(db)+'-wal').stat().st_size,0)
+            # Closing this connection checkpoints; use the helper directly to
+            # prove an uncheckpointed WAL is rejected before any mutation.
+            metrics={};budget=retention.Budget(db.parent)
+            with self.pressure(), self.assertRaises(retention.Deferred) as raised:
+                with retention._bounded_wal(con,db,budget,metrics):self.fail('uncheckpointed WAL admitted')
+            self.assertEqual(str(raised.exception),'checkpoint_busy')
+            con.close()
+            with self.pressure(), self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['deleted_sessions'],1)
+            self.assertEqual(self.counts(db)['session'],2)
+
+    def test_commit_write_failure_rolls_back_and_measures_kernel_ceiling(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            con.isolation_level=None;con.execute('pragma cache_spill=off');con.execute('pragma secure_delete=on')
+            retention._checkpoint(con);metrics={};budget=retention.Budget(db.parent)
+            with self.pressure(6*1024**2):
+                with self.assertRaises(retention.Deferred):
+                    with retention._bounded_wal(con,db,budget,metrics):
+                        con.execute('begin immediate')
+                        con.execute("delete from part where session_id='old'")
+                        # cache spill is off: the cap failure is at COMMIT.
+                        self.assertEqual(Path(str(db)+'-wal').stat().st_size,0)
+                        con.execute('commit')
+            self.assertLessEqual(Path(str(db)+'-wal').stat().st_size,metrics['wal_limit_bytes'])
+            if con.in_transaction:con.execute('rollback')
+            self.assertEqual(con.execute('pragma wal_autocheckpoint').fetchone(),(1000,))
+            con.close();self.check_intact(db)
+
+    def test_sigkill_during_uncommitted_prune_recovers_every_row(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);ready=Path(td)/'ready'
+            code='''import importlib.util,sqlite3,sys,time,os
+from pathlib import Path
+s=importlib.util.spec_from_file_location('r',sys.argv[1]);r=importlib.util.module_from_spec(s);s.loader.exec_module(r)
+db=Path(sys.argv[2]);con=sqlite3.connect(db);con.isolation_level=None;con.execute('pragma cache_size=10');con.execute('pragma secure_delete=on');r._checkpoint(con)
+with r._bounded_wal(con,db,r.Budget(db.parent),{}):
+ con.execute('begin immediate');con.execute("delete from part where session_id='old'")
+ Path(sys.argv[3]).touch();time.sleep(30)
+'''
+            proc=subprocess.Popen([sys.executable,'-c',code,str(ROOT/'lib/opencode_db_retention.py'),str(db),str(ready)])
+            try:
+                deadline=time.monotonic()+10
+                while not ready.exists() and proc.poll() is None and time.monotonic()<deadline:time.sleep(.02)
+                self.assertTrue(ready.exists())
+                self.assertGreater(Path(str(db)+'-wal').stat().st_size,0)
+                proc.kill();proc.wait(timeout=5)
+                self.assertEqual(self.counts(db)['part'],2)
+                self.check_intact(db)
+            finally:
+                if proc.poll() is None:proc.kill();proc.wait(timeout=5)
+
+    def test_nondefault_soft_limit_signal_and_autocheckpoint_are_restored(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            retention._checkpoint(con);con.execute('pragma wal_autocheckpoint=37')
+            original=resource.getrlimit(resource.RLIMIT_FSIZE);sig=signal.getsignal(signal.SIGXFSZ)
+            def handler(*args):pass
+            try:
+                resource.setrlimit(resource.RLIMIT_FSIZE,(32*1024**2,original[1]))
+                signal.signal(signal.SIGXFSZ,handler)
+                expected=resource.getrlimit(resource.RLIMIT_FSIZE)
+                with self.pressure():
+                    with self.assertRaises(RuntimeError):
+                        with retention._bounded_wal(con,db,retention.Budget(db.parent),{}):
+                            self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE)[1],expected[1])
+                            self.assertEqual(signal.getsignal(signal.SIGXFSZ),signal.SIG_IGN)
+                            raise RuntimeError('interrupted')
+                self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE),expected)
+                self.assertIs(signal.getsignal(signal.SIGXFSZ),handler)
+                self.assertEqual(con.execute('pragma wal_autocheckpoint').fetchone(),(37,))
+            finally:
+                resource.setrlimit(resource.RLIMIT_FSIZE,original)
+                signal.signal(signal.SIGXFSZ,sig);con.close()
+
+    def test_reserve_or_limit_install_failure_never_begins_delete(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);metrics={}
+            with self.pressure(retention.PRUNE_OVERHEAD_BYTES+retention.PRUNE_MIN_WAL_BYTES-4096):
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['deleted_sessions'],0)
+            self.assertEqual(metrics['reason'],'insufficient_space')
+            limits=resource.getrlimit(resource.RLIMIT_FSIZE);sig=signal.getsignal(signal.SIGXFSZ)
+            setter=resource.setrlimit
+            def reject_lower(which, value):
+                if value != limits:raise OSError('limit unavailable')
+                return setter(which,value)
+            with self.pressure(),patch.object(retention.resource,'setrlimit',reject_lower):
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['deleted_sessions'],0)
+            self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE),limits)
+            self.assertEqual(signal.getsignal(signal.SIGXFSZ),sig)
+            self.check_intact(db)
+
+    def test_single_thread_contract_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);metrics={}
+            with self.pressure(),patch.object(retention.threading,'active_count',return_value=2):
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['reason'],'wal_limit_unavailable')
+            self.assertEqual(metrics['deleted_sessions'],0)
+            self.check_intact(db)
+
+    def test_ungated_writer_cannot_enter_bounded_transaction(self):
+        guard=retention._bounded_wal
+        @contextmanager
+        def verified(con,db,budget,metrics):
+            with guard(con,db,budget,metrics):
+                other=sqlite3.connect(db,timeout=.01)
+                try:
+                    with self.assertRaises(sqlite3.OperationalError):other.execute("insert into session values ('ungated',0)")
+                finally:other.close()
+                yield
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);metrics={}
+            with self.pressure(),patch.object(retention,'_bounded_wal',verified):
+                with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(metrics['deleted_sessions'],1)
+            self.check_intact(db,1)
 
 
 if __name__ == '__main__':
