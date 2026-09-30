@@ -420,7 +420,7 @@ export function runGeminiText(tag, promptText, options = {}) {
 function runOpencodeOnce({ model, promptText, timeoutMs, permission, extraEnv, parseOutput }) {
   return new Promise((resolve, reject) => {
     const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_text_'));
-    const child = execFile('bash', [OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--format', 'json', '--model', model], {
+    const child = execFile('bash', [OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--title', 'docich:soren91', '--format', 'json', '--model', model], {
       encoding: 'utf-8',
       timeout: timeoutMs,
       cwd: tempDir,
