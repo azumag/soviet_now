@@ -1133,6 +1133,21 @@ _ai_call_local_llm() {
 
 # === Opencode (free tier via opencode CLI) ===
 
+# OpenCode session title は prompt 本文ではなく固定bucketだけを保存する。
+# default XDG の巨大sessionを metadata-only で caller 帰属できるようにしつつ、
+# topic / user text / model名など可変・機微な値をDB titleへ流さない。
+_opencode_session_title() {
+	local label="${1:-}"
+	case "$label" in
+	*prepass* | *PREPASS* | *RESEARCH*) printf '%s' "docich:radio_prepass" ;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*) printf '%s' "docich:radio_main" ;;
+	COMMENT*) printf '%s' "docich:comment" ;;
+	IMPROVE* | IMPROVEMENT* | ROLLBACK-POSTMORTEM*) printf '%s' "docich:improvement" ;;
+	PROBE*) printf '%s' "docich:probe" ;;
+	*) printf '%s' "docich:other" ;;
+	esac
+}
+
 # _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT]
 # opencode:deepseek-v4-flash-free などは opencode CLI で直接呼ぶ。
 # 検証済み: /snap/bin/opencode run --model opencode/deepseek-v4-flash-free は litellm の zen/v1 429 と異なり成功する。
@@ -1157,6 +1172,8 @@ _ai_call_opencode_unqueued() {
 	[ -x "$opencode_bin" ] || opencode_bin="opencode"
 	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
+	local session_title
+	session_title=$(_opencode_session_title "$label")
 	local opencode_agent_args=()
 	case "$agent" in
 	vercel:*|amd:*)
@@ -1186,10 +1203,10 @@ _ai_call_opencode_unqueued() {
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
 			_opencode_rotation_gate_run python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
-				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+				"$opencode_bin" run --title "$session_title" --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --title "$session_title" "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?
