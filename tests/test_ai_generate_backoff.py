@@ -54,6 +54,28 @@ class AiGenerateBackoffTests(unittest.TestCase):
         )
         self.assertIn('opencode_session_title_args=(--title "$session_title")', source)
 
+    def test_direct_radio_engine_opencode_paths_use_fixed_session_titles(self) -> None:
+        source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'session_title="${3:-docich:radio_main}"',
+            source,
+            "direct radio OpenCode calls must use the radio_main fixed bucket",
+        )
+        self.assertIn(
+            'opencode run --title "$session_title" "${model_args[@]}"',
+            source,
+        )
+        self.assertIn(
+            '_run_opencode_radio_unqueued "$agent" "$prompt_file" "docich:comment"',
+            source,
+            "comment sandbox fallback must stay in the comment bucket",
+        )
+        self.assertIn(
+            'opencode run --title "docich:comment" --agent "$agent"',
+            source,
+            "direct comment OpenCode calls must use the comment fixed bucket",
+        )
+
     def test_rate_limit_status_reports_main_and_fallback(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             state_dir = Path(temp_dir)

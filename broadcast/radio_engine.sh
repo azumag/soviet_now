@@ -24,7 +24,7 @@ _radio_peak_hour_should_defer() {
 }
 
 _run_opencode_radio_unqueued() {
-	local agent="$1" prompt_file="$2"
+	local agent="$1" prompt_file="$2" session_title="${3:-docich:radio_main}"
 	local raw_file raw_text cleaned model="$agent"
 	local -a model_args=()
 	case "$agent" in
@@ -58,7 +58,7 @@ _run_opencode_radio_unqueued() {
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$RADIO_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		opencode run "${model_args[@]}" "$(cat "$prompt_file")" \
+		opencode run --title "$session_title" "${model_args[@]}" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
@@ -147,7 +147,7 @@ _run_opencode_comment_unqueued() {
 		rm -f "$raw_file"
 		# The caller already owns the comment lane. Re-entering the shared
 		# radio lane here would deadlock when the sandbox fallback is used.
-		_run_opencode_radio_unqueued "$agent" "$prompt_file"
+		_run_opencode_radio_unqueued "$agent" "$prompt_file" "docich:comment"
 		return
 	fi
 	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
@@ -165,7 +165,7 @@ _run_opencode_comment_unqueued() {
 		cd "$sandbox_dir" || exit 1
 		_opencode_rotation_gate_run env XDG_STATE_HOME="$(_opencode_xdg_state_home)" XDG_DATA_HOME="$(_opencode_xdg_data_home)" OPENCODE_PERMISSION="$COMMENT_OPENCODE_PERMISSION" LC_ALL=en_US.UTF-8 \
 			timeout "$timeout_sec" \
-			opencode run --agent "$agent" "$(cat tmp/comment_prompt.txt)"
+			opencode run --title "docich:comment" --agent "$agent" "$(cat tmp/comment_prompt.txt)"
 	) >"$raw_file" 2>&1
 	local rc=$?
 	destroy_sandbox "$sandbox_dir"
