@@ -402,6 +402,28 @@ html[data-soren-neutral="1"] .toast {
 .toast.fresh { animation: enter .18s ease-out; }
 @keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 @keyframes thinking-pulse { 0%, 100% { box-shadow: 0 6px 16px rgba(0, 0, 0, .28); } 50% { box-shadow: 0 0 16px rgba(245, 158, 11, .4); } }
+
+/* Hanjuku: readable at the actual 320px broadcast sidebar width. */
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 302px; }
+html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
+.hanjuku-card { box-sizing: border-box; width: 306px; padding: 10px; border: 1px solid #e9b84d; border-radius: 9px; background: linear-gradient(145deg,#202017,#101c2c); color: #f8fafc; font-family: sans-serif; white-space: normal; }
+.hanjuku-card.stale { border-color: #f59e0b; background: #282014; }
+.hanjuku-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 900; }
+.hanjuku-badge { border-radius: 4px; padding: 3px 6px; background: #123c36; color: #86efac; font-size: 11px; }
+.stale .hanjuku-badge { background: #713f12; color: #fef08a; }
+.hanjuku-chapter { color: #fde68a; font-size: 38px; line-height: 46px; font-weight: 950; }
+.hanjuku-dots { display: flex; gap: 4px; margin: 0 0 9px; }
+.hanjuku-dot { width: 20px; height: 6px; border: 1px solid #536170; border-radius: 2px; }
+.hanjuku-dot.current { background: #facc15; border-color: #fef08a; }
+.hanjuku-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.hanjuku-kpi { background: #07121e; border: 1px solid #334155; border-radius: 6px; padding: 6px 8px; }
+.hanjuku-label { color: #b3c3d5; font-size: 10px; }
+.hanjuku-value { color: #f1f5f9; font-size: 22px; line-height: 27px; font-weight: 900; }
+.hanjuku-kpi { min-width: 0; }
+.hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 16px; overflow-wrap: anywhere; }
+.hanjuku-status { margin-top: 8px; padding: 6px 8px; border-radius: 5px; background: #12324c; color: #bae6fd; font-size: 16px; font-weight: 900; }
+.hanjuku-note { margin-top: 6px; color: #a9bacb; font-size: 10px; line-height: 14px; }
+
 </style>
 </head>
 <body>
@@ -592,17 +614,69 @@ html[data-soren-neutral="1"] .toast {
       return row;
     }));
   }
+  function hanjukuView(feed, now) {
+    const text = String(feed?.text || '');
+    if (!/^SOREN\/CORNER:.*\/ hanjuku-hero \//m.test(text)) return null;
+    const lines = text.split('\n').map(line => line.trim());
+    const pick = pattern => lines.map(line => line.match(pattern)).find(Boolean);
+    const values = pick(/^第(\d+|不明)話 \/ 所持金 (\d+|不明)G$/);
+    const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗$/);
+    const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)$/);
+    const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
+    const chapter = number(values?.[1]);
+    const age = now - Number(feed?.updatedAt || 0);
+    const fresh = Number.isFinite(age) && age >= 0 && age <= 30
+      && lines.includes('半熟英雄 / 最終観測・記録') && Boolean(values);
+    const labels = {battle:'白兵戦', battle_menu:'作戦選択', battle_menu_pending:'メニュー確認中',
+      card_list:'切り札を選択', card_select:'携行札を選択', egg_battle_menu:'召喚獣の戦闘',
+      monster_menu:'召喚獣の戦闘', world_map:'戦況を確認中', map:'行軍・探索', map_target:'行先を選択',
+      castle_menu:'城の管理', general_list:'将軍を選択', month_menu:'月初の処理',
+      sortie_confirm:'出撃を確認中', unknown:'画面を確認中'};
+    return {fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
+      gold:fresh ? number(values?.[2]) : null,
+      wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
+      status:fresh ? (labels[screen?.[1]] || '進行状況を確認中') : '最新情報を確認中'};
+  }
+  function renderHanjuku(container, value) {
+    const node = (cls, text) => {
+      const el = document.createElement('div'); el.className = cls;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    };
+    const shown = v => v === null ? '—' : String(v);
+    const card = node(`hanjuku-card${value.fresh ? '' : ' stale'}`);
+    const head = node('hanjuku-head', '半熟英雄');
+    head.appendChild(node('hanjuku-badge', value.fresh ? '進行中' : '要確認'));
+    card.appendChild(head);
+    card.appendChild(node('hanjuku-chapter', value.chapter === null ? '話数 未確認' : `第 ${value.chapter} 話`));
+    const dots = node('hanjuku-dots');
+    for (let i = 1; i <= 12; i++) dots.appendChild(node(`hanjuku-dot${i === value.chapter ? ' current' : ''}`));
+    card.appendChild(dots);
+    const kpis = node('hanjuku-kpis');
+    for (const [label, text] of [['所持金・最終確認', `${shown(value.gold)} G`],
+      ['戦闘結果・記録', `${shown(value.wins)}勝 ${shown(value.losses)}敗`]]) {
+      const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
+      cell.appendChild(node('hanjuku-value', text)); kpis.appendChild(cell);
+    }
+    card.appendChild(kpis);
+    card.appendChild(node('hanjuku-status', value.status));
+    card.appendChild(node('hanjuku-note', value.fresh ? '取得済み情報を表示 / 将軍HP・卵は未確認' : '観測が古いか取得できません / 数値は非表示'));
+    container.replaceChildren(card);
+  }
   function renderFeed() {
     const g = state?.feeds?.showStatusG;
     const s = state?.feeds?.showStatus;
     const i = state?.feeds?.improve;
     const improveActive = Boolean(i?.active);
     document.documentElement.dataset.improveActive = improveActive ? '1' : '';
-    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
+    const hanjuku = hanjukuView(g, Date.now() / 1000);
+    document.documentElement.dataset.hanjukuActive = hanjuku ? '1' : '';
+    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}:${hanjuku?.fresh}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
-      renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      if (hanjuku) renderHanjuku(feedG, hanjuku);
+      else renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }

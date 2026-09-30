@@ -956,3 +956,50 @@ test('unboxed corner charts after an AI box stay visible in the live sidebar', a
   assert.match(rendered, /▁▃▅█/);
   assert.match(rendered, /SCORE DISTRIBUTION/);
 });
+
+function hanjukuFixture(overrides = {}) {
+  return { version:1, updatedAt:1780001000,
+    feeds:{showStatusG:{updatedAt:1780001000,lineCount:10,text:
+      'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
+      + '  第2話 / 所持金 123G\n  戦闘結果: 4勝 / 1敗\n  画面: battle_menu / battle', ...overrides},
+      showStatus:{text:'● Backend FFMPEG LIVE',updatedAt:1780001000}},
+    notifications:{visibleSec:18,events:[],work:{active:false},generators:[]} };
+}
+
+test('Hanjuku sidebar uses large current-chapter cards without changing the top rail source', async () => {
+  const state = hanjukuFixture(); const ui = await runBroadcastOverlayScript(state);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '123 G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x => x.className.includes('current')).length, 1);
+  assert.match(state.feeds.showStatusG.text, /SOREN\/CORNER/);
+});
+
+test('Hanjuku cached figures disappear when source stops updating even without a new payload', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-badge').textContent, '要確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '— G');
+});
+
+test('switching away removes Hanjuku layout and renders the new game without stale figures', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  ui.setState(hanjukuFixture({text:'SOREN/CORNER: RETRO / robots / 進行中\nLive: next game'}));
+  await ui.tick(1);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '');
+  assert.equal(ui.feedG.querySelector('.hanjuku-card'), null);
+});
+
+test('unavailable, future or malformed Hanjuku status never becomes fabricated progress', async () => {
+  for (const overrides of [
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / ゲーム状況\n状態: 未確認'},
+    {updatedAt:1780002000},
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第99話 / 所持金 不明G\n画面: <script> / battle'},
+  ]) {
+    const ui = await runBroadcastOverlayScript(hanjukuFixture(overrides));
+    assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+    assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x=>x.className.includes('current')).length, 0);
+  }
+});
