@@ -47,11 +47,11 @@ for agent in "${_models[@]}"; do
 
 	case "$model" in
 	opencode/muse-spark-1.[23]-contributor-free)
-		out=$(python3 lib/opencode_rate_limit_guard.py "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --print-logs --model "$model" \
+		out=$(python3 lib/opencode_rate_limit_guard.py "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --title docich:probe --print-logs --model "$model" \
 			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	*)
-		out=$(timeout --kill-after=5s "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --model "$model" \
+		out=$(timeout --kill-after=5s "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --title docich:probe --model "$model" \
 			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	esac

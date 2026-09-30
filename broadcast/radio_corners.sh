@@ -1759,7 +1759,7 @@ _run_opencode_jiji_research_unqueued() {
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	_opencode_rotation_gate_run env OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}" \
-		opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		opencode run --title "docich:radio_prepass" --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then

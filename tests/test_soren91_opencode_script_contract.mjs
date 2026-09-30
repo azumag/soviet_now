@@ -18,7 +18,7 @@ test('opencode text fallback holds the shared rotation gate without a TTY shell'
   );
   assert.match(
     source,
-    /execFile\('bash', \[OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--format', 'json', '--model', model\]/,
+    /execFile\('bash', \[OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--title', 'docich:soren91', '--format', 'json', '--model', model\]/,
   );
   assert.match(source, /child\.stdin\.write\(promptText\);/);
   assert.doesNotMatch(source, /execFile\('opencode'/);
