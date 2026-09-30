@@ -8,11 +8,13 @@ lock, synchronous=FULL and single-transaction child/session rollback remain.
 Production execution, cleanup policy, deployment, provider settings and game
 inputs are outside this PR.
 
-When the complete-database WAL preflight cannot fit, attempt at most eight old
-sessions in **one** transaction. The session limit is a candidate bound only.
-After an initial successful TRUNCATE checkpoint, RLIMIT_FSIZE gives this process
-a kernel-enforced file-size ceiling of at most 128 MiB during DELETE/COMMIT.
-The soft limit can only decrease; the hard limit is never changed. SIGXFSZ is
+When the complete-database WAL preflight cannot fit, drain old sessions in
+guarded batches of at most eight sessions in **one** transaction each. The
+session limit is a candidate bound only. After an initial successful
+TRUNCATE checkpoint, RLIMIT_FSIZE gives this process a kernel-enforced
+file-size ceiling of at most 128 MiB during every DELETE/COMMIT, re-armed per
+batch against the space the previous batch's checkpoint returned. The soft
+limit can only decrease; the hard limit is never changed. SIGXFSZ is
 temporarily ignored so the write returns EFBIG instead of killing the process.
 The ceiling includes WAL frames from blobs, indices, triggers and cache spills.
 Existing nonzero WAL must be checkpointed first; a busy checkpoint defers.
@@ -38,25 +40,39 @@ writers can still consume disk space, as with the existing contract.
   `deleted_sessions`, `selected_sessions`, `remaining_sessions` and freelist.
   Return code 75 / `deferred`, stage `compact_deferred`, reason
   `bounded_prune_committed` explicitly preserves the outstanding compaction.
-- No VACUUM or compact copy is attempted before or after this fallback, even
-  when a tmpfs copy could fit. Its writeback WAL could still be too large;
-  existing freelist must not block the next expired-session batch on that path.
-  Later writers can reuse freed pages, reducing growth; the DB file remains the
-  same inode and size. This is **not** proof of increased physical free space.
-- An I/O/size-limit failure rolls the whole selected set back, reports
+- Under a full-image WAL shortfall the invocation now drains the expired
+  backlog in guarded batches: at most `CATCHUP_MAX_BATCHES` (64) transactions
+  of `PRUNE_BATCH_SESSIONS` (8) sessions each, every batch under a freshly
+  re-armed ceiling and followed by a TRUNCATE checkpoint, with the deadline
+  and free-space checks still bounding one invocation. `prune_batches` records
+  committed batches; each batch is committed or rolled back on its own and a
+  later failure never relabels earlier committed rows.
+- After the eligible set is drained (catch-up complete, freelist nonzero), one
+  live-image compaction is attempted. `VACUUM INTO` excludes freelist pages, so
+  the copy is budgeted from live bytes rather than `page_count`; the measured
+  writeback WAL is budgeted separately and a tmpfs copy is used only under the
+  same opt-in RAM rules as before. The attempt is fail-closed: if it cannot
+  fit, the committed-prune outcome is kept, reason stays
+  `bounded_prune_committed` and `compact_defer_reason` records only the fixed
+  enum (`insufficient_space`, `deadline`, `checkpoint_busy`, ...). A
+  successful compaction shrinks the live inode and is reported as
+  `completed`; physical free-space change is then measurable via
+  `after_bytes` instead of assumed.
+- An I/O/size-limit failure rolls back only the batch in flight, reports
   `bounded_prune_io_error`, `bounded_prune_blocked=true` and
-  `recovery_action=inspect_io_or_add_capacity`. An arbitrary I/O error is not
-  labelled proof that the ceiling was reached.
+  `recovery_action=inspect_io_or_add_capacity`; batches committed earlier in
+  the invocation remain committed. An arbitrary I/O error is not labelled proof
+  that the ceiling was reached.
 - If the oldest eight sessions exceed the ceiling, the existing timer may
-  retry that same set. This PR explicitly reports intervention needed and does
-  not silently promise eventual recovery. It does not add repeated scans,
-  multiple transactions per invocation, unbounded adaptive retries or a larger
-  limit. Capacity expansion or a separately reviewed smaller-batch strategy is
-  required for persistent failures. No automatic bypass is provided.
-- Throughput is at most eight sessions per invocation. At an hourly cadence,
-  fifteen newly expired sessions per hour outpace that bound even when every
-  batch succeeds. Cadence is unchanged and catch-up is not established. A
-  committed batch is not a claim that storage exhaustion has been resolved.
+  retry that same set. This path still reports intervention needed and does
+  not silently promise eventual recovery: no unbounded adaptive retries and no
+  larger limit are added, and the batch cap plus deadline bound each
+  invocation. No automatic bypass is provided.
+- Throughput is at most 512 sessions per invocation at an hourly cadence;
+  anything left over is reported in `remaining_sessions` and continues on the
+  next run. A committed batch is not a claim that storage exhaustion has been
+  resolved, and the growth cause of the database itself is outside this
+  contract.
 - Post-COMMIT checkpoint/compaction failure must retain the committed deletion
   count; it is never reported as rollback of already committed rows.
 
@@ -72,6 +88,15 @@ No SQL, exception text, DB data or arguments are recorded. Existing status,
 reason, stage and exit codes retain their meaning. Old allowlist collectors
 ignore the new fields; direct status JSON has the detail. Reused metrics clear
 prior busy codes so a later success cannot inherit a previous failure.
+
+The catch-up and compaction follow-up adds only fixed integer/enum fields:
+`prune_batches` (committed guarded batches this invocation),
+`selected_sessions` accumulated across batches, `remaining_sessions` after
+catch-up, and `compact_defer_reason` restricted to the existing fixed reason
+set when a post-catch-up compaction is deferred. `compact_storage` and
+`compact_bytes` describe a successful compaction the same way as the normal
+path. Collectors that allowlist fields must be extended separately; missing
+keys degrade to `unknown`, never to raw text.
 
 Ubuntu 24.04 History retention CI runs the complete retention and producer gate
 tests. Synthetic SQLite fixtures cover recent sessions, every child table,

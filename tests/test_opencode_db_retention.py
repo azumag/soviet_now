@@ -134,6 +134,36 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             self.assertEqual(metrics['deleted_sessions'],0)
             self.assertEqual(metrics['reason'],'insufficient_space')
 
+    def test_pressure_batches_prune_when_full_wal_budget_does_not_fit(self):
+        real = retention._wal_budget
+        calls = {'n': 0}
+
+        def wrapped(pages):
+            calls['n'] += 1
+            if calls['n'] == 1:
+                return 10**15
+            return real(pages)
+
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'opencode.db'
+            self.make_large_wal_db(db)
+            before = db.stat()
+            metrics = {}
+            with patch.object(retention, '_wal_budget', wrapped):
+                self.assertEqual(retention.rotate(str(db), 3, metrics=metrics), 1)
+            self.assertEqual(metrics['status'], 'completed')
+            self.assertEqual(metrics['reason'], 'ok')
+            self.assertEqual(metrics['deleted_sessions'], 1)
+            self.assertEqual(metrics['remaining_sessions'], 0)
+            self.assertEqual(metrics['prune_batches'], 1)
+            self.assertEqual(self.counts(db)['session'], 1)
+            self.assertEqual(db.stat().st_ino, before.st_ino)
+            self.assertLess(db.stat().st_size, before.st_size // 2)
+            con = sqlite3.connect(db)
+            self.assertEqual(con.execute('pragma integrity_check').fetchone(), ('ok',))
+            self.assertEqual(con.execute('select length(payload) from part').fetchone(), (1048576,))
+            con.close()
+
     def test_failed_copy_preserves_committed_prune(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
@@ -226,10 +256,21 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
             before=db.stat()
-            # Budget allows one original image, but not two. The copy is put
-            # on the separately accounted RAM root; writeback still uses disk.
-            space=retention.RESERVE_BYTES+before.st_size+100000
+            real=retention._wal_budget
+            calls={'n':0}
+            def budget_wrap(pages):
+                calls['n']+=1
+                if calls['n']==1:
+                    # Keep the delete itself on the non-bounded path; the
+                    # remaining checks use the real estimates.
+                    return 1024
+                return real(pages)
+            # Live-image budget: the live output fits in RAM and its measured
+            # writeback WAL fits on the database filesystem, while a second
+            # full image on disk would not.
+            space=retention.RESERVE_BYTES+int(1.6*1024*1024)
             with patch.object(retention,'available_bytes',return_value=space), \
+                 patch.object(retention,'_wal_budget',budget_wrap), \
                  patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
                  patch.object(retention,'memory_headroom',return_value=10**12):
                 retention.rotate(str(db),3,metrics=metrics)
@@ -243,10 +284,18 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
     def test_memory_pressure_interrupts_copy_and_cleans_private_ram_directory(self):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
-            space=retention.RESERVE_BYTES+db.stat().st_size+100000
+            real=retention._wal_budget
+            calls={'n':0}
+            def budget_wrap(pages):
+                calls['n']+=1
+                if calls['n']==1:
+                    return 1024
+                return real(pages)
+            space=retention.RESERVE_BYTES+int(1.6*1024*1024)
             def available_ram():
                 return 0 if metrics.get('stage')=='compact_copy' else 10**12
             with patch.object(retention,'available_bytes',return_value=space), \
+                 patch.object(retention,'_wal_budget',budget_wrap), \
                  patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
                  patch.object(retention,'memory_headroom',side_effect=available_ram):
                 with self.assertRaises(SystemExit) as raised:retention.rotate(str(db),3,metrics=metrics)
@@ -280,7 +329,7 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             (root/'self/cgroup').write_text('0::/missing\n')
             with self.assertRaises(ValueError):retention.memory_headroom(root,root/'cg')
 
-    def test_prior_freelist_prunes_before_ram_compaction_under_pressure(self):
+    def test_prior_freelist_prunes_before_compaction_under_pressure(self):
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as ram:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db)
             con=sqlite3.connect(db)
@@ -288,16 +337,22 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             con.execute('insert into old_scratch values (zeroblob(4194304))');con.commit()
             con.execute('drop table old_scratch');con.commit();con.close()
             before=db.stat();metrics={}
+            # The unrelated freelist never blocks the guarded prune; once the
+            # eligible rows are gone the live image fits the pressure budget
+            # and the freed pages are returned to the filesystem.
             with patch.object(retention,'available_bytes',return_value=retention.RESERVE_BYTES+9*1024**2), \
                  patch.object(retention,'memory_copy_root',return_value=Path(ram)), \
                  patch.object(retention,'memory_headroom',return_value=10**12):
-                with self.assertRaises(SystemExit):retention.rotate(str(db),3,metrics=metrics)
-            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+                retention.rotate(str(db),3,metrics=metrics)
+            self.assertEqual(metrics['status'],'completed')
             self.assertEqual(metrics['deleted_sessions'],1)
-            self.assertEqual(db.stat().st_size,before.st_size)
+            self.assertLess(db.stat().st_size,before.st_size//2)
             self.assertEqual(db.stat().st_ino,before.st_ino)
             self.assertEqual(self.counts(db)['session'],1)
             self.assertEqual(list(Path(ram).iterdir()),[])
+            con=sqlite3.connect(db)
+            self.assertEqual(con.execute('pragma integrity_check').fetchone(),('ok',))
+            con.close()
 
     def test_memory_copy_requires_explicit_opt_in(self):
         with patch.dict(retention.os.environ,{},clear=True):
@@ -421,7 +476,7 @@ class HighWaterWalTests(unittest.TestCase):
             con=sqlite3.connect(db);self.assertEqual(con.execute('select count(*) from amplified').fetchone(),(0,));con.close()
             self.check_intact(db)
 
-    def test_batch_is_one_transaction_and_preserves_remaining_sessions(self):
+    def test_bounded_catchup_drains_eligible_one_transaction_per_batch(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
             for n in range(20):con.execute('insert into session values (?,0)',('extra-%02d'%n,))
@@ -429,10 +484,15 @@ class HighWaterWalTests(unittest.TestCase):
             with self.pressure():
                 with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
             self.assertEqual(metrics['eligible_sessions'],21)
-            self.assertEqual(metrics['selected_sessions'],8)
-            self.assertEqual(metrics['deleted_sessions'],8)
-            self.assertEqual(metrics['remaining_sessions'],13)
-            self.assertEqual(self.counts(db)['session'],14)
+            # 8+8+5 in three guarded transactions; every batch commits or rolls
+            # back on its own and the deferred outcome keeps the live image
+            # (16 MiB 'new' payload) outside the 12 MiB pressure budget.
+            self.assertEqual(metrics['prune_batches'],3)
+            self.assertEqual(metrics['selected_sessions'],21)
+            self.assertEqual(metrics['deleted_sessions'],21)
+            self.assertEqual(metrics['remaining_sessions'],0)
+            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertEqual(self.counts(db)['session'],1)
 
     def test_prior_freelist_does_not_block_next_bounded_prune(self):
         with tempfile.TemporaryDirectory() as td:
@@ -466,13 +526,55 @@ class HighWaterWalTests(unittest.TestCase):
                 finally:con.close()
                 con=sqlite3.connect(db);con.execute("insert into session values ('next-old',0)");con.commit();con.close()
                 metrics={}
-                with patch.object(retention,'_compact',side_effect=AssertionError('precompact blocked prune')) as compact:
+                with patch.object(retention,'_compact',side_effect=retention.Deferred('insufficient_space')) as compact:
                     with self.assertRaises(SystemExit):retention.rotate(db,1,metrics=metrics)
-                compact.assert_not_called()
+                # The prune commits first; a later compaction failure only
+                # defers and never rolls the committed rows back.
+                compact.assert_called_once()
                 self.assertEqual(metrics['deleted_sessions'],1)
                 self.assertEqual(metrics['reason'],'bounded_prune_committed')
+                self.assertEqual(metrics['compact_defer_reason'],'insufficient_space')
             self.assertEqual(list(Path(ram).iterdir()),[])
             self.check_intact(db,1)
+
+    def test_bounded_catchup_stops_at_batch_cap_and_defers(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            for n in range(20):con.execute('insert into session values (?,0)',('extra-%02d'%n,))
+            con.commit();con.close();metrics={}
+            with self.pressure(),patch.object(retention,'CATCHUP_MAX_BATCHES',2):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            self.assertEqual(metrics['prune_batches'],2)
+            self.assertEqual(metrics['deleted_sessions'],16)
+            self.assertEqual(metrics['remaining_sessions'],5)
+            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertNotIn('compact_defer_reason',metrics)
+            self.assertEqual(self.counts(db)['session'],6)
+
+    def test_live_image_budget_compacts_after_catchup_under_pressure(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.make_large_wal_db(db)
+            con=sqlite3.connect(db)
+            con.execute('create table scratch(value blob)')
+            con.execute('insert into scratch values (zeroblob(20971520))');con.commit()
+            con.execute('drop table scratch');con.commit();con.close()
+            before=db.stat();metrics={}
+            # Full image (~25 MiB) cannot fit the 14 MiB slack, but the live
+            # image after catch-up (~1 MiB) can: only live-image budgeting
+            # reclaims freed pages on this path.
+            with self.pressure(14*1024**2):
+                retention.rotate(db,3,metrics=metrics)
+            self.assertEqual(metrics['status'],'completed')
+            self.assertEqual(metrics['deleted_sessions'],1)
+            self.assertEqual(metrics['remaining_sessions'],0)
+            self.assertLess(db.stat().st_size,before.st_size//2)
+            self.assertEqual(db.stat().st_ino,before.st_ino)
+            self.assertEqual(self.counts(db)['session'],1)
+            con=sqlite3.connect(db)
+            self.assertEqual(con.execute('pragma integrity_check').fetchone(),('ok',))
+            con.close()
+            self.assertFalse(list(Path(td).glob('.opencode-retention-*')))
 
     def test_nonzero_wal_is_checkpointed_before_installing_limit(self):
         with tempfile.TemporaryDirectory() as td:

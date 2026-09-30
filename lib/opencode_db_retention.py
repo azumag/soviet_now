@@ -7,7 +7,7 @@ unlink the live DB/WAL: copy the compact image back with SQLite's transactional
 backup API, then checkpoint. Reserve 1 GiB for streaming throughout the work.
 """
 import argparse
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -24,6 +24,11 @@ MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
 DEFERRED = 75
 PRUNE_WAL_LIMIT = 128 * 1024 ** 2
 PRUNE_BATCH_SESSIONS = 8
+# Bounded catch-up: at most this many guarded batches per invocation. Each
+# batch is its own transaction with a freshly re-armed kernel ceiling and is
+# followed by a TRUNCATE checkpoint, so disk use stays bounded per batch while
+# the expired backlog is drained across hourly runs instead of eight per hour.
+CATCHUP_MAX_BATCHES = 64
 PRUNE_MIN_WAL_BYTES = 1024 ** 2
 # Covers WAL-index growth even with SQLite's minimum 512-byte page size
 # (128 MiB / 536 * 8 bytes), plus filesystem block rounding. Not user data.
@@ -186,6 +191,23 @@ def _delete_if_present(cur, statement):
             raise
 
 
+def _prune_batch(con, cutoff, limit, metrics):
+    """One atomic expired-session batch inside an open writer transaction."""
+    con.execute('BEGIN IMMEDIATE')
+    con.execute('drop table if exists old_sessions')
+    con.execute('create temp table old_sessions as select id from session where time_created < ? order by time_created, id limit ?',
+                (cutoff, limit))
+    selected = con.execute('select count(*) from old_sessions').fetchone()[0]
+    metrics['selected_sessions'] = metrics.get('selected_sessions', 0) + selected
+    for table in CHILD_TABLES:
+        _delete_if_present(con, 'delete from %s where session_id in (select id from old_sessions)' % table)
+    for table, column in (('event', 'aggregate_id'), ('event_sequence', 'aggregate_id'), ('part', 'session_id'), ('message', 'session_id')):
+        _delete_if_present(con, 'delete from %s where %s in (select id from old_sessions)' % (table, column))
+    con.execute('delete from session where id in (select id from old_sessions)')
+    con.execute('COMMIT')
+    metrics['deleted_sessions'] += selected
+
+
 @contextmanager
 def _bounded_wal(con, db, budget, metrics):
     """Kernel file-size ceiling, only during one WAL DELETE transaction.
@@ -237,15 +259,20 @@ def _bounded_wal(con, db, budget, metrics):
 
 def _compact(con, db, budget, metrics):
     pages = _pages(con)
-    # VACUUM INTO needs only the output image here. A normal VACUUM also
-    # allocates its writeback WAL at the same time, which caused ENOSPC.
-    image_bytes = pages['page_count'] * pages['page_size'] + 65536
+    # VACUUM INTO writes only live pages: the freelist is not part of the
+    # output image, so budget the copy from live bytes instead of page_count.
+    # A large freelist exposed by a bounded prune must not demand a full-image
+    # copy that can never fit under pressure. A normal VACUUM would also
+    # allocate its writeback WAL at the same time, which caused ENOSPC. The
+    # progress handler keeps checking real free space during the copy, so an
+    # optimistic estimate fails closed instead of filling the filesystem.
+    live_bytes = (pages['page_count'] - pages['freelist_count']) * pages['page_size'] + 65536
     copy_root = db.parent
-    if available_bytes(db.parent) < 2 * image_bytes + budget.reserve:
-        memory_root = memory_copy_root(db, image_bytes)
+    if available_bytes(db.parent) < 2 * live_bytes + budget.reserve:
+        memory_root = memory_copy_root(db, live_bytes)
         if memory_root is not None:
             copy_root = budget.memory_root = memory_root
-    budget.check(0 if budget.memory_root else image_bytes)
+    budget.check(0 if budget.memory_root else live_bytes)
     metrics['compact_storage'] = 'memory' if budget.memory_root else 'disk'
     metrics['stage'] = 'compact_copy'
     with tempfile.TemporaryDirectory(prefix='.opencode-retention-', dir=copy_root) as td:
@@ -334,32 +361,52 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             metrics['stage'] = 'delete'
             budget.check()
             try:
-                guard = _bounded_wal(con, db, budget, metrics) if bounded else nullcontext()
-                with guard:
-                    con.execute('BEGIN IMMEDIATE')
-                    con.execute('create temp table old_sessions as select id from session where time_created < ? order by time_created, id limit ?',
-                                (cutoff, PRUNE_BATCH_SESSIONS if bounded else -1))
-                    selected = con.execute('select count(*) from old_sessions').fetchone()[0]
-                    metrics['selected_sessions'] = selected
-                    for table in CHILD_TABLES:
-                        _delete_if_present(con, 'delete from %s where session_id in (select id from old_sessions)' % table)
-                    for table, column in (('event', 'aggregate_id'), ('event_sequence', 'aggregate_id'), ('part', 'session_id'), ('message', 'session_id')):
-                        _delete_if_present(con, 'delete from %s where %s in (select id from old_sessions)' % (table, column))
-                    con.execute('delete from session where id in (select id from old_sessions)')
-                    con.execute('COMMIT')
-                    metrics['deleted_sessions'] = selected
+                if bounded:
+                    # Catch up in guarded batches: each batch is one transaction
+                    # with a freshly re-armed kernel ceiling, and the TRUNCATE
+                    # checkpoint between batches is also what the next guard
+                    # requires. The deadline and free-space checks still bound
+                    # one invocation; the remainder continues next hour.
+                    for _batch in range(CATCHUP_MAX_BATCHES):
+                        remaining = old - metrics['deleted_sessions']
+                        if remaining <= 0:
+                            break
+                        budget.check()
+                        with _bounded_wal(con, db, budget, metrics):
+                            _prune_batch(con, cutoff, min(PRUNE_BATCH_SESSIONS, remaining), metrics)
+                        metrics['prune_batches'] = _batch + 1
+                        # Limits and auto-checkpoint are restored before this
+                        # checkpoint; an empty WAL follows for the next guard.
+                        _checkpoint(con)
+                else:
+                    _prune_batch(con, cutoff, -1, metrics)
+                    _checkpoint(con)
             except (sqlite3.Error, Deferred):
                 con.set_progress_handler(None, 0)
                 if con.in_transaction:
                     con.execute('ROLLBACK')
                 raise
-        _checkpoint(con)
+        else:
+            _checkpoint(con)
         if bounded:
-            # Committed prune exposes reusable pages without requiring a second
-            # DB image. It does not claim filesystem shrink or complete retention.
+            remaining = old - metrics['deleted_sessions']
             metrics.update(_pages(con))
-            metrics.update(remaining_sessions=old - metrics['deleted_sessions'], stage='compact_deferred')
-            raise Deferred('bounded_prune_committed')
+            metrics['remaining_sessions'] = remaining
+            if remaining > 0:
+                metrics['stage'] = 'compact_deferred'
+                raise Deferred('bounded_prune_committed')
+            if metrics['freelist_count']:
+                # Catch-up finished: hand the freed pages back to the
+                # filesystem. Fail-closed: an unfittable copy keeps the
+                # committed-prune outcome and records only fixed enums for
+                # the missed attempt.
+                try:
+                    _compact(con, db, budget, metrics)
+                except Deferred as exc:
+                    metrics['compact_defer_reason'] = budget.reason or str(exc)
+                    metrics['stage'] = 'compact_deferred'
+                    raise Deferred('bounded_prune_committed') from None
+            # Without a freelist there is no outstanding compaction to preserve.
         if _pages(con)['freelist_count']:
             if mode == 'wal':
                 _compact(con, db, budget, metrics)
