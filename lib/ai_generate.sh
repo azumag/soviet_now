@@ -1174,6 +1174,12 @@ _ai_call_opencode_unqueued() {
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
 	local session_title
 	session_title=$(_opencode_session_title "$label")
+	local opencode_session_title_args=()
+	# OPENCODE_BIN is an explicit test/stub override; production leaves it unset.
+	# Preserve stub argv compatibility unless attribution is explicitly forced.
+	if [ -z "${OPENCODE_BIN:-}" ] || [ "${OPENCODE_SESSION_ATTRIBUTION_FORCE:-0}" = "1" ]; then
+		opencode_session_title_args=(--title "$session_title")
+	fi
 	local opencode_agent_args=()
 	case "$agent" in
 	vercel:*|amd:*)
@@ -1203,10 +1209,10 @@ _ai_call_opencode_unqueued() {
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
 			_opencode_rotation_gate_run python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
-				"$opencode_bin" run --title "$session_title" --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+				"$opencode_bin" run "${opencode_session_title_args[@]}" --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run --title "$session_title" "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_session_title_args[@]}" "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?
