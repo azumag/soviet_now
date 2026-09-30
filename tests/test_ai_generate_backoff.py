@@ -20,7 +20,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             f"""
             set -u
             source {REPO_ROOT / 'lib/ai_generate.sh'!s}
-            for label in 'RADIO:weather:prepass' 'RADIO:theme' 'COMMENT:reply' 'IMPROVE:cycle' 'arbitrary user-looking label'; do
+            for label in 'RADIO:weather:prepass' 'RADIO:theme' 'COMMENT:prepass-like-user-text' 'IMPROVE:cycle' 'PROBE:health' 'arbitrary user-looking label'; do
                 _opencode_session_title "$label"
                 printf '\\n'
             done
@@ -42,6 +42,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 "docich:radio_main",
                 "docich:comment",
                 "docich:improvement",
+                "docich:probe",
                 "docich:other",
             ],
         )
