@@ -30,6 +30,12 @@ PRUNE_MIN_WAL_BYTES = 1024 ** 2
 PRUNE_OVERHEAD_BYTES = 4 * 1024 ** 2
 CHILD_TABLES = ('todo', 'session_share', 'session_message', 'session_input', 'session_context_epoch')
 STATUSES = {'running', 'completed', 'gate_timeout', 'disabled', 'deferred', 'failed'}
+# Additive, fixed diagnostics only: never SQL, exception text or DB content.
+PREFLIGHT_PHASES = frozenset({
+    'input', 'budget', 'connect', 'busy_timeout', 'temp_store', 'synchronous',
+    'locking_mode', 'begin_exclusive', 'commit_exclusive', 'journal_mode',
+    'checkpoint', 'pages', 'eligible_count', 'delete_budget', 'complete',
+})
 
 
 class Deferred(Exception):
@@ -267,7 +273,10 @@ def _compact(con, db, budget, metrics):
 def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERVE_BYTES):
     metrics = metrics if metrics is not None else {}
     metrics.update(version=1, status='running', stage='preflight', deleted_sessions=0,
-                   started_at=int(time.time()), retention_days=days)
+                   started_at=int(time.time()), retention_days=days, preflight_phase='input')
+    # A caller may reuse its metrics dictionary after a previous busy attempt.
+    metrics.pop('sqlite_error_code', None)
+    metrics.pop('sqlite_extended_error_code', None)
     db = Path(db_path).absolute()
     con = None
     budget = Budget(db.parent, reserve)
@@ -278,26 +287,39 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             raise ValueError('invalid_days')
         metrics['before_bytes'] = db.stat().st_size
         metrics['available_before_bytes'] = available_bytes(db.parent)
+        metrics['preflight_phase'] = 'budget'
         budget.check()
+        metrics['preflight_phase'] = 'connect'
         con = sqlite3.connect(db.as_uri() + '?mode=rw', uri=True, timeout=busy_timeout_ms / 1000)
         con.isolation_level = None
+        metrics['preflight_phase'] = 'busy_timeout'
         con.execute('PRAGMA busy_timeout=%d' % busy_timeout_ms)
+        metrics['preflight_phase'] = 'temp_store'
         con.execute('PRAGMA temp_store=MEMORY')
+        metrics['preflight_phase'] = 'synchronous'
         con.execute('PRAGMA synchronous=FULL')
+        metrics['preflight_phase'] = 'locking_mode'
         con.execute('PRAGMA locking_mode=EXCLUSIVE')
         # Acquire and retain SQLite's lock across prune, snapshot and writeback.
         # This protects against a writer outside the cooperative shell gate.
+        metrics['preflight_phase'] = 'begin_exclusive'
         con.execute('BEGIN EXCLUSIVE')
+        metrics['preflight_phase'] = 'commit_exclusive'
         con.execute('COMMIT')
+        metrics['preflight_phase'] = 'journal_mode'
         mode = con.execute('PRAGMA journal_mode').fetchone()[0]
         if mode not in ('wal', 'delete', 'truncate', 'persist'):
             raise Deferred('unsafe_journal_mode')
+        metrics['preflight_phase'] = 'checkpoint'
         _checkpoint(con)
+        metrics['preflight_phase'] = 'pages'
         metrics.update(_pages(con))
         cutoff = int(time.time() * 1000) - days * 86400000
+        metrics['preflight_phase'] = 'eligible_count'
         old = con.execute('select count(*) from session where time_created < ?', (cutoff,)).fetchone()[0]
         metrics['eligible_sessions'] = old
         con.set_progress_handler(budget.progress, 1000)
+        metrics['preflight_phase'] = 'delete_budget'
         pages = _pages(con)
         # Under pressure prune first, even if a RAM copy is possible. A compact
         # copy may fit tmpfs while its writeback WAL cannot fit this filesystem;
@@ -307,6 +329,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                    and available_bytes(db.parent) < budget.reserve + delete_wal_budget)
         if old and not bounded:
             budget.check(delete_wal_budget)
+        metrics['preflight_phase'] = 'complete'
         if old:
             metrics['stage'] = 'delete'
             budget.check()
@@ -359,7 +382,8 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             raise SystemExit(DEFERRED) from None
         code = getattr(exc, 'sqlite_errorcode', 0) or 0
         if (code & 255) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
-            metrics.update(status='deferred', reason='sqlite_busy')
+            metrics.update(status='deferred', reason='sqlite_busy',
+                           sqlite_error_code=code & 255, sqlite_extended_error_code=code)
             raise SystemExit(DEFERRED) from None
         metrics.update(status='failed', reason='sqlite_error')
         raise SystemExit(1) from None
