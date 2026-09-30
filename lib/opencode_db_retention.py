@@ -7,18 +7,27 @@ unlink the live DB/WAL: copy the compact image back with SQLite's transactional
 backup API, then checkpoint. Reserve 1 GiB for streaming throughout the work.
 """
 import argparse
+from contextlib import contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
 import sqlite3
 import signal
+import resource
 import sys
 import tempfile
 import time
+import threading
 
 RESERVE_BYTES = 1024 ** 3
 MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
 DEFERRED = 75
+PRUNE_WAL_LIMIT = 128 * 1024 ** 2
+PRUNE_BATCH_SESSIONS = 8
+PRUNE_MIN_WAL_BYTES = 1024 ** 2
+# Covers WAL-index growth even with SQLite's minimum 512-byte page size
+# (128 MiB / 536 * 8 bytes), plus filesystem block rounding. Not user data.
+PRUNE_OVERHEAD_BYTES = 4 * 1024 ** 2
 CHILD_TABLES = ('todo', 'session_share', 'session_message', 'session_input', 'session_context_epoch')
 STATUSES = {'running', 'completed', 'gate_timeout', 'disabled', 'deferred', 'failed'}
 
@@ -171,6 +180,55 @@ def _delete_if_present(cur, statement):
             raise
 
 
+@contextmanager
+def _bounded_wal(con, db, budget, metrics):
+    """Kernel file-size ceiling, only during one WAL DELETE transaction.
+
+    This is process-wide: use the single-threaded retention CLI, never a
+    concurrent application. Checkpoint/result-file writes happen after restore.
+    The ceiling bounds blobs, triggers, indices and cache spills alike; LIMIT
+    only bounds the candidate set, not the bytes SQLite may dirty.
+    """
+    if threading.active_count() != 1:
+        raise Deferred('wal_limit_unavailable')
+    previous_limit = resource.getrlimit(resource.RLIMIT_FSIZE)
+    previous_signal = signal.getsignal(signal.SIGXFSZ)
+    auto = con.execute('PRAGMA wal_autocheckpoint').fetchone()[0]
+    cap = min(PRUNE_WAL_LIMIT, available_bytes(db.parent) - budget.reserve - PRUNE_OVERHEAD_BYTES)
+    for value in previous_limit:
+        if value != resource.RLIM_INFINITY:
+            cap = min(cap, value)
+    cap = max(0, cap // 4096 * 4096)
+    if cap < PRUNE_MIN_WAL_BYTES:
+        raise Deferred('insufficient_space')
+    wal = Path(str(db) + '-wal')
+    if wal.exists() and wal.stat().st_size:
+        raise Deferred('checkpoint_busy')
+    budget.check(cap + PRUNE_OVERHEAD_BYTES)
+    installed = False
+    try:
+        con.execute('PRAGMA wal_autocheckpoint=0')
+        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap, previous_limit[1]))
+        installed = True
+        metrics.update(prune_mode='bounded_wal', wal_limit_bytes=cap)
+        yield
+    except sqlite3.Error as exc:
+        code = (getattr(exc, 'sqlite_errorcode', 0) or 0) & 255
+        if installed and code in (sqlite3.SQLITE_IOERR, sqlite3.SQLITE_FULL):
+            # Do not mistake an arbitrary I/O error for proof the cap was hit.
+            metrics.update(bounded_prune_blocked=True,
+                           recovery_action='inspect_io_or_add_capacity')
+            raise Deferred('bounded_prune_io_error') from None
+        raise
+    finally:
+        # Restore BEFORE rollback/close/checkpoint or writing the result JSON.
+        # No hard limit is lowered, so restoring the soft limit needs no privilege.
+        resource.setrlimit(resource.RLIMIT_FSIZE, previous_limit)
+        signal.signal(signal.SIGXFSZ, previous_signal)
+        con.execute('PRAGMA wal_autocheckpoint=%d' % auto)
+
+
 def _compact(con, db, budget, metrics):
     pages = _pages(con)
     # VACUUM INTO needs only the output image here. A normal VACUUM also
@@ -240,38 +298,46 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
         old = con.execute('select count(*) from session where time_created < ?', (cutoff,)).fetchone()[0]
         metrics['eligible_sessions'] = old
         con.set_progress_handler(budget.progress, 1000)
-        compacted_first = False
         pages = _pages(con)
-        if (old and mode == 'wal' and pages['freelist_count']
-                and available_bytes(db.parent) < budget.reserve + _wal_budget(pages)):
-            # Recover space from an earlier committed prune before budgeting
-            # a full-size WAL just to remove newly expired sessions.
-            _compact(con, db, budget, metrics)
-            compacted_first = True
-        if old:
-            budget.check(_wal_budget(_pages(con)))
+        # Under pressure prune first, even if a RAM copy is possible. A compact
+        # copy may fit tmpfs while its writeback WAL cannot fit this filesystem;
+        # running it first would block every subsequent bounded prune.
+        delete_wal_budget = _wal_budget(_pages(con)) if old else 0
+        bounded = (old and mode == 'wal'
+                   and available_bytes(db.parent) < budget.reserve + delete_wal_budget)
+        if old and not bounded:
+            budget.check(delete_wal_budget)
         if old:
             metrics['stage'] = 'delete'
             budget.check()
             try:
-                con.execute('BEGIN IMMEDIATE')
-                con.execute('create temp table old_sessions as select id from session where time_created < ?', (cutoff,))
-                for table in CHILD_TABLES:
-                    _delete_if_present(con, 'delete from %s where session_id in (select id from old_sessions)' % table)
-                for table, column in (('event', 'aggregate_id'), ('event_sequence', 'aggregate_id'), ('part', 'session_id'), ('message', 'session_id')):
-                    _delete_if_present(con, 'delete from %s where %s in (select id from old_sessions)' % (table, column))
-                con.execute('delete from session where id in (select id from old_sessions)')
-                con.execute('COMMIT')
-                metrics['deleted_sessions'] = old
+                guard = _bounded_wal(con, db, budget, metrics) if bounded else nullcontext()
+                with guard:
+                    con.execute('BEGIN IMMEDIATE')
+                    con.execute('create temp table old_sessions as select id from session where time_created < ? order by time_created, id limit ?',
+                                (cutoff, PRUNE_BATCH_SESSIONS if bounded else -1))
+                    selected = con.execute('select count(*) from old_sessions').fetchone()[0]
+                    metrics['selected_sessions'] = selected
+                    for table in CHILD_TABLES:
+                        _delete_if_present(con, 'delete from %s where session_id in (select id from old_sessions)' % table)
+                    for table, column in (('event', 'aggregate_id'), ('event_sequence', 'aggregate_id'), ('part', 'session_id'), ('message', 'session_id')):
+                        _delete_if_present(con, 'delete from %s where %s in (select id from old_sessions)' % (table, column))
+                    con.execute('delete from session where id in (select id from old_sessions)')
+                    con.execute('COMMIT')
+                    metrics['deleted_sessions'] = selected
             except (sqlite3.Error, Deferred):
                 con.set_progress_handler(None, 0)
                 if con.in_transaction:
                     con.execute('ROLLBACK')
                 raise
         _checkpoint(con)
-        # Keep the new freelist reusable after pressure recovery; avoid
-        # copying the same database twice in one maintenance pass.
-        if _pages(con)['freelist_count'] and not compacted_first:
+        if bounded:
+            # Committed prune exposes reusable pages without requiring a second
+            # DB image. It does not claim filesystem shrink or complete retention.
+            metrics.update(_pages(con))
+            metrics.update(remaining_sessions=old - metrics['deleted_sessions'], stage='compact_deferred')
+            raise Deferred('bounded_prune_committed')
+        if _pages(con)['freelist_count']:
             if mode == 'wal':
                 _compact(con, db, budget, metrics)
             else:
