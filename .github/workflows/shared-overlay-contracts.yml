@@ -9,6 +9,8 @@ on:
       - 'lib/shared_overlay.mjs'
       - 'lib/direct_overlay.mjs'
       - 'lib/direct_broadcast_overlay.mjs'
+      - 'overlays/direct_broadcast_overlay.html'
+      - 'tests/test_direct_broadcast_overlay.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
@@ -27,6 +29,8 @@ on:
       - 'lib/shared_overlay.mjs'
       - 'lib/direct_overlay.mjs'
       - 'lib/direct_broadcast_overlay.mjs'
+      - 'overlays/direct_broadcast_overlay.html'
+      - 'tests/test_direct_broadcast_overlay.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
@@ -64,6 +68,7 @@ jobs:
           node --test
           tests/test_shared_overlay.mjs
           tests/test_direct_overlay.mjs
+          tests/test_direct_broadcast_overlay.mjs
           tests/test_twica_overlay_layout.mjs
           tests/test_twica_overlay_proxy.mjs
       - name: Run shared overlay service lifecycle regression
