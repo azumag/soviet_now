@@ -296,6 +296,16 @@ PY
 )"
 _log "desired title: $NEW_TITLE"
 
+# Reuse existing credentials only. Per-platform failure must never stop a game
+# switch or a successful Twitch update. The helper emits fixed status enums.
+_sync_other_titles() {
+    [ "$MODE" = "dryrun" ] && return 0
+    [ "$MODE" = "show" ] && return 0
+    [ "${CATEGORY_ONLY:-0}" = "1" ] && return 0
+    [ -f lib/stream_title_sync.py ] || return 0
+    printf '%s' "$NEW_TITLE" | python3 lib/stream_title_sync.py || true
+}
+
 # --- 現在の title/game を取得 ---
 CH_JSON="$(_twitch_get "https://api.twitch.tv/helix/channels?broadcaster_id=${BROADCASTER_ID}")"
 CH_OUT="$(printf '%s' "$CH_JSON" | python3 -c "
@@ -336,6 +346,7 @@ if [ "$TITLE_ONLY" = "1" ]; then
 fi
 if [ "$NEW_TITLE" = "$CUR_TITLE" ] && [ "$WANT_GAME_ID" = "$CUR_GAME_ID" ] && [ "$MODE" != "force" ]; then
 	_log "already up to date; no change needed"
+	_sync_other_titles
 	exit 0
 fi
 
@@ -356,6 +367,7 @@ HTTP_CODE="$(curl -s -o /tmp/_stream_game_patch_resp.$$ -w '%{http_code}' \
 RESP="$(cat /tmp/_stream_game_patch_resp.$$ 2>/dev/null)"; rm -f /tmp/_stream_game_patch_resp.$$ 2>/dev/null
 if [ "$HTTP_CODE" = "204" ]; then
 	_log "OK: updated title=$NEW_TITLE game_id=$WANT_GAME_ID"
+	_sync_other_titles
 	exit 0
 fi
 _log "ERROR: PATCH failed (HTTP $HTTP_CODE): $(printf '%s' "$RESP" | head -c 300)"
