@@ -435,10 +435,17 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertNotIn('交戦HP: 戦闘記録なし', text)
 
     def test_partial_battle_record_never_prints_half_measured_hp(self):
-        self._policy(battle={'enemy': ' dragon', 'ally_hp': 44})
-        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
-        self.assertIn('交戦HP: 戦闘記録なし', text)
-        self.assertNotIn('44', text)
+        cases = [
+            {'enemy': ' dragon', 'ally_hp': 44},
+            {'enemy': 'dragon', 'enemy_hp': 31, 'ally_hp': 44},
+            {'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44},
+        ]
+        for battle in cases:
+            with self.subTest(battle=battle):
+                self._policy(battle=battle)
+                text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+                self.assertIn('交戦HP: 戦闘記録なし', text)
+                self.assertNotIn('交戦HP: 敵', text)
 
     def test_roster_line_names_observed_castles_and_lost_ones(self):
         self._policy(captured=['カストーラ', '-travel'], lost=['ジョンリギ'], home_lost=False)
