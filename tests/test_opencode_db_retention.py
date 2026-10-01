@@ -169,6 +169,7 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             db = Path(td) / 'opencode.db'
             self.make_db(db)
             con = sqlite3.connect(db)
+            con.execute('PRAGMA journal_mode=WAL')
             now = int(time.time() * 1000)
             for n in range(12):
                 con.execute(
