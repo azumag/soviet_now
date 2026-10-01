@@ -3290,8 +3290,10 @@ def render_hanjuku_status(value):
         f" / 切り札確定 {num('cards_confirmed')}",
     ]
     enemy_hp, ally_hp = value.get("enemy_hp"), value.get("ally_hp")
-    if type(enemy_hp) is int and type(ally_hp) is int:
-        lines.append(f"  交戦HP: 敵 {enemy_hp}（{label('enemy')}） / 我 {ally_hp}（{label('ally')}）")
+    enemy_name, ally_name = label("enemy"), label("ally")
+    if (type(enemy_hp) is int and type(ally_hp) is int
+            and enemy_name != "不明" and ally_name != "不明"):
+        lines.append(f"  交戦HP: 敵 {enemy_hp}（{enemy_name}） / 我 {ally_hp}（{ally_name}）")
     else:
         lines.append("  交戦HP: 戦闘記録なし")
     garrison = [g for g in row("garrison") if isinstance(g, dict)]
