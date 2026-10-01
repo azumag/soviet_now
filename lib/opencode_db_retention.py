@@ -183,6 +183,7 @@ class Budget:
         self.deadline = time.monotonic() + timeout
         self.reason = None
         self.memory_root = None
+        self.sparse_start_offset = 0
 
     def check(self, extra=0):
         if time.monotonic() >= self.deadline:
@@ -443,11 +444,11 @@ def _sparse_reclaim(con, db, fd, budget, metrics, start_offset=0):
         metrics['sparse_reclaimed_bytes'] = max(0, (before.st_blocks - after.st_blocks) * 512)
 
 
-def _compact(con, db, budget, metrics, db_fd=None, sparse_start_offset=0):
+def _compact(con, db, budget, metrics, db_fd=None):
     if os.environ.get('OPENCODE_RETENTION_SPARSE_RECLAIM') == '1':
         if db_fd is None:
             raise Deferred('sparse_fd_required')
-        _sparse_reclaim(con, db, db_fd, budget, metrics, start_offset=sparse_start_offset)
+        _sparse_reclaim(con, db, db_fd, budget, metrics, start_offset=budget.sparse_start_offset)
         return
     pages = _pages(con)
     # VACUUM INTO writes only live pages: the freelist is not part of the
@@ -503,6 +504,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
     con = None
     db_fd = None
     budget = Budget(db.parent, reserve)
+    budget.sparse_start_offset = sparse_start_offset
     try:
         if db.is_symlink() or not db.is_file() or db.stat().st_nlink != 1:
             raise ValueError('invalid_db')
@@ -662,7 +664,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                 # Fail-closed: an unfittable copy keeps the committed-prune
                 # outcome and records only fixed enums for the missed attempt.
                 try:
-                    _compact(con, db, budget, metrics, db_fd, sparse_start_offset)
+                    _compact(con, db, budget, metrics, db_fd)
                 except Deferred as exc:
                     metrics['compact_defer_reason'] = budget.reason or str(exc)
                     metrics['stage'] = 'compact_deferred'
@@ -670,7 +672,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             # Without a freelist there is no outstanding compaction to preserve.
         if _pages(con)['freelist_count'] and not metrics.get('sparse_complete'):
             if mode == 'wal':
-                _compact(con, db, budget, metrics, db_fd, sparse_start_offset)
+                _compact(con, db, budget, metrics, db_fd)
             else:
                 # Legacy rollback-journal DBs use the documented 2x bound.
                 p = _pages(con)
