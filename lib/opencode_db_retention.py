@@ -20,7 +20,7 @@ import time
 import threading
 import hashlib
 import stat
-import subprocess
+import ctypes
 
 RESERVE_BYTES = 1024 ** 3
 MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
@@ -298,6 +298,44 @@ def _bounded_wal(con, db, budget, metrics):
         con.execute('PRAGMA wal_autocheckpoint=%d' % auto)
 
 
+def _dig_zero_window(fd, offset, size, check):
+    """Punch ONLY full filesystem blocks just read as zero under SQLite lock.
+
+    Use the syscall in this process, not a child utility: even SIGKILL cannot
+    release our SQLite locks while a surviving child is still punching holes.
+    Kernel I/O completes before this process exits and releases its locks.
+    """
+    block = os.fstatvfs(fd).f_bsize
+    if block <= 0 or offset % block:
+        raise Deferred('sparse_alignment')
+    libc = ctypes.CDLL(None, use_errno=True)
+    punch = libc.fallocate
+    punch.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_longlong)
+    punch.restype = ctypes.c_int
+    zero = bytes(block)
+    finish = offset + size
+    while offset + block <= finish:
+        check()
+        length = min(max(block, 1024 ** 2 // block * block), finish - offset)
+        length -= length % block
+        data = os.pread(fd, length, offset)
+        if len(data) != length:
+            raise Deferred('sparse_identity_changed')
+        start = None
+        for pos in range(0, length + block, block):
+            is_zero = pos < length and data[pos:pos + block] == zero
+            if is_zero and start is None:
+                start = pos
+            elif not is_zero and start is not None:
+                check()
+                # Linux FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE. The entire
+                # aligned interval was just verified zero; never blanket-punch.
+                if punch(fd, 3, offset + start, pos - start) != 0:
+                    raise Deferred('sparse_filesystem_unsupported')
+                start = None
+        offset += length
+
+
 def _sparse_reclaim(con, db, fd, budget, metrics):
     """Deallocate already-zero blocks, never change bytes or SQLite pages.
 
@@ -305,7 +343,8 @@ def _sparse_reclaim(con, db, fd, budget, metrics):
     this inode in this process could release SQLite's POSIX advisory locks.
     The caller retains both its writer gate and SQLite EXCLUSIVE lock.
     """
-    if sys.platform != 'linux' or con.in_transaction:
+    if (sys.platform != 'linux' or con.in_transaction
+            or threading.active_count() != 1):
         raise Deferred('sparse_unsupported')
     if con.execute('PRAGMA locking_mode').fetchone()[0] != 'exclusive':
         raise Deferred('sparse_lock_required')
@@ -342,24 +381,7 @@ def _sparse_reclaim(con, db, fd, budget, metrics):
             size = min(SPARSE_WINDOW_BYTES, before.st_size - offset)
             original = digest(offset, size)
             check()
-            # Only dig-holes examines bytes for zero ranges. Never substitute
-            # punch-hole/zero-range, which destroy nonzero file contents.
-            child = subprocess.Popen(
-                ['/usr/bin/fallocate', '--dig-holes', '--offset', str(offset),
-                 '--length', str(size), '--', '/proc/self/fd/%d' % fd],
-                pass_fds=(fd,), stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try:
-                try:
-                    rc = child.wait(timeout=max(0.001, end - time.monotonic()))
-                except subprocess.TimeoutExpired:
-                    raise Deferred('sparse_deadline') from None
-                if rc:
-                    raise Deferred('sparse_tool_failed')
-            finally:
-                if child.poll() is None:
-                    child.kill()
-                child.wait()
+            _dig_zero_window(fd, offset, size, check)
             if original != digest(offset, size):
                 raise sqlite3.DatabaseError('sparse content mismatch')
             metrics['sparse_scanned_bytes'] += size

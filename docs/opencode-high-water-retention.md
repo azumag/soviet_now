@@ -185,10 +185,13 @@ delete any additional row, shrink the logical file, or rearrange SQLite pages.
 The normal path is unchanged unless the fixed deployment helper enables it.
 
 With the producer gate and SQLite EXCLUSIVE connection still held, first
-checkpoint/TRUNCATE the WAL, then invoke installed util-linux
-`/usr/bin/fallocate --dig-holes` on the anchored database descriptor. This
-operation inspects existing bytes and deallocates only all-zero filesystem
-blocks. It must never be replaced by unqualified punch-hole or zero-range.
+checkpoint/TRUNCATE the WAL, then read filesystem-aligned blocks from the anchored database descriptor.
+Only runs of full blocks just verified entirely zero are deallocated with
+Linux fallocate(PUNCH_HOLE | KEEP_SIZE). Never punch an unchecked byte range.
+The syscall executes in the SAME single-threaded process that holds SQLite's
+lock. An external utility was rejected during self-review: if the parent is
+SIGKILLed, a surviving child must not continue modifying allocation after
+SQLite unlocks. Here kernel I/O finishes before process exit releases the lock.
 No temporary database, copy-back WAL or volume expansion is required.
 
 - Work in 64 MiB windows, hash every byte before and after each window, and
@@ -197,10 +200,10 @@ No temporary database, copy-back WAL or volume expansion is required.
 - Open the database with O_NOFOLLOW, require a regular single-link inode and
   check identity/size against the live path. Keep this extra descriptor open
   until AFTER closing SQLite: closing it earlier could drop this process's
-  POSIX SQLite locks. Child tools inherit only this explicit extra descriptor.
-- Reap/kill an interrupted or timed-out tool before releasing the connection.
-  A partially completed dig-holes pass remains byte preserving, but is not
-  reported as complete. Unsupported filesystems/tools defer/fail rather than
+  POSIX SQLite locks. No subprocess or separate allocation worker is used.
+- Check the deadline between reads and zero-run syscalls. A partial pass
+  remains byte preserving, but is not reported as complete.
+  Unsupported filesystems defer/fail rather than
   trying a destructive fallback. No stderr, payload, hashes or paths are
   copied into diagnostic status.
 - Success reports stage `sparse_reclaimed`, `sparse_complete=true`,
@@ -220,8 +223,8 @@ No temporary database, copy-back WAL or volume expansion is required.
 Root Linux synthetic tests cover complete-file SHA/rows/inode/size integrity,
 actual allocation reduction with secure_delete ON, nonzero free pages with
 secure_delete OFF, a separate-process noncooperative SQLite writer before AND
-after reclamation, child failure, real timeout/reaping, signal-style
-interruption, hardlink/path replacement rejection, and the opt-in rotate path.
+after reclamation, filesystem failure, deadline, signal-style
+interruption, real SIGKILL/reopen, hardlink/path replacement rejection, and the opt-in rotate path.
 Production physical recovery remains unverified until a deployed invocation
 reports allocation and filesystem availability. Sparse reclaim does not
 resolve the separate producer-growth attribution issue.

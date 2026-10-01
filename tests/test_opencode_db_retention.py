@@ -904,8 +904,7 @@ class RetentionPreflightDiagnosticsTests(unittest.TestCase):
             self.assertEqual(self.counts(db)['session'], 2)
 
 
-@unittest.skipUnless(sys.platform == 'linux' and Path('/usr/bin/fallocate').exists(),
-                     'Linux util-linux sparse reclamation')
+@unittest.skipUnless(sys.platform == 'linux', 'Linux sparse reclamation')
 class SparseReclaimTests(unittest.TestCase):
     @contextmanager
     def fixture(self, secure=True):
@@ -979,64 +978,107 @@ class SparseReclaimTests(unittest.TestCase):
     def test_hardlink_is_rejected_before_tool(self):
         with self.fixture() as (db, fd, con, budget, metrics):
             os.link(db, db.parent / 'alias')
-            with patch.object(retention.subprocess, 'Popen') as proc:
+            with patch.object(retention, '_dig_zero_window') as proc:
                 with self.assertRaisesRegex(retention.Deferred, 'sparse_identity_changed'):
                     retention._sparse_reclaim(con, db, fd, budget, metrics)
             proc.assert_not_called()
 
-    def test_child_failure_does_not_claim_recovery(self):
+    def test_filesystem_failure_does_not_claim_recovery(self):
         with self.fixture() as (db, fd, con, budget, metrics):
-            with patch.object(retention.subprocess, 'Popen') as proc:
-                proc.return_value.wait.return_value = 1
-                with self.assertRaisesRegex(retention.Deferred, 'sparse_tool_failed'):
+            with patch.object(retention, '_dig_zero_window',
+                              side_effect=retention.Deferred('sparse_filesystem_unsupported')):
+                with self.assertRaisesRegex(retention.Deferred, 'sparse_filesystem_unsupported'):
                     retention._sparse_reclaim(con, db, fd, budget, metrics)
             self.assertNotIn('sparse_complete', metrics)
             self.assert_writer_blocked(db)
 
-    def test_timeout_kills_and_reaps_before_lock_can_release(self):
+    def test_interruption_between_windows_preserves_bytes_and_lock(self):
+        import hashlib
         with self.fixture() as (db, fd, con, budget, metrics):
-            with patch.object(retention.subprocess, 'Popen') as proc:
-                proc.return_value.wait.side_effect = [subprocess.TimeoutExpired('fallocate', 1), 0]
-                proc.return_value.poll.return_value = None
-                with self.assertRaisesRegex(retention.Deferred, 'sparse_deadline'):
-                    retention._sparse_reclaim(con, db, fd, budget, metrics)
-                proc.return_value.kill.assert_called_once()
-                self.assertEqual(proc.return_value.wait.call_count, 2)
-            self.assert_writer_blocked(db)
-
-    def test_real_child_timeout_reaps_process_and_keeps_sqlite_lock(self):
-        with self.fixture() as (db, fd, con, budget, metrics):
-            actual_popen = subprocess.Popen
-            children = []
-            def delayed(*args, **kwargs):
-                child = actual_popen(['/usr/bin/sleep', '10'])
-                children.append(child)
-                return child
-            with patch.object(retention, 'SPARSE_TIMEOUT_SECONDS', .1), \
-                    patch.object(retention.subprocess, 'Popen', delayed):
-                with self.assertRaisesRegex(retention.Deferred, 'sparse_deadline'):
-                    retention._sparse_reclaim(con, db, fd, budget, metrics)
-            self.assertEqual(len(children), 1)
-            self.assertIsNotNone(children[0].returncode)
-            self.assert_writer_blocked(db)
-            self.assertEqual(con.execute('pragma integrity_check').fetchone(), ('ok',))
-
-    def test_signal_style_interruption_reaps_child(self):
-        with self.fixture() as (db, fd, con, budget, metrics):
-            with patch.object(retention.subprocess, 'Popen') as proc:
-                proc.return_value.wait.side_effect = [retention.Deferred('interrupted'), 0]
-                proc.return_value.poll.return_value = None
+            size = os.fstat(fd).st_size
+            before = hashlib.sha256(os.pread(fd, size, 0)).digest()
+            real = retention._dig_zero_window
+            def interrupt(*args):
+                real(*args)
+                raise retention.Deferred('interrupted')
+            with patch.object(retention, '_dig_zero_window', interrupt):
                 with self.assertRaisesRegex(retention.Deferred, 'interrupted'):
                     retention._sparse_reclaim(con, db, fd, budget, metrics)
-                proc.return_value.kill.assert_called_once()
-                self.assertEqual(proc.return_value.wait.call_count, 2)
+            self.assertEqual(hashlib.sha256(os.pread(fd, size, 0)).digest(), before)
+            self.assertNotIn('sparse_complete', metrics)
             self.assert_writer_blocked(db)
+
+    def test_sigkill_at_window_boundary_preserves_database_and_releases_lock(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'db.sqlite'
+            con = sqlite3.connect(db)
+            con.execute('pragma journal_mode=wal')
+            con.execute('pragma secure_delete=1')
+            con.execute('create table payload(data blob)')
+            con.execute('insert into payload values (randomblob(2097152))')
+            con.commit()
+            con.execute('delete from payload')
+            con.commit()
+            con.close()
+            before = hashlib.sha256(db.read_bytes()).digest()
+            marker = Path(td) / 'window-done'
+            script = """
+import importlib.util,os,sqlite3,sys,time
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('retention',sys.argv[1])
+r=importlib.util.module_from_spec(spec);spec.loader.exec_module(r)
+db=Path(sys.argv[2]);fd=os.open(db,os.O_RDWR)
+c=sqlite3.connect(db,isolation_level=None)
+c.execute('pragma locking_mode=exclusive');c.execute('begin exclusive');c.execute('commit')
+r._checkpoint(c)
+real=r._dig_zero_window
+def pause(*args):
+    real(*args)
+    Path(sys.argv[3]).write_text('ready')
+    time.sleep(10)
+r._dig_zero_window=pause
+r._sparse_reclaim(c,db,fd,r.Budget(db.parent,reserve=0),{})
+"""
+            child = subprocess.Popen([sys.executable, '-c', script,
+                str(ROOT / 'lib/opencode_db_retention.py'), str(db), str(marker)])
+            try:
+                for _ in range(300):
+                    if marker.exists() or child.poll() is not None:
+                        break
+                    time.sleep(.01)
+                self.assertTrue(marker.exists())
+                self.assert_writer_blocked(db)
+                child.kill()
+                child.wait(timeout=5)
+            finally:
+                if child.poll() is None:
+                    child.kill(); child.wait()
+            self.assertEqual(hashlib.sha256(db.read_bytes()).digest(), before)
+            con = sqlite3.connect(db)
+            self.assertEqual(con.execute('pragma integrity_check').fetchone(), ('ok',))
+            con.execute('insert into payload values (?)', (b'new',))
+            con.commit(); con.close()
+
+    def test_nonzero_byte_in_a_block_prevents_deallocation(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'blocks'
+            block = os.statvfs(td).f_bsize
+            original = bytes(block) + b'X' + bytes(block - 1) + bytes(block)
+            db.write_bytes(original)
+            fd = os.open(db, os.O_RDWR)
+            try:
+                retention._dig_zero_window(fd, 0, len(original), lambda: None)
+                self.assertEqual(os.pread(fd, len(original), 0), original)
+                self.assertEqual(os.fstat(fd).st_size, len(original))
+            finally:
+                os.close(fd)
 
     def test_replaced_path_is_rejected_without_touching_either_file(self):
         with self.fixture() as (db, fd, con, budget, metrics):
             db.rename(db.parent / 'original')
             db.write_bytes(b'replacement')
-            with patch.object(retention.subprocess, 'Popen') as proc:
+            with patch.object(retention, '_dig_zero_window') as proc:
                 with self.assertRaisesRegex(retention.Deferred, 'sparse_identity_changed'):
                     retention._sparse_reclaim(con, db, fd, budget, metrics)
             proc.assert_not_called()
