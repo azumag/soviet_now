@@ -477,7 +477,16 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
             return {"availability": "stale"}
         policy = bot.get("policy") if isinstance(bot.get("policy"), dict) else {}
         stats = policy.get("stats") if isinstance(policy.get("stats"), dict) else {}
+        tally = policy.get("tally") if isinstance(policy.get("tally"), dict) else {}
         number = lambda value: value if type(value) is int and 0 <= value <= 1000000 else None
+        battles_started = number(tally.get("battles_started"))
+        battles_judged = number(tally.get("battles_judged"))
+        # A started battle with no verdict is neither a win nor a loss. The
+        # panel must disclose that gap instead of showing the judged subset as
+        # if it were every battle (2026-10-02: "1 losses" while six castles
+        # were observed falling to the enemy).
+        battles_unjudged = (max(0, battles_started - battles_judged)
+                            if battles_started is not None and battles_judged is not None else None)
         captured = policy.get("captured")
         chapter = number(policy.get("chapter"))
         month = policy.get("month")
@@ -506,6 +515,14 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "soldiers": number(policy.get("soldiers_seen")),
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),
+                  # Policy-side battle accounting. Distinct from the
+                  # run-side battles_started/finished pair below, which counts
+                  # debounced frame transitions; the two are reconciled on the
+                  # panel instead of being silently mixed.
+                  "battles_recorded": battles_started,
+                  "battles_judged": battles_judged,
+                  "battles_unjudged": battles_unjudged,
+                  "castle_losses": number(tally.get("castle_losses")),
                   "cards_confirmed": number(stats.get("cards_confirmed")),
                   "orders_launched": (sum(1 for value in orders.values() if value == "launched")
                                       if orders is not None else None),

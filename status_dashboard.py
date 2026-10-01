@@ -3284,11 +3284,23 @@ def render_hanjuku_status(value):
     lost = row("lost_names")
     if lost:
         lines.append(f"  失った城: {_hanjuku_join(lost)}")
+    # 戦闘結果 counts only battles whose final HP panel was decisive, so it can
+    # read "0敗" while castles are visibly falling. Always show the judged
+    # subset next to the started total, and the separately observed castle
+    # losses, instead of letting the subset stand in for the whole run.
+    unjudged = value.get("battles_unjudged")
+    account = f"（判定 {num('battles_judged')}"
+    if unjudged:
+        account += f" / 未判定 {num('battles_unjudged')}"
+    account += "）"
     lines += [
-        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗 / 未分類 {num('unclassified')}",
+        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗 / 未分類 {num('unclassified')}{account}",
         f"  戦闘: 開始 {num('battles_started')} / 終了 {num('battles_finished')}"
         f" / 切り札確定 {num('cards_confirmed')}",
     ]
+    castle_losses = value.get("castle_losses")
+    if type(castle_losses) is int and castle_losses > 0:
+        lines.append(f"  城失陥: {castle_losses}件（全体マップで旗が敵色になった実測）")
     enemy_hp, ally_hp = value.get("enemy_hp"), value.get("ally_hp")
     enemy_name, ally_name = label("enemy"), label("ally")
     if (type(enemy_hp) is int and type(ally_hp) is int
