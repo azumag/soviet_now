@@ -21,6 +21,10 @@ on:
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - 'tests/test_say_speaking_state.sh'
+      - 'twitch_chat.sh'
+      - 'youtube_chat.sh'
+      - 'kick_chat.sh'
+      - 'tests/test_*comment_identity.py'
       - '.github/workflows/comment-reply-quality.yml'
   push:
     branches: [main]
@@ -44,6 +48,10 @@ on:
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - 'tests/test_say_speaking_state.sh'
+      - 'twitch_chat.sh'
+      - 'youtube_chat.sh'
+      - 'kick_chat.sh'
+      - 'tests/test_*comment_identity.py'
       - '.github/workflows/comment-reply-quality.yml'
 permissions:
   contents: read
@@ -60,7 +68,7 @@ jobs:
       - name: Test dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Intent, rendering, output validation, history and translation
-        run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich
+        run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich tests.test_twitch_comment_identity tests.test_youtube_comment_identity
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
       - name: Raid and country-name regression tests
