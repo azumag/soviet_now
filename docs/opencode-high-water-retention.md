@@ -12,9 +12,16 @@ When the complete-database WAL preflight cannot fit, drain old sessions in
 guarded batches of at most eight sessions in **one** transaction each. The
 session limit is a candidate bound only. After an initial successful
 TRUNCATE checkpoint, RLIMIT_FSIZE gives this process a kernel-enforced
-file-size ceiling of at most 128 MiB during every DELETE/COMMIT, re-armed per
-batch against the space the previous batch's checkpoint returned. The soft
-limit can only decrease; the hard limit is never changed. SIGXFSZ is
+file-size ceiling of at most `PRUNE_WAL_LIMIT` (1 GiB) during every
+DELETE/COMMIT, re-armed per batch against the space the previous batch's
+checkpoint returned. The ceiling is always `min(1 GiB, free − reserve − 4 MiB
+− cap/64)`: the floor, not the constant, is what keeps one batch from filling
+the filesystem, and `cap/64` reserves the WAL-index (worst case about eight
+bytes per 512-byte page) that the kernel ceiling cannot see because it lives
+in the separate `-shm` file. The 1 GiB constant has to cover realistic
+sessions: a single session's child rows can reach several hundred MB, and the
+former 128 MiB value turned one oversized session into a total stall. The
+soft limit can only decrease; the hard limit is never changed. SIGXFSZ is
 temporarily ignored so the write returns EFBIG instead of killing the process.
 The ceiling includes WAL frames from blobs, indices, triggers and cache spills.
 Existing nonzero WAL must be checkpointed first; a busy checkpoint defers.
@@ -27,12 +34,12 @@ The process-wide ceiling is inappropriate for an embedded/multithreaded host;
 that path refuses to mutate. The cooperative gate is not assumed to cover every
 producer: SQLite's EXCLUSIVE connection blocks noncooperative SQLite writers.
 
-Preflight requires the WAL ceiling plus **4 MiB** for WAL-index/file allocation
-overhead above the unchanged 1 GiB reserve. With SQLite's minimum 512-byte page
-size, a 128 MiB WAL contains fewer than 251,000 frames; WAL-index growth at eight
-bytes per frame is less than 2 MiB. The 4 MiB allowance includes block rounding.
-The existing free-space/deadline progress checks remain; unrelated filesystem
-writers can still consume disk space, as with the existing contract.
+Preflight requires the WAL ceiling plus **4 MiB** for filesystem block
+rounding above the unchanged 1 GiB reserve; the WAL-index allowance is carved
+out of the ceiling itself (`cap/64`, at most 16 MiB at the 1 GiB ceiling, so
+WAL plus index stay inside the free-space floor). The existing
+free-space/deadline progress checks remain; unrelated filesystem writers can
+still consume disk space, as with the existing contract.
 
 ## Observable outcomes and limitations
 
@@ -59,15 +66,21 @@ writers can still consume disk space, as with the existing contract.
   `completed`; physical free-space change is then measurable via
   `after_bytes` instead of assumed.
 - An I/O/size-limit failure rolls back only the batch in flight, reports
-  `bounded_prune_io_error`, `bounded_prune_blocked=true` and
-  `recovery_action=inspect_io_or_add_capacity`; batches committed earlier in
-  the invocation remain committed. An arbitrary I/O error is not labelled proof
-  that the ceiling was reached.
-- If the oldest eight sessions exceed the ceiling, the existing timer may
-  retry that same set. This path still reports intervention needed and does
-  not silently promise eventual recovery: no unbounded adaptive retries and no
-  larger limit are added, and the batch cap plus deadline bound each
-  invocation. No automatic bypass is provided.
+  `bounded_prune_io_error`, `bounded_prune_blocked=true`,
+  `recovery_action=inspect_io_or_add_capacity` and the fixed
+  `sqlite_error_code`/`sqlite_extended_error_code`; batches committed earlier
+  in the invocation remain committed. An arbitrary I/O error is not labelled
+  proof that the ceiling was reached.
+- A batch that hits the ceiling is retried one session per transaction: only
+  the session that fails again is excluded for this run (`skipped_sessions`,
+  counted in `skipped_batches`), its neighbours are pruned normally, and a
+  TRUNCATE checkpoint clears the rolled-back frames before the next guard.
+  Retries are bounded by `CATCHUP_MAX_RETRIES` (64) per invocation, so an
+  oversized session no longer stalls every expired session behind it. If
+  nothing at all could be pruned the run reports `bounded_prune_io_error`;
+  with a completed sweep except for known skipped blockers, compaction is
+  still attempted. No automatic bypass, unbounded adaptive retries or
+  unreviewed larger limit are added.
 - Throughput is at most 512 sessions per invocation at an hourly cadence;
   anything left over is reported in `remaining_sessions` and continues on the
   next run. A committed batch is not a claim that storage exhaustion has been
@@ -92,11 +105,15 @@ prior busy codes so a later success cannot inherit a previous failure.
 The catch-up and compaction follow-up adds only fixed integer/enum fields:
 `prune_batches` (committed guarded batches this invocation),
 `selected_sessions` accumulated across batches, `remaining_sessions` after
-catch-up, and `compact_defer_reason` restricted to the existing fixed reason
-set when a post-catch-up compaction is deferred. `compact_storage` and
-`compact_bytes` describe a successful compaction the same way as the normal
-path. Collectors that allowlist fields must be extended separately; missing
-keys degrade to `unknown`, never to raw text.
+catch-up, `skipped_batches` (batch/single attempts that hit the ceiling and
+rolled back) and `skipped_sessions` (sessions excluded for this run after
+their single-session retry failed again), both reset per invocation, and
+`compact_defer_reason` restricted to the existing fixed reason set when a
+post-catch-up compaction is deferred. `sqlite_error_code` is also recorded at
+the ceiling-failure conversion, not only on BUSY/LOCKED. `compact_storage`
+and `compact_bytes` describe a successful compaction the same way as the
+normal path. Collectors that allowlist fields must be extended separately;
+missing keys degrade to `unknown`, never to raw text.
 
 Ubuntu 24.04 History retention CI runs the complete retention and producer gate
 tests. Synthetic SQLite fixtures cover recent sessions, every child table,

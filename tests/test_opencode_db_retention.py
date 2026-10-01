@@ -552,6 +552,59 @@ class HighWaterWalTests(unittest.TestCase):
             self.assertNotIn('compact_defer_reason',metrics)
             self.assertEqual(self.counts(db)['session'],6)
 
+    def test_wal_ceiling_covers_multi_hundred_megabyte_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db)
+            con=sqlite3.connect(db);con.isolation_level=None
+            retention._checkpoint(con)
+            budget=retention.Budget(db.parent,retention.RESERVE_BYTES)
+            metrics={}
+            limits=resource.getrlimit(resource.RLIMIT_FSIZE)
+            # With ample free space the per-batch ceiling must stay large
+            # enough for a session whose child rows alone are hundreds of MB;
+            # the old 128 MiB value made such a session block catch-up.
+            self.assertEqual(retention.PRUNE_WAL_LIMIT,1024**3)
+            available=retention.RESERVE_BYTES+retention.PRUNE_WAL_LIMIT+64*1024**2
+            with patch.object(retention,'available_bytes',return_value=available):
+                with retention._bounded_wal(con,db,budget,metrics):
+                    pass
+            self.assertGreaterEqual(metrics['wal_limit_bytes'],512*1024**2)
+            self.assertLessEqual(metrics['wal_limit_bytes'],retention.PRUNE_WAL_LIMIT)
+            self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE),limits)
+            con.close()
+
+    def test_oversized_session_is_isolated_and_catchup_continues(self):
+        with tempfile.TemporaryDirectory() as td:
+            db=Path(td)/'db';self.fixture(db);con=sqlite3.connect(db)
+            # 'old' carries the multi-megabyte payload at rank one; ten tiny
+            # sessions with their own child rows queue behind it, seven of
+            # them inside its first batch (their freed pages must give the
+            # post-sweep compaction something to reclaim).
+            con.execute("update session set time_created=-1 where id='old'")
+            for n in range(10):
+                con.execute('insert into session values (?,0)',('zextra-%02d'%n,))
+                con.execute('insert into part values (?,?,?,zeroblob(65536))',
+                            ('pz-%02d'%n,'mz-%02d'%n,'zextra-%02d'%n))
+            con.commit();con.close();metrics={}
+            with self.pressure(6*1024**2):
+                with self.assertRaises(SystemExit) as raised:retention.rotate(db,1,metrics=metrics)
+            self.assertEqual(raised.exception.code,75)
+            # The failed batch is retried one session per transaction, so only
+            # the oversized session is excluded; its seven neighbours and the
+            # rest of the backlog are still pruned in this run.
+            self.assertEqual(metrics['skipped_sessions'],1)
+            self.assertEqual(metrics['skipped_batches'],2)
+            self.assertEqual(metrics['deleted_sessions'],10)
+            self.assertEqual(metrics['remaining_sessions'],1)
+            self.assertEqual(metrics['reason'],'bounded_prune_committed')
+            self.assertEqual(metrics['compact_defer_reason'],'insufficient_space')
+            self.assertIn(metrics.get('sqlite_error_code'),(sqlite3.SQLITE_IOERR,sqlite3.SQLITE_FULL))
+            con=sqlite3.connect(db)
+            self.assertEqual(con.execute("select length(payload) from part where session_id='old'").fetchone(),(4194304,))
+            self.assertEqual(con.execute("select count(*) from session where id like 'zextra-%'").fetchone(),(0,))
+            self.assertEqual(con.execute("select count(*) from part where session_id like 'zextra-%'").fetchone(),(0,))
+            con.close();self.check_intact(db)
+
     def test_live_image_budget_compacts_after_catchup_under_pressure(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/'db';self.make_large_wal_db(db)
