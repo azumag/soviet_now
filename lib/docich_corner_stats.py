@@ -36,6 +36,16 @@ _CORNER_SPECS = (
     ("jev", "JEV", ("jev_corner.json",)),
 )
 _GAME_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+# Whole ANSI/OSC escape sequences and C0/C1 control runs.  Filtering character
+# by character is not enough: ESC is not printable but the "[31m" after it is,
+# so a per-character check would leak a broken escape into the card.
+_CONTROL_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]"
+    r"|\[[0-?]{1,4}[ -/]*[@-~]|[\x00-\x1f\x7f-\x9f]")
+# docich hanjuku_policy ages a marching sortie for this many observations
+# (~10 min at 1.5 s).  A sortie older than this is not "still marching" and must
+# not be shown as one.
+SORTIE_BUSY_TICKS = 400
 
 
 def resolve_state_dir(value: str | os.PathLike[str] | None = None) -> Path:
@@ -351,6 +361,85 @@ def _bounded_state(path: Path, limit=262144):
         return data, info.st_mtime
 
 
+def _hanjuku_clean(value):
+    """Printable-only text from cached game memory.
+
+    ``str.isprintable()`` rejects the ESC itself but keeps the printable
+    ``[31m`` that follows it, so filtering character by character would leak a
+    broken escape fragment into the card.  Drop whole escape sequences and
+    control runs first, then reject anything still not printable.  The headless
+    form also drops an escape that already lost its ESC.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = _CONTROL_RE.sub("", value)
+    return "".join(ch for ch in text if ch.isprintable()).strip()
+
+
+def _hanjuku_names(value, limit=3, each=10):
+    """Bounded, printable name list from cached game memory (never raw text)."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        name = _hanjuku_clean(item)
+        if not name or len(name) > 24 or name in out:
+            continue
+        out.append(name[:each])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _hanjuku_name(value, each=10):
+    """One bounded printable name, or None. Never a raw or unbounded string."""
+    names = _hanjuku_names([value] if isinstance(value, str) else [], limit=1, each=each)
+    return names[0] if names else None
+
+
+def _hanjuku_garrison(policy: Mapping[str, object]):
+    """castle -> generals actually read from a castle panel, bounded."""
+    raw = policy.get("garrison")
+    if not isinstance(raw, dict):
+        return []
+    rows = []
+    for castle in sorted(raw):
+        castle_name = _hanjuku_name(castle)
+        generals = _hanjuku_names(raw[castle], limit=3, each=8)
+        if castle_name and generals:
+            rows.append({"castle": castle_name, "generals": generals})
+        if len(rows) >= 3:
+            break
+    return rows
+
+
+def _hanjuku_marching(policy: Mapping[str, object], tick):
+    """Sorties still counted as marching by the policy's own busy window."""
+    raw = policy.get("sorties")
+    if not isinstance(raw, dict) or type(tick) is not int:
+        return []
+    rows = []
+    for step in sorted(raw):
+        sortie = raw[step]
+        if not isinstance(sortie, dict):
+            continue
+        if sortie.get("status") not in ("en_route", "launched_unconfirmed"):
+            continue
+        general = _hanjuku_name(sortie.get("general"))
+        if general is None:
+            continue
+        seen = sortie.get("tick")
+        if type(seen) is not int:
+            continue
+        age = tick - seen
+        if not 0 <= age < SORTIE_BUSY_TICKS:
+            continue
+        rows.append({"general": general, "target": _hanjuku_name(sortie.get("target"))})
+        if len(rows) >= 3:
+            break
+    return rows
+
+
 def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
     """Display only cached observations from the canonical active generation."""
     unavailable = {"availability": "unavailable"}
@@ -397,6 +486,10 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                         ("house", "repair")) if isinstance(policy.get(key), dict) and policy[key]), None)
         if pending is None and isinstance(policy.get("active"), str) and policy["active"]:
             pending = "sortie"
+        battle = policy.get("battle") if isinstance(policy.get("battle"), dict) else None
+        tick = policy.get("tick")
+        orders = policy.get("orders") if isinstance(policy.get("orders"), dict) else None
+        egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
         # Chapter and currency are last observations, not predictions or orders.
         result = {"availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
@@ -405,11 +498,42 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "month": int(month_match[2]) if month_match else None,
                   "pending_plan": pending,
                   "captured": len(captured) if isinstance(captured, list) else None,
+                  "captured_names": _hanjuku_names(captured),
+                  "lost_names": _hanjuku_names(policy.get("lost")),
+                  "home_lost": policy.get("home_lost") is True,
+                  "garrison": _hanjuku_garrison(policy),
+                  "marching": _hanjuku_marching(policy, tick),
+                  "soldiers": number(policy.get("soldiers_seen")),
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
+                  "unclassified": number(stats.get("unclassified")),
+                  "cards_confirmed": number(stats.get("cards_confirmed")),
+                  "orders_launched": (sum(1 for value in orders.values() if value == "launched")
+                                      if orders is not None else None),
+                  "orders_failed": (sum(1 for value in orders.values() if value == "failed")
+                                    if orders is not None else None),
+                  "eggs": [row for row in
+                           ({"general": _hanjuku_name(name), "uses": uses}
+                            for name, uses in sorted(egg_uses.items(), key=lambda kv: str(kv[0]))
+                            if _hanjuku_name(name) and type(uses) is int and 0 <= uses <= 4)
+                           if row["general"]][:3],
+                  "enemy": _hanjuku_name(battle.get("enemy")) if battle else None,
+                  "ally": _hanjuku_name(battle.get("ally")) if battle else None,
+                  "enemy_hp": number(battle.get("enemy_hp")) if battle else None,
+                  "ally_hp": number(battle.get("ally_hp")) if battle else None,
+                  "battles_started": number(run.get("battles_started")),
+                  "battles_finished": number(run.get("battles_finished")),
+                  "observations": number(run.get("observations")),
+                  "unchanged_seconds": int(run["unchanged_seconds"])
+                                       if type(run.get("unchanged_seconds")) in (int, float)
+                                       and math.isfinite(run["unchanged_seconds"])
+                                       and run["unchanged_seconds"] >= 0 else None,
                   "actions": number(run.get("actions_sent")),
                   "phase": run.get("phase") if run.get("phase") in {"field", "battle", "title", "name", "unknown"} else None,
                   "screen": bot.get("screen_kind") if isinstance(bot.get("screen_kind"), str) else None,
-                  "chart_step": policy.get("active") if isinstance(policy.get("active"), str) else None}
+                  # Bounded like every other cached string: a control character or
+                  # an unbounded blob in policy memory must not reach the card.
+                  "variant": _hanjuku_name(policy.get("variant"), each=24),
+                  "chart_step": _hanjuku_name(policy.get("active"), each=24)}
         # Recheck generation after reads; never carry the previous game into a switch.
         latest, _ = _bounded_state(root / "game_switch.json")
         if latest.get("phase") != "ready" or latest.get("active") != active:

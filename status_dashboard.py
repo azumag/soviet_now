@@ -3221,6 +3221,30 @@ def _corner_score_panels(values, *, rank=False, reports=False):
     return fit_dashboard_lines(lines)
 
 
+# Whole ANSI/OSC escape sequences and C0/C1 control runs from cached game
+# metadata.  isprintable() alone rejects the ESC but keeps the printable
+# "[31m" behind it, which would put a broken escape fragment on the card.
+# The headless form only matches an escape that already lost its ESC and still
+# starts with a CSI parameter byte, so a literal name like "array[0]" stays.
+_CORNER_CONTROL_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]"
+    r"|\[[0-?]{1,4}[ -/]*[@-~]|[\x00-\x1f\x7f-\x9f]")
+
+
+def _hanjuku_join(names, fallback="未確認", limit=3):
+    """Join cached names, dropping escape runs: the renderer trusts no caller."""
+    items = []
+    for name in names or []:
+        if not isinstance(name, str):
+            continue
+        clean = _corner_short(_CORNER_CONTROL_RE.sub("", name), "", 10)
+        if clean and clean not in items:
+            items.append(clean)
+        if len(items) >= limit:
+            break
+    return "/".join(items) if items else fallback
+
+
 def render_hanjuku_status(value):
     value = value if isinstance(value, dict) else {}
     if value.get("availability") != "fresh":
@@ -3231,20 +3255,70 @@ def render_hanjuku_status(value):
         return str(v) if type(v) is int and v >= 0 else "不明"
     def label(key):
         v = value.get(key)
-        # No raw ANSI/control characters from cached game metadata.
-        return _corner_short("".join(c for c in v if c.isprintable()), "不明", 24) if isinstance(v, str) else "不明"
-    return [
+        # No raw ANSI/control characters from cached game metadata.  A
+        # per-character isprintable() check would keep the printable "[31m"
+        # that follows an ESC, so drop whole escape runs first.
+        if not isinstance(v, str):
+            return "不明"
+        return _corner_short(_CORNER_CONTROL_RE.sub("", v), "不明", 24)
+    def row(key):
+        v = value.get(key)
+        return v if isinstance(v, list) else []
+    def text(value, fallback="不明", limit=10):
+        # Nested cached names go through the same escape-run removal as
+        # label(): the renderer must not trust a hand-built snapshot dict.
+        if not isinstance(value, str):
+            return fallback
+        return _corner_short(_CORNER_CONTROL_RE.sub("", value), fallback, limit)
+
+    lines = [
         "半熟英雄 / 最終観測・記録",
         f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
         f"  ゲーム内: {num('year')}年{num('month')}月（最終観測）",
+        f"  兵力: {num('soldiers')}名 / 停滞 {num('unchanged_seconds')}秒",
         f"  占領記録 {num('captured')}城（現在の城数ではない）",
-        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗",
-        f"  画面: {label('screen')} / {label('phase')}",
+        f"  保有: {_hanjuku_join(value.get('captured_names'))}",
+    ]
+    if value.get("home_lost") is True:
+        lines.append("  本拠: 失陥（記録）")
+    lost = row("lost_names")
+    if lost:
+        lines.append(f"  失った城: {_hanjuku_join(lost)}")
+    lines += [
+        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗 / 未分類 {num('unclassified')}",
+        f"  戦闘: 開始 {num('battles_started')} / 終了 {num('battles_finished')}"
+        f" / 切り札確定 {num('cards_confirmed')}",
+    ]
+    enemy_hp, ally_hp = value.get("enemy_hp"), value.get("ally_hp")
+    enemy_name, ally_name = label("enemy"), label("ally")
+    if (type(enemy_hp) is int and type(ally_hp) is int
+            and enemy_name != "不明" and ally_name != "不明"):
+        lines.append(f"  交戦HP: 敵 {enemy_hp}（{enemy_name}） / 我 {ally_hp}（{ally_name}）")
+    else:
+        lines.append("  交戦HP: 戦闘記録なし")
+    garrison = [g for g in row("garrison") if isinstance(g, dict)]
+    if garrison:
+        lines.append("  駐留: " + " / ".join(
+            f"{text(g.get('castle'), '?')}={_hanjuku_join([text(n, '?') for n in g.get('generals') or []], '?')}"
+            for g in garrison))
+    marching = [s for s in row("marching") if isinstance(s, dict)]
+    if marching:
+        lines.append("  行軍中: " + " / ".join(
+            f"{text(s.get('general'), '?')}→{text(s.get('target'), '未確定')}"
+            for s in marching))
+    eggs = [e for e in row("eggs") if isinstance(e, dict) and type(e.get("uses")) is int]
+    if eggs:
+        lines.append("  卵: " + " / ".join(
+            f"{text(e.get('general'), '?')} {e['uses']}回" for e in eggs))
+    lines += [
+        f"  出撃: 成立 {num('orders_launched')} / 失敗 {num('orders_failed')}",
+        f"  画面: {label('screen')} / {label('phase')}"
+        + (f" / 方針 {label('variant')}" if label("variant") != "不明" else ""),
         f"  計画段階: {label('chart_step')}（完了未確認）",
         f"  保留計画: {label('pending_plan')}",
-        f"  実入力: {num('actions')}回 / 観測 {num('age')}秒前",
-        "  将軍HP・卵状態: 未確認",
+        f"  実入力: {num('actions')}回 / 観測 {num('age')}秒前（{num('observations')}回）",
     ]
+    return lines
 
 
 def render_docich_corner_stats(corner):
@@ -3289,7 +3363,13 @@ def render_docich_corner_stats(corner):
         ]
         if corner.get("game") == "hanjuku-hero":
             lines += render_hanjuku_status(corner.get("hanjuku"))
-        lines += _corner_score_panels(score_values)
+        # Hanjuku is a scripted corner: it never appends to scores/<game>.jsonl
+        # (docich retro_corner waits for game over, not a scorelog target), so
+        # the score timeline/distribution panels stay empty forever.  The card
+        # above already carries this run's observed progress, so skip the empty
+        # panels instead of printing "no completed results yet" every refresh.
+        else:
+            lines += _corner_score_panels(score_values)
         ranking = corner.get("strategy_ranking") if isinstance(corner.get("strategy_ranking"), list) else []
         if ranking:
             top = ranking[:3]
@@ -3301,7 +3381,7 @@ def render_docich_corner_stats(corner):
                     if isinstance(row, dict)
                 )
             )
-        else:
+        elif corner.get("game") != "hanjuku-hero":
             lines.append("Strategy: no corner ranking data")
         return lines
 

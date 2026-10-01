@@ -424,6 +424,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
 .hanjuku-kpi { min-width: 0; }
 .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 16px; overflow-wrap: anywhere; }
 .hanjuku-status { margin-top: 8px; padding: 6px 8px; border-radius: 5px; background: #12324c; color: #bae6fd; font-size: 16px; font-weight: 900; }
+.hanjuku-duel { margin-top: 7px; padding: 5px 8px; border-radius: 5px; background: #3d1520; color: #fecdd3; font-size: 13px; font-weight: 800; }
 .hanjuku-note { margin-top: 6px; color: #a9bacb; font-size: 10px; line-height: 14px; }
 
 </style>
@@ -626,9 +627,17 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
     const castles = pick(/^占領記録 (\d+|不明)城/);
     const plan = pick(/^計画段階: (.{1,24})（完了未確認）$/);
     const pending = pick(/^保留計画: ([a-z_]+|不明)$/);
-    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前$/);
-    const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗$/);
-    const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)$/);
+    // The card lines carry extra observed fields after these prefixes; anchor on
+    // the leading group only so an added field cannot drop a parsed value.
+    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前/);
+    const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗/);
+    const duel = pick(/^交戦HP: 敵 (\d+)（([^）]*)） \/ 我 (\d+)（([^）]*)）$/);
+    const troops = pick(/^兵力: (\d+|不明)名 \/ 停滞 (\d+|不明)秒$/);
+    const holds = pick(/^保有: (.{1,40})$/);
+    const garrison = pick(/^駐留: (.{1,60})$/);
+    const marching = pick(/^行軍中: (.{1,60})$/);
+    const orders = pick(/^出撃: 成立 (\d+) \/ 失敗 (\d+)$/);
+    const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
     const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
     const chapter = number(values?.[1]);
     const age = now - Number(feed?.updatedAt || 0);
@@ -645,6 +654,14 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
       month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
       captured:fresh ? number(castles?.[1]) : null,
       actions:fresh ? number(inputs?.[1]) : null,
+      soldiers:fresh ? number(troops?.[1]) : null,
+      stalled:fresh ? number(troops?.[2]) : null,
+      holds:fresh ? (holds?.[1] || null) : null,
+      garrison:fresh ? (garrison?.[1] || null) : null,
+      marching:fresh ? (marching?.[1] || null) : null,
+      launched:fresh ? number(orders?.[1]) : null, failed:fresh ? number(orders?.[2]) : null,
+      enemyHp:fresh ? number(duel?.[1]) : null, enemy:fresh ? (duel?.[2] || null) : null,
+      allyHp:fresh ? number(duel?.[3]) : null, ally:fresh ? (duel?.[4] || null) : null,
       plan:fresh && plan?.[1] !== '不明' ? plan?.[1] : null,
       pending:fresh ? ({monthly:'月次処理', recall:'帰還', repair:'卵修理', sortie:'出撃'}[pending?.[1]] || null) : null,
       wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
@@ -675,12 +692,24 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
     }
     card.appendChild(kpis);
     card.appendChild(node('hanjuku-status', value.status));
+    if (value.enemyHp !== null) {
+      card.appendChild(node('hanjuku-duel',
+        `交戦 ${value.enemy} ${value.enemyHp} / ${value.ally} ${value.allyHp}`));
+    }
     const details = node('hanjuku-details');
     details.appendChild(node('hanjuku-castles', `占領の記録 ${shown(value.captured)}城（現在数ではありません）`));
+    if (value.holds) details.appendChild(node('hanjuku-holds', `保有 ${value.holds}`));
+    if (value.garrison) details.appendChild(node('hanjuku-garrison', `駐留 ${value.garrison}`));
+    if (value.marching) details.appendChild(node('hanjuku-marching', `行軍中 ${value.marching}`));
+    details.appendChild(node('hanjuku-troops',
+      `兵力 ${shown(value.soldiers)}名 / 停滞 ${shown(value.stalled)}秒`));
+    if (value.launched !== null) {
+      details.appendChild(node('hanjuku-orders', `出撃 成立 ${value.launched} / 失敗 ${value.failed}`));
+    }
     details.appendChild(node('hanjuku-plan', `計画 ${[value.pending, value.plan].filter(Boolean).join(' / ') || '未確認'}（完了未確認）`));
     details.appendChild(node('hanjuku-inputs', `実際に送った入力 ${shown(value.actions)}回`));
     card.appendChild(details);
-    card.appendChild(node('hanjuku-note', value.fresh ? '取得済み情報を表示 / 将軍HP・卵は未確認' : '観測が古いか取得できません / 数値は非表示'));
+    card.appendChild(node('hanjuku-note', value.fresh ? '記録済みの観測値を表示 / 未読の値は空欄' : '観測が古いか取得できません / 数値は非表示'));
     container.replaceChildren(card);
   }
   function renderFeed() {

@@ -318,7 +318,9 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIn('現在の城数ではない', rendered)
         self.assertIn('計画段階: F3（完了未確認）', rendered)
         self.assertIn('実入力: 7回', rendered)
-        self.assertIn('将軍HP・卵状態: 未確認', rendered)
+        # No live battle record in this fixture: say so instead of inventing HP.
+        self.assertIn('交戦HP: 戦闘記録なし', rendered)
+        self.assertNotIn('将軍HP', rendered)
 
     def test_month_and_pending_plan_are_observations_not_roster_counts(self):
         path = self.runtime / 'hanjuku_bot.json'
@@ -387,3 +389,143 @@ class HanjukuStatusTest(unittest.TestCase):
         text = sd.fit_dashboard_lines(sd.render_hanjuku_status(dict(availability='fresh', screen='\x1b[31mBAD\n' * 100)))
         self.assertNotIn('\x1b', '\n'.join(text))
         self.assertTrue(all(sd.ansi_display_width(line) <= sd.W for line in text))
+
+    def test_no_escape_fragment_survives_any_card_field(self):
+        # isprintable() rejects ESC but keeps the printable "[31m" behind it, so
+        # a per-character check would put a broken escape on the card. Cover
+        # every field the renderer reads, including the nested name rows.
+        esc = '\x1b[31m'
+        value = dict(
+            availability='fresh', chapter=2, gold=1,
+            variant=esc + 'EVIL\n' * 50, chart_step='X' * 200,
+            screen=esc + 'S\n', phase=esc + 'P\n', pending_plan=esc + 'N\n',
+            captured_names=[esc + '[2J', 'Y' * 90, 'ok'],
+            lost_names=[esc + '[9mZ'],
+            garrison=[{'castle': esc + 'X', 'generals': ['\x07bell', esc + 'OK']}],
+            marching=[{'general': esc + 'A', 'target': esc + '[2JB'}],
+            eggs=[{'general': esc + 'E', 'uses': 2}],
+            enemy=esc + 'EN', ally=esc + 'AL', enemy_hp=5, ally_hp=6)
+        text = '\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value)))
+        # '\n' is the card's own line separator, so check per line instead.
+        for fragment in ('\x1b', '\x07', '\r', '[31m', '[2J', '[1m', '[9m'):
+            self.assertNotIn(fragment, text, f'{fragment!r} leaked onto the card')
+        for line in text.split('\n'):
+            self.assertNotIn('\n', line)
+            self.assertTrue(sd.ansi_display_width(line) <= sd.W)
+
+    def test_snapshot_cleaner_drops_whole_escape_runs(self):
+        from lib.docich_corner_stats import _hanjuku_clean, _hanjuku_names
+        self.assertEqual(_hanjuku_clean('\x1b[31mEVIL\n'), 'EVIL')
+        self.assertEqual(_hanjuku_clean('\x1b]0;title\x07X'), 'X')
+        self.assertEqual(_hanjuku_clean('\x07\x08\x00only'), 'only')
+        self.assertEqual(_hanjuku_names(['\x1b[2J', 'plain', 'plain', '\x07b']), ['plain', 'b'])
+
+    def _policy(self, **extra):
+        data = json.loads((self.runtime / 'hanjuku_bot.json').read_text())
+        data['policy'].update(extra)
+        _write_json(self.runtime / 'hanjuku_bot.json', data)
+        return data
+
+    def test_observed_battle_hp_replaces_the_permanent_unknown_placeholder(self):
+        self._policy(battle={'enemy': ' dragon', 'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44})
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('交戦HP: 敵 31（dragon） / 我 44（ゼウス）', text)
+        # The old card ended on a permanent "将軍HP・卵状態: 未確認" line.
+        self.assertNotIn('将軍HP', text)
+        self.assertNotIn('交戦HP: 戦闘記録なし', text)
+
+    def test_partial_battle_record_never_prints_half_measured_hp(self):
+        cases = [
+            {'enemy': ' dragon', 'ally_hp': 44},
+            {'enemy': 'dragon', 'enemy_hp': 31, 'ally_hp': 44},
+            {'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44},
+        ]
+        for battle in cases:
+            with self.subTest(battle=battle):
+                self._policy(battle=battle)
+                text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+                self.assertIn('交戦HP: 戦闘記録なし', text)
+                self.assertNotIn('交戦HP: 敵', text)
+
+    def test_roster_line_names_observed_castles_and_lost_ones(self):
+        self._policy(captured=['カストーラ', '-travel'], lost=['ジョンリギ'], home_lost=False)
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('失った城: ジョンリギ', text)
+        self.assertNotIn('本拠: 失陥', text)
+        self._policy(home_lost=True)
+        self.assertIn('本拠: 失陥（記録）', '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku'])))
+
+    def test_marching_sortie_expires_with_the_policy_busy_window(self):
+        self._policy(tick=5000, sorties={'J3': {'general': 'どうし', 'target': 'ナキューメラ',
+                                                 'status': 'en_route', 'tick': 4990}})
+        result = self.snapshot()['hanjuku']
+        self.assertEqual(result['marching'], [{'general': 'どうし', 'target': 'ナキューメラ'}])
+        self.assertIn('行軍中: どうし→ナキューメラ', '\n'.join(sd.render_hanjuku_status(result)))
+        # One tick past the policy's own 400-observation busy window: no longer
+        # marching, so it must not be displayed as one.
+        self._policy(tick=5000 + 400, sorties={'J3': {'general': 'どうし', 'target': 'ナキューメラ',
+                                                      'status': 'en_route', 'tick': 4990}})
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertNotIn('行軍中', text)
+
+    def test_settled_and_unread_sorties_are_not_shown_as_marching(self):
+        self._policy(tick=5000, sorties={
+            'J3': {'general': 'ゼウス', 'status': 'arrived', 'tick': 4999},
+            'J4': {'general': 'ユイートル', 'target': 'X', 'status': 'launched_unconfirmed', 'tick': True},
+            'J5': {'target': 'Y', 'status': 'en_route', 'tick': 4999},
+            'J6': {'general': 'future', 'target': 'Z', 'status': 'en_route', 'tick': 5001},
+        })
+        self.assertEqual(self.snapshot()['hanjuku']['marching'], [])
+
+    def test_marching_without_a_confirmed_target_says_so_instead_of_inventing_one(self):
+        self._policy(tick=5000, sorties={'J4': {'general': 'ヴィーナス', 'status': 'en_route', 'tick': 4999}})
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('行軍中: ヴィーナス→未確定', text)
+
+    def test_garrison_and_eggs_are_bounded_observations(self):
+        self._policy(garrison={'アルマムーン': ['ゼウス', 'ユイートル'], '空': []},
+                     egg_uses={'ゼウス': 1, '不正': 'x', '範囲外': 9})
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('駐留: アルマムーン=ゼウス/ユイートル', text)
+        self.assertIn('卵: ゼウス 1回', text)
+        self.assertNotIn('範囲外', text)
+        self.assertNotIn('不正', text)
+
+    def test_unread_values_stay_unknown_rather_than_zero(self):
+        result = self.snapshot()['hanjuku']
+        text = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('兵力: 不明名', text)
+        self.assertIn('停滞 不明秒', text)
+        self.assertIn('戦闘: 開始 不明 / 終了 不明', text)
+        self.assertNotIn('開始 0', text)
+        self.assertNotIn('兵力: 0名', text)
+        self.assertIn('出撃: 成立 不明 / 失敗 不明', text)
+        self.assertNotIn('出撃: 成立 0 / 失敗 0', text)
+
+    def test_hanjuku_corner_omits_permanently_empty_score_and_ranking_lines(self):
+        rendered = sd.render_docich_corner_stats(self.snapshot())
+        text = '\n'.join(rendered)
+        self.assertNotIn('no completed results', text)
+        self.assertNotIn('no corner ranking data', text)
+        # The retro card header and the Hanjuku card itself stay in place.
+        self.assertIn('SOREN/CORNER: RETRO / hanjuku-hero', text)
+        self.assertIn('半熟英雄 / 最終観測・記録', text)
+
+    def test_other_retro_game_without_scores_keeps_empty_score_panel(self):
+        state = dict(self.state, game='ninvaders', bot_identity=None)
+        _write_json(self.root / 'retro_corner.json', state)
+        text = '\n'.join(sd.render_docich_corner_stats(load_active_corner(self.root)))
+        self.assertIn('Stats: no completed results yet', text)
+        self.assertIn('Strategy: no corner ranking data', text)
+
+    def test_other_retro_games_keep_their_score_and_ranking_lines(self):
+        state = dict(self.state, game='ninvaders', bot_identity=None)
+        _write_json(self.root / 'retro_corner.json', state)
+        log = self.root / 'scores/ninvaders.jsonl'
+        log.parent.mkdir(parents=True)
+        log.write_text('\n'.join(json.dumps({'ts': f'2026-10-01T0{i}:00:00+00:00',
+                                            'game': 'ninvaders', 'score': 100 + i})
+                                for i in range(4)), encoding='utf-8')
+        text = '\n'.join(sd.render_docich_corner_stats(load_active_corner(self.root)))
+        self.assertIn('Stats: 4 results', text)
+        self.assertIn('Strategy: no corner ranking data', text)
