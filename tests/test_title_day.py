@@ -52,10 +52,10 @@ esac
     def test_wrong_broadcaster_is_rejected(self):
         self.assertEqual(self.run_script('999').returncode, 3)
 
-    def test_body_updates_from_ops_brief(self):
+    def test_daily_tick_cannot_replace_game_body_from_ops_brief(self):
         r = self.run_script(memo='# memo\n- 新しい配信内容\n- 過去の内容\n')
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertRegex(r.stdout, r'^\[day\d+\] 新しい配信内容\n$')
+        self.assertRegex(r.stdout, r'^\[day\d+\] Keep Title intact\n$')
 
     def test_empty_memo_preserves_body(self):
         r = self.run_script(memo='# empty\n')

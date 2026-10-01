@@ -126,13 +126,7 @@ _log "current title: $CUR_TITLE"
 # --- [dayN] と本文を更新。旧ゲームprefix/day表記も正規形へ移行する。 ---
 NEW_TITLE="$(python3 - "$CUR_TITLE" "$N" "${OPS_BRIEF_FILE:-prompts/ops_brief.md}" <<'PY'
 import sys, re
-from pathlib import Path
 cur, n, memo = sys.argv[1:4]
-try:
-    activity = next((line.strip()[2:].strip() for line in Path(memo).read_text(encoding="utf-8").splitlines()
-                     if line.strip().startswith("- ") and line.strip()[2:].strip()), "")
-except (OSError, UnicodeError):
-    activity = ""
 
 body = cur.strip()
 # Current canonical form: [day187] body
@@ -151,15 +145,26 @@ else:
             body = (body[:match.start()] + " " + body[match.end():]).strip()
             body = " ".join(body.split())
 
-# Missing/empty memo cannot erase an existing title body. If the day marker was
+# The game-switch composer owns the body. The daily tick changes the day only.
+# If the day marker was
 # missing entirely, prefixing it here self-heals instead of skipping forever.
-suffix = " ".join((activity or body).split())
+suffix = " ".join(body.split())
 title = f"[day{n}]"
 if suffix:
     title += " " + suffix
 print(title[:140])
 PY
 )"
+
+# Reuse existing credentials only. Per-platform failure must never stop a game
+# switch or a successful Twitch update. The helper emits fixed status enums.
+_sync_other_titles() {
+    [ "$MODE" = "dryrun" ] && return 0
+    [ "$MODE" = "show" ] && return 0
+    [ "${CATEGORY_ONLY:-0}" = "1" ] && return 0
+    [ -f lib/stream_title_sync.py ] || return 0
+    printf '%s' "$NEW_TITLE" | python3 lib/stream_title_sync.py || true
+}
 
 if [ "$MODE" = "show" ]; then
 	_log "show only: would set -> $NEW_TITLE"
@@ -170,6 +175,7 @@ fi
 
 if [ "$NEW_TITLE" = "$CUR_TITLE" ] && [ "$MODE" != "force" ]; then
 	_log "title already current for day $N; no change needed"
+	_sync_other_titles
 	exit 0
 fi
 
@@ -190,6 +196,7 @@ HTTP_CODE="$(curl -s --max-time 15 -o /tmp/_stream_title_patch_resp.$$ -w '%{htt
 RESP="$(cat /tmp/_stream_title_patch_resp.$$ 2>/dev/null)"; rm -f /tmp/_stream_title_patch_resp.$$ 2>/dev/null
 if [ "$HTTP_CODE" = "204" ]; then
 	_log "OK: title updated -> $NEW_TITLE"
+	_sync_other_titles
 	exit 0
 fi
 _log "ERROR: PATCH failed (HTTP $HTTP_CODE): $(printf '%s' "$RESP" | head -c 300)"
