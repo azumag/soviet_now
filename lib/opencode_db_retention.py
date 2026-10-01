@@ -139,6 +139,37 @@ def write_result(path, result):
             os.unlink(name)
 
 
+def load_sparse_resume_offset(path):
+    """Resume only a previously verified window boundary from our result file."""
+    if not path or os.environ.get('OPENCODE_RETENTION_SPARSE_RECLAIM') != '1':
+        return 0
+    path = Path(path)
+    try:
+        st = path.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 4096:
+            return 0
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        with os.fdopen(fd, encoding='utf-8') as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_dev, opened.st_ino) != (st.st_dev, st.st_ino):
+                return 0
+            previous = json.loads(handle.read(4097))
+    except (OSError, ValueError):
+        return 0
+    if not isinstance(previous, dict) or previous.get('status') != 'deferred':
+        return 0
+    reason = previous.get('reason')
+    if reason == 'bounded_prune_committed':
+        if previous.get('compact_defer_reason') not in ('sparse_deadline', 'deadline'):
+            return 0
+    elif reason not in ('sparse_deadline', 'deadline'):
+        return 0
+    offset = previous.get('sparse_next_offset_bytes')
+    if type(offset) is not int or not 0 <= offset < 2 ** 63:
+        return 0
+    return offset
+
+
 class Budget:
     def __init__(self, path, reserve=RESERVE_BYTES, timeout=600):
         self.path = path
@@ -152,6 +183,7 @@ class Budget:
         self.deadline = time.monotonic() + timeout
         self.reason = None
         self.memory_root = None
+        self.sparse_start_offset = 0
 
     def check(self, extra=0):
         if time.monotonic() >= self.deadline:
@@ -336,7 +368,7 @@ def _dig_zero_window(fd, offset, size, check):
         offset += length
 
 
-def _sparse_reclaim(con, db, fd, budget, metrics):
+def _sparse_reclaim(con, db, fd, budget, metrics, start_offset=0):
     """Deallocate already-zero blocks, never change bytes or SQLite pages.
 
     fd stays open until AFTER the SQLite connection closes: closing any fd for
@@ -355,8 +387,14 @@ def _sparse_reclaim(con, db, fd, budget, metrics):
     if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
             or (path_stat.st_dev, path_stat.st_ino, path_stat.st_size) != identity):
         raise Deferred('sparse_identity_changed')
+    if (SPARSE_WINDOW_BYTES <= 0 or type(start_offset) is not int
+            or start_offset < 0 or start_offset >= before.st_size
+            or start_offset % SPARSE_WINDOW_BYTES):
+        start_offset = 0
     end = min(budget.deadline, time.monotonic() + SPARSE_TIMEOUT_SECONDS)
     metrics.update(stage='sparse_reclaim', sparse_scanned_bytes=0,
+                   sparse_start_offset_bytes=start_offset,
+                   sparse_next_offset_bytes=start_offset,
                    sparse_allocated_before_bytes=before.st_blocks * 512)
 
     def check():
@@ -377,14 +415,21 @@ def _sparse_reclaim(con, db, fd, budget, metrics):
         return hashed.digest()
 
     try:
-        for offset in range(0, before.st_size, SPARSE_WINDOW_BYTES):
+        offset = start_offset
+        scanned = 0
+        while scanned < before.st_size:
             size = min(SPARSE_WINDOW_BYTES, before.st_size - offset)
             original = digest(offset, size)
             check()
             _dig_zero_window(fd, offset, size, check)
             if original != digest(offset, size):
                 raise sqlite3.DatabaseError('sparse content mismatch')
-            metrics['sparse_scanned_bytes'] += size
+            scanned += size
+            metrics['sparse_scanned_bytes'] = scanned
+            offset += size
+            if offset >= before.st_size:
+                offset = 0
+            metrics['sparse_next_offset_bytes'] = offset
         after = os.fstat(fd)
         current = os.stat(db, follow_symlinks=False)
         if ((after.st_dev, after.st_ino, after.st_size) != identity
@@ -392,6 +437,7 @@ def _sparse_reclaim(con, db, fd, budget, metrics):
                 or current.st_nlink != 1):
             raise Deferred('sparse_identity_changed')
         metrics['sparse_complete'] = True
+        metrics['sparse_next_offset_bytes'] = 0
     finally:
         after = os.fstat(fd)
         metrics['sparse_allocated_after_bytes'] = after.st_blocks * 512
@@ -402,7 +448,7 @@ def _compact(con, db, budget, metrics, db_fd=None):
     if os.environ.get('OPENCODE_RETENTION_SPARSE_RECLAIM') == '1':
         if db_fd is None:
             raise Deferred('sparse_fd_required')
-        _sparse_reclaim(con, db, db_fd, budget, metrics)
+        _sparse_reclaim(con, db, db_fd, budget, metrics, start_offset=budget.sparse_start_offset)
         return
     pages = _pages(con)
     # VACUUM INTO writes only live pages: the freelist is not part of the
@@ -443,7 +489,7 @@ def _compact(con, db, budget, metrics, db_fd=None):
         _checkpoint(con)
 
 
-def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERVE_BYTES):
+def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERVE_BYTES, sparse_start_offset=0):
     metrics = metrics if metrics is not None else {}
     metrics.update(version=1, status='running', stage='preflight', deleted_sessions=0,
                    selected_sessions=0, prune_batches=0, skipped_batches=0, skipped_sessions=0,
@@ -458,6 +504,7 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
     con = None
     db_fd = None
     budget = Budget(db.parent, reserve)
+    budget.sparse_start_offset = sparse_start_offset
     try:
         if db.is_symlink() or not db.is_file() or db.stat().st_nlink != 1:
             raise ValueError('invalid_db')
@@ -687,8 +734,9 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     result = {}
     rc = 0
+    sparse_start_offset = load_sparse_resume_offset(args.result_file)
     try:
-        rotate(args.db, args.days, metrics=result)
+        rotate(args.db, args.days, metrics=result, sparse_start_offset=sparse_start_offset)
     except SystemExit as exc:
         rc = exc.code
     write_result(args.result_file, result)

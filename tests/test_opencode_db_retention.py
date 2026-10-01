@@ -1037,6 +1037,70 @@ class SparseReclaimTests(unittest.TestCase):
             self.assertNotIn('sparse_complete', metrics)
             self.assert_writer_blocked(db)
 
+    def test_resume_starts_after_prior_prefix_then_wraps_without_gap(self):
+        with self.fixture() as (db, fd, con, budget, metrics):
+            window = 256 * 1024
+            size = os.fstat(fd).st_size
+            self.assertGreater(size, window)
+            seen = []
+            real = retention._dig_zero_window
+
+            def record(current_fd, offset, length, check):
+                seen.append((offset, length))
+                return real(current_fd, offset, length, check)
+
+            with patch.object(retention, 'SPARSE_WINDOW_BYTES', window), \
+                    patch.object(retention, '_dig_zero_window', side_effect=record):
+                retention._sparse_reclaim(
+                    con, db, fd, budget, metrics, start_offset=window
+                )
+
+            self.assertEqual(seen[0][0], window)
+            self.assertIn(0, [offset for offset, _ in seen])
+            self.assertEqual(sum(length for _, length in seen), size)
+            self.assertEqual(metrics['sparse_start_offset_bytes'], window)
+            self.assertEqual(metrics['sparse_scanned_bytes'], size)
+            self.assertEqual(metrics['sparse_next_offset_bytes'], 0)
+            self.assertTrue(metrics['sparse_complete'])
+
+    def test_sparse_resume_offset_accepts_only_prior_deadline_progress(self):
+        with tempfile.TemporaryDirectory() as td:
+            result = Path(td) / 'retention.json'
+            with patch.dict(os.environ, OPENCODE_RETENTION_SPARSE_RECLAIM='1'):
+                result.write_text(json.dumps({
+                    'status': 'deferred',
+                    'reason': 'sparse_deadline',
+                    'sparse_next_offset_bytes': 3 * retention.SPARSE_WINDOW_BYTES,
+                }))
+                self.assertEqual(
+                    retention.load_sparse_resume_offset(result),
+                    3 * retention.SPARSE_WINDOW_BYTES,
+                )
+
+                result.write_text(json.dumps({
+                    'status': 'deferred',
+                    'reason': 'bounded_prune_committed',
+                    'compact_defer_reason': 'sparse_deadline',
+                    'sparse_next_offset_bytes': 4 * retention.SPARSE_WINDOW_BYTES,
+                }))
+                self.assertEqual(
+                    retention.load_sparse_resume_offset(result),
+                    4 * retention.SPARSE_WINDOW_BYTES,
+                )
+
+                for invalid in (
+                    {'status': 'completed', 'reason': 'ok',
+                     'sparse_next_offset_bytes': retention.SPARSE_WINDOW_BYTES},
+                    {'status': 'deferred', 'reason': 'sqlite_busy',
+                     'sparse_next_offset_bytes': retention.SPARSE_WINDOW_BYTES},
+                    {'status': 'deferred', 'reason': 'sparse_deadline',
+                     'sparse_next_offset_bytes': -1},
+                    {'status': 'deferred', 'reason': 'sparse_deadline',
+                     'sparse_next_offset_bytes': True},
+                ):
+                    result.write_text(json.dumps(invalid))
+                    self.assertEqual(retention.load_sparse_resume_offset(result), 0)
+
     def test_hardlink_is_rejected_before_tool(self):
         with self.fixture() as (db, fd, con, budget, metrics):
             os.link(db, db.parent / 'alias')
