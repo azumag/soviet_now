@@ -22,16 +22,27 @@ import threading
 RESERVE_BYTES = 1024 ** 3
 MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
 DEFERRED = 75
-PRUNE_WAL_LIMIT = 128 * 1024 ** 2
+# Kernel ceiling per guarded batch. The floor below (free space minus the
+# reserve) is what keeps a single batch from filling the filesystem, so this
+# only has to stay under that floor while covering realistic sessions: one
+# session's child rows can reach several hundred MB, and at 128 MiB a single
+# oversized session stalled the whole catch-up. Cap and floor are recomputed
+# per batch from current free space.
+PRUNE_WAL_LIMIT = 1024 ** 3
 PRUNE_BATCH_SESSIONS = 8
-# Bounded catch-up: at most this many guarded batches per invocation. Each
+# Bounded catch-up: at most this many committed batches per invocation. Each
 # batch is its own transaction with a freshly re-armed kernel ceiling and is
 # followed by a TRUNCATE checkpoint, so disk use stays bounded per batch while
 # the expired backlog is drained across hourly runs instead of eight per hour.
 CATCHUP_MAX_BATCHES = 64
+# After a batch hits the kernel ceiling it is retried one session per
+# transaction, so only the oversized session is excluded for this run instead
+# of the seven sessions next to it. Retries are bounded separately.
+CATCHUP_MAX_RETRIES = 64
 PRUNE_MIN_WAL_BYTES = 1024 ** 2
-# Covers WAL-index growth even with SQLite's minimum 512-byte page size
-# (128 MiB / 536 * 8 bytes), plus filesystem block rounding. Not user data.
+# Fixed filesystem-block rounding margin subtracted from the ceiling. The
+# WAL-index (frame table) additionally scales with the cap itself and is
+# reserved from the ceiling below, not from this margin.
 PRUNE_OVERHEAD_BYTES = 4 * 1024 ** 2
 CHILD_TABLES = ('todo', 'session_share', 'session_message', 'session_input', 'session_context_epoch')
 STATUSES = {'running', 'completed', 'gate_timeout', 'disabled', 'deferred', 'failed'}
@@ -191,14 +202,30 @@ def _delete_if_present(cur, statement):
             raise
 
 
-def _prune_batch(con, cutoff, limit, metrics):
-    """One atomic expired-session batch inside an open writer transaction."""
+def _prune_batch(con, cutoff, limit, metrics, out_ids=None, skipped=(), only_id=None):
+    """One atomic batch inside an open writer transaction.
+
+    out_ids receives the selected session ids before any delete runs, so an
+    IO failure can identify exactly which sessions were in flight. skipped is
+    excluded from a fresh selection and only_id retries one known session.
+    """
     con.execute('BEGIN IMMEDIATE')
     con.execute('drop table if exists old_sessions')
-    con.execute('create temp table old_sessions as select id from session where time_created < ? order by time_created, id limit ?',
-                (cutoff, limit))
+    sql = 'select id, time_created as created from session where time_created < ?'
+    args = [cutoff]
+    if only_id is not None:
+        sql += ' and id = ?'
+        args.append(only_id)
+    elif skipped:
+        sql += ' and id not in (%s)' % ','.join('?' * len(skipped))
+        args.extend(skipped)
+    sql += ' order by created, id limit ?'
+    args.append(limit)
+    con.execute('create temp table old_sessions as ' + sql, args)
     selected = con.execute('select count(*) from old_sessions').fetchone()[0]
     metrics['selected_sessions'] = metrics.get('selected_sessions', 0) + selected
+    if out_ids is not None:
+        out_ids[:] = [row[0] for row in con.execute('select id from old_sessions order by created, id')]
     for table in CHILD_TABLES:
         _delete_if_present(con, 'delete from %s where session_id in (select id from old_sessions)' % table)
     for table, column in (('event', 'aggregate_id'), ('event_sequence', 'aggregate_id'), ('part', 'session_id'), ('message', 'session_id')):
@@ -206,6 +233,7 @@ def _prune_batch(con, cutoff, limit, metrics):
     con.execute('delete from session where id in (select id from old_sessions)')
     con.execute('COMMIT')
     metrics['deleted_sessions'] += selected
+    return selected
 
 
 @contextmanager
@@ -223,6 +251,10 @@ def _bounded_wal(con, db, budget, metrics):
     previous_signal = signal.getsignal(signal.SIGXFSZ)
     auto = con.execute('PRAGMA wal_autocheckpoint').fetchone()[0]
     cap = min(PRUNE_WAL_LIMIT, available_bytes(db.parent) - budget.reserve - PRUNE_OVERHEAD_BYTES)
+    # The WAL-index (frame table) is a separate file the kernel ceiling does
+    # not cover. Worst case ~8 bytes per 512-byte page: reserve cap / 64 of it
+    # inside the ceiling so WAL plus index stay inside the free-space margin.
+    cap = max(0, cap - cap // 64)
     for value in previous_limit:
         if value != resource.RLIM_INFINITY:
             cap = min(cap, value)
@@ -245,8 +277,12 @@ def _bounded_wal(con, db, budget, metrics):
         code = (getattr(exc, 'sqlite_errorcode', 0) or 0) & 255
         if installed and code in (sqlite3.SQLITE_IOERR, sqlite3.SQLITE_FULL):
             # Do not mistake an arbitrary I/O error for proof the cap was hit.
+            # Keep the fixed error codes: they distinguish the ceiling from a
+            # real filesystem fault without forwarding exception text.
             metrics.update(bounded_prune_blocked=True,
-                           recovery_action='inspect_io_or_add_capacity')
+                           recovery_action='inspect_io_or_add_capacity',
+                           sqlite_error_code=code,
+                           sqlite_extended_error_code=getattr(exc, 'sqlite_errorcode', 0) or 0)
             raise Deferred('bounded_prune_io_error') from None
         raise
     finally:
@@ -300,6 +336,7 @@ def _compact(con, db, budget, metrics):
 def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERVE_BYTES):
     metrics = metrics if metrics is not None else {}
     metrics.update(version=1, status='running', stage='preflight', deleted_sessions=0,
+                   selected_sessions=0, prune_batches=0, skipped_batches=0, skipped_sessions=0,
                    started_at=int(time.time()), retention_days=days, preflight_phase='input')
     # A caller may reuse its metrics dictionary after a previous busy attempt.
     metrics.pop('sqlite_error_code', None)
@@ -367,17 +404,60 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                     # checkpoint between batches is also what the next guard
                     # requires. The deadline and free-space checks still bound
                     # one invocation; the remainder continues next hour.
-                    for _batch in range(CATCHUP_MAX_BATCHES):
-                        remaining = old - metrics['deleted_sessions']
-                        if remaining <= 0:
-                            break
+                    # A batch that hits the kernel ceiling is rolled back and
+                    # retried one session per transaction, so only the
+                    # oversized session is excluded (skipped_ids) for this run.
+                    skipped_ids = []
+                    retry_ids = []
+                    batch_ids = []
+                    batches = 0
+                    retries = 0
+                    while True:
+                        only_id = None
+                        if retry_ids:
+                            if retries >= CATCHUP_MAX_RETRIES:
+                                break
+                            only_id = retry_ids.pop(0)
+                            retries += 1
+                        else:
+                            if batches >= CATCHUP_MAX_BATCHES:
+                                break
+                            if old - metrics['deleted_sessions'] <= 0:
+                                break
                         budget.check()
-                        with _bounded_wal(con, db, budget, metrics):
-                            _prune_batch(con, cutoff, min(PRUNE_BATCH_SESSIONS, remaining), metrics)
-                        metrics['prune_batches'] = _batch + 1
-                        # Limits and auto-checkpoint are restored before this
-                        # checkpoint; an empty WAL follows for the next guard.
-                        _checkpoint(con)
+                        batch_ids.clear()
+                        try:
+                            with _bounded_wal(con, db, budget, metrics):
+                                selected = _prune_batch(
+                                    con, cutoff,
+                                    1 if only_id else min(PRUNE_BATCH_SESSIONS,
+                                                          old - metrics['deleted_sessions']),
+                                    metrics, batch_ids, skipped_ids, only_id)
+                            if not selected:
+                                # Every remaining eligible session is excluded.
+                                break
+                            batches += 1
+                            metrics['prune_batches'] = batches
+                            # Limits and auto-checkpoint are restored before this
+                            # checkpoint; an empty WAL follows for the next guard.
+                            _checkpoint(con)
+                        except (sqlite3.Error, Deferred) as exc:
+                            if con.in_transaction:
+                                con.execute('ROLLBACK')
+                            if (isinstance(exc, Deferred) and str(exc) == 'bounded_prune_io_error'
+                                    and batch_ids):
+                                metrics['skipped_batches'] = metrics.get('skipped_batches', 0) + 1
+                                if len(batch_ids) == 1:
+                                    metrics['skipped_sessions'] = metrics.get('skipped_sessions', 0) + 1
+                                    skipped_ids.extend(batch_ids)
+                                else:
+                                    retry_ids.extend(batch_ids)
+                                # The rolled-back attempt still left its
+                                # uncommitted frames in the WAL file; the next
+                                # guard requires an empty one.
+                                _checkpoint(con)
+                                continue
+                            raise
                 else:
                     _prune_batch(con, cutoff, -1, metrics)
                     _checkpoint(con)
@@ -390,16 +470,22 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
             _checkpoint(con)
         if bounded:
             remaining = old - metrics['deleted_sessions']
+            skipped = metrics.get('skipped_sessions', 0)
             metrics.update(_pages(con))
             metrics['remaining_sessions'] = remaining
-            if remaining > 0:
+            blocked_only = not metrics['deleted_sessions'] and skipped
+            if remaining > skipped or blocked_only:
+                # Not swept (batch/retry cap) or every eligible session is a
+                # known oversized blocker: no compaction claim either way.
+                if blocked_only:
+                    raise Deferred('bounded_prune_io_error')
                 metrics['stage'] = 'compact_deferred'
                 raise Deferred('bounded_prune_committed')
             if metrics['freelist_count']:
-                # Catch-up finished: hand the freed pages back to the
-                # filesystem. Fail-closed: an unfittable copy keeps the
-                # committed-prune outcome and records only fixed enums for
-                # the missed attempt.
+                # Catch-up finished (only known-oversized sessions may remain
+                # skipped): hand the freed pages back to the filesystem.
+                # Fail-closed: an unfittable copy keeps the committed-prune
+                # outcome and records only fixed enums for the missed attempt.
                 try:
                     _compact(con, db, budget, metrics)
                 except Deferred as exc:
