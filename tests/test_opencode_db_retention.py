@@ -164,6 +164,68 @@ class RetentionSpaceSafetyTests(OpencodeDbRetentionTests):
             self.assertEqual(con.execute('select length(payload) from part').fetchone(), (1048576,))
             con.close()
 
+    def test_partial_batch_failure_refreshes_post_commit_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / 'opencode.db'
+            self.make_db(db)
+            con = sqlite3.connect(db)
+            con.execute('PRAGMA journal_mode=WAL')
+            now = int(time.time() * 1000)
+            for n in range(12):
+                con.execute(
+                    'insert into session values (?,?)',
+                    (f'old-extra-{n}', now - 10 * 86400000),
+                )
+            con.commit()
+            con.close()
+
+            metrics = {}
+            real_wal_budget = retention._wal_budget
+            wal_calls = {'n': 0}
+
+            def force_bounded(pages):
+                wal_calls['n'] += 1
+                if wal_calls['n'] == 1:
+                    return 10**15
+                return real_wal_budget(pages)
+
+            real_checkpoint = retention._checkpoint
+            injected = {'hit': False}
+
+            def fail_after_first_commit(connection):
+                if (
+                    metrics.get('deleted_sessions') == retention.PRUNE_BATCH_SESSIONS
+                    and metrics.get('prune_batches') == 1
+                ):
+                    injected['hit'] = True
+                    raise sqlite3.OperationalError('synthetic checkpoint failure')
+                return real_checkpoint(connection)
+
+            with patch.object(retention, '_wal_budget', force_bounded), \
+                 patch.object(retention, '_checkpoint', fail_after_first_commit):
+                with self.assertRaises(SystemExit) as raised:
+                    retention.rotate(str(db), 3, metrics=metrics)
+
+            self.assertTrue(injected['hit'])
+            self.assertIn(raised.exception.code, (1, retention.DEFERRED))
+            self.assertEqual(metrics['deleted_sessions'], retention.PRUNE_BATCH_SESSIONS)
+            self.assertEqual(metrics['remaining_sessions'], 5)
+            self.assertIn(metrics['status'], ('failed', 'deferred'))
+
+            con = sqlite3.connect(db)
+            cutoff = int(time.time() * 1000) - 3 * 86400000
+            self.assertEqual(
+                con.execute(
+                    'select count(*) from session where time_created < ?', (cutoff,)
+                ).fetchone(),
+                (5,),
+            )
+            self.assertEqual(con.execute('pragma integrity_check').fetchone(), ('ok',))
+            pages = retention._pages(con)
+            con.close()
+            for key in ('page_size', 'page_count', 'freelist_count'):
+                self.assertEqual(metrics[key], pages[key])
+
     def test_failed_copy_preserves_committed_prune(self):
         with tempfile.TemporaryDirectory() as td:
             db=Path(td)/'opencode.db';self.make_large_wal_db(db);metrics={}
