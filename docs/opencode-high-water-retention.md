@@ -176,3 +176,55 @@ cause. The Python image dispatch rejects OpenCode image requests and screen
 reply strips images before its fallback, weakening direct-screen-image storage
 through that route. Other routes and historical/base64 text remain unverified.
 No provider/dispatcher change is included here.
+
+## Opt-in byte-preserving sparse reclaim
+
+`OPENCODE_RETENTION_SPARSE_RECLAIM=1` selects a Linux-only alternative to
+VACUUM copy/writeback after pruning. It does not change retention eligibility,
+delete any additional row, shrink the logical file, or rearrange SQLite pages.
+The normal path is unchanged unless the fixed deployment helper enables it.
+
+With the producer gate and SQLite EXCLUSIVE connection still held, first
+checkpoint/TRUNCATE the WAL, then invoke installed util-linux
+`/usr/bin/fallocate --dig-holes` on the anchored database descriptor. This
+operation inspects existing bytes and deallocates only all-zero filesystem
+blocks. It must never be replaced by unqualified punch-hole or zero-range.
+No temporary database, copy-back WAL or volume expansion is required.
+
+- Work in 64 MiB windows, hash every byte before and after each window, and
+  require equality. The complete pass has a 90-second limit, additionally
+  constrained by the original invocation deadline and reserve checks.
+- Open the database with O_NOFOLLOW, require a regular single-link inode and
+  check identity/size against the live path. Keep this extra descriptor open
+  until AFTER closing SQLite: closing it earlier could drop this process's
+  POSIX SQLite locks. Child tools inherit only this explicit extra descriptor.
+- Reap/kill an interrupted or timed-out tool before releasing the connection.
+  A partially completed dig-holes pass remains byte preserving, but is not
+  reported as complete. Unsupported filesystems/tools defer/fail rather than
+  trying a destructive fallback. No stderr, payload, hashes or paths are
+  copied into diagnostic status.
+- Success reports stage `sparse_reclaimed`, `sparse_complete=true`,
+  `sparse_scanned_bytes`, allocated bytes before/after and
+  `sparse_reclaimed_bytes`. Logical size, page_count and freelist_count can
+  remain unchanged; measure allocation/df separately. Completion with zero
+  reclaimed bytes is possible and is not a resolution of storage pressure.
+- Only already-zero space can be reclaimed. secure_delete OFF may leave
+  nonzero old contents with little or no benefit. This mode does not erase
+  such bytes, change secure_delete or parse SQLite freelist structures.
+- An interrupted pass starts again from the beginning on the next existing
+  timer invocation. There is no new timer or automatic retry loop. If a full
+  pass cannot fit 90 seconds, report the partial scan rather than claim full
+  coverage. I/O and hashing cost are bounded by that observation deadline;
+  blocked kernel I/O, like existing SQLite operations, can delay exit.
+
+Root Linux synthetic tests cover complete-file SHA/rows/inode/size integrity,
+actual allocation reduction with secure_delete ON, nonzero free pages with
+secure_delete OFF, a separate-process noncooperative SQLite writer before AND
+after reclamation, child failure, real timeout/reaping, signal-style
+interruption, hardlink/path replacement rejection, and the opt-in rotate path.
+Production physical recovery remains unverified until a deployed invocation
+reports allocation and filesystem availability. Sparse reclaim does not
+resolve the separate producer-growth attribution issue.
+
+References: [util-linux fallocate](https://kernel.googlesource.com/pub/scm/utils/util-linux/util-linux/+/refs/tags/v2.41.1/sys-utils/fallocate.1.adoc),
+[Linux fallocate(2)](https://man7.org/linux/man-pages/man2/fallocate.2.html).
