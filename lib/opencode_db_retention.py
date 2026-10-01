@@ -18,6 +18,9 @@ import sys
 import tempfile
 import time
 import threading
+import hashlib
+import stat
+import ctypes
 
 RESERVE_BYTES = 1024 ** 3
 MEMORY_RESERVE_BYTES = 4 * 1024 ** 3
@@ -44,6 +47,8 @@ PRUNE_MIN_WAL_BYTES = 1024 ** 2
 # WAL-index (frame table) additionally scales with the cap itself and is
 # reserved from the ceiling below, not from this margin.
 PRUNE_OVERHEAD_BYTES = 4 * 1024 ** 2
+SPARSE_WINDOW_BYTES = 64 * 1024 ** 2
+SPARSE_TIMEOUT_SECONDS = 90
 CHILD_TABLES = ('todo', 'session_share', 'session_message', 'session_input', 'session_context_epoch')
 STATUSES = {'running', 'completed', 'gate_timeout', 'disabled', 'deferred', 'failed'}
 # Additive, fixed diagnostics only: never SQL, exception text or DB content.
@@ -293,7 +298,112 @@ def _bounded_wal(con, db, budget, metrics):
         con.execute('PRAGMA wal_autocheckpoint=%d' % auto)
 
 
-def _compact(con, db, budget, metrics):
+def _dig_zero_window(fd, offset, size, check):
+    """Punch ONLY full filesystem blocks just read as zero under SQLite lock.
+
+    Use the syscall in this process, not a child utility: even SIGKILL cannot
+    release our SQLite locks while a surviving child is still punching holes.
+    Kernel I/O completes before this process exits and releases its locks.
+    """
+    block = os.fstatvfs(fd).f_bsize
+    if block <= 0 or offset % block:
+        raise Deferred('sparse_alignment')
+    libc = ctypes.CDLL(None, use_errno=True)
+    punch = libc.fallocate
+    punch.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_longlong, ctypes.c_longlong)
+    punch.restype = ctypes.c_int
+    zero = bytes(block)
+    finish = offset + size
+    while offset + block <= finish:
+        check()
+        length = min(max(block, 1024 ** 2 // block * block), finish - offset)
+        length -= length % block
+        data = os.pread(fd, length, offset)
+        if len(data) != length:
+            raise Deferred('sparse_identity_changed')
+        start = None
+        for pos in range(0, length + block, block):
+            is_zero = pos < length and data[pos:pos + block] == zero
+            if is_zero and start is None:
+                start = pos
+            elif not is_zero and start is not None:
+                check()
+                # Linux FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE. The entire
+                # aligned interval was just verified zero; never blanket-punch.
+                if punch(fd, 3, offset + start, pos - start) != 0:
+                    raise Deferred('sparse_filesystem_unsupported')
+                start = None
+        offset += length
+
+
+def _sparse_reclaim(con, db, fd, budget, metrics):
+    """Deallocate already-zero blocks, never change bytes or SQLite pages.
+
+    fd stays open until AFTER the SQLite connection closes: closing any fd for
+    this inode in this process could release SQLite's POSIX advisory locks.
+    The caller retains both its writer gate and SQLite EXCLUSIVE lock.
+    """
+    if (sys.platform != 'linux' or con.in_transaction
+            or threading.active_count() != 1):
+        raise Deferred('sparse_unsupported')
+    if con.execute('PRAGMA locking_mode').fetchone()[0] != 'exclusive':
+        raise Deferred('sparse_lock_required')
+    _checkpoint(con)
+    before = os.fstat(fd)
+    path_stat = os.stat(db, follow_symlinks=False)
+    identity = (before.st_dev, before.st_ino, before.st_size)
+    if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+            or (path_stat.st_dev, path_stat.st_ino, path_stat.st_size) != identity):
+        raise Deferred('sparse_identity_changed')
+    end = min(budget.deadline, time.monotonic() + SPARSE_TIMEOUT_SECONDS)
+    metrics.update(stage='sparse_reclaim', sparse_scanned_bytes=0,
+                   sparse_allocated_before_bytes=before.st_blocks * 512)
+
+    def check():
+        budget.check()
+        if time.monotonic() >= end:
+            raise Deferred('sparse_deadline')
+
+    def digest(offset, size):
+        hashed = hashlib.sha256()
+        while size:
+            check()
+            data = os.pread(fd, min(size, 1024 ** 2), offset)
+            if not data:
+                raise Deferred('sparse_identity_changed')
+            hashed.update(data)
+            offset += len(data)
+            size -= len(data)
+        return hashed.digest()
+
+    try:
+        for offset in range(0, before.st_size, SPARSE_WINDOW_BYTES):
+            size = min(SPARSE_WINDOW_BYTES, before.st_size - offset)
+            original = digest(offset, size)
+            check()
+            _dig_zero_window(fd, offset, size, check)
+            if original != digest(offset, size):
+                raise sqlite3.DatabaseError('sparse content mismatch')
+            metrics['sparse_scanned_bytes'] += size
+        after = os.fstat(fd)
+        current = os.stat(db, follow_symlinks=False)
+        if ((after.st_dev, after.st_ino, after.st_size) != identity
+                or (current.st_dev, current.st_ino, current.st_size) != identity
+                or current.st_nlink != 1):
+            raise Deferred('sparse_identity_changed')
+        metrics['sparse_complete'] = True
+    finally:
+        after = os.fstat(fd)
+        metrics['sparse_allocated_after_bytes'] = after.st_blocks * 512
+        metrics['sparse_reclaimed_bytes'] = max(0, (before.st_blocks - after.st_blocks) * 512)
+
+
+def _compact(con, db, budget, metrics, db_fd=None):
+    if os.environ.get('OPENCODE_RETENTION_SPARSE_RECLAIM') == '1':
+        if db_fd is None:
+            raise Deferred('sparse_fd_required')
+        _sparse_reclaim(con, db, db_fd, budget, metrics)
+        return
     pages = _pages(con)
     # VACUUM INTO writes only live pages: the freelist is not part of the
     # output image, so budget the copy from live bytes instead of page_count.
@@ -341,14 +451,20 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
     # A caller may reuse its metrics dictionary after a previous busy attempt.
     metrics.pop('sqlite_error_code', None)
     metrics.pop('sqlite_extended_error_code', None)
+    for key in tuple(metrics):
+        if key.startswith('sparse_'):
+            metrics.pop(key)
     db = Path(db_path).absolute()
     con = None
+    db_fd = None
     budget = Budget(db.parent, reserve)
     try:
         if db.is_symlink() or not db.is_file() or db.stat().st_nlink != 1:
             raise ValueError('invalid_db')
         if not 1 <= days <= 365:
             raise ValueError('invalid_days')
+        if os.environ.get('OPENCODE_RETENTION_SPARSE_RECLAIM') == '1':
+            db_fd = os.open(db, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
         metrics['before_bytes'] = db.stat().st_size
         metrics['available_before_bytes'] = available_bytes(db.parent)
         metrics['preflight_phase'] = 'budget'
@@ -487,15 +603,15 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                 # Fail-closed: an unfittable copy keeps the committed-prune
                 # outcome and records only fixed enums for the missed attempt.
                 try:
-                    _compact(con, db, budget, metrics)
+                    _compact(con, db, budget, metrics, db_fd)
                 except Deferred as exc:
                     metrics['compact_defer_reason'] = budget.reason or str(exc)
                     metrics['stage'] = 'compact_deferred'
                     raise Deferred('bounded_prune_committed') from None
             # Without a freelist there is no outstanding compaction to preserve.
-        if _pages(con)['freelist_count']:
+        if _pages(con)['freelist_count'] and not metrics.get('sparse_complete'):
             if mode == 'wal':
-                _compact(con, db, budget, metrics)
+                _compact(con, db, budget, metrics, db_fd)
             else:
                 # Legacy rollback-journal DBs use the documented 2x bound.
                 p = _pages(con)
@@ -504,6 +620,8 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                 con.execute('VACUUM')
         metrics.update(_pages(con))
         metrics.update(status='completed', stage='done', reason='ok')
+        if metrics.get('sparse_complete'):
+            metrics['stage'] = 'sparse_reclaimed'
         return old
     except Deferred as exc:
         metrics.update(status='deferred', reason=str(exc))
@@ -527,6 +645,8 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
         if con is not None:
             con.set_progress_handler(None, 0)
             con.close()
+        if db_fd is not None:
+            os.close(db_fd)
         metrics['completed_at'] = int(time.time())
         try:
             metrics['after_bytes'] = db.stat().st_size
