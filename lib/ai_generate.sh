@@ -976,7 +976,10 @@ _ai_call_claude_unqueued() {
 	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] claude timeout (${timeout_sec}s, model=$model)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトはレート制限の証拠ではない (2026-10-02 実測)。
+		# rc=124 では stderr に 429 相当の文言が残っていても、応答が
+		# 返っていないので bench の根拠にできない。下の rc!=0 分岐が
+		# 明示的なレート制限だけを拾う。
 		return 1
 	fi
 	if [ "$provider_error" = "true" ]; then
@@ -1020,7 +1023,7 @@ _ai_call_ollama_unqueued() {
 	if [ $rc -eq 124 ]; then
 		log "[${label}] ollama timeout (${timeout_sec}s, model=$model)" >&2
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1093,7 +1096,7 @@ PY
 	if [ $rc -eq 124 ]; then
 		log "[${label}] local LLM timeout (${timeout_sec}s, model=$model)" >&2
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1257,7 +1260,9 @@ _ai_call_opencode_unqueued() {
 		log "[${label}] opencode timeout (${timeout_sec}s, model=$model)" >&2
 		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file" "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
+		# opencode は上流 429 を出したまま内部リトライで 30s を超えることがあり、
+		# stderr の 429 を根拠にすると生きているモデルを 18000s bench した。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1375,7 +1380,7 @@ _ai_call_codex_unqueued() {
 		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
