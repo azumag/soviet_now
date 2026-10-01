@@ -385,6 +385,20 @@ def rotate(db_path, days, busy_timeout_ms=30000, *, metrics=None, reserve=RESERV
                 con.set_progress_handler(None, 0)
                 if con.in_transaction:
                     con.execute('ROLLBACK')
+                if bounded and metrics.get('deleted_sessions', 0):
+                    # Earlier batches are already committed. Refresh the
+                    # post-rollback bounded state so diagnostics never expose
+                    # preflight page counters as if they described the partial
+                    # commit. If the connection is no longer readable, omit
+                    # those counters rather than publishing stale values.
+                    metrics['remaining_sessions'] = max(
+                        0, old - metrics['deleted_sessions']
+                    )
+                    try:
+                        metrics.update(_pages(con))
+                    except sqlite3.Error:
+                        for key in ('page_size', 'page_count', 'freelist_count'):
+                            metrics.pop(key, None)
                 raise
         else:
             _checkpoint(con)
