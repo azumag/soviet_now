@@ -1,10 +1,10 @@
 name: Title day update
 on:
   pull_request:
-    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'lib/stream_title_public.py', 'tools/build_ops_brief.sh', 'prompts/viewer_title.md', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'tests/test_stream_title_public.py', 'tests/test_build_ops_brief.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
   push:
     branches: [main]
-    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'deploy/title-day/**', '.github/workflows/title-day.yml']
+    paths: ['update_stream_title_day.sh', 'update_stream_game.sh', 'lib/stream_title_public.py', 'tools/build_ops_brief.sh', 'prompts/viewer_title.md', 'tests/test_title_day.py', 'tests/test_update_stream_game.sh', 'tests/test_stream_title_public.py', 'tests/test_build_ops_brief.py', 'deploy/title-day/**', '.github/workflows/title-day.yml']
 permissions:
   contents: read
 jobs:
@@ -14,6 +14,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: python3 -m unittest tests.test_title_day
+      - run: python3 -m unittest tests.test_title_day tests.test_stream_title_public tests.test_build_ops_brief
       - run: bash tests/test_update_stream_game.sh
-      - run: bash -n update_stream_title_day.sh update_stream_game.sh tests/test_update_stream_game.sh
+      - run: bash -n update_stream_title_day.sh update_stream_game.sh tools/build_ops_brief.sh tests/test_update_stream_game.sh
+      - run: python3 -m py_compile lib/stream_title_public.py

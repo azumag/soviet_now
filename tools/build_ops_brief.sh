@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # tools/build_ops_brief.sh - handoff.md の最新セクション見出しから
-#   prompts/ops_brief.md（コメント返しプロンプトへ埋め込む「直近の裏側の改修」メモ）を生成する。
+#   prompts/ops_brief.md（コメント返し用の内部運用メモ）と、
+#   prompts/viewer_title.md（明示された視聴者向け配信タイトル候補）を生成する。
 #
 # コメント返しプロンプトは肥大させたくないので、ここでは見出しの topic 部分だけを
 # 数行・各行短く切り出す。本文や hash・ファイル名は入れない。
@@ -42,8 +43,9 @@ fi
 
 items="${2:-3}"
 out="prompts/ops_brief.md"
+viewer_out="prompts/viewer_title.md"
 
-python3 - "$src" "$items" "$out" <<'PY'
+python3 - "$src" "$items" "$out" "$viewer_out" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -54,6 +56,7 @@ try:
 except Exception:
     items = 3
 out = Path(sys.argv[3])
+viewer_out = Path(sys.argv[4])
 
 # 見出し例: "## 2026-08-26 21:2x-21:5x JST — 同じニュースを1日4回読み上げた問題を修正"
 # 日付/時刻の前置きは視聴者向けに不要なので落とし、topic 部分だけを残す。
@@ -62,8 +65,9 @@ LEAD_DASH = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\s.*?[—–]\s*")
 # 見出しに全角ダッシュが無い場合の保険: 日付〜JST までを落とす。
 LEAD_PLAIN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[0-9:x\s\-]*(?:JST)?\s*")
 
+raw_lines = src.read_text(encoding="utf-8", errors="ignore").splitlines()
 topics = []
-for raw in src.read_text(encoding="utf-8", errors="ignore").splitlines():
+for raw in raw_lines:
     m = HEAD.match(raw.strip())
     if not m:
         continue
@@ -92,4 +96,37 @@ out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"{out}: {len(topics)} 件")
 for t in topics:
     print(f"  - {t}")
+
+# 公開タイトルは内部見出しから推測しない。最新セクションに開発担当が
+# 明示した viewer_title / 視聴者向けタイトル だけを候補として抽出する。
+VIEWER = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:viewer_title|視聴者向けタイトル)\s*[:：]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+latest_section = []
+seen_latest = False
+for raw in raw_lines:
+    if HEAD.match(raw.strip()):
+        if seen_latest:
+            break
+        seen_latest = True
+        continue
+    if seen_latest:
+        latest_section.append(raw)
+
+viewer_title = ""
+for raw in latest_section:
+    m = VIEWER.match(raw.strip())
+    if not m:
+        continue
+    viewer_title = re.sub(r"\s+", " ", m.group(1)).strip()
+    break
+
+viewer_lines = [
+    "# 視聴者向け配信タイトル (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)"
+]
+if viewer_title:
+    viewer_lines.append(f"- {viewer_title}")
+viewer_out.write_text("\n".join(viewer_lines) + "\n", encoding="utf-8")
+print(f"{viewer_out}: {'1 件' if viewer_title else '候補なし'}")
 PY

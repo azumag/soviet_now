@@ -1,5 +1,5 @@
 #!/bin/bash
-# update_stream_title_day.sh - 配信タイトルのDAYと運用メモ由来の本文を更新する。
+# update_stream_title_day.sh - 配信タイトルのDAYと視聴者向け本文を更新する。
 #
 # "[dayN]" の N を、基準日 (day 1) からの経過日数で毎日算出し、
 # Twitch チャンネルタイトルを Helix API (PATCH /helix/channels) で更新する。
@@ -21,6 +21,8 @@
 # 任意:
 #   STREAM_DAY_EPOCH        : day 1 の日付 (YYYY-MM-DD)。既定 2026-03-14
 #   STREAM_DAY_TZ           : 日付判定のタイムゾーン。既定 Asia/Tokyo
+#   STREAM_VIEWER_TITLE_FILE : 明示的な視聴者向けタイトル候補。既定 prompts/viewer_title.md
+#   STREAM_TITLE_PUBLIC_FALLBACK : 候補も安全な現タイトルも無い場合の一般向け本文
 #
 # 終了コード: 0=更新済/変化なし, 3=トークン/スコープ不足,
 #            4=API エラー, 1=設定不足
@@ -123,43 +125,26 @@ if [ -z "$CUR_TITLE" ]; then
 fi
 _log "current title: $CUR_TITLE"
 
-# --- [dayN] と本文を更新。旧ゲームprefix/day表記も正規形へ移行する。 ---
-NEW_TITLE="$(python3 - "$CUR_TITLE" "$N" "${OPS_BRIEF_FILE:-prompts/ops_brief.md}" <<'PY'
-import sys, re
-from pathlib import Path
-cur, n, memo = sys.argv[1:4]
-try:
-    activity = next((line.strip()[2:].strip() for line in Path(memo).read_text(encoding="utf-8").splitlines()
-                     if line.strip().startswith("- ") and line.strip()[2:].strip()), "")
-except (OSError, UnicodeError):
-    activity = ""
+# --- [dayN] と視聴者向け本文を更新。内部運用メモは公開タイトルへ流さない。 ---
+TITLE_HELPER="${STREAM_TITLE_HELPER:-lib/stream_title_public.py}"
+VIEWER_TITLE_FILE="${STREAM_VIEWER_TITLE_FILE:-prompts/viewer_title.md}"
+PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュース・会話に挑戦する実験配信}"
+[ -f "$TITLE_HELPER" ] || { _log "ERROR: public title helper not found: $TITLE_HELPER"; exit 1; }
 
-body = cur.strip()
-# Current canonical form: [day187] body
-match = re.match(r'(?i)^\s*\[\s*day\s*\d+\s*\]\s*', body)
-if match:
-    body = body[match.end():].strip()
-else:
-    # Legacy game-prefix form: [Robots] day176 body
-    match = re.match(r'(?i)^\s*\[[^\]]+\]\s*day\s*\d+\b\s*', body)
-    if match:
-        body = body[match.end():].strip()
-    else:
-        # Older free-form titles may contain DAY 177 in the middle.
-        match = re.search(r'(?i)\bday\s*\d+\b', body)
-        if match:
-            body = (body[:match.start()] + " " + body[match.end():]).strip()
-            body = " ".join(body.split())
-
-# Missing/empty memo cannot erase an existing title body. If the day marker was
-# missing entirely, prefixing it here self-heals instead of skipping forever.
-suffix = " ".join((activity or body).split())
-title = f"[day{n}]"
-if suffix:
-    title += " " + suffix
-print(title[:140])
-PY
-)"
+PUBLIC_BODY="$(python3 "$TITLE_HELPER" choose \
+    --current "$CUR_TITLE" \
+    --candidate-file "$VIEWER_TITLE_FILE" \
+    --fallback "$PUBLIC_FALLBACK")" || {
+    _log "ERROR: failed to choose public title body"
+    exit 1
+}
+NEW_TITLE="$(python3 "$TITLE_HELPER" compose \
+    --day "$N" \
+    --activity "$PUBLIC_BODY" \
+    --fallback "$PUBLIC_FALLBACK")" || {
+    _log "ERROR: failed to compose public title"
+    exit 1
+}
 
 if [ "$MODE" = "show" ]; then
 	_log "show only: would set -> $NEW_TITLE"
