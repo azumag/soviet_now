@@ -83,6 +83,12 @@ QUEUE_DIR="tmp/.say_queue"
 mkdir -p "$QUEUE_DIR"
 
 CONTENT_FILE="${1:?Usage: say_enqueue.sh [--no-preempt] <content_file> [rate]}"
+WEATHER_AUDIO_ITEM=0
+_weather_audio_base="$CONTENT_FILE"
+case "$_weather_audio_base" in *.txt) _weather_audio_base="${_weather_audio_base%.txt}" ;; *.playing) _weather_audio_base="${_weather_audio_base%.playing}" ;; esac
+WEATHER_AUDIO_META="${_weather_audio_base}.weather_audio.json"
+case "$CONTENT_FILE" in *_weather_audio_item.txt|*_weather_audio_item.playing) WEATHER_AUDIO_ITEM=1 ;; esac
+if [ -e "$WEATHER_AUDIO_META" ] || [ -L "$WEATHER_AUDIO_META" ]; then WEATHER_AUDIO_ITEM=1; fi
 RATE="${2:-120}"
 SAY_RETRY_MAX="${SAY_RETRY_MAX:-6}"
 SAY_RETRY_SLEEP_SEC="${SAY_RETRY_SLEEP_SEC:-2}"
@@ -1419,7 +1425,15 @@ _launch_bg_exec() {
 	local fence_path="${fence_base}.runtime_fence.json" fenced=0
 	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) fenced=1 ;; esac
 	[ -e "$fence_path" ] || [ -L "$fence_path" ] && fenced=1
-	if [ "$fenced" -eq 1 ]; then
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ]; then
+		# Re-check the complete weather-view lease while holding the existing
+		# GameSwitch shared lock, immediately before the owned player is spawned.
+		set -- env \
+			COMMENT_QUEUE_DIR="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" \
+			SOREN_ACTIVE_GAME_CONTEXT_FILE="${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" \
+			python3 ./lib/weather_audio_consumer.py play \
+			--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$CONTENT_FILE" -- "$@"
+	elif [ "$fenced" -eq 1 ]; then
 		# The helper rechecks after TTS/queue waits immediately before spawning,
 		# and owns only its own player process group while monitoring the fence.
 		set -- python3 ./lib/hanjuku_audio_fence.py play \
@@ -1837,6 +1851,14 @@ _play_prerendered_voicevox_chunks() {
 			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 			break
 		fi
+		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] \
+			&& _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$current_expected_sec"; then
+			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			_log "weather_corner owned player ended before the complete prerendered chunk"
+			play_failed=1
+			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
+			break
+		fi
 		if [ "$cc_clear_after_chunk" -eq 1 ]; then
 			docich_cc_clear || true
 		fi
@@ -1983,6 +2005,10 @@ _stream_wait_voicevox_chunk() {
 	local play_pid="$1" expected_sec="${2:-0}"
 	if ! _wait_for_player_pid "$play_pid" "$expected_sec" 0; then
 		_hanjuku_audio_allowed || return 75
+		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ]; then
+			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			return "${PLAYER_WAIT_RC:-1}"
+		fi
 		if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
 			&& _partial_playback_already_heard "${PLAYER_WAIT_ELAPSED:-0}"; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
@@ -1998,6 +2024,11 @@ _stream_wait_voicevox_chunk() {
 			fi
 		fi
 		return "${PLAYER_WAIT_RC:-1}"
+	fi
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] \
+		&& _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+		_log "weather_corner streaming player ended before the complete chunk"
+		return 98
 	fi
 	if _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
 		if [ "${PLAYER_WAIT_ELAPSED:-0}" -le 1 ]; then
@@ -2674,6 +2705,16 @@ _play_with_retry() {
 			elapsed="$PLAYER_WAIT_ELAPSED"
 		fi
 		_hanjuku_audio_allowed || return 75
+		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && [ -n "$say_pid" ]; then
+			# A launched owned player that fails, times out, or appears truncated
+			# is uncertain for this at-most-once item. Do not replay it.
+			if [ "$say_rc" -ne 0 ] || { [ "${expected_sec:-0}" -gt 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; }; then
+				_log "weather_corner owned player ended uncertainly (rc=$say_rc, elapsed=${elapsed}s)"
+				[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+				docich_cc_clear || true
+				return 74
+			fi
+		fi
 		if [ "$timed_out" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
 			&& _partial_playback_already_heard "$elapsed" \
 			&& { [ "$say_rc" -ne 0 ] || _is_truncated_playback "$elapsed" "$expected_sec"; }; then
