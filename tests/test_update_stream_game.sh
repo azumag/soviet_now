@@ -3,10 +3,23 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/update_stream_game.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/bin" "$TMP/games"
+TEST_ROOT="$TMP/soren"
+mkdir -p "$TMP/bin" "$TMP/games" "$TEST_ROOT/lib"
+cp "$ROOT/update_stream_game.sh" "$TEST_ROOT/update_stream_game.sh"
+cp "$ROOT/lib/stream_title_sync.py" "$TEST_ROOT/lib/stream_title_sync.py"
+chmod +x "$TEST_ROOT/update_stream_game.sh"
+(
+  cd "$TEST_ROOT"
+  git init -q
+  git config user.name "Test Fixture"
+  git config user.email "test@example.invalid"
+  git add update_stream_game.sh lib/stream_title_sync.py
+  git commit -qm "stream title fixture"
+)
+mkdir -p "$TEST_ROOT/tmp/state"
+BIN="$TEST_ROOT/update_stream_game.sh"
 
 # --- curl stub ---
 cat >"$TMP/bin/curl" <<'SH'
@@ -190,6 +203,20 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["game_id"] == "11585", d
 assert d["title"] == "[Soren] keep this title", d
+PY
+
+python3 - "$TEST_ROOT/tmp/state/stream_title_sync/events.jsonl" <<'PY' 2>/dev/null && ok "category-only condition is recorded safely" || not_ok "category-only diagnostic condition"
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    rows = [json.loads(line) for line in handle if line.strip()]
+row = rows[-1]
+assert row["event"] == "skipped"
+assert row["skip_reason"] == "category_only"
+assert row["call_condition"] == "category_only"
+assert re.fullmatch(r"[0-9a-f]{40}", row["execution_head"])
+assert re.fullmatch(r"[0-9a-f]{64}", row["update_stream_game_sha256"])
+assert re.fullmatch(r"[0-9a-f]{64}", row["stream_title_sync_sha256"])
+assert "title" not in row and "soviet_sha" not in row
 PY
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
