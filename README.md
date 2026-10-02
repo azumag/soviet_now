@@ -50,11 +50,14 @@ claim時、TTS待機後の実プレイヤー起動直前、再生中100ms間隔�
 予報metadataの異なるrequestを送ると拒否します。既存の本文MD5 dedupはweather項目には使いません。
 
 queue受理時とowned player起動直前に、canonical `game_switch.json` のready状態・
-`weather-view` runtime ID・generation・lease ID・expiryを確認します。再生側は既存
-`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、player終了を待った後に
-item receiptを `played` / `rejected` / `interrupted` へ確定します。itemをclaimしたworkerが落ちた
-場合は再投入せず `interrupted` を保存します。`queued` は受理済みだけを表し、再生完了の意味では
-ありません。`get_weather_audio_receipt ITEM_KEY` はそのdurable receiptを返します。
+`weather-view` runtime ID・generation・lease ID・expiryを確認します。開始後も完全runtime tupleを
+監視し、identity loss時はweatherが起動したowned player groupだけを停止して
+`interrupted/runtime_fence_lost`を確定します（expiryは開始gateであり、開始済み音声は切りません）。
+再生側は既存`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、実player終了時に
+item receiptを `played` / `rejected` / `interrupted` へ確定します。後段の`finish`は未確定項目を
+`played`へ昇格しません。itemをclaimしたworkerが落ちた場合は再投入せず `interrupted` を保存します。
+`queued` は受理済みだけを表し、再生完了の意味ではありません。`get_weather_audio_receipt ITEM_KEY` は
+そのdurable receiptを返します。
 
 receiptは既存comment queue内の `.weather_audio_receipts/` に保持します。別playback queue、worker、
 timer、forecast fetch、原稿生成、producer activationは追加していません。入力原稿は呼び出し側が

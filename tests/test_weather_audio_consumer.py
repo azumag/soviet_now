@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -73,9 +74,11 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         }
         self.dummy_player = self.root / "dummy_player.py"
         self.dummy_player.write_text(
-            "import pathlib, sys, time\n"
-            "pathlib.Path(sys.argv[1]).write_text('completed', encoding='utf-8')\n"
+            "import os, pathlib, signal, sys, time\n"
+            "if os.environ.get('DUMMY_IGNORE_TERM') == '1': signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "pathlib.Path(sys.argv[1]).write_text('started', encoding='utf-8')\n"
             "time.sleep(float(sys.argv[3]) if len(sys.argv) > 3 else 0)\n"
+            "pathlib.Path(sys.argv[1] + '.completed').write_text('completed', encoding='utf-8')\n"
             "raise SystemExit(int(sys.argv[2]))\n",
             encoding="utf-8",
         )
@@ -124,7 +127,7 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
-    def player(self, item_path, *, exit_code=0):
+    def player(self, item_path, *, exit_code=0, duration=0):
         sentinel = self.root / f"player-{time.time_ns()}.sentinel"
         target = item_path
         if item_path.suffix == ".txt":
@@ -132,9 +135,30 @@ class TestWeatherAudioConsumer(unittest.TestCase):
             item_path.rename(target)
         result = self.helper(
             "play", "--queue-dir", self.queue, target, "--",
-            sys.executable, self.dummy_player, sentinel, str(exit_code), "0",
+            sys.executable, self.dummy_player, sentinel, str(exit_code), str(duration),
         )
         return result, sentinel, target
+
+    def start_long_player(self, item_path, *, duration="10"):
+        target = item_path
+        if item_path.suffix == ".txt":
+            target = item_path.with_suffix(".playing")
+            item_path.rename(target)
+        sentinel = self.root / f"player-{time.time_ns()}.sentinel"
+        process = subprocess.Popen(
+            [
+                sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
+                str(target), "--", sys.executable, str(self.dummy_player),
+                str(sentinel), "0", duration,
+            ],
+            cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 3
+        while not sentinel.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert sentinel.exists(), "dummy owned player did not start"
+        return process, sentinel, Path(str(sentinel) + ".completed"), target
 
     def test_deduplicates_by_stable_item_key_and_rejects_whole_payload_conflicts(self):
         same_text_a = _request(index=1, text="同じ本文")
@@ -212,14 +236,73 @@ class TestWeatherAudioConsumer(unittest.TestCase):
 
         result, sentinel, playing_path = self.player(item_path)
         assert result.returncode == 0
-        assert sentinel.read_text(encoding="utf-8") == "completed"
-        assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "queued"
+        assert sentinel.read_text(encoding="utf-8") == "started"
+        assert Path(str(sentinel) + ".completed").read_text(encoding="utf-8") == "completed"
+        assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "played"
 
         finished = self.helper("finish", "--queue-dir", self.queue, playing_path, "success")
         assert finished.returncode == 0, finished.stderr
         assert json.loads(finished.stdout)["status"] == "played"
         assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "played"
         assert not sidecar.exists()
+
+    def test_runtime_identity_change_stops_owned_player_and_terminal_receipt_survives_finish_success(self):
+        request = _request(index=5)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_05_" in path.name)
+        player, sentinel, completed, playing_path = self.start_long_player(item_path)
+
+        switch_lock = self.context.parent / "locks" / "game-switch.lock"
+        with switch_lock.open("rb") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                self.set_identity({**IDENTITY, "runtime_id": "g8-b2c3d4e5", "generation": 8})
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+        stdout, stderr = player.communicate(timeout=4)
+        assert player.returncode == 74, stderr or stdout
+        assert not completed.exists(), "owned player completed after the runtime changed"
+        receipt = self.receipt(request["item_key"])
+        assert receipt["status"] == "interrupted"
+        assert receipt["reason"] == "runtime_fence_lost"
+
+        retry = self.enqueue(request)
+        assert retry.returncode == 0
+        assert json.loads(retry.stdout)["status"] == "interrupted"
+        assert not list(self.queue.glob("*_weather_audio_item.txt"))
+
+        finished = self.helper("finish", "--queue-dir", self.queue, playing_path, "success")
+        assert finished.returncode == 0, finished.stderr
+        assert json.loads(finished.stdout)["status"] == "interrupted"
+        assert self.receipt(request["item_key"])["reason"] == "runtime_fence_lost"
+        assert not completed.exists()
+
+    def test_monitor_lock_contention_fails_closed_and_kills_ignoring_player_within_bound(self):
+        request = _request(index=6)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_06_" in path.name)
+        self.env["DUMMY_IGNORE_TERM"] = "1"
+        player, sentinel, completed, _playing_path = self.start_long_player(item_path)
+
+        switch_lock = self.context.parent / "locks" / "game-switch.lock"
+        started = time.monotonic()
+        with switch_lock.open("rb") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                stdout, stderr = player.communicate(timeout=4)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+        elapsed = time.monotonic() - started
+        assert player.returncode == 74, stderr or stdout
+        assert elapsed < 3.2, f"runtime monitor blocked too long under EX lock: {elapsed:.2f}s"
+        assert not completed.exists(), "owned process group survived bounded fail-closed stop"
+        receipt = self.receipt(request["item_key"])
+        assert receipt["status"] == "interrupted"
+        assert receipt["reason"] == "runtime_fence_lost"
 
     def test_success_without_an_owned_player_is_rejected(self):
         queued = self.enqueue(_request(index=0))
@@ -400,7 +483,7 @@ _recover_orphan_comment_playing_files
         assert failed.returncode == 0
         failed_item = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_08_" in path.name)
         player_result, sentinel, failed_playing = self.player(failed_item, exit_code=9)
-        assert player_result.returncode == 9
+        assert player_result.returncode != 0
         assert sentinel.exists()
         failed_receipt = self.helper("finish", "--queue-dir", self.queue, failed_playing, "failure")
         assert failed_receipt.returncode == 0
@@ -472,6 +555,7 @@ _play_comment_queue
             capture_output=True, text=True,
         )
         assert result.returncode == 0, result.stderr
-        assert sentinel.read_text(encoding="utf-8") == "completed"
+        assert sentinel.read_text(encoding="utf-8") == "started"
+        assert Path(str(sentinel) + ".completed").read_text(encoding="utf-8") == "completed"
         assert self.receipt(item_key)["status"] == "played"
         assert list(self.queue.glob("*_weather_audio_item.txt")) == []

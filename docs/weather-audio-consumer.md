@@ -32,18 +32,24 @@ they do not form another queue or playback lane.
 
 Enqueue verifies a ready canonical GameSwitch identity and an unexpired
 forecast lease. `_play_comment_queue` checks again when claiming the item.
-`say_enqueue.sh` routes a weather item’s owned player command through the
+`say_enqueue.sh` routes a weather item's owned player command through the
 weather fence helper, which holds the existing GameSwitch shared lock while it
-checks the complete identity and spawns that player. Expiry gates starting;
-it does not terminate a player that already started.
+checks the complete identity and spawns that player. During playback the
+helper rechecks the full identity using bounded nonblocking lock attempts. A
+runtime change, unreadable control plane, or sustained exclusive hold causes
+only this helper-owned process group to stop within its termination bound.
+Forecast/runtime expiry gates starting; it does not terminate a player that
+already started.
 
-The durable receipt stays `queued` until `say_enqueue.sh` returns after its
-owned player subprocesses finish. Only a zero exit for the complete weather
-item produces `played`; a player failure or uncertain completion produces
-`interrupted`. Validation or queue failures produce `rejected`. If an audio
-worker disappears with an item claimed as `.playing`, recovery records
-`interrupted` and removes it from the FIFO instead of risking replay. A retry
-after a terminal receipt returns that receipt and never republishes the item.
+The owned-player helper records `played` only after the actual player exits
+successfully while the exact runtime identity still matches. The later
+`say_enqueue.sh`/queue finalizer can clean up or record uncertainty, but cannot
+promote a queued or playing item to `played`. Player failure or uncertain
+completion produces `interrupted`; runtime loss uses `runtime_fence_lost`.
+Validation or queue failures produce `rejected`. If an audio worker disappears
+with an item claimed as `.playing`, recovery records `interrupted` and removes
+it from the FIFO instead of risking replay. A retry after a terminal receipt
+returns that receipt and never republishes the item.
 
 Receipt JSON follows the docich weather-audio receipt schema, including the
 whole-request digest, item key, exact runtime fence, forecast identity,
@@ -54,6 +60,6 @@ the digest binds a payload but is not a signature or proof of its source.
 
 `tests/test_weather_audio_consumer.py` uses temporary queue and GameSwitch
 fixtures plus a dummy subprocess that only writes a sentinel file. It exercises
-stable-key retries and conflicts, enqueue and play-start fences, durable
-completion receipts, and interrupted recovery without calling TTS or emitting
-audio.
+stable-key retries and conflicts, enqueue/play-start/runtime-loss fences,
+bounded lock contention and owned-group termination, durable completion
+receipts, and interrupted recovery without calling TTS or emitting audio.
