@@ -66,7 +66,9 @@ A terminal receipt and owned-player stop completion are separate states.
 `interrupt` may first persist an `interrupted` receipt while the playback
 wrapper is still stopping its owned player group. The wrapper sets the durable
 `player_stop_confirmed` ledger field only after it has stopped and waited for
-that child. `quiescence ITEM_KEY` returns both the receipt and this stop
+the owned process group to disappear, including descendants after the group
+leader exits. A group that remains after the bounded SIGKILL wait stays
+unconfirmed. `quiescence ITEM_KEY` returns both the receipt and this stop
 acknowledgement; it remains false until the acknowledgement is durable. A lost
 interrupt response can be recovered by querying the same item key. Legacy
 schema-2 interrupted receipts have no stop acknowledgement and remain
