@@ -2,13 +2,174 @@
 from __future__ import annotations
 
 import copy
+import datetime as _datetime
+import fcntl
 import json
 import os
 import re
+import stat
+import subprocess
 import sys
 import urllib.request
+from pathlib import Path
 
-from youtube_broadcast_guard import YouTubeAPI
+
+YOUTUBE_RESULTS = frozenset({
+    "not_configured", "stream_not_configured", "no_unique_live_broadcast",
+    "invalid_video_id", "video_not_found", "invalid_video_snippet",
+    "unchanged", "updated", "unconfirmed", "update_failed",
+})
+KICK_RESULTS = frozenset({
+    "not_configured", "invalid_broadcaster", "wrong_broadcaster", "not_live",
+    "unchanged", "updated", "unconfirmed", "update_failed",
+})
+SKIP_REASONS = frozenset({
+    "category_only", "dry_run", "show_only", "twitch_read_failed",
+    "twitch_update_failed", "category_not_configured", "updater_missing",
+    "dispatch_failed", "invalid_title",
+})
+EVENT_FILE = "tmp/state/stream_title_sync.jsonl"
+EVENT_LOCK_FILE = "tmp/state/stream_title_sync.lock"
+EVENT_MAX_BYTES = 32 * 1024
+EVENT_MAX_LINE_BYTES = 512
+
+
+def _source_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _current_soren_sha(root=None) -> str | None:
+    root = _source_root() if root is None else root
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        value = result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return value if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
+
+
+def _private_directory(path):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        except OSError:
+            return False
+        try:
+            info = path.lstat()
+        except OSError:
+            return False
+    except OSError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
+        return False
+    try:
+        os.chmod(path, 0o700, follow_symlinks=False)
+        info = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode) and info.st_uid == os.getuid() and info.st_mode & 0o077 == 0
+
+
+def _open_private_file(path, flags):
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+        info = os.fstat(fd)
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+        os.close(fd)
+        return None
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _append_title_event(event, *, skip_reason, youtube, kick, root=None, source_sha=None, now=None):
+    """Append only fixed metadata to the owner-only, bounded runtime journal."""
+    if event not in {"started", "result", "skipped"}:
+        return False
+    if skip_reason not in ({"none"} | SKIP_REASONS):
+        return False
+    if event == "result":
+        if skip_reason != "none" or youtube not in YOUTUBE_RESULTS or kick not in KICK_RESULTS:
+            return False
+    elif event == "started":
+        if skip_reason != "none" or youtube != "not_run" or kick != "not_run":
+            return False
+    elif skip_reason not in SKIP_REASONS or youtube != "not_run" or kick != "not_run":
+        return False
+
+    root = _source_root() if root is None else root
+    source_sha = _current_soren_sha(root) if source_sha is None else source_sha
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        return False
+    stamp = _datetime.datetime.now(_datetime.timezone.utc) if now is None else now
+    if not isinstance(stamp, _datetime.datetime) or stamp.tzinfo is None:
+        return False
+    stamp = stamp.astimezone(_datetime.timezone.utc).replace(microsecond=0)
+    record = {
+        "occurred_at": stamp.isoformat().replace("+00:00", "Z"),
+        "event": event,
+        "skip_reason": skip_reason,
+        "youtube": youtube,
+        "kick": kick,
+        "soviet_sha": source_sha,
+    }
+    encoded = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(encoded) > EVENT_MAX_LINE_BYTES:
+        return False
+
+    root = Path(root)
+    tmp_dir = root / "tmp"
+    state_dir = tmp_dir / "state"
+    if not _private_directory(tmp_dir) or not _private_directory(state_dir):
+        return False
+    lock_fd = _open_private_file(root / EVENT_LOCK_FILE, os.O_CREAT | os.O_RDWR)
+    if lock_fd is None:
+        return False
+    event_fd = None
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        event_fd = _open_private_file(root / EVENT_FILE, os.O_CREAT | os.O_RDWR | os.O_APPEND)
+        if event_fd is None:
+            return False
+        if os.fstat(event_fd).st_size + len(encoded) > EVENT_MAX_BYTES:
+            os.ftruncate(event_fd, 0)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(event_fd, view)
+            if written <= 0:
+                return False
+            view = view[written:]
+        return True
+    except OSError:
+        return False
+    finally:
+        if event_fd is not None:
+            os.close(event_fd)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock_fd)
+
+
 
 
 def normalize_title(title: str, limit: int = 100) -> str:
@@ -86,18 +247,40 @@ def kick_request(token: str):
         return value
     return request
 
-def main() -> int:
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv:
+        if len(argv) == 2 and argv[0] == "--record-skip" and argv[1] in SKIP_REASONS:
+            _append_title_event(
+                "skipped", skip_reason=argv[1], youtube="not_run", kick="not_run"
+            )
+            return 0
+        return 2
+
     title = sys.stdin.read(4097)
     if len(title)>4096:
+        _append_title_event(
+            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run"
+        )
         return 2
     try:
         title=normalize_title(title)
     except ValueError:
+        _append_title_event(
+            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run"
+        )
         return 2
+
+    source_sha = _current_soren_sha()
+    _append_title_event(
+        "started", skip_reason="none", youtube="not_run", kick="not_run",
+        source_sha=source_sha,
+    )
     results={}
     required=('YOUTUBE_OAUTH_CLIENT_ID','YOUTUBE_OAUTH_CLIENT_SECRET','YOUTUBE_OAUTH_REFRESH_TOKEN')
     if all(os.environ.get(k) for k in required):
         try:
+            from youtube_broadcast_guard import YouTubeAPI
             api=YouTubeAPI(timeout=10);api.refresh()
             results['youtube']=youtube_title(api,title,os.environ.get('YOUTUBE_BROADCAST_STREAM_ID',''))
         except Exception:
@@ -112,6 +295,10 @@ def main() -> int:
             results['kick']='update_failed'
     else:
         results['kick']='not_configured'
+    _append_title_event(
+        "result", skip_reason="none",
+        youtube=results["youtube"], kick=results["kick"], source_sha=source_sha,
+    )
     print(json.dumps(results))
     return 0
 

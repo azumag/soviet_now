@@ -34,3 +34,19 @@ adds title-only fan-out. Raw private handoff text is never newly transmitted.
 
 Live credentials, successful live delivery and production deployment are not
 established by stub tests. No live operation was performed during development.
+
+
+## Owner-only runtime journal
+
+The helper appends fixed metadata to `tmp/state/stream_title_sync.jsonl` with
+owner-only permissions and a 32 KiB cap. Records contain a UTC timestamp, the
+Soren commit SHA, a fixed event name, fixed YouTube/Kick outcome enums, and an
+allowlisted skip reason. They never contain the title, command arguments,
+environment values, credentials, request/response bodies, or exception text.
+The writer is best-effort and does not change the Twitch update result.
+
+The read-only docich production diagnostics collector may project the newest
+record when it is at most 15 minutes old and its Soren SHA matches the deployed
+gitlink. `updated` means the API read-back matched the requested title; it does
+not confirm what a public viewer sees. The journal itself and integrated
+stream logs are not included in the diagnostic output.
