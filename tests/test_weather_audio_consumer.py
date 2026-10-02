@@ -29,6 +29,7 @@ IDENTITY = {
     "generation": 7,
     "lease_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
 }
+PROCESS_GROUP_PERMISSION_MARKER = "TestOnlyProcessGroupPermissionDenied"
 
 
 def _request(*, index=1, text="札幌。晴れ。最高気温は18度。", expires_at=None, **changes):
@@ -151,20 +152,50 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         result = self.helper("ack", "--queue-dir", self.queue, target)
         assert result.returncode == 0, result.stderr
 
-    def start_long_player(self, item_path, *, duration="10"):
+    def start_long_player(self, item_path, *, duration="10", permission_marker=None):
         target = item_path
         if item_path.suffix == ".txt":
             target = item_path.with_suffix(".playing")
             item_path.rename(target)
         self.plan_players(target, 1)
         sentinel = self.root / f"player-{time.time_ns()}.sentinel"
+        command = [
+            sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
+            str(target), "--", sys.executable, str(self.dummy_player),
+            str(sentinel), "0", duration,
+        ]
+        env = self.env
+        if permission_marker is not None:
+            wrapper = self.root / "test_weather_audio_consumer_marker_wrapper.py"
+            wrapper.write_text(
+                "import importlib.util, os, sys\n"
+                "from pathlib import Path\n"
+                "spec = importlib.util.spec_from_file_location('weather_audio_consumer', os.environ['WEATHER_AUDIO_CONSUMER_PATH'])\n"
+                "consumer = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(consumer)\n"
+                "class TestOnlyProcessGroupPermissionDenied(PermissionError): pass\n"
+                "real_killpg = consumer.os.killpg\n"
+                "def marked_killpg(pid, sig):\n"
+                "    try:\n"
+                "        return real_killpg(pid, sig)\n"
+                "    except PermissionError as exc:\n"
+                "        Path(os.environ['WEATHER_TEST_PERMISSION_MARKER']).write_text(\n"
+                "            'TestOnlyProcessGroupPermissionDenied', encoding='utf-8')\n"
+                "        raise TestOnlyProcessGroupPermissionDenied(\n"
+                "            'test observed process-group stop denial') from exc\n"
+                "consumer.os.killpg = marked_killpg\n"
+                "raise SystemExit(consumer.main(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            command[1] = str(wrapper)
+            env = {
+                **self.env,
+                "WEATHER_AUDIO_CONSUMER_PATH": str(HELPER),
+                "WEATHER_TEST_PERMISSION_MARKER": str(permission_marker),
+            }
         process = subprocess.Popen(
-            [
-                sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
-                str(target), "--", sys.executable, str(self.dummy_player),
-                str(sentinel), "0", duration,
-            ],
-            cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            command,
+            cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
         )
         deadline = time.monotonic() + 3
@@ -437,7 +468,10 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         queued = self.enqueue(request)
         assert queued.returncode == 0
         item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_05_" in path.name)
-        player, sentinel, completed, playing_path = self.start_long_player(item_path)
+        permission_marker = self.root / "runtime-identity-stop-permission.marker"
+        player, sentinel, completed, playing_path = self.start_long_player(
+            item_path, permission_marker=permission_marker,
+        )
 
         switch_lock = self.context.parent / "locks" / "game-switch.lock"
         with switch_lock.open("rb") as lock:
@@ -448,12 +482,15 @@ class TestWeatherAudioConsumer(unittest.TestCase):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
         stdout, stderr = player.communicate(timeout=4)
-        if player.returncode == 1:
+        if (player.returncode == 1 and permission_marker.is_file()
+                and permission_marker.read_text(encoding="utf-8") == PROCESS_GROUP_PERMISSION_MARKER):
             unconfirmed = self.helper(
                 "quiescence", "--queue-dir", self.queue, f"weather_corner:{EXECUTION_ID}:05",
             )
             assert unconfirmed.returncode == 0, unconfirmed.stderr
             assert json.loads(unconfirmed.stdout)["quiescent"] is False
+            if os.environ.get("WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP") == "1":
+                self.fail("CI forbids skipping after an observed process-group stop PermissionError")
             self.skipTest("sandbox denied process-group stop; no player-stop acknowledgement was written")
         assert player.returncode == 74, stderr or stdout
         assert not completed.exists(), "owned player completed after the runtime changed"
