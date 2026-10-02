@@ -663,25 +663,49 @@ def _interrupt_item(target: Path, queue: Path) -> dict[str, object]:
 
 
 def _stop_owned_player(child: subprocess.Popen) -> None:
-    """Stop and reap only this helper's process group within a fixed bound."""
+    """Stop and confirm disappearance of only this helper's process group."""
     deadline = time.monotonic() + PLAYER_STOP_GRACE_SEC
+    try:
+        os.killpg(child.pid, 0)
+    except ProcessLookupError:
+        if child.poll() is None:
+            child.wait(timeout=max(0.0, deadline - time.monotonic()))
+        return
     try:
         os.killpg(child.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     while time.monotonic() < deadline:
-        if child.poll() is not None:
-            try:
-                os.killpg(child.pid, 0)
-            except ProcessLookupError:
-                break
-        time.sleep(0.02)
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            if child.poll() is None:
+                child.wait(timeout=max(0.0, deadline - time.monotonic()))
+            return
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+
+    # The group leader may already have exited while one of its descendants
+    # remains. Sending SIGKILL is only a stop request; wait for the whole owned
+    # group to disappear before writing the durable stop acknowledgement.
     try:
         os.killpg(child.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    kill_deadline = time.monotonic() + PLAYER_STOP_GRACE_SEC
     if child.poll() is None:
-        child.wait()
+        try:
+            child.wait(timeout=max(0.0, kill_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            raise WeatherAudioError("owned player leader did not stop after SIGKILL") from exc
+    while True:
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            return
+        remaining = kill_deadline - time.monotonic()
+        if remaining <= 0:
+            raise WeatherAudioError("owned player process group remained after SIGKILL")
+        time.sleep(min(0.02, remaining))
 
 
 def _item_check(target: Path, queue: Path) -> bool:
@@ -800,6 +824,14 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
     request = None
     record_path = None
     child = None
+    player_stop_attempted = False
+    player_stop_confirmed = False
+
+    def stop_owned_player() -> None:
+        nonlocal player_stop_attempted, player_stop_confirmed
+        player_stop_attempted = True
+        _stop_owned_player(child)
+        player_stop_confirmed = True
 
     def interrupted(_signum, _frame):
         raise InterruptedError("owned player wrapper interrupted")
@@ -885,7 +917,7 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
             # before taking the receipt lock so a contender holding that lock
             # while doing its own bounded GameSwitch read cannot delay stop.
             if not _monitor_runtime_matches(canonical, request):
-                _stop_owned_player(child)
+                stop_owned_player()
                 with _queue_lock(queue):
                     _record_path_value, current_record = _read_record(queue, key)
                     _interrupt_record(
@@ -895,14 +927,14 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
             with _queue_lock(queue):
                 _record_path_value, current_record = _read_record(queue, key)
                 if current_record["phase"] == "terminal":
-                    _stop_owned_player(child)
+                    stop_owned_player()
                     return 74
             time.sleep(PLAYER_MONITOR_INTERVAL_SEC)
         exit_code = child.wait()
         # A process-group leader can exit before a descendant it spawned. Do
         # not publish the post-wait acknowledgement while any owned group
         # member remains.
-        _stop_owned_player(child)
+        stop_owned_player()
         record = _record_player_completion(queue, key, request, exit_code, canonical, child.pid)
         if (exit_code != 0 or record["phase"] != "playing"
                 or record["player_active"] or not record["player_pending"]):
@@ -911,12 +943,15 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
     except InterruptedError:
         return 74
     finally:
-        if child is not None:
-            if child.poll() is None:
-                _stop_owned_player(child)
-            _confirm_player_stopped(queue, key, child.pid)
-        signal.signal(signal.SIGTERM, previous_term)
-        signal.signal(signal.SIGINT, previous_int)
+        try:
+            if child is not None:
+                if not player_stop_attempted:
+                    stop_owned_player()
+                if player_stop_confirmed:
+                    _confirm_player_stopped(queue, key, child.pid)
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
 
 
 def _finish(target: Path, queue: Path, outcome: str) -> dict[str, object]:
