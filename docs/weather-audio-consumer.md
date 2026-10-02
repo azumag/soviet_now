@@ -41,11 +41,16 @@ only this helper-owned process group to stop within its termination bound.
 Forecast/runtime expiry gates starting; it does not terminate a player that
 already started.
 
-The owned-player helper records `played` only after the actual player exits
-successfully while the exact runtime identity still matches. The later
-`say_enqueue.sh`/queue finalizer can clean up or record uncertainty, but cannot
-promote a queued or playing item to `played`. Player failure or uncertain
-completion produces `interrupted`; runtime loss uses `runtime_fence_lost`.
+Before playback, `say_enqueue.sh` persists the expected number of owned player
+chunks. Each helper records only that one player process exited with status 0;
+this leaves the item receipt `queued` and the chunk awaiting acknowledgement.
+After the caller's strict duration check succeeds, `say_enqueue.sh` acknowledges
+that chunk. Only the finalizer can write `played`, and only when the acknowledged
+chunk count equals the persisted plan with no active or pending player. An exit-0
+player that ends too early is interrupted before acknowledgement. A missing,
+failed, or uncertain chunk produces `interrupted`; runtime loss uses
+`runtime_fence_lost`. The finalizer never promotes a queued or incomplete item
+to `played`.
 Validation or queue failures produce `rejected`. If an audio worker disappears
 with an item claimed as `.playing`, recovery records `interrupted` and removes
 it from the FIFO instead of risking replay. A retry after a terminal receipt
@@ -62,4 +67,6 @@ the digest binds a payload but is not a signature or proof of its source.
 fixtures plus a dummy subprocess that only writes a sentinel file. It exercises
 stable-key retries and conflicts, enqueue/play-start/runtime-loss fences,
 bounded lock contention and owned-group termination, durable completion
-receipts, and interrupted recovery without calling TTS or emitting audio.
+receipts, interrupted recovery, and the actual prerendered shell path for
+two-chunk success, second-chunk failure, and zero-exit early truncation without
+calling TTS or emitting audio.

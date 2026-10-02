@@ -52,6 +52,7 @@ GAME_SWITCH_LOCK_BURST_SEC = 0.5
 GAME_SWITCH_MONITOR_GRACE_SEC = 1.0
 PLAYER_MONITOR_INTERVAL_SEC = 0.05
 PLAYER_STOP_GRACE_SEC = 1.0
+MAX_PLAYER_CHUNKS = 128
 
 
 class WeatherAudioError(ValueError):
@@ -300,14 +301,43 @@ def _read_record(queue: Path, item_key: str) -> tuple[Path, dict[str, object]]:
     path = _record_path(queue, item_key)
     value = _read_json(path, MAX_RECEIPT_BYTES)
     if (not isinstance(value, dict)
-            or set(value) != {"schema_version", "request_digest", "queue_filename", "phase", "receipt"}
-            or type(value.get("schema_version")) is not int or value["schema_version"] != 1
+            or set(value) != {
+                "schema_version", "request_digest", "queue_filename", "phase", "receipt",
+                "expected_player_count", "player_attempts", "player_successes",
+                "player_active", "player_pending",
+            }
+            or type(value.get("schema_version")) is not int or value["schema_version"] != 2
             or not isinstance(value.get("request_digest"), str)
             or SHA256_RE.fullmatch(value["request_digest"]) is None
             or value.get("phase") not in {"queued", "playing", "terminal"}
             or not isinstance(value.get("receipt"), dict)
-            or set(value["receipt"]) != RECEIPT_KEYS):
+            or set(value["receipt"]) != RECEIPT_KEYS
+            or type(value.get("expected_player_count")) is not int
+            or not 0 <= value["expected_player_count"] <= MAX_PLAYER_CHUNKS
+            or type(value.get("player_attempts")) is not int
+            or not 0 <= value["player_attempts"] <= MAX_PLAYER_CHUNKS
+            or type(value.get("player_successes")) is not int
+            or not 0 <= value["player_successes"] <= value["player_attempts"]
+            or value["player_attempts"] > value["expected_player_count"]
+            or type(value.get("player_active")) is not bool
+            or type(value.get("player_pending")) is not bool
+            or value["player_active"] and value["player_pending"]):
         raise WeatherAudioError("invalid receipt record")
+    if value["phase"] == "queued" and (
+        value["player_attempts"] or value["player_successes"]
+        or value["player_active"] or value["player_pending"]
+    ):
+        raise WeatherAudioError("invalid queued player record")
+    if value["phase"] == "playing" and (
+        value["expected_player_count"] < 1
+        or value["player_attempts"] < 1
+        or value["player_attempts"] - value["player_successes"] not in (0, 1)
+        or value["player_active"] and value["player_attempts"] != value["player_successes"] + 1
+        or value["player_pending"] and value["player_attempts"] != value["player_successes"] + 1
+    ):
+        raise WeatherAudioError("invalid playing player record")
+    if value["phase"] == "terminal" and (value["player_active"] or value["player_pending"]):
+        raise WeatherAudioError("invalid terminal player record")
     filename = value.get("queue_filename")
     if filename and (not isinstance(filename, str) or Path(filename).name != filename or not filename.endswith("_weather_audio_item.txt")):
         raise WeatherAudioError("invalid queue record")
@@ -337,11 +367,16 @@ def _store_initial(
 ) -> dict[str, object]:
     receipt = _make_receipt(request, digest, status, now, reason)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "request_digest": digest,
         "queue_filename": queue_filename,
         "phase": "terminal" if status == "rejected" else "queued",
         "receipt": receipt,
+        "expected_player_count": 0,
+        "player_attempts": 0,
+        "player_successes": 0,
+        "player_active": False,
+        "player_pending": False,
     }
 
 
@@ -462,6 +497,8 @@ def _reject_record(queue: Path, path: Path, record: dict[str, object], request: 
         reason = "queue_rejected"
     receipt = _make_receipt(request, record["request_digest"], status, time.time(), reason)
     record["phase"] = "terminal"
+    record["player_active"] = False
+    record["player_pending"] = False
     record["receipt"] = receipt
     _write_record(path, record)
     return receipt
@@ -474,6 +511,8 @@ def _interrupt_record(path: Path, record: dict[str, object], request: dict[str, 
         reason = "worker_interrupted"
     receipt = _make_receipt(request, record["request_digest"], "interrupted", time.time(), reason)
     record["phase"] = "terminal"
+    record["player_active"] = False
+    record["player_pending"] = False
     record["receipt"] = receipt
     _write_record(path, record)
     return receipt
@@ -483,26 +522,88 @@ def _record_player_completion(
     queue: Path, key: str, request: dict[str, object], exit_code: int,
     canonical: Path,
 ) -> dict[str, object]:
-    """Commit the terminal receipt at the owned-player completion boundary."""
+    """Record one owned chunk's exit; whole-item success is finalized later."""
     with _queue_lock(queue):
         path, record = _read_record(queue, key)
         if record["phase"] == "terminal":
-            return record["receipt"]
-        if record["phase"] != "playing":
-            return _interrupt_record(path, record, request, "worker_interrupted")
+            return record
+        if (record["phase"] != "playing" or not record["player_active"]
+                or record["player_pending"]):
+            _interrupt_record(path, record, request, "worker_interrupted")
+            return record
         if not _monitor_runtime_matches(canonical, request):
-            return _interrupt_record(path, record, request, "runtime_fence_lost")
+            _interrupt_record(path, record, request, "runtime_fence_lost")
+            return record
         if exit_code == 0:
-            receipt = _make_receipt(request, record["request_digest"], "played", time.time(), None)
-        else:
-            receipt = _make_receipt(
-                request, record["request_digest"], "interrupted", time.time(),
-                "playback_interrupted",
-            )
-        record["phase"] = "terminal"
-        record["receipt"] = receipt
+            record["player_active"] = False
+            record["player_pending"] = True
+            _write_record(path, record)
+            return record
+        _interrupt_record(path, record, request, "playback_interrupted")
+        return record
+
+
+def _plan_players(target: Path, queue: Path, expected_count: int) -> None:
+    if type(expected_count) is not int or not 1 <= expected_count <= MAX_PLAYER_CHUNKS:
+        raise WeatherAudioError("invalid player chunk count")
+    key = _target_key(target)
+    with _queue_lock(queue):
+        request = _request_from_sidecar(target)
+        if request["item_key"] != key:
+            raise WeatherAudioError("item metadata key mismatch")
+        path, record = _read_record(queue, key)
+        if request_digest(request) != record["request_digest"]:
+            raise WeatherAudioError("item metadata digest mismatch")
+        if record["phase"] == "terminal":
+            raise WeatherAudioError("weather item is already terminal")
+        if record["expected_player_count"] == expected_count:
+            return
+        if (record["expected_player_count"] != 0 or record["player_attempts"]
+                or record["player_successes"] or record["player_active"]
+                or record["player_pending"] or record["phase"] != "queued"):
+            raise WeatherAudioError("player chunk plan is already fixed")
+        record["expected_player_count"] = expected_count
         _write_record(path, record)
-        return receipt
+
+
+def _ack_player(target: Path, queue: Path) -> None:
+    key = _target_key(target)
+    with _queue_lock(queue):
+        request = _request_from_sidecar(target)
+        if request["item_key"] != key:
+            raise WeatherAudioError("item metadata key mismatch")
+        path, record = _read_record(queue, key)
+        if request_digest(request) != record["request_digest"]:
+            raise WeatherAudioError("item metadata digest mismatch")
+        if record["phase"] == "terminal":
+            raise WeatherAudioError("weather item is already terminal")
+        if (record["phase"] != "playing" or record["player_active"]
+                or not record["player_pending"]
+                or record["player_attempts"] != record["player_successes"] + 1
+                or record["player_successes"] >= record["expected_player_count"]):
+            raise WeatherAudioError("no completed owned player awaits acknowledgement")
+        if not _monitor_runtime_matches(_canonical_path(), request):
+            _interrupt_record(path, record, request, "runtime_fence_lost")
+            raise WeatherAudioError("runtime fence changed before player acknowledgement")
+        record["player_successes"] += 1
+        record["player_pending"] = False
+        _write_record(path, record)
+
+
+def _interrupt_item(target: Path, queue: Path) -> dict[str, object]:
+    key = _target_key(target)
+    with _queue_lock(queue):
+        request = _request_from_sidecar(target)
+        if request["item_key"] != key:
+            raise WeatherAudioError("item metadata key mismatch")
+        path, record = _read_record(queue, key)
+        if request_digest(request) != record["request_digest"]:
+            raise WeatherAudioError("item metadata digest mismatch")
+        if record["phase"] == "terminal":
+            return record["receipt"]
+        if record["phase"] == "playing":
+            return _interrupt_record(path, record, request, "playback_interrupted")
+        return _reject_record(queue, path, record, request, "player_rejected")
 
 
 def _stop_owned_player(child: subprocess.Popen) -> None:
@@ -656,7 +757,10 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
             record_path, record = _read_record(queue, key)
             if request_digest(request) != record["request_digest"]:
                 raise WeatherAudioError("item metadata digest mismatch")
-            if record["phase"] == "terminal":
+            if (record["phase"] == "terminal"
+                    or record["expected_player_count"] < 1
+                    or record["player_attempts"] >= record["expected_player_count"]
+                    or record["player_active"] or record["player_pending"]):
                 return 75
             canonical = _canonical_path()
             try:
@@ -678,6 +782,8 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                         _reject_record(queue, record_path, record, request, reason)
                         return 75
                     record["phase"] = "playing"
+                    record["player_attempts"] += 1
+                    record["player_active"] = True
                     _write_record(record_path, record)
                     mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
                     try:
@@ -690,6 +796,7 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             except (OSError, ValueError, WeatherAudioError):
                 if record.get("phase") == "playing":
+                    _interrupt_record(record_path, record, request, "playback_interrupted")
                     return 74
                 _reject_record(queue, record_path, record, request, "runtime_mismatch")
                 return 75
@@ -707,10 +814,11 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                     return 74
             time.sleep(PLAYER_MONITOR_INTERVAL_SEC)
         exit_code = child.wait()
-        receipt = _record_player_completion(queue, key, request, exit_code, canonical)
-        if receipt["status"] != "played":
+        record = _record_player_completion(queue, key, request, exit_code, canonical)
+        if (exit_code != 0 or record["phase"] != "playing"
+                or record["player_active"] or not record["player_pending"]):
             return 74
-        return exit_code
+        return 0
     except InterruptedError:
         return 74
     finally:
@@ -743,6 +851,8 @@ def _finish(target: Path, queue: Path, outcome: str) -> dict[str, object]:
                     }, record["request_digest"], status, time.time(), reason,
                 )
                 record["phase"] = "terminal"
+                record["player_active"] = False
+                record["player_pending"] = False
                 record["receipt"] = receipt
                 _write_record(_record_path(queue, key), record)
             return receipt
@@ -752,17 +862,31 @@ def _finish(target: Path, queue: Path, outcome: str) -> dict[str, object]:
             raise WeatherAudioError("item metadata digest mismatch")
         if record["phase"] != "terminal":
             if record["phase"] == "playing":
-                reason = (
-                    "playback_interrupted"
-                    if _monitor_runtime_matches(_canonical_path(), request)
-                    else "runtime_fence_lost"
+                all_players_acknowledged = (
+                    outcome == "success"
+                    and record["expected_player_count"] > 0
+                    and record["player_attempts"] == record["expected_player_count"]
+                    and record["player_successes"] == record["expected_player_count"]
+                    and not record["player_active"] and not record["player_pending"]
                 )
-                receipt = _make_receipt(
-                    request, record["request_digest"], "interrupted", time.time(), reason,
-                )
+                if all_players_acknowledged:
+                    receipt = _make_receipt(
+                        request, record["request_digest"], "played", time.time(), None,
+                    )
+                else:
+                    reason = "playback_interrupted"
+                    if (record["player_active"] or record["player_pending"]
+                            or record["player_attempts"] > record["player_successes"]):
+                        if not _monitor_runtime_matches(_canonical_path(), request):
+                            reason = "runtime_fence_lost"
+                    receipt = _make_receipt(
+                        request, record["request_digest"], "interrupted", time.time(), reason,
+                    )
             else:
                 receipt = _make_receipt(request, record["request_digest"], "rejected", time.time(), "player_rejected")
             record["phase"] = "terminal"
+            record["player_active"] = False
+            record["player_pending"] = False
             record["receipt"] = receipt
             _write_record(path, record)
         sidecar.unlink(missing_ok=True)
@@ -822,6 +946,19 @@ def main(argv: list[str] | None = None) -> int:
     play.add_argument("target")
     play.add_argument("command", nargs=argparse.REMAINDER)
 
+    plan = subparsers.add_parser("plan")
+    plan.add_argument("--queue-dir", required=True)
+    plan.add_argument("target")
+    plan.add_argument("count", type=int)
+
+    ack = subparsers.add_parser("ack")
+    ack.add_argument("--queue-dir", required=True)
+    ack.add_argument("target")
+
+    interrupt = subparsers.add_parser("interrupt")
+    interrupt.add_argument("--queue-dir", required=True)
+    interrupt.add_argument("target")
+
     finish = subparsers.add_parser("finish")
     finish.add_argument("--queue-dir", required=True)
     finish.add_argument("target")
@@ -843,6 +980,15 @@ def main(argv: list[str] | None = None) -> int:
         target = Path(args.target)
         if args.operation == "check":
             return 0 if _item_check(target, queue) else 75
+        if args.operation == "plan":
+            _plan_players(target, queue, args.count)
+            return 0
+        if args.operation == "ack":
+            _ack_player(target, queue)
+            return 0
+        if args.operation == "interrupt":
+            _emit(_interrupt_item(target, queue))
+            return 0
         if args.operation == "play":
             command = args.command
             if command and command[0] == "--":

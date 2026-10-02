@@ -1417,6 +1417,28 @@ _hanjuku_audio_allowed() {
 		"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" "$CONTENT_FILE"
 }
 
+_weather_audio_plan_players() {
+	local count="${1:-}"
+	[ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] || return 0
+	python3 ./lib/weather_audio_consumer.py plan \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$CONTENT_FILE" "$count" \
+		>/dev/null 2>&1
+}
+
+_weather_audio_ack_player() {
+	[ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] || return 0
+	python3 ./lib/weather_audio_consumer.py ack \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$CONTENT_FILE" \
+		>/dev/null 2>&1
+}
+
+_weather_audio_interrupt() {
+	[ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] || return 0
+	python3 ./lib/weather_audio_consumer.py interrupt \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$CONTENT_FILE" \
+		>/dev/null 2>&1
+}
+
 _launch_bg_exec() {
 	local cleanup_file="$1"
 	shift
@@ -1790,6 +1812,10 @@ _play_prerendered_voicevox_chunks() {
 
 	local total=${#wavs[@]}
 	[ "$total" -gt 0 ] || return 1
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_plan_players "$total"; then
+		_log "weather_corner could not persist the prerendered player plan"
+		return 1
+	fi
 	local cc_available=0 cc_prepared=0 cc_clear_after_chunk=0
 	if docich_cc_prepare 0 0; then
 		cc_available=1
@@ -1847,6 +1873,7 @@ _play_prerendered_voicevox_chunks() {
 		fi
 		if ! _wait_for_player_pid "$play_pid" "$current_expected_sec" 0; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			[ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && _weather_audio_interrupt || true
 			play_failed=1
 			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
 			break
@@ -1854,9 +1881,15 @@ _play_prerendered_voicevox_chunks() {
 		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] \
 			&& _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$current_expected_sec"; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			_weather_audio_interrupt || true
 			_log "weather_corner owned player ended before the complete prerendered chunk"
 			play_failed=1
 			[ "${SAY_PRESERVE_PRERENDERED_CHUNKS:-0}" = "1" ] || rm -f "$chunk_wav" 2>/dev/null
+			break
+		fi
+		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_ack_player; then
+			_log "weather_corner could not acknowledge the completed prerendered chunk"
+			play_failed=1
 			break
 		fi
 		if [ "$cc_clear_after_chunk" -eq 1 ]; then
@@ -2007,6 +2040,7 @@ _stream_wait_voicevox_chunk() {
 		_hanjuku_audio_allowed || return 75
 		if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ]; then
 			[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
+			_weather_audio_interrupt || true
 			return "${PLAYER_WAIT_RC:-1}"
 		fi
 		if [ "${PLAYER_WAIT_TIMED_OUT:-0}" -eq 0 ] && [ "${expected_sec:-0}" -gt 0 ] \
@@ -2027,8 +2061,13 @@ _stream_wait_voicevox_chunk() {
 	fi
 	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] \
 		&& _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
+		_weather_audio_interrupt || true
 		_log "weather_corner streaming player ended before the complete chunk"
 		return 98
+	fi
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_ack_player; then
+		_log "weather_corner could not acknowledge the completed streaming chunk"
+		return 74
 	fi
 	if _is_truncated_playback "${PLAYER_WAIT_ELAPSED:-0}" "$expected_sec"; then
 		if [ "${PLAYER_WAIT_ELAPSED:-0}" -le 1 ]; then
@@ -2108,6 +2147,10 @@ _stream_voicevox_chunks() {
 	done < <(_split_tts_text "$text" 100 1)
 	total=${#chunks[@]}
 	[ "$total" -gt 1 ] || return 1
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_plan_players "$total"; then
+		_log "weather_corner could not persist the streaming player plan"
+		return 1
+	fi
 
 	stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
 	mkdir -p "$stream_dir" || return 1
@@ -2646,6 +2689,10 @@ fi
 _play_with_retry() {
 	local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
 	local cc_for_retry=0 cc_prepared=0
+	if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_plan_players 1; then
+		_log "weather_corner could not persist the single-player plan"
+		return 74
+	fi
 	if [ "${DOCICH_CC_PLAN_CHUNK_COUNT:-0}" -eq 1 ]; then
 		cc_for_retry=1
 	fi
@@ -2712,6 +2759,7 @@ _play_with_retry() {
 				_log "weather_corner owned player ended uncertainly (rc=$say_rc, elapsed=${elapsed}s)"
 				[ "${CHROME_AUDIO_USED:-0}" = "1" ] && _stop_chrome_audio_players
 				docich_cc_clear || true
+				_weather_audio_interrupt || true
 				return 74
 			fi
 		fi
@@ -2727,6 +2775,10 @@ _play_with_retry() {
 			_log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
 		fi
 		if [ "$say_rc" -eq 0 ]; then
+			if [ "${WEATHER_AUDIO_ITEM:-0}" = "1" ] && ! _weather_audio_ack_player; then
+				_log "weather_corner could not acknowledge the completed player"
+				return 74
+			fi
 			docich_cc_clear || true
 			return 0
 		fi

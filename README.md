@@ -54,8 +54,10 @@ queue受理時とowned player起動直前に、canonical `game_switch.json` のr
 監視し、identity loss時はweatherが起動したowned player groupだけを停止して
 `interrupted/runtime_fence_lost`を確定します（expiryは開始gateであり、開始済み音声は切りません）。
 再生側は既存`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、実player終了時に
-item receiptを `played` / `rejected` / `interrupted` へ確定します。後段の`finish`は未確定項目を
-`played`へ昇格しません。itemをclaimしたworkerが落ちた場合は再投入せず `interrupted` を保存します。
+チャンクごとの完了証跡を記録します。`say_enqueue.sh` が全チャンク数を事前に固定し、各owned playerの
+終了コードと厳格な再生尺確認が通った後だけ、そのチャンクをackします。`finish`は計画した全チャンクが
+ackされた場合だけitemを `played` に確定し、未確定・不足・失敗は `interrupted` または `rejected` のまま
+扱います。itemをclaimしたworkerが落ちた場合は再投入せず `interrupted` を保存します。
 `queued` は受理済みだけを表し、再生完了の意味ではありません。`get_weather_audio_receipt ITEM_KEY` は
 そのdurable receiptを返します。
 

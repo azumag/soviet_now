@@ -78,8 +78,10 @@ class TestWeatherAudioConsumer(unittest.TestCase):
             "if os.environ.get('DUMMY_IGNORE_TERM') == '1': signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
             "pathlib.Path(sys.argv[1]).write_text('started', encoding='utf-8')\n"
             "time.sleep(float(sys.argv[3]) if len(sys.argv) > 3 else 0)\n"
-            "pathlib.Path(sys.argv[1] + '.completed').write_text('completed', encoding='utf-8')\n"
-            "raise SystemExit(int(sys.argv[2]))\n",
+            "code = int(sys.argv[2])\n"
+            "marker = 'completed' if code == 0 else 'failed'\n"
+            "pathlib.Path(sys.argv[1] + '.' + marker).write_text(marker, encoding='utf-8')\n"
+            "raise SystemExit(code)\n",
             encoding="utf-8",
         )
 
@@ -133,17 +135,27 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         if item_path.suffix == ".txt":
             target = item_path.with_suffix(".playing")
             item_path.rename(target)
+        self.plan_players(target, 1)
         result = self.helper(
             "play", "--queue-dir", self.queue, target, "--",
             sys.executable, self.dummy_player, sentinel, str(exit_code), str(duration),
         )
         return result, sentinel, target
 
+    def plan_players(self, target, count):
+        result = self.helper("plan", "--queue-dir", self.queue, target, str(count))
+        assert result.returncode == 0, result.stderr
+
+    def ack_player(self, target):
+        result = self.helper("ack", "--queue-dir", self.queue, target)
+        assert result.returncode == 0, result.stderr
+
     def start_long_player(self, item_path, *, duration="10"):
         target = item_path
         if item_path.suffix == ".txt":
             target = item_path.with_suffix(".playing")
             item_path.rename(target)
+        self.plan_players(target, 1)
         sentinel = self.root / f"player-{time.time_ns()}.sentinel"
         process = subprocess.Popen(
             [
@@ -238,7 +250,9 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert result.returncode == 0
         assert sentinel.read_text(encoding="utf-8") == "started"
         assert Path(str(sentinel) + ".completed").read_text(encoding="utf-8") == "completed"
-        assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "played"
+        assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "queued"
+
+        self.ack_player(playing_path)
 
         finished = self.helper("finish", "--queue-dir", self.queue, playing_path, "success")
         assert finished.returncode == 0, finished.stderr
@@ -328,6 +342,8 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         script = function + r'''
 WEATHER_AUDIO_ITEM=1
 CONTENT_FILE=weather.txt
+_weather_audio_plan_players() { return 0; }
+_weather_audio_interrupt() { :; }
 PID_FILE="$TEST_PID_FILE"
 SAY_RETRY_MAX=0
 SAY_RETRY_SLEEP_SEC=0
@@ -381,9 +397,13 @@ printf '%s' "$result"
         playlist = self.root / "playlist.txt"
         playlist.write_text(str(wav) + "\n", encoding="utf-8")
         stopped_marker = self.root / "chrome-player-stopped"
+        interrupt_marker = self.root / "weather-player-interrupted"
         script = function + r'''
 WEATHER_AUDIO_ITEM=1
 SAY_PRESERVE_PRERENDERED_CHUNKS=1
+_weather_audio_plan_players() { return 0; }
+_weather_audio_ack_player() { return 0; }
+_weather_audio_interrupt() { touch "$TEST_INTERRUPT_MARKER"; }
 _log() { :; }
 _set_current_source() { :; }
 docich_cc_prepare() { return 1; }
@@ -402,11 +422,159 @@ printf '%s' "$result"
             "TEST_TRUNCATED": "1",
             "TEST_PLAYLIST": str(playlist),
             "TEST_STOPPED_MARKER": str(stopped_marker),
+            "TEST_INTERRUPT_MARKER": str(interrupt_marker),
         }
         result = subprocess.run(["bash", "-c", script], cwd=self.root, env=env, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert result.stdout == "1"
         assert wav.exists()
+        assert interrupt_marker.exists()
+
+    def _run_prerendered_weather_shell(self, item_path, playlist, *, elapsed, second_exit=0):
+        signatures = (
+            "_weather_audio_plan_players() {",
+            "_weather_audio_ack_player() {",
+            "_weather_audio_interrupt() {",
+            "_launch_bg_exec() {",
+            "_is_truncated_playback() {",
+            "_play_prerendered_voicevox_chunks() {",
+        )
+        pieces = [self._shell_function(ROOT / "say_enqueue.sh", sig) for sig in signatures]
+        harness = r'''
+CONTENT_FILE="$TEST_ITEM_PATH"
+WEATHER_AUDIO_ITEM=1
+SAY_PRESERVE_PRERENDERED_CHUNKS=1
+SAY_TRUNCATE_MIN_EXPECTED_SEC=1
+SAY_TRUNCATE_RATIO=0.5
+SAY_TRUNCATE_GRACE_SEC=0
+LAUNCH_COUNT=0
+_log() { :; }
+_set_current_source() { :; }
+docich_cc_prepare() { return 1; }
+docich_cc_clear() { :; }
+docich_cc_commit() { return 0; }
+_estimate_audio_duration_sec() { printf '10'; }
+_wait_for_player_pid() {
+  wait "$1"
+  PLAYER_WAIT_RC=$?
+  PLAYER_WAIT_ELAPSED="$TEST_ELAPSED"
+  PLAYER_WAIT_TIMED_OUT=0
+  [ "$PLAYER_WAIT_RC" -eq 0 ]
+}
+_launch_stream_wav() {
+  local index="$LAUNCH_COUNT" exit_code=0 sentinel
+  LAUNCH_COUNT=$((LAUNCH_COUNT + 1))
+  sentinel="$TEST_SENTINEL_PREFIX.$index"
+  if [ "$index" -eq 1 ]; then
+    exit_code="$TEST_SECOND_EXIT"
+    python3 ./lib/weather_audio_consumer.py get --queue-dir "$COMMENT_QUEUE_DIR" \
+      "weather_corner:$TEST_EXECUTION_ID:12" >"$TEST_BEFORE_SECOND"
+  fi
+  _launch_bg_exec "" "$PYTHON_BIN" "$TEST_DUMMY_PLAYER" "$sentinel" "$exit_code" 0.01
+}
+_stop_chrome_audio_players() { :; }
+_play_prerendered_voicevox_chunks "$TEST_PLAYLIST"
+result=$?
+printf '%s %s' "$result" "$LAUNCH_COUNT"
+'''
+        env = {
+            **self.env,
+            "TEST_ITEM_PATH": str(item_path),
+            "TEST_PLAYLIST": str(playlist),
+            "TEST_ELAPSED": str(elapsed),
+            "TEST_SECOND_EXIT": str(second_exit),
+            "TEST_SENTINEL_PREFIX": str(self.root / "real-shell-player"),
+            "TEST_BEFORE_SECOND": str(self.root / "receipt-before-second.json"),
+            "TEST_EXECUTION_ID": EXECUTION_ID,
+            "PYTHON_BIN": sys.executable,
+            "TEST_DUMMY_PLAYER": str(self.dummy_player),
+        }
+        return subprocess.run(
+            ["bash", "-c", "\n".join(pieces) + harness],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+        )
+
+    def test_actual_prerendered_shell_path_plays_two_chunks_before_item_success(self):
+        request = _request(index=12)
+        assert self.enqueue(request).returncode == 0
+        item = next(self.queue.glob("*_weather_audio_item.txt"))
+        playing = item.with_suffix(".playing")
+        item.rename(playing)
+        playlist = self.root / "two-chunks.txt"
+        wav1, wav2 = self.root / "chunk-1.wav", self.root / "chunk-2.wav"
+        wav1.write_bytes(b"dummy 1")
+        wav2.write_bytes(b"dummy 2")
+        playlist.write_text(f"{wav1}\n{wav2}\n", encoding="utf-8")
+
+        result = self._run_prerendered_weather_shell(playing, playlist, elapsed=10)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "0 2"
+        assert json.loads((self.root / "receipt-before-second.json").read_text())["status"] == "queued"
+        for index in (0, 1):
+            sentinel = self.root / f"real-shell-player.{index}"
+            assert sentinel.read_text(encoding="utf-8") == "started"
+            assert Path(str(sentinel) + ".completed").exists()
+        assert self.receipt(request["item_key"])["status"] == "queued"
+
+        finished = self.helper("finish", "--queue-dir", self.queue, playing, "success")
+        assert finished.returncode == 0, finished.stderr
+        assert json.loads(finished.stdout)["status"] == "played"
+
+    def test_actual_prerendered_shell_path_second_chunk_failure_stays_interrupted(self):
+        request = _request(index=12)
+        assert self.enqueue(request).returncode == 0
+        item = next(self.queue.glob("*_weather_audio_item.txt"))
+        playing = item.with_suffix(".playing")
+        item.rename(playing)
+        playlist = self.root / "two-chunks.txt"
+        wav1, wav2 = self.root / "chunk-1.wav", self.root / "chunk-2.wav"
+        wav1.write_bytes(b"dummy 1")
+        wav2.write_bytes(b"dummy 2")
+        playlist.write_text(f"{wav1}\n{wav2}\n", encoding="utf-8")
+
+        result = self._run_prerendered_weather_shell(playing, playlist, elapsed=10, second_exit=9)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "1 2"
+        assert json.loads((self.root / "receipt-before-second.json").read_text())["status"] == "queued"
+        first = self.root / "real-shell-player.0"
+        second = self.root / "real-shell-player.1"
+        assert Path(str(first) + ".completed").exists()
+        assert Path(str(second) + ".failed").exists()
+        assert self.receipt(request["item_key"])["status"] == "interrupted"
+
+        finished = self.helper("finish", "--queue-dir", self.queue, playing, "failure")
+        assert finished.returncode == 0, finished.stderr
+        assert json.loads(finished.stdout)["status"] == "interrupted"
+        assert self.receipt(request["item_key"])["reason"] == "playback_interrupted"
+
+    def test_actual_prerendered_shell_path_exit_zero_early_truncation_never_plays_item(self):
+        request = _request(index=12)
+        assert self.enqueue(request).returncode == 0
+        item = next(self.queue.glob("*_weather_audio_item.txt"))
+        playing = item.with_suffix(".playing")
+        item.rename(playing)
+        playlist = self.root / "one-chunk.txt"
+        wav = self.root / "early.wav"
+        wav.write_bytes(b"dummy only")
+        playlist.write_text(f"{wav}\n", encoding="utf-8")
+
+        result = self._run_prerendered_weather_shell(playing, playlist, elapsed=0)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "1 1"
+        sentinel = self.root / "real-shell-player.0"
+        assert Path(str(sentinel) + ".completed").exists()
+        assert self.receipt(request["item_key"])["status"] == "interrupted"
+
+        # Even an apparently successful finalizer cannot overwrite the
+        # stricter duration-check interruption.
+        finished = self.helper("finish", "--queue-dir", self.queue, playing, "success")
+        assert finished.returncode == 0, finished.stderr
+        receipt = json.loads(finished.stdout)
+        assert receipt["status"] == "interrupted"
+        assert receipt["reason"] == "playback_interrupted"
 
     def test_same_key_retry_while_owned_player_is_live_does_not_interrupt_or_duplicate(self):
         request = _request(index=12)
@@ -416,6 +584,7 @@ printf '%s' "$result"
         sentinel = self.root / "long-player.sentinel"
         playing_path = item_path.with_suffix(".playing")
         item_path.rename(playing_path)
+        self.plan_players(playing_path, 1)
         player = subprocess.Popen(
             [
                 sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
@@ -445,6 +614,7 @@ printf '%s' "$result"
                 player.communicate(timeout=5)
             else:
                 player.communicate(timeout=5)
+        self.ack_player(playing_path)
         finished = self.helper("finish", "--queue-dir", self.queue, playing_path, "success")
         assert finished.returncode == 0
         assert json.loads(finished.stdout)["status"] == "played"
@@ -520,9 +690,13 @@ _recover_orphan_comment_playing_files
             "#!/usr/bin/env bash\n"
             "set -e\n"
             "target=\"$2\"\n"
-            "exec \"$PYTHON_BIN\" \"$ELOOP_LIB_DIR/lib/weather_audio_consumer.py\" play "
+            "\"$PYTHON_BIN\" \"$ELOOP_LIB_DIR/lib/weather_audio_consumer.py\" plan "
+            "--queue-dir \"$COMMENT_QUEUE_DIR\" \"$target\" 1\n"
+            "\"$PYTHON_BIN\" \"$ELOOP_LIB_DIR/lib/weather_audio_consumer.py\" play "
             "--queue-dir \"$COMMENT_QUEUE_DIR\" \"$target\" -- "
-            "\"$PYTHON_BIN\" \"$DUMMY_PLAYER\" \"$PLAYER_SENTINEL\" 0\n",
+            "\"$PYTHON_BIN\" \"$DUMMY_PLAYER\" \"$PLAYER_SENTINEL\" 0\n"
+            "\"$PYTHON_BIN\" \"$ELOOP_LIB_DIR/lib/weather_audio_consumer.py\" ack "
+            "--queue-dir \"$COMMENT_QUEUE_DIR\" \"$target\"\n",
             encoding="utf-8",
         )
         fake_say.chmod(0o755)
