@@ -443,20 +443,29 @@ def _active_identity(canonical: Path) -> dict[str, object]:
 
 
 def _runtime_matches(
-    canonical: Path, request: dict[str, object], *, lock_budget_sec: float | None = None,
+    canonical: Path, request: dict[str, object], *,
+    lock_budget_sec: float = GAME_SWITCH_LOCK_BURST_SEC,
 ) -> bool:
     try:
         with _game_switch_lock(canonical, budget_sec=lock_budget_sec):
             current = _active_identity(canonical)
     except TimeoutError:
-        if lock_budget_sec is not None:
-            raise
-        return False
+        raise
     except (OSError, ValueError, WeatherAudioError):
         return False
     expected = request["runtime_fence"]
     return all(current[key] == expected[key] and type(current[key]) is type(expected[key])
                for key in ("game", "runtime_id", "generation", "lease_id"))
+
+
+def _runtime_matches_bounded(canonical: Path, request: dict[str, object]) -> bool:
+    """One bounded runtime read for operations that hold the receipt ledger."""
+    try:
+        return _runtime_matches(
+            canonical, request, lock_budget_sec=GAME_SWITCH_LOCK_BURST_SEC,
+        )
+    except TimeoutError:
+        return False
 
 
 def _monitor_runtime_matches(canonical: Path, request: dict[str, object]) -> bool:
@@ -531,7 +540,7 @@ def _record_player_completion(
                 or record["player_pending"]):
             _interrupt_record(path, record, request, "worker_interrupted")
             return record
-        if not _monitor_runtime_matches(canonical, request):
+        if not _runtime_matches_bounded(canonical, request):
             _interrupt_record(path, record, request, "runtime_fence_lost")
             return record
         if exit_code == 0:
@@ -582,7 +591,7 @@ def _ack_player(target: Path, queue: Path) -> None:
                 or record["player_attempts"] != record["player_successes"] + 1
                 or record["player_successes"] >= record["expected_player_count"]):
             raise WeatherAudioError("no completed owned player awaits acknowledgement")
-        if not _monitor_runtime_matches(_canonical_path(), request):
+        if not _runtime_matches_bounded(_canonical_path(), request):
             _interrupt_record(path, record, request, "runtime_fence_lost")
             raise WeatherAudioError("runtime fence changed before player acknowledgement")
         record["player_successes"] += 1
@@ -641,7 +650,9 @@ def _item_check(target: Path, queue: Path) -> bool:
             return False
         now = time.time()
         reason = _freshness_reason(request, now)
-        if reason is None and not _runtime_matches(_canonical_path(), request):
+        if reason is None and not _runtime_matches(
+            _canonical_path(), request, lock_budget_sec=GAME_SWITCH_LOCK_BURST_SEC,
+        ):
             reason = "runtime_mismatch"
         if reason is not None:
             _reject_record(queue, path, record, request, reason)
@@ -688,7 +699,9 @@ def _queue_request(raw: str, queue: Path) -> dict[str, object]:
                     return record["receipt"]
         else:
             reason = _freshness_reason(request, now)
-            if reason is None and not _runtime_matches(_canonical_path(), request):
+            if reason is None and not _runtime_matches(
+                _canonical_path(), request, lock_budget_sec=GAME_SWITCH_LOCK_BURST_SEC,
+            ):
                 reason = "runtime_mismatch"
             if reason is not None:
                 record = _store_initial(request, digest, "rejected", reason, now=now)
@@ -764,7 +777,7 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                 return 75
             canonical = _canonical_path()
             try:
-                with _game_switch_lock(canonical):
+                with _game_switch_lock(canonical, budget_sec=GAME_SWITCH_LOCK_BURST_SEC):
                     current = _active_identity(canonical)
                     expected = request["runtime_fence"]
                     identity_ok = all(
@@ -794,6 +807,12 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                         )
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
+            except TimeoutError:
+                if record.get("phase") == "playing":
+                    _interrupt_record(record_path, record, request, "runtime_fence_lost")
+                    return 74
+                _reject_record(queue, record_path, record, request, "runtime_mismatch")
+                return 75
             except (OSError, ValueError, WeatherAudioError):
                 if record.get("phase") == "playing":
                     _interrupt_record(record_path, record, request, "playback_interrupted")
@@ -801,15 +820,20 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                 _reject_record(queue, record_path, record, request, "runtime_mismatch")
                 return 75
         while child.poll() is None:
-            with _queue_lock(queue):
-                _record_path_value, current_record = _read_record(queue, key)
-                if current_record["phase"] == "terminal":
-                    _stop_owned_player(child)
-                    return 74
-                if not _monitor_runtime_matches(canonical, request):
+            # The GameSwitch check is the playback safety boundary. Run it
+            # before taking the receipt lock so a contender holding that lock
+            # while doing its own bounded GameSwitch read cannot delay stop.
+            if not _monitor_runtime_matches(canonical, request):
+                _stop_owned_player(child)
+                with _queue_lock(queue):
+                    _record_path_value, current_record = _read_record(queue, key)
                     _interrupt_record(
                         record_path, current_record, request, "runtime_fence_lost",
                     )
+                return 74
+            with _queue_lock(queue):
+                _record_path_value, current_record = _read_record(queue, key)
+                if current_record["phase"] == "terminal":
                     _stop_owned_player(child)
                     return 74
             time.sleep(PLAYER_MONITOR_INTERVAL_SEC)
@@ -877,7 +901,7 @@ def _finish(target: Path, queue: Path, outcome: str) -> dict[str, object]:
                     reason = "playback_interrupted"
                     if (record["player_active"] or record["player_pending"]
                             or record["player_attempts"] > record["player_successes"]):
-                        if not _monitor_runtime_matches(_canonical_path(), request):
+                        if not _runtime_matches_bounded(_canonical_path(), request):
                             reason = "runtime_fence_lost"
                     receipt = _make_receipt(
                         request, record["request_digest"], "interrupted", time.time(), reason,

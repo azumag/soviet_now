@@ -30,14 +30,18 @@ dedup, so identical wording at different ordinals remains distinct. Per-key
 receipts and the enqueue lock are metadata under the existing queue directory;
 they do not form another queue or playback lane.
 
-Enqueue verifies a ready canonical GameSwitch identity and an unexpired
-forecast lease. `_play_comment_queue` checks again when claiming the item.
-`say_enqueue.sh` routes a weather item's owned player command through the
-weather fence helper, which holds the existing GameSwitch shared lock while it
-checks the complete identity and spawns that player. During playback the
-helper rechecks the full identity using bounded nonblocking lock attempts. A
-runtime change, unreadable control plane, or sustained exclusive hold causes
-only this helper-owned process group to stop within its termination bound.
+Enqueue and `_play_comment_queue` claim checks verify a ready canonical
+GameSwitch identity and an unexpired forecast lease. Each check while holding
+the receipt ledger uses the bounded GameSwitch lock burst (0.5 seconds) and
+fails closed on contention; it cannot hold the ledger indefinitely behind a
+game switch. `say_enqueue.sh` routes a weather item's owned player command
+through the weather fence helper, which holds the existing GameSwitch shared
+lock while it checks the complete identity and spawns that player. During
+playback the helper rechecks the full identity using bounded nonblocking lock
+attempts before taking the receipt ledger lock. If runtime identity is lost or
+the control plane remains unreadable/busy, it stops only its owned process
+group first, then records the interruption. A ledger contender therefore
+cannot delay stopping audio while an exclusive GameSwitch lock is held.
 Forecast/runtime expiry gates starting; it does not terminate a player that
 already started.
 
@@ -69,4 +73,7 @@ stable-key retries and conflicts, enqueue/play-start/runtime-loss fences,
 bounded lock contention and owned-group termination, durable completion
 receipts, interrupted recovery, and the actual prerendered shell path for
 two-chunk success, second-chunk failure, and zero-exit early truncation without
-calling TTS or emitting audio.
+calling TTS or emitting audio. A three-party regression holds the exclusive
+GameSwitch lock while an enqueue or check contender owns the receipt ledger,
+then verifies that a long-running owned player stops within the termination
+bound before the exclusive lock is released.

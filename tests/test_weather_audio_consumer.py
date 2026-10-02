@@ -172,6 +172,146 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert sentinel.exists(), "dummy owned player did not start"
         return process, sentinel, Path(str(sentinel) + ".completed"), target
 
+    def _start_gated_monitor_player(self, item_path):
+        target = item_path
+        if item_path.suffix == ".txt":
+            target = item_path.with_suffix(".playing")
+            item_path.rename(target)
+        self.plan_players(target, 1)
+        sentinel = self.root / "three-party-player.sentinel"
+        ready = self.root / "player-monitor-ready"
+        release = self.root / "player-monitor-release"
+        wrapper = self.root / "gated_weather_player.py"
+        wrapper.write_text(
+            "import importlib.util, os, sys, time\n"
+            "from pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('weather_audio_consumer', os.environ['WEATHER_HELPER_PATH'])\n"
+            "consumer = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(consumer)\n"
+            "monitor = consumer._monitor_runtime_matches\n"
+            "def gated_monitor(canonical, request):\n"
+            "    ready = Path(os.environ['WEATHER_MONITOR_READY'])\n"
+            "    if not ready.exists():\n"
+            "        ready.write_text('ready')\n"
+            "        release = Path(os.environ['WEATHER_MONITOR_RELEASE'])\n"
+            "        deadline = time.monotonic() + 4\n"
+            "        while not release.exists() and time.monotonic() < deadline:\n"
+            "            time.sleep(0.005)\n"
+            "    return monitor(canonical, request)\n"
+            "consumer._monitor_runtime_matches = gated_monitor\n"
+            "raise SystemExit(consumer.main(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        env = {
+            **self.env,
+            "DUMMY_IGNORE_TERM": "1",
+            "WEATHER_HELPER_PATH": str(HELPER),
+            "WEATHER_MONITOR_READY": str(ready),
+            "WEATHER_MONITOR_RELEASE": str(release),
+        }
+        process = subprocess.Popen(
+            [
+                sys.executable, str(wrapper), "play", "--queue-dir", str(self.queue),
+                str(target), "--", sys.executable, str(self.dummy_player),
+                str(sentinel), "0", "10",
+            ],
+            cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.monotonic() + 3
+        while (not sentinel.exists() or not ready.exists()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert sentinel.exists() and ready.exists(), "player did not reach the gated runtime monitor"
+        return process, sentinel, Path(str(sentinel) + ".completed"), target, release
+
+    def _start_runtime_contender(self, operation, target=None, request=None):
+        ready = self.root / f"{operation}-runtime-read-ready"
+        wrapper = self.root / f"{operation}_weather_contender.py"
+        wrapper.write_text(
+            "import importlib.util, os, sys\n"
+            "from pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('weather_audio_consumer', os.environ['WEATHER_HELPER_PATH'])\n"
+            "consumer = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(consumer)\n"
+            "runtime_matches = consumer._runtime_matches\n"
+            "def announce_runtime_read(canonical, request, **kwargs):\n"
+            "    Path(os.environ['WEATHER_CONTENDER_READY']).write_text('inside runtime read')\n"
+            "    return runtime_matches(canonical, request, **kwargs)\n"
+            "consumer._runtime_matches = announce_runtime_read\n"
+            "raise SystemExit(consumer.main(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        env = {
+            **self.env,
+            "WEATHER_HELPER_PATH": str(HELPER),
+            "WEATHER_CONTENDER_READY": str(ready),
+        }
+        if operation == "check":
+            args = ["check", "--queue-dir", str(self.queue), str(target)]
+        else:
+            args = [
+                "enqueue", "--queue-dir", str(self.queue),
+                json.dumps(request, ensure_ascii=False, separators=(",", ":")),
+            ]
+        process = subprocess.Popen(
+            [sys.executable, str(wrapper), *args], cwd=ROOT, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        return process, ready
+
+    def _assert_runtime_contender_does_not_delay_audio_stop(self, operation):
+        request = _request(index=6)
+        assert self.enqueue(request).returncode == 0
+        item = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_06_" in path.name)
+        player, sentinel, completed, playing, release_monitor = self._start_gated_monitor_player(item)
+        candidate = _request(index=7) if operation == "enqueue" else None
+        switch_lock = self.context.parent / "locks" / "game-switch.lock"
+        contender = None
+        try:
+            with switch_lock.open("rb") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                contender, contender_ready = self._start_runtime_contender(
+                    operation, target=playing, request=candidate,
+                )
+                deadline = time.monotonic() + 3
+                while not contender_ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                assert contender_ready.exists(), "contender did not reach its GameSwitch read under the ledger lock"
+
+                started = time.monotonic()
+                release_monitor.touch()
+                stdout, stderr = player.communicate(timeout=4)
+                elapsed = time.monotonic() - started
+                assert player.returncode == 74, stderr or stdout
+                assert elapsed < 3.25, f"runtime loss did not stop audio within its bound: {elapsed:.2f}s"
+                assert not completed.exists(), "owned audio process survived while GameSwitch EX remained held"
+                try:
+                    with switch_lock.open("rb") as probe:
+                        fcntl.flock(probe.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise AssertionError("GameSwitch EX lock was released before audio stopped")
+                contender_stdout, contender_stderr = contender.communicate(timeout=1)
+                assert contender.returncode != 0, contender_stdout or contender_stderr
+        finally:
+            release_monitor.touch()
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=4)
+            if contender is not None and contender.poll() is None:
+                contender.terminate()
+                contender.communicate(timeout=2)
+        receipt = self.receipt(request["item_key"])
+        assert receipt["status"] == "interrupted"
+        assert receipt["reason"] == "runtime_fence_lost"
+
+    def test_check_contender_cannot_hold_ledger_ahead_of_runtime_stop(self):
+        self._assert_runtime_contender_does_not_delay_audio_stop("check")
+
+    def test_enqueue_contender_cannot_hold_ledger_ahead_of_runtime_stop(self):
+        self._assert_runtime_contender_does_not_delay_audio_stop("enqueue")
+
     def test_deduplicates_by_stable_item_key_and_rejects_whole_payload_conflicts(self):
         same_text_a = _request(index=1, text="同じ本文")
         same_text_b = _request(index=2, text="同じ本文")

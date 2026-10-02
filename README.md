@@ -49,10 +49,12 @@ claim時、TTS待機後の実プレイヤー起動直前、再生中100ms間隔�
 正規化したrequest全体のSHA-256が同じ場合だけretryとして扱います。同じkeyに本文・runtime・
 予報metadataの異なるrequestを送ると拒否します。既存の本文MD5 dedupはweather項目には使いません。
 
-queue受理時とowned player起動直前に、canonical `game_switch.json` のready状態・
-`weather-view` runtime ID・generation・lease ID・expiryを確認します。開始後も完全runtime tupleを
-監視し、identity loss時はweatherが起動したowned player groupだけを停止して
-`interrupted/runtime_fence_lost`を確定します（expiryは開始gateであり、開始済み音声は切りません）。
+queue受理・claim時のruntime確認は既存のGameSwitch lockを0.5秒単位で待ち、競合中にreceipt
+ledgerを無期限に保持しません。owned player起動直前にはcanonical `game_switch.json` のready状態・
+`weather-view` runtime ID・generation・lease ID・expiryを確認します。開始後の監視はreceipt ledger lockの
+外で完全runtime tupleを検査します。identity loss時はweatherが起動したowned player groupを先に停止し、
+その後`interrupted/runtime_fence_lost`を確定します。そのためexclusive GameSwitch lock中にcheck/enqueueが
+ledgerを保持しても音声停止を遅らせません（expiryは開始gateであり、開始済み音声は切りません）。
 再生側は既存`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、実player終了時に
 チャンクごとの完了証跡を記録します。`say_enqueue.sh` が全チャンク数を事前に固定し、各owned playerの
 終了コードと厳格な再生尺確認が通った後だけ、そのチャンクをackします。`finish`は計画した全チャンクが
