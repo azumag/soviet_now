@@ -147,6 +147,7 @@ PY
 	*soren91_ranking_comment*) printf '%s' "soren91:ranking_comment" ;;
 	*soren91_midgame_comment*)  printf '%s' "soren91:midgame_comment" ;;
 	*soren91_beat_comment*)     printf '%s' "soren91:beat_comment" ;;
+	*hanjuku_terminal*)        printf '%s' "hanjuku_terminal" ;;
 	*crypto_paper*)             printf '%s' "crypto_paper" ;;
 	*)                         printf '%s' "comment" ;;
 	esac
@@ -164,6 +165,7 @@ _comment_playback_overlay_title() {
 	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
 	soren91:beat_comment)      printf '%s' "メリケンAIひとこと playback" ;;
 	soren91:*)                 printf '%s' "メリケンAIコメント playback" ;;
+	hanjuku_terminal)          printf '%s' "半熟英雄終了結果 playback" ;;
 	crypto_paper)              printf '%s' "PAPERコーナー playback" ;;
 	comment)                   printf '%s' "コメント返信 playback" ;;
 	*)                         printf '%s' "${label} playback" ;;
@@ -371,6 +373,9 @@ _play_comment_queue() {
 			# dedupe has no notion of "occasion" and would otherwise drop the
 			# later one as a false-positive replay (2026-09-18 outage: every
 			# delivery in a 10-minute corner test was skipped this way).
+			# Hanjuku terminal deliveries carry a run-scoped durable receipt upstream.
+			# Identical summaries from different finished runs are separate events.
+			hanjuku_terminal) _skip_duplicate_check=1 ;;
 			crypto_paper) _skip_duplicate_check=1 ;;
 			esac
 				if [ "$_comment_context_label_for_dedupe" = "improve_progress" ] && _comment_improve_progress_already_played; then
