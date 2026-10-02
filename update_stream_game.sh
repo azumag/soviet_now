@@ -88,6 +88,35 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+_title_sync_call_condition() {
+    case "$MODE" in
+        dryrun) echo "dry_run"; return ;;
+        show) echo "show_only"; return ;;
+    esac
+    if [ "$CATEGORY_ONLY" = "1" ]; then
+        echo "category_only"
+    elif [ "$TITLE_ONLY" = "1" ]; then
+        echo "title_only"
+    elif [ "$MODE" = "force" ]; then
+        echo "force"
+    else
+        echo "normal"
+    fi
+}
+
+_record_title_sync_invocation() {
+    case "$MODE" in
+        verify|resolve) return 0 ;;
+    esac
+    [ -f lib/stream_title_sync.py ] || return 0
+    local condition
+    condition="$(_title_sync_call_condition)"
+    python3 lib/stream_title_sync.py --record-invocation "$condition" </dev/null >/dev/null 2>&1 || true
+    return 0
+}
+
+_record_title_sync_invocation
+
 EPOCH="${STREAM_DAY_EPOCH:-2026-03-14}"
 DAY_TZ="${STREAM_DAY_TZ:-Asia/Tokyo}"
 
@@ -300,21 +329,26 @@ _log "desired title: $NEW_TITLE"
 # switch or a successful Twitch update. The helper emits fixed status enums.
 _record_title_sync_skip() {
     [ -f lib/stream_title_sync.py ] || return 0
-    python3 lib/stream_title_sync.py --record-skip "$1" </dev/null >/dev/null 2>&1 || true
+    local condition
+    condition="$(_title_sync_call_condition)"
+    if [ "$#" -ge 2 ]; then condition="$2"; fi
+    python3 lib/stream_title_sync.py --record-skip "$1" --call-condition "$condition" </dev/null >/dev/null 2>&1 || true
     return 0
 }
 
 _sync_other_titles() {
+    local condition
+    condition="$(_title_sync_call_condition)"
     case "$MODE" in
-        dryrun) _record_title_sync_skip dry_run; return 0 ;;
-        show) _record_title_sync_skip show_only; return 0 ;;
+        dryrun) _record_title_sync_skip dry_run "$condition"; return 0 ;;
+        show) _record_title_sync_skip show_only "$condition"; return 0 ;;
     esac
-    if [ "${CATEGORY_ONLY:-0}" = "1" ]; then
-        _record_title_sync_skip category_only
+    if [ "$CATEGORY_ONLY" = "1" ]; then
+        _record_title_sync_skip category_only "$condition"
         return 0
     fi
     [ -f lib/stream_title_sync.py ] || return 0
-    printf '%s' "$NEW_TITLE" | python3 lib/stream_title_sync.py || true
+    printf '%s' "$NEW_TITLE" | python3 lib/stream_title_sync.py --call-condition "$condition" || true
 }
 
 # --- 現在の title/game を取得 ---
