@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import datetime as _datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,10 @@ SKIP_REASONS = frozenset({
     "category_only", "dry_run", "show_only", "twitch_read_failed",
     "twitch_update_failed", "category_not_configured", "updater_missing",
     "dispatch_failed", "invalid_title",
+})
+CALL_CONDITIONS = frozenset({
+    "unknown", "normal", "category_only", "dry_run", "show_only",
+    "title_only", "force",
 })
 EVENT_DIR = "tmp/state/stream_title_sync"
 EVENT_FILE = EVENT_DIR + "/events.jsonl"
@@ -116,24 +121,64 @@ def _open_private_file(path, flags):
     return fd
 
 
-def _append_title_event(event, *, skip_reason, youtube, kick, root=None, source_sha=None, now=None):
-    """Append only fixed metadata to the owner-only, bounded runtime journal."""
-    if event not in {"started", "result", "skipped"}:
+def _source_file_sha256(path) -> str | None:
+    """Hash one bounded regular source file without following a symlink."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 512 * 1024:
+            return None
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > 512 * 1024:
+                return None
+            digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _append_title_event(
+    event, *, skip_reason, youtube, kick, root=None, source_sha=None,
+    call_condition="unknown", now=None,
+):
+    """Append fixed enums and source identity to the owner-only bounded journal."""
+    if event not in {"invoked", "started", "result", "skipped"}:
+        return False
+    if call_condition not in CALL_CONDITIONS:
         return False
     if skip_reason not in ({"none"} | SKIP_REASONS):
         return False
     if event == "result":
         if skip_reason != "none" or youtube not in YOUTUBE_RESULTS or kick not in KICK_RESULTS:
             return False
-    elif event == "started":
+    elif event in {"invoked", "started"}:
         if skip_reason != "none" or youtube != "not_run" or kick != "not_run":
             return False
     elif skip_reason not in SKIP_REASONS or youtube != "not_run" or kick != "not_run":
         return False
 
-    root = _source_root() if root is None else root
+    root = Path(_source_root() if root is None else root)
     source_sha = _current_soren_sha(root) if source_sha is None else source_sha
-    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+    if source_sha is not None and (
+        not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+    ):
         return False
     stamp = _datetime.datetime.now(_datetime.timezone.utc) if now is None else now
     if not isinstance(stamp, _datetime.datetime) or stamp.tzinfo is None:
@@ -145,13 +190,15 @@ def _append_title_event(event, *, skip_reason, youtube, kick, root=None, source_
         "skip_reason": skip_reason,
         "youtube": youtube,
         "kick": kick,
-        "soviet_sha": source_sha,
+        "execution_head": source_sha,
+        "call_condition": call_condition,
+        "update_stream_game_sha256": _source_file_sha256(root / "update_stream_game.sh"),
+        "stream_title_sync_sha256": _source_file_sha256(Path(__file__)),
     }
     encoded = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     if len(encoded) > EVENT_MAX_LINE_BYTES:
         return False
 
-    root = Path(root)
     tmp_dir = root / "tmp"
     state_dir = tmp_dir / "state"
     event_dir = root / EVENT_DIR
@@ -270,32 +317,60 @@ def kick_request(token: str):
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    call_condition = "unknown"
+    skip_reason = None
     if argv:
-        if len(argv) == 2 and argv[0] == "--record-skip" and argv[1] in SKIP_REASONS:
+        if (
+            len(argv) == 2
+            and argv[0] == "--record-invocation"
+            and argv[1] in CALL_CONDITIONS - {"unknown"}
+        ):
             _append_title_event(
-                "skipped", skip_reason=argv[1], youtube="not_run", kick="not_run"
+                "invoked", skip_reason="none", youtube="not_run", kick="not_run",
+                call_condition=argv[1],
             )
             return 0
-        return 2
+        if (
+            len(argv) == 4
+            and argv[0] == "--record-skip"
+            and argv[1] in SKIP_REASONS
+            and argv[2] == "--call-condition"
+            and argv[3] in CALL_CONDITIONS
+        ):
+            skip_reason, call_condition = argv[1], argv[3]
+        elif len(argv) == 2 and argv[0] == "--record-skip" and argv[1] in SKIP_REASONS:
+            skip_reason = argv[1]
+        elif len(argv) == 2 and argv[0] == "--call-condition" and argv[1] in CALL_CONDITIONS:
+            call_condition = argv[1]
+        else:
+            return 2
+    if skip_reason is not None:
+        _append_title_event(
+            "skipped", skip_reason=skip_reason, youtube="not_run", kick="not_run",
+            call_condition=call_condition,
+        )
+        return 0
 
     title = sys.stdin.read(4097)
     if len(title)>4096:
         _append_title_event(
-            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run"
+            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run",
+            call_condition=call_condition,
         )
         return 2
     try:
         title=normalize_title(title)
     except ValueError:
         _append_title_event(
-            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run"
+            "skipped", skip_reason="invalid_title", youtube="not_run", kick="not_run",
+            call_condition=call_condition,
         )
         return 2
 
     source_sha = _current_soren_sha()
     _append_title_event(
         "started", skip_reason="none", youtube="not_run", kick="not_run",
-        source_sha=source_sha,
+        source_sha=source_sha, call_condition=call_condition,
     )
     results={}
     required=('YOUTUBE_OAUTH_CLIENT_ID','YOUTUBE_OAUTH_CLIENT_SECRET','YOUTUBE_OAUTH_REFRESH_TOKEN')
@@ -319,6 +394,7 @@ def main(argv=None) -> int:
     _append_title_event(
         "result", skip_reason="none",
         youtube=results["youtube"], kick=results["kick"], source_sha=source_sha,
+        call_condition=call_condition,
     )
     print(json.dumps(results))
     return 0
