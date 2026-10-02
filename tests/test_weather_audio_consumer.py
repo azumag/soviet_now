@@ -667,6 +667,8 @@ class TestWeatherAudioConsumer(unittest.TestCase):
                     state = json.loads(unconfirmed.stdout)
                     assert state["receipt"]["status"] == "interrupted"
                     assert state["quiescent"] is False
+                    if os.environ.get("WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP") == "1":
+                        self.fail("CI forbids skipping after an observed process-group stop PermissionError")
                     self.skipTest("sandbox denied process-group stop; consumer kept stop acknowledgement false")
             assert player.returncode == 74, stop_error.read_text() if stop_error.exists() else stderr or stdout
             stopped = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
