@@ -11,6 +11,8 @@ forecast text.
 ```bash
 enqueue_weather_audio_request "$request_json"
 get_weather_audio_receipt "weather_corner:<execution UUID>:<item index>"
+python3 lib/weather_audio_consumer.py quiescence --queue-dir "$COMMENT_QUEUE_DIR" \
+  "weather_corner:<execution UUID>:<item index>"
 ```
 
 The request shape is the `SharedWeatherAudioPort` value contract in docich:
@@ -60,6 +62,16 @@ with an item claimed as `.playing`, recovery records `interrupted` and removes
 it from the FIFO instead of risking replay. A retry after a terminal receipt
 returns that receipt and never republishes the item.
 
+A terminal receipt and owned-player stop completion are separate states.
+`interrupt` may first persist an `interrupted` receipt while the playback
+wrapper is still stopping its owned player group. The wrapper sets the durable
+`player_stop_confirmed` ledger field only after it has stopped and waited for
+that child. `quiescence ITEM_KEY` returns both the receipt and this stop
+acknowledgement; it remains false until the acknowledgement is durable. A lost
+interrupt response can be recovered by querying the same item key. Legacy
+schema-2 interrupted receipts have no stop acknowledgement and remain
+unconfirmed. Queue-file disappearance alone is not proof that a player exited.
+
 Receipt JSON follows the docich weather-audio receipt schema, including the
 whole-request digest, item key, exact runtime fence, forecast identity,
 recorded time, and a limited reason code. Receipt storage is local metadata;
@@ -77,3 +89,6 @@ calling TTS or emitting audio. A three-party regression holds the exclusive
 GameSwitch lock while an enqueue or check contender owns the receipt ledger,
 then verifies that a long-running owned player stops within the termination
 bound before the exclusive lock is released.
+A gated long-lived dummy player also proves that an `interrupted` receipt can
+precede process termination, and that the separate quiescence acknowledgement
+appears only after the consumer has stopped and waited for its owned player.
