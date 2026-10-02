@@ -7,9 +7,22 @@ import unittest
 
 
 class TitleDayTest(unittest.TestCase):
-    def run_script(self, owner='123', memo=None, title='Keep Title DAY 177 intact'):
+    def run_script(self, owner='123', memo=None, title='Keep Title DAY 177 intact',
+                   channel_failure=False):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
+            self.last_skip_log = ""
+            (p / "lib").mkdir()
+            (p / "lib/stream_title_sync.py").write_text(
+                "\n".join([
+                    "import os, sys",
+                    'with open(os.environ["SYNC_SKIP_LOG"], "a", encoding="utf-8") as f:',
+                    '    f.write(" ".join(sys.argv[1:]) + "\\n")',
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+            skip_log = p / "skip.log"
             shutil.copy(Path(__file__).resolve().parents[1] / 'update_stream_title_day.sh', p)
             if memo is not None:
                 (p / 'prompts').mkdir()
@@ -21,7 +34,12 @@ case "$*" in
  *OAuth\ bad*) echo '{"client_id":"app","user_id":"123","scopes":[]}' ;;
  *) printf '{"client_id":"app","user_id":"%s","scopes":["channel:manage:broadcast"]}' "$TEST_OWNER" ;;
  esac ;;
-*) printf '{"data":[{"title":"%s"}]}' "$TEST_TITLE" ;;
+*)
+ if [ "$TEST_CHANNEL_FAILURE" = "1" ]; then
+  printf '{"data":[]}'
+ else
+  printf '{"data":[{"title":"%s"}]}' "$TEST_TITLE"
+ fi ;;
 esac
 ''')
             (p / 'curl').chmod(0o755)
@@ -34,13 +52,18 @@ esac
                 'TWITCH_BOT_TOKEN': 'good',
                 'TEST_OWNER': owner,
                 'TEST_TITLE': title,
+                'TEST_CHANNEL_FAILURE': '1' if channel_failure else '0',
+                'SYNC_SKIP_LOG': str(skip_log),
             }
-            return subprocess.run(
+            result = subprocess.run(
                 ['bash', str(p / 'update_stream_title_day.sh'), '--dry-run'],
                 env=env,
                 text=True,
                 capture_output=True,
             )
+            if skip_log.exists():
+                self.last_skip_log = skip_log.read_text(encoding="utf-8")
+            return result
 
     def test_scope_fallback_normalizes_day_prefix(self):
         r = self.run_script()
@@ -48,6 +71,13 @@ esac
         self.assertIn('TWITCH_BOT_TOKEN', r.stderr)
         self.assertRegex(r.stdout, r'^\[day\d+\] Keep Title intact\n$')
         self.assertNotIn('good', r.stderr)
+
+
+    def test_twitch_read_failure_records_skip_before_returning(self):
+        r = self.run_script(channel_failure=True)
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertNotIn("command not found", r.stderr)
+        self.assertEqual(self.last_skip_log, "--record-skip twitch_read_failed\n")
 
     def test_wrong_broadcaster_is_rejected(self):
         self.assertEqual(self.run_script('999').returncode, 3)
