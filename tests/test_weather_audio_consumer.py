@@ -433,6 +433,73 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert self.receipt(request["item_key"])["reason"] == "runtime_fence_lost"
         assert not completed.exists()
 
+    def test_terminal_interrupt_receipt_is_not_player_stop_acknowledgement(self):
+        request = _request(index=11)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_11_" in path.name)
+        player, sentinel, completed, playing_path, release = self._start_gated_monitor_player(item_path)
+        try:
+            assert sentinel.exists()
+            interrupted = self.helper("interrupt", "--queue-dir", self.queue, playing_path)
+            assert interrupted.returncode == 0, interrupted.stderr
+            assert json.loads(interrupted.stdout)["status"] == "interrupted"
+
+            # The receipt is terminal, but the owned wrapper has not yet read
+            # it and its dummy player is still alive behind the test gate.
+            pending = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert pending.returncode == 0, pending.stderr
+            pending_value = json.loads(pending.stdout)
+            assert pending_value["receipt"]["status"] == "interrupted"
+            assert pending_value["quiescent"] is False
+            assert player.poll() is None
+            assert not completed.exists()
+
+            release.write_text("release", encoding="utf-8")
+            stdout, stderr = player.communicate(timeout=5)
+            assert player.returncode == 74, stderr or stdout
+            assert not completed.exists(), "owned dummy player survived terminal interruption"
+            stopped = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert stopped.returncode == 0, stopped.stderr
+            stopped_value = json.loads(stopped.stdout)
+            assert stopped_value["receipt"]["status"] == "interrupted"
+            assert stopped_value["quiescent"] is True
+        finally:
+            release.write_text("release", encoding="utf-8")
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=5)
+
+    def test_legacy_terminal_interrupted_record_is_not_assumed_quiescent(self):
+        request = _request(index=12)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_12_" in path.name)
+        player, _sentinel, _completed, playing_path, release = self._start_gated_monitor_player(item_path)
+        try:
+            interrupted = self.helper("interrupt", "--queue-dir", self.queue, playing_path)
+            assert interrupted.returncode == 0, interrupted.stderr
+            assert json.loads(interrupted.stdout)["status"] == "interrupted"
+
+            record_path = self.queue / ".weather_audio_receipts" / f"{EXECUTION_ID}_12.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["schema_version"] = 2
+            record.pop("player_stop_confirmed")
+            record.pop("player_pid")
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            status = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert status.returncode == 0, status.stderr
+            result = json.loads(status.stdout)
+            assert result["receipt"]["status"] == "interrupted"
+            assert result["quiescent"] is False
+            assert player.poll() is None
+        finally:
+            release.write_text("release", encoding="utf-8")
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=5)
+
     def test_monitor_lock_contention_fails_closed_and_kills_ignoring_player_within_bound(self):
         request = _request(index=6)
         queued = self.enqueue(request)
