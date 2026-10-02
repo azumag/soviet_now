@@ -78,6 +78,8 @@ jobs:
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer
+        env:
+          WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP: "1"
         run: python3 -m unittest -v tests.test_weather_audio_consumer
       - name: Raid and country-name regression tests
         run: python3 -m unittest tests.test_raid_research tests.test_country_stage_names

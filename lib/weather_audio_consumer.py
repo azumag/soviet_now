@@ -42,6 +42,7 @@ SHA256_RE = re.compile(r"[a-f0-9]{64}\Z")
 ITEM_NAME_RE = re.compile(
     r"comment_announce_weather_audio_[0-9]{16,}_([0-9a-f-]{36})_([0-9]{2})_weather_audio_item\.(?:txt|playing)\Z"
 )
+ITEM_KEY_RE = re.compile(r"weather_corner:([0-9a-f-]{36}):(0[0-9]|1[0-2])\Z")
 MAX_REQUEST_BYTES = 65536
 MAX_RECEIPT_BYTES = 65536
 MAX_ITEM_TEXT_CHARS = 1000
@@ -300,13 +301,29 @@ def _write_record(path: Path, record: dict[str, object]) -> None:
 def _read_record(queue: Path, item_key: str) -> tuple[Path, dict[str, object]]:
     path = _record_path(queue, item_key)
     value = _read_json(path, MAX_RECEIPT_BYTES)
+    legacy_keys = {
+        "schema_version", "request_digest", "queue_filename", "phase", "receipt",
+        "expected_player_count", "player_attempts", "player_successes",
+        "player_active", "player_pending",
+    }
+    current_keys = legacy_keys | {"player_stop_confirmed", "player_pid"}
+    if isinstance(value, dict) and value.get("schema_version") == 2 and set(value) == legacy_keys:
+        # Old terminal interrupted receipts do not prove that their owned
+        # player has exited. Keep those records fail-closed until a v3 player
+        # process can write its post-wait acknowledgement.
+        receipt = value.get("receipt")
+        stop_confirmed = (
+            value.get("phase") != "terminal"
+            or not isinstance(receipt, dict)
+            or receipt.get("status") != "interrupted"
+        ) and not value.get("player_active", False)
+        value = {
+            **value, "schema_version": 3,
+            "player_stop_confirmed": stop_confirmed, "player_pid": None,
+        }
     if (not isinstance(value, dict)
-            or set(value) != {
-                "schema_version", "request_digest", "queue_filename", "phase", "receipt",
-                "expected_player_count", "player_attempts", "player_successes",
-                "player_active", "player_pending",
-            }
-            or type(value.get("schema_version")) is not int or value["schema_version"] != 2
+            or set(value) != current_keys
+            or type(value.get("schema_version")) is not int or value["schema_version"] != 3
             or not isinstance(value.get("request_digest"), str)
             or SHA256_RE.fullmatch(value["request_digest"]) is None
             or value.get("phase") not in {"queued", "playing", "terminal"}
@@ -321,11 +338,18 @@ def _read_record(queue: Path, item_key: str) -> tuple[Path, dict[str, object]]:
             or value["player_attempts"] > value["expected_player_count"]
             or type(value.get("player_active")) is not bool
             or type(value.get("player_pending")) is not bool
+            or type(value.get("player_stop_confirmed")) is not bool
+            or (value.get("player_pid") is not None and (
+                type(value.get("player_pid")) is not int or value["player_pid"] < 2
+            ))
+            or value["player_stop_confirmed"] and value["player_pid"] is not None
+            or value["player_active"] and value["player_stop_confirmed"]
             or value["player_active"] and value["player_pending"]):
         raise WeatherAudioError("invalid receipt record")
     if value["phase"] == "queued" and (
         value["player_attempts"] or value["player_successes"]
         or value["player_active"] or value["player_pending"]
+        or not value["player_stop_confirmed"] or value["player_pid"] is not None
     ):
         raise WeatherAudioError("invalid queued player record")
     if value["phase"] == "playing" and (
@@ -367,7 +391,7 @@ def _store_initial(
 ) -> dict[str, object]:
     receipt = _make_receipt(request, digest, status, now, reason)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "request_digest": digest,
         "queue_filename": queue_filename,
         "phase": "terminal" if status == "rejected" else "queued",
@@ -377,6 +401,8 @@ def _store_initial(
         "player_successes": 0,
         "player_active": False,
         "player_pending": False,
+        "player_stop_confirmed": True,
+        "player_pid": None,
     }
 
 
@@ -527,14 +553,35 @@ def _interrupt_record(path: Path, record: dict[str, object], request: dict[str, 
     return receipt
 
 
+def _confirm_player_stopped(queue: Path, item_key: str, player_pid: int) -> None:
+    """Persist the owned player's stop acknowledgement only after wait/reap."""
+    with _queue_lock(queue):
+        path, record = _read_record(queue, item_key)
+        stored_pid = record["player_pid"]
+        if stored_pid not in (None, player_pid):
+            raise WeatherAudioError("owned player identity changed before stop acknowledgement")
+        if record["player_stop_confirmed"] and stored_pid is None:
+            return
+        record["player_pid"] = None
+        record["player_stop_confirmed"] = True
+        record["player_active"] = False
+        _write_record(path, record)
+
+
 def _record_player_completion(
     queue: Path, key: str, request: dict[str, object], exit_code: int,
-    canonical: Path,
+    canonical: Path, player_pid: int,
 ) -> dict[str, object]:
     """Record one owned chunk's exit; whole-item success is finalized later."""
     with _queue_lock(queue):
         path, record = _read_record(queue, key)
+        if record["player_pid"] not in (None, player_pid):
+            raise WeatherAudioError("owned player identity changed before completion")
+        record["player_pid"] = None
+        record["player_stop_confirmed"] = True
         if record["phase"] == "terminal":
+            record["player_active"] = False
+            _write_record(path, record)
             return record
         if (record["phase"] != "playing" or not record["player_active"]
                 or record["player_pending"]):
@@ -616,25 +663,49 @@ def _interrupt_item(target: Path, queue: Path) -> dict[str, object]:
 
 
 def _stop_owned_player(child: subprocess.Popen) -> None:
-    """Stop and reap only this helper's process group within a fixed bound."""
+    """Stop and confirm disappearance of only this helper's process group."""
     deadline = time.monotonic() + PLAYER_STOP_GRACE_SEC
+    try:
+        os.killpg(child.pid, 0)
+    except ProcessLookupError:
+        if child.poll() is None:
+            child.wait(timeout=max(0.0, deadline - time.monotonic()))
+        return
     try:
         os.killpg(child.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     while time.monotonic() < deadline:
-        if child.poll() is not None:
-            try:
-                os.killpg(child.pid, 0)
-            except ProcessLookupError:
-                break
-        time.sleep(0.02)
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            if child.poll() is None:
+                child.wait(timeout=max(0.0, deadline - time.monotonic()))
+            return
+        time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
+
+    # The group leader may already have exited while one of its descendants
+    # remains. Sending SIGKILL is only a stop request; wait for the whole owned
+    # group to disappear before writing the durable stop acknowledgement.
     try:
         os.killpg(child.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    kill_deadline = time.monotonic() + PLAYER_STOP_GRACE_SEC
     if child.poll() is None:
-        child.wait()
+        try:
+            child.wait(timeout=max(0.0, kill_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            raise WeatherAudioError("owned player leader did not stop after SIGKILL") from exc
+    while True:
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            return
+        remaining = kill_deadline - time.monotonic()
+        if remaining <= 0:
+            raise WeatherAudioError("owned player process group remained after SIGKILL")
+        time.sleep(min(0.02, remaining))
 
 
 def _item_check(target: Path, queue: Path) -> bool:
@@ -753,6 +824,14 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
     request = None
     record_path = None
     child = None
+    player_stop_attempted = False
+    player_stop_confirmed = False
+
+    def stop_owned_player() -> None:
+        nonlocal player_stop_attempted, player_stop_confirmed
+        player_stop_attempted = True
+        _stop_owned_player(child)
+        player_stop_confirmed = True
 
     def interrupted(_signum, _frame):
         raise InterruptedError("owned player wrapper interrupted")
@@ -797,6 +876,8 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                     record["phase"] = "playing"
                     record["player_attempts"] += 1
                     record["player_active"] = True
+                    record["player_stop_confirmed"] = False
+                    record["player_pid"] = None
                     _write_record(record_path, record)
                     mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
                     try:
@@ -805,16 +886,28 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
                             start_new_session=True,
                             preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, mask),
                         )
+                        record["player_pid"] = child.pid
+                        _write_record(record_path, record)
                     finally:
                         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
             except TimeoutError:
                 if record.get("phase") == "playing":
+                    if child is None:
+                        record["player_active"] = False
+                        record["player_stop_confirmed"] = True
+                        record["player_pid"] = None
+                        _write_record(record_path, record)
                     _interrupt_record(record_path, record, request, "runtime_fence_lost")
                     return 74
                 _reject_record(queue, record_path, record, request, "runtime_mismatch")
                 return 75
             except (OSError, ValueError, WeatherAudioError):
                 if record.get("phase") == "playing":
+                    if child is None:
+                        record["player_active"] = False
+                        record["player_stop_confirmed"] = True
+                        record["player_pid"] = None
+                        _write_record(record_path, record)
                     _interrupt_record(record_path, record, request, "playback_interrupted")
                     return 74
                 _reject_record(queue, record_path, record, request, "runtime_mismatch")
@@ -824,7 +917,7 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
             # before taking the receipt lock so a contender holding that lock
             # while doing its own bounded GameSwitch read cannot delay stop.
             if not _monitor_runtime_matches(canonical, request):
-                _stop_owned_player(child)
+                stop_owned_player()
                 with _queue_lock(queue):
                     _record_path_value, current_record = _read_record(queue, key)
                     _interrupt_record(
@@ -834,11 +927,15 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
             with _queue_lock(queue):
                 _record_path_value, current_record = _read_record(queue, key)
                 if current_record["phase"] == "terminal":
-                    _stop_owned_player(child)
+                    stop_owned_player()
                     return 74
             time.sleep(PLAYER_MONITOR_INTERVAL_SEC)
         exit_code = child.wait()
-        record = _record_player_completion(queue, key, request, exit_code, canonical)
+        # A process-group leader can exit before a descendant it spawned. Do
+        # not publish the post-wait acknowledgement while any owned group
+        # member remains.
+        stop_owned_player()
+        record = _record_player_completion(queue, key, request, exit_code, canonical, child.pid)
         if (exit_code != 0 or record["phase"] != "playing"
                 or record["player_active"] or not record["player_pending"]):
             return 74
@@ -846,10 +943,15 @@ def _run_player(target: Path, queue: Path, command: list[str]) -> int:
     except InterruptedError:
         return 74
     finally:
-        if child is not None and child.poll() is None:
-            _stop_owned_player(child)
-        signal.signal(signal.SIGTERM, previous_term)
-        signal.signal(signal.SIGINT, previous_int)
+        try:
+            if child is not None:
+                if not player_stop_attempted:
+                    stop_owned_player()
+                if player_stop_confirmed:
+                    _confirm_player_stopped(queue, key, child.pid)
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
+            signal.signal(signal.SIGINT, previous_int)
 
 
 def _finish(target: Path, queue: Path, outcome: str) -> dict[str, object]:
@@ -945,6 +1047,38 @@ def _get_receipt(queue: Path, item_key: str) -> dict[str, object] | None:
         return record["receipt"]
 
 
+def _get_quiescence(queue: Path, item_key: str) -> dict[str, object]:
+    """Return receipt and a durable post-wait owned-player stop acknowledgement."""
+    match = ITEM_KEY_RE.fullmatch(item_key) if isinstance(item_key, str) else None
+    if match is None:
+        raise WeatherAudioError("invalid weather item key")
+    execution_id = _uuid(match.group(1), "execution identity")
+    index = match.group(2)
+    if item_key != f"{SOURCE}:{execution_id}:{index}":
+        raise WeatherAudioError("non-canonical weather item key")
+    try:
+        _path, record = _read_record(queue, item_key)
+    except FileNotFoundError:
+        pattern = (
+            f"comment_announce_weather_audio_*_{execution_id}_{index}_"
+            "weather_audio_item.*"
+        )
+        outstanding = list(queue.glob(pattern)) if queue.exists() else []
+        return {
+            "schema_version": 1, "item_key": item_key, "receipt": None,
+            "quiescent": not outstanding,
+        }
+    receipt = record["receipt"]
+    if receipt.get("item_key") != item_key:
+        raise WeatherAudioError("weather item receipt identity mismatch")
+    return {
+        "schema_version": 1,
+        "item_key": item_key,
+        "receipt": receipt,
+        "quiescent": record["phase"] == "terminal" and record["player_stop_confirmed"],
+    }
+
+
 def _emit(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
@@ -960,6 +1094,10 @@ def main(argv: list[str] | None = None) -> int:
     get = subparsers.add_parser("get")
     get.add_argument("--queue-dir", required=True)
     get.add_argument("item_key")
+
+    quiescence = subparsers.add_parser("quiescence")
+    quiescence.add_argument("--queue-dir", required=True)
+    quiescence.add_argument("item_key")
 
     check = subparsers.add_parser("check")
     check.add_argument("--queue-dir", required=True)
@@ -1000,6 +1138,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.operation == "get":
             _emit(_get_receipt(queue, args.item_key))
+            return 0
+        if args.operation == "quiescence":
+            _emit(_get_quiescence(queue, args.item_key))
             return 0
         target = Path(args.target)
         if args.operation == "check":

@@ -10,6 +10,7 @@ from datetime import datetime
 import fcntl
 import json
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +29,7 @@ IDENTITY = {
     "generation": 7,
     "lease_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
 }
+PROCESS_GROUP_PERMISSION_MARKER = "TestOnlyProcessGroupPermissionDenied"
 
 
 def _request(*, index=1, text="札幌。晴れ。最高気温は18度。", expires_at=None, **changes):
@@ -150,20 +152,50 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         result = self.helper("ack", "--queue-dir", self.queue, target)
         assert result.returncode == 0, result.stderr
 
-    def start_long_player(self, item_path, *, duration="10"):
+    def start_long_player(self, item_path, *, duration="10", permission_marker=None):
         target = item_path
         if item_path.suffix == ".txt":
             target = item_path.with_suffix(".playing")
             item_path.rename(target)
         self.plan_players(target, 1)
         sentinel = self.root / f"player-{time.time_ns()}.sentinel"
+        command = [
+            sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
+            str(target), "--", sys.executable, str(self.dummy_player),
+            str(sentinel), "0", duration,
+        ]
+        env = self.env
+        if permission_marker is not None:
+            wrapper = self.root / "test_weather_audio_consumer_marker_wrapper.py"
+            wrapper.write_text(
+                "import importlib.util, os, sys\n"
+                "from pathlib import Path\n"
+                "spec = importlib.util.spec_from_file_location('weather_audio_consumer', os.environ['WEATHER_AUDIO_CONSUMER_PATH'])\n"
+                "consumer = importlib.util.module_from_spec(spec)\n"
+                "spec.loader.exec_module(consumer)\n"
+                "class TestOnlyProcessGroupPermissionDenied(PermissionError): pass\n"
+                "real_killpg = consumer.os.killpg\n"
+                "def marked_killpg(pid, sig):\n"
+                "    try:\n"
+                "        return real_killpg(pid, sig)\n"
+                "    except PermissionError as exc:\n"
+                "        Path(os.environ['WEATHER_TEST_PERMISSION_MARKER']).write_text(\n"
+                "            'TestOnlyProcessGroupPermissionDenied', encoding='utf-8')\n"
+                "        raise TestOnlyProcessGroupPermissionDenied(\n"
+                "            'test observed process-group stop denial') from exc\n"
+                "consumer.os.killpg = marked_killpg\n"
+                "raise SystemExit(consumer.main(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            command[1] = str(wrapper)
+            env = {
+                **self.env,
+                "WEATHER_AUDIO_CONSUMER_PATH": str(HELPER),
+                "WEATHER_TEST_PERMISSION_MARKER": str(permission_marker),
+            }
         process = subprocess.Popen(
-            [
-                sys.executable, str(HELPER), "play", "--queue-dir", str(self.queue),
-                str(target), "--", sys.executable, str(self.dummy_player),
-                str(sentinel), "0", duration,
-            ],
-            cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            command,
+            cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
         )
         deadline = time.monotonic() + 3
@@ -400,12 +432,46 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert self.receipt(f"weather_corner:{EXECUTION_ID}:07")["status"] == "played"
         assert not sidecar.exists()
 
+    def test_stop_ack_fails_closed_if_owned_process_group_survives_sigkill(self):
+        import importlib.util
+        from unittest.mock import patch
+
+        spec = importlib.util.spec_from_file_location("weather_audio_consumer_under_test", HELPER)
+        consumer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(consumer)
+        signals = []
+
+        class ExitedLeader:
+            pid = 43210
+
+            @staticmethod
+            def poll():
+                return 0
+
+        def group_remains(_pgid, sig):
+            signals.append(sig)
+
+        # A persistent process group makes killpg(..., 0) succeed even after
+        # SIGKILL. The stop helper must time out without permitting a stop ack.
+        with patch.object(consumer, "PLAYER_STOP_GRACE_SEC", 0.01), \
+                patch.object(consumer.os, "killpg", side_effect=group_remains):
+            with self.assertRaisesRegex(
+                consumer.WeatherAudioError, "process group remained after SIGKILL",
+            ):
+                consumer._stop_owned_player(ExitedLeader())
+
+        self.assertIn(consumer.signal.SIGTERM, signals)
+        self.assertIn(consumer.signal.SIGKILL, signals)
+
     def test_runtime_identity_change_stops_owned_player_and_terminal_receipt_survives_finish_success(self):
         request = _request(index=5)
         queued = self.enqueue(request)
         assert queued.returncode == 0
         item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_05_" in path.name)
-        player, sentinel, completed, playing_path = self.start_long_player(item_path)
+        permission_marker = self.root / "runtime-identity-stop-permission.marker"
+        player, sentinel, completed, playing_path = self.start_long_player(
+            item_path, permission_marker=permission_marker,
+        )
 
         switch_lock = self.context.parent / "locks" / "game-switch.lock"
         with switch_lock.open("rb") as lock:
@@ -416,6 +482,16 @@ class TestWeatherAudioConsumer(unittest.TestCase):
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
         stdout, stderr = player.communicate(timeout=4)
+        if (player.returncode == 1 and permission_marker.is_file()
+                and permission_marker.read_text(encoding="utf-8") == PROCESS_GROUP_PERMISSION_MARKER):
+            unconfirmed = self.helper(
+                "quiescence", "--queue-dir", self.queue, f"weather_corner:{EXECUTION_ID}:05",
+            )
+            assert unconfirmed.returncode == 0, unconfirmed.stderr
+            assert json.loads(unconfirmed.stdout)["quiescent"] is False
+            if os.environ.get("WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP") == "1":
+                self.fail("CI forbids skipping after an observed process-group stop PermissionError")
+            self.skipTest("sandbox denied process-group stop; no player-stop acknowledgement was written")
         assert player.returncode == 74, stderr or stdout
         assert not completed.exists(), "owned player completed after the runtime changed"
         receipt = self.receipt(request["item_key"])
@@ -432,6 +508,209 @@ class TestWeatherAudioConsumer(unittest.TestCase):
         assert json.loads(finished.stdout)["status"] == "interrupted"
         assert self.receipt(request["item_key"])["reason"] == "runtime_fence_lost"
         assert not completed.exists()
+
+    def test_terminal_interrupt_receipt_is_not_player_stop_acknowledgement(self):
+        request = _request(index=11)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_11_" in path.name)
+        player, sentinel, completed, playing_path, release = self._start_gated_monitor_player(item_path)
+        try:
+            assert sentinel.exists()
+            interrupted = self.helper("interrupt", "--queue-dir", self.queue, playing_path)
+            assert interrupted.returncode == 0, interrupted.stderr
+            assert json.loads(interrupted.stdout)["status"] == "interrupted"
+
+            # The receipt is terminal, but the owned wrapper has not yet read
+            # it and its dummy player is still alive behind the test gate.
+            pending = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert pending.returncode == 0, pending.stderr
+            pending_value = json.loads(pending.stdout)
+            assert pending_value["receipt"]["status"] == "interrupted"
+            assert pending_value["quiescent"] is False
+            assert player.poll() is None
+            assert not completed.exists()
+
+            release.write_text("release", encoding="utf-8")
+            stdout, stderr = player.communicate(timeout=5)
+            assert player.returncode == 74, stderr or stdout
+            assert not completed.exists(), "owned dummy player survived terminal interruption"
+            stopped = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert stopped.returncode == 0, stopped.stderr
+            stopped_value = json.loads(stopped.stdout)
+            assert stopped_value["receipt"]["status"] == "interrupted"
+            assert stopped_value["quiescent"] is True
+        finally:
+            release.write_text("release", encoding="utf-8")
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=5)
+
+    def test_sigterm_finally_stops_group_after_leader_exits_before_acknowledging(self):
+        request = _request(index=9)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_09_" in path.name)
+        playing_path = item_path.with_suffix(".playing")
+        item_path.rename(playing_path)
+        self.plan_players(playing_path, 1)
+
+        wrapper = self.root / "sigterm-gated-consumer" / "lib" / "weather_audio_consumer.py"
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text(
+            "import importlib.util, os, signal, sys, time\n"
+            "from pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('weather_audio_consumer', os.environ['WEATHER_HELPER_PATH'])\n"
+            "consumer = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(consumer)\n"
+            "monitor = consumer._monitor_runtime_matches\n"
+            "stop = consumer._stop_owned_player\n"
+            "def traced_stop(child):\n"
+            "    try: return stop(child)\n"
+            "    except Exception as exc:\n"
+            "        Path(os.environ['WEATHER_STOP_ERROR']).write_text(type(exc).__name__ + ':' + str(exc))\n"
+            "        raise\n"
+            "consumer._stop_owned_player = traced_stop\n"
+            "real_popen = consumer.subprocess.Popen\n"
+            "class TrackedPopen(real_popen):\n"
+            "    def __init__(self, *args, **kwargs):\n"
+            "        super().__init__(*args, **kwargs)\n"
+            "        Path(os.environ['WEATHER_CHILD_PID']).write_text(str(self.pid))\n"
+            "consumer.subprocess.Popen = TrackedPopen\n"
+            "def gated_monitor(canonical, request):\n"
+            "    Path(os.environ['WEATHER_MONITOR_READY']).write_text('ready')\n"
+            "    release = Path(os.environ['WEATHER_PARENT_RELEASE'])\n"
+            "    deadline = time.monotonic() + 5\n"
+            "    while not release.exists() and time.monotonic() < deadline: time.sleep(0.005)\n"
+            "    child_pid = int(Path(os.environ['WEATHER_CHILD_PID']).read_text())\n"
+            "    exited = Path(os.environ['WEATHER_LEADER_EXITED'])\n"
+            "    while time.monotonic() < deadline:\n"
+            "        result = os.waitid(os.P_PID, child_pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)\n"
+            "        if result is not None and result.si_pid == child_pid:\n"
+            "            exited.write_text('exited')\n"
+            "            break\n"
+            "        time.sleep(0.005)\n"
+            "    while time.monotonic() < deadline: time.sleep(0.005)\n"
+            "    return monitor(canonical, request)\n"
+            "consumer._monitor_runtime_matches = gated_monitor\n"
+            "raise SystemExit(consumer.main(sys.argv[1:]))\n",
+            encoding="utf-8",
+        )
+        player_script = self.root / "long_lived_same_group_descendant.py"
+        player_script.write_text(
+            "import pathlib, signal, subprocess, sys, time\n"
+            "descendant = subprocess.Popen([sys.executable, '-c', "
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(5)'], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+            "pathlib.Path(sys.argv[1]).write_text(str(descendant.pid))\n"
+            "release = pathlib.Path(sys.argv[2])\n"
+            "while not release.exists(): time.sleep(0.005)\n"
+            "raise SystemExit(0)\n",
+            encoding="utf-8",
+        )
+        child_pid_file = self.root / "owned-leader.pid"
+        monitor_ready = self.root / "monitor-ready"
+        parent_release = self.root / "parent-release"
+        leader_exited = self.root / "leader-exited"
+        stop_error = self.root / "stop-error"
+        helper_env = self.env | {
+            "WEATHER_HELPER_PATH": str(HELPER),
+            "WEATHER_CHILD_PID": str(child_pid_file),
+            "WEATHER_MONITOR_READY": str(monitor_ready),
+            "WEATHER_PARENT_RELEASE": str(parent_release),
+            "WEATHER_LEADER_EXITED": str(leader_exited),
+            "WEATHER_STOP_ERROR": str(stop_error),
+        }
+        player = subprocess.Popen(
+            [sys.executable, str(wrapper), "play", "--queue-dir", str(self.queue),
+             str(playing_path), "--", sys.executable, str(player_script),
+             str(child_pid_file.with_suffix(".descendant")), str(parent_release)],
+            cwd=self.root, env=helper_env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        descendant_pid = None
+        try:
+            deadline = time.monotonic() + 3
+            while (not child_pid_file.with_suffix(".descendant").exists()
+                   or not monitor_ready.exists()) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert child_pid_file.with_suffix(".descendant").exists() and monitor_ready.exists()
+            descendant_pid = int(child_pid_file.with_suffix(".descendant").read_text())
+
+            interrupted = self.helper("interrupt", "--queue-dir", self.queue, playing_path)
+            assert interrupted.returncode == 0, interrupted.stderr
+            assert json.loads(interrupted.stdout)["status"] == "interrupted"
+            pending = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert json.loads(pending.stdout)["quiescent"] is False
+            os.kill(descendant_pid, 0)
+
+            parent_release.write_text("release")
+            deadline = time.monotonic() + 3
+            while not leader_exited.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert leader_exited.exists(), "owned group leader did not exit behind monitor gate"
+            assert json.loads(self.helper(
+                "quiescence", "--queue-dir", self.queue, request["item_key"],
+            ).stdout)["quiescent"] is False
+
+            # SIGTERM arrives after waitid proves the group leader exited; its
+            # live same-group descendant must still be stopped before ack.
+            os.kill(player.pid, signal.SIGTERM)
+            stdout, stderr = player.communicate(timeout=6)
+            if player.returncode != 74 and stop_error.exists():
+                error = stop_error.read_text()
+                if "PermissionError" in error:
+                    unconfirmed = self.helper(
+                        "quiescence", "--queue-dir", self.queue, request["item_key"],
+                    )
+                    assert unconfirmed.returncode == 0, unconfirmed.stderr
+                    state = json.loads(unconfirmed.stdout)
+                    assert state["receipt"]["status"] == "interrupted"
+                    assert state["quiescent"] is False
+                    if os.environ.get("WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP") == "1":
+                        self.fail("CI forbids skipping after an observed process-group stop PermissionError")
+                    self.skipTest("sandbox denied process-group stop; consumer kept stop acknowledgement false")
+            assert player.returncode == 74, stop_error.read_text() if stop_error.exists() else stderr or stdout
+            stopped = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert stopped.returncode == 0, stopped.stderr
+            assert json.loads(stopped.stdout)["quiescent"] is True
+            with self.assertRaises(ProcessLookupError):
+                os.kill(descendant_pid, 0)
+        finally:
+            parent_release.write_text("release")
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=6)
+
+    def test_legacy_terminal_interrupted_record_is_not_assumed_quiescent(self):
+        request = _request(index=12)
+        queued = self.enqueue(request)
+        assert queued.returncode == 0
+        item_path = next(path for path in self.queue.glob("*_weather_audio_item.txt") if "_12_" in path.name)
+        player, _sentinel, _completed, playing_path, release = self._start_gated_monitor_player(item_path)
+        try:
+            interrupted = self.helper("interrupt", "--queue-dir", self.queue, playing_path)
+            assert interrupted.returncode == 0, interrupted.stderr
+            assert json.loads(interrupted.stdout)["status"] == "interrupted"
+
+            record_path = self.queue / ".weather_audio_receipts" / f"{EXECUTION_ID}_12.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["schema_version"] = 2
+            record.pop("player_stop_confirmed")
+            record.pop("player_pid")
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+
+            status = self.helper("quiescence", "--queue-dir", self.queue, request["item_key"])
+            assert status.returncode == 0, status.stderr
+            result = json.loads(status.stdout)
+            assert result["receipt"]["status"] == "interrupted"
+            assert result["quiescent"] is False
+            assert player.poll() is None
+        finally:
+            release.write_text("release", encoding="utf-8")
+            if player.poll() is None:
+                player.terminate()
+                player.communicate(timeout=5)
 
     def test_monitor_lock_contention_fails_closed_and_kills_ignoring_player_within_bound(self):
         request = _request(index=6)
