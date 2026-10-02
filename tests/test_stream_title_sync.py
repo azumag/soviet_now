@@ -1,13 +1,16 @@
 import copy
+import fcntl
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from unittest import mock
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'lib'))
-from stream_title_sync import (EVENT_FILE, EVENT_MAX_BYTES, KICK_RESULTS, SKIP_REASONS, YOUTUBE_RESULTS, _append_title_event, main, youtube_title, kick_title, normalize_title)
+from stream_title_sync import (EVENT_DIR, EVENT_FILE, EVENT_MAX_BYTES, KICK_RESULTS, SKIP_REASONS, YOUTUBE_RESULTS, _append_title_event, main, youtube_title, kick_title, normalize_title)
 
 class FakeYouTube:
     def __init__(self):
@@ -57,6 +60,7 @@ class TitleSyncJournalTests(unittest.TestCase):
     def test_result_record_is_private_bounded_and_contains_no_title(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "tmp" / "state").mkdir(parents=True)
             stamp = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
             self.assertTrue(_append_title_event(
                 "result", skip_reason="none", youtube="updated", kick="unchanged",
@@ -106,6 +110,7 @@ class TitleSyncJournalTests(unittest.TestCase):
     def test_journal_stays_bounded_after_repeated_updates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "tmp" / "state").mkdir(parents=True)
             stamp = datetime(2026, 10, 2, tzinfo=timezone.utc)
             for _ in range(250):
                 self.assertTrue(_append_title_event(
@@ -116,6 +121,54 @@ class TitleSyncJournalTests(unittest.TestCase):
             self.assertLessEqual(path.stat().st_size, EVENT_MAX_BYTES)
             self.assertTrue(path.read_bytes().endswith(b"\n"))
             self.assertEqual(json.loads(path.read_text().splitlines()[-1])["kick"], "not_live")
+
+    def test_contended_writer_does_not_wait_for_the_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_path = root / "tmp/state/stream_title_sync/lock"
+            lock_path.parent.mkdir(parents=True, mode=0o700)
+            held = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(held, fcntl.LOCK_EX)
+            try:
+                started = time.monotonic()
+                self.assertFalse(_append_title_event(
+                    "result", skip_reason="none", youtube="updated", kick="updated",
+                    root=root, source_sha="f" * 40,
+                    now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+                ))
+                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertFalse((root / EVENT_FILE).exists())
+            finally:
+                fcntl.flock(held, fcntl.LOCK_UN)
+                os.close(held)
+
+    def test_writer_does_not_create_shared_runtime_parents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertFalse(_append_title_event(
+                "result", skip_reason="none", youtube="updated", kick="updated",
+                root=root, source_sha="2" * 40,
+                now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+            ))
+            self.assertFalse((root / "tmp").exists())
+
+    def test_existing_runtime_parent_directory_modes_are_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tmp_dir = root / "tmp"
+            state_dir = tmp_dir / "state"
+            state_dir.mkdir(parents=True)
+            os.chmod(tmp_dir, 0o750)
+            os.chmod(state_dir, 0o710)
+            before = (tmp_dir.stat().st_mode & 0o777, state_dir.stat().st_mode & 0o777)
+            self.assertTrue(_append_title_event(
+                "result", skip_reason="none", youtube="updated", kick="updated",
+                root=root, source_sha="1" * 40,
+                now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+            ))
+            after = (tmp_dir.stat().st_mode & 0o777, state_dir.stat().st_mode & 0o777)
+            self.assertEqual(after, before)
+            self.assertEqual((root / EVENT_DIR).stat().st_mode & 0o777, 0o700)
 
     def test_writer_refuses_symlink_state_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

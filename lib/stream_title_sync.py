@@ -28,8 +28,9 @@ SKIP_REASONS = frozenset({
     "twitch_update_failed", "category_not_configured", "updater_missing",
     "dispatch_failed", "invalid_title",
 })
-EVENT_FILE = "tmp/state/stream_title_sync.jsonl"
-EVENT_LOCK_FILE = "tmp/state/stream_title_sync.lock"
+EVENT_DIR = "tmp/state/stream_title_sync"
+EVENT_FILE = EVENT_DIR + "/events.jsonl"
+EVENT_LOCK_FILE = EVENT_DIR + "/lock"
 EVENT_MAX_BYTES = 32 * 1024
 EVENT_MAX_LINE_BYTES = 512
 
@@ -56,7 +57,15 @@ def _current_soren_sha(root=None) -> str | None:
     return value if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
 
 
-def _private_directory(path):
+def _owned_directory(path):
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode) and info.st_uid == os.getuid()
+
+
+def _ensure_private_directory(path):
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -74,12 +83,19 @@ def _private_directory(path):
         return False
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
         return False
-    try:
-        os.chmod(path, 0o700, follow_symlinks=False)
-        info = path.lstat()
-    except OSError:
-        return False
-    return stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode) and info.st_uid == os.getuid() and info.st_mode & 0o077 == 0
+    if info.st_mode & 0o077:
+        try:
+            os.chmod(path, 0o700, follow_symlinks=False)
+            info = path.lstat()
+        except OSError:
+            return False
+    return (
+        stat.S_ISDIR(info.st_mode)
+        and not stat.S_ISLNK(info.st_mode)
+        and info.st_uid == os.getuid()
+        and info.st_mode & 0o077 == 0
+    )
+
 
 
 def _open_private_file(path, flags):
@@ -138,14 +154,19 @@ def _append_title_event(event, *, skip_reason, youtube, kick, root=None, source_
     root = Path(root)
     tmp_dir = root / "tmp"
     state_dir = tmp_dir / "state"
-    if not _private_directory(tmp_dir) or not _private_directory(state_dir):
+    event_dir = root / EVENT_DIR
+    if (
+        not _owned_directory(tmp_dir)
+        or not _owned_directory(state_dir)
+        or not _ensure_private_directory(event_dir)
+    ):
         return False
     lock_fd = _open_private_file(root / EVENT_LOCK_FILE, os.O_CREAT | os.O_RDWR)
     if lock_fd is None:
         return False
     event_fd = None
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         event_fd = _open_private_file(root / EVENT_FILE, os.O_CREAT | os.O_RDWR | os.O_APPEND)
         if event_fd is None:
             return False

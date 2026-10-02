@@ -38,8 +38,9 @@ established by stub tests. No live operation was performed during development.
 
 ## Owner-only runtime journal
 
-The helper appends fixed metadata to `tmp/state/stream_title_sync.jsonl` with
-owner-only permissions and a 32 KiB cap. Records contain a UTC timestamp, the
+The helper appends fixed metadata to
+`tmp/state/stream_title_sync/events.jsonl` inside a dedicated owner-only
+directory. The journal has a 32 KiB cap. Records contain a UTC timestamp, the
 Soren commit SHA, a fixed event name, fixed YouTube/Kick outcome enums, and an
 allowlisted skip reason. They never contain the title, command arguments,
 environment values, credentials, request/response bodies, or exception text.

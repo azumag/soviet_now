@@ -44,6 +44,12 @@ _log() {
 	echo "$line" >>"$LOG_FILE" 2>/dev/null || true
 }
 
+_record_title_sync_skip() {
+    [ -f lib/stream_title_sync.py ] || return 0
+    python3 lib/stream_title_sync.py --record-skip "$1" </dev/null >/dev/null 2>&1 || true
+    return 0
+}
+
 MODE="update"
 case "${1:-}" in
 	--show)    MODE="show" ;;
@@ -159,12 +165,6 @@ PY
 
 # Reuse existing credentials only. Per-platform failure must never stop a game
 # switch or a successful Twitch update. The helper emits fixed status enums.
-_record_title_sync_skip() {
-    [ -f lib/stream_title_sync.py ] || return 0
-    python3 lib/stream_title_sync.py --record-skip "$1" </dev/null >/dev/null 2>&1 || true
-    return 0
-}
-
 _sync_other_titles() {
     case "$MODE" in
         dryrun) _record_title_sync_skip dry_run; return 0 ;;
