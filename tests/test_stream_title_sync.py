@@ -70,7 +70,9 @@ class TitleSyncJournalTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             record = json.loads(path.read_text())
             self.assertEqual(record["occurred_at"], "2026-10-02T12:00:00Z")
-            self.assertEqual(record["soviet_sha"], "a" * 40)
+            self.assertEqual(record["execution_head"], "a" * 40)
+            self.assertEqual(record["call_condition"], "unknown")
+            self.assertRegex(record["stream_title_sync_sha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(record["youtube"], "updated")
             self.assertEqual(record["kick"], "unchanged")
             self.assertNotIn("title", record)
@@ -104,7 +106,8 @@ class TitleSyncJournalTests(unittest.TestCase):
                 self.assertEqual(main(["--record-skip", "category_only"]), 0)
             self.assertEqual(output, [])
             append.assert_called_once_with(
-                "skipped", skip_reason="category_only", youtube="not_run", kick="not_run"
+                "skipped", skip_reason="category_only", youtube="not_run", kick="not_run",
+                call_condition="unknown",
             )
 
     def test_journal_stays_bounded_after_repeated_updates(self):
@@ -182,3 +185,46 @@ class TitleSyncJournalTests(unittest.TestCase):
                 now=datetime(2026, 10, 2, tzinfo=timezone.utc),
             ))
             self.assertFalse(list(outside.iterdir()))
+
+    def test_invocation_cli_records_only_fixed_condition_without_output(self):
+        with mock.patch("stream_title_sync._append_title_event", return_value=True) as append:
+            output = []
+            with mock.patch("sys.stdout.write", side_effect=lambda value: output.append(value)):
+                self.assertEqual(main(["--record-invocation", "category_only"]), 0)
+            self.assertEqual(output, [])
+            append.assert_called_once_with(
+                "invoked", skip_reason="none", youtube="not_run", kick="not_run",
+                call_condition="category_only",
+            )
+
+    def test_record_projects_execution_head_and_code_hashes_without_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tmp" / "state").mkdir(parents=True)
+            updater = root / "update_stream_game.sh"
+            updater.write_text("# fixed test source\n", encoding="utf-8")
+            self.assertTrue(_append_title_event(
+                "invoked", skip_reason="none", youtube="not_run", kick="not_run",
+                root=root, source_sha="d" * 40, call_condition="category_only",
+                now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+            ))
+            path = root / EVENT_FILE
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(record["execution_head"], "d" * 40)
+            self.assertEqual(record["call_condition"], "category_only")
+            self.assertRegex(record["update_stream_game_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(record["stream_title_sync_sha256"], r"^[0-9a-f]{64}$")
+            self.assertNotIn("source", json.dumps(record))
+            self.assertNotIn("title", record)
+            self.assertNotIn("token", json.dumps(record).lower())
+            self.assertLessEqual(path.stat().st_size, EVENT_MAX_BYTES)
+
+    def test_call_condition_is_allowlisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tmp" / "state").mkdir(parents=True)
+            self.assertFalse(_append_title_event(
+                "invoked", skip_reason="none", youtube="not_run", kick="not_run",
+                root=root, source_sha="e" * 40, call_condition="private condition",
+                now=datetime(2026, 10, 2, tzinfo=timezone.utc),
+            ))
