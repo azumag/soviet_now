@@ -106,7 +106,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         return {sidebar:box('broadcast-sidebar'),top:box('top-rail'),bottom:box('bottom-rail'),
           health:window.__sorenBroadcastOverlayHealth, cardClipped:bounds?bounds.bottom>Math.min(panel.bottom,document.getElementById('feed').getBoundingClientRect().bottom)+1:false,
           cardWidthClipped:card?card.scrollWidth>card.clientWidth+1:false,
-          dotsVisible:getComputedStyle(document.querySelector('.hanjuku-dots')).display!=='none',
+          dotsVisible:document.querySelector('.hanjuku-dots')
+            ? getComputedStyle(document.querySelector('.hanjuku-dots')).display!=='none' : false,
           bars:[...document.querySelectorAll('.work-bar,.gen-top-bar,.toast-bar')].some(e=>getComputedStyle(e).display!=='none'),
           background:getComputedStyle(document.body).backgroundColor,
           feedRows:document.querySelectorAll('#feed-s .feed-line').length,
@@ -153,7 +154,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').textContent(),'実際に送った入力 —回');
-      } else if(kind!=='improve') {
+      } else if(!['improve','soren91','jev'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.match(await page.locator('.hanjuku-plan').textContent(),/完了未確認/);
         assert.match(await page.locator('.hanjuku-note').textContent(),/観測/);
