@@ -240,11 +240,20 @@ function detectedInRoi(data, width, height, roi, options = {}) {
   const area = integerRoi(roi, width, height);
   const components = extractSpriteComponents(data, width, height, roi, { minPixels: 8 }).filter(c => {
     if (!area) return false;
-    const b = c.bounds, thin = Math.max(1, Math.round(width / 480));
+    const b = c.bounds;
+    const thin = Math.max(1, Math.ceil(Math.min(area.width, area.height) * 0.08));
     // A panel-edge rule is not HOLD occupancy. Do not generalise this to small
     // interior components: an unresolved tiny flag still makes HOLD unknown.
-    return !((b.width <= thin && b.height >= area.height * 0.8 && (b.left === area.left || b.right === area.right))
-      || (b.height <= thin && b.width >= area.width * 0.8 && (b.top === area.top || b.bottom === area.bottom)));
+    // Scale the thickness with the calibrated cell, including antialiasing.
+    // Only dense neutral rules qualify; coloured or irregular edge fragments
+    // remain evidence of an unresolved sprite, even when they are very thin.
+    const edgeRule = (b.width <= thin && b.height >= area.height * 0.8 && (b.left === area.left || b.right === area.right))
+      || (b.height <= thin && b.width >= area.width * 0.8 && (b.top === area.top || b.bottom === area.bottom));
+    if (!edgeRule || c.pixelCount < b.width * b.height * 0.9) return true;
+    return c.pixels.some(pixel => {
+      const i = pixel * 4;
+      return Math.max(data[i], data[i + 1], data[i + 2]) - Math.min(data[i], data[i + 1], data[i + 2]) > 32;
+    });
   });
   const substantial = components.filter(c => c.bounds.width >= 4 && c.bounds.height >= 4 && c.pixelCount >= 16);
   const matches = substantial.map(component => ({ component, result: classifySpriteComponent(data, width, height, component, options) }))
