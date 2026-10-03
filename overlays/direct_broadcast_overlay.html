@@ -520,13 +520,17 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
 html[data-prediction-active="1"] #feed { height: 568px; }
 .feed-panel {
   flex: 1 1 0;
-  border: 1px solid #29495d;
-  border-radius: 7px;
-  background: #06131d;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .16);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: hidden;
 }
-.feed-panel + .feed-panel { padding-top: 0; border-top: 1px solid #29495d; }
+.feed-panel + .feed-panel { padding-top: 0; border-top: 0; }
+.feed-panel.structured .panel-head { display: none; }
+.feed-panel.structured .feed-lines { padding: 0; }
+.feed-panel.structured .game-dashboard,
+.feed-panel.structured .ops-dashboard { padding: 5px 2px 0; }
 html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 auto; }
 html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .panel-head {
@@ -536,9 +540,9 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   border-bottom: 1px solid #29495d;
   background: #0a1b27;
 }
-.panel-g .panel-head { box-shadow: inset 3px 0 #22d3ee; }
-.panel-s .panel-head { box-shadow: inset 3px 0 #34d399; }
-.panel-i .panel-head { box-shadow: inset 3px 0 #fb923c; }
+.panel-g .panel-head,
+.panel-s .panel-head,
+.panel-i .panel-head { box-shadow: none; }
 .badge {
   padding: 2px 6px;
   border: 1px solid #39677d;
@@ -654,14 +658,10 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .dash-kpi {
   min-width: 0;
   padding: 8px 9px;
-  border: 1px solid #25475a;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 5px;
   background: #081a25;
 }
-.game-kpis .dash-kpi:first-child { box-shadow: inset 3px 0 #22d3ee; }
-.game-kpis .dash-kpi:nth-child(2) { box-shadow: inset 3px 0 #818cf8; }
-.ops-kpis .dash-kpi:first-child { box-shadow: inset 3px 0 #34d399; }
-.ops-kpis .dash-kpi:nth-child(2) { box-shadow: inset 3px 0 #38bdf8; }
 .dash-kpi-label {
   color: #7895a8;
   font-size: 7px;
@@ -708,8 +708,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .ops-activity-item {
   min-width: 0;
   padding: 5px 6px;
-  border: 1px solid #233f50;
-  border-radius: 5px;
+  border: 0;
+  border-radius: 4px;
   background: #071720;
 }
 .ops-activity-label {
@@ -789,8 +789,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .ops-service {
   min-width: 0;
   padding: 5px 7px;
-  border: 1px solid #233f50;
-  border-radius: 5px;
+  border: 0;
+  border-radius: 4px;
   background: #071720;
   display: flex;
   align-items: center;
@@ -812,11 +812,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ops-service.ok { border-color: #255844; background: rgba(16, 185, 129, .06); }
 .ops-service.ok .ops-service-value { color: #a7f3d0; }
-.ops-service.warn { border-color: #72571d; background: rgba(245, 158, 11, .07); }
 .ops-service.warn .ops-service-value { color: #fde68a; }
-.ops-service.down { border-color: #713535; background: rgba(239, 68, 68, .08); }
 .ops-service.down .ops-service-value { color: #fecaca; }
 .ops-alerts {
   display: flex;
@@ -1162,6 +1159,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     }
 
     container.replaceChildren(root);
+    container.closest('.feed-panel')?.classList.add('structured');
     return true;
   }
   function opsTone(value) {
@@ -1313,6 +1311,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     }
 
     container.replaceChildren(root);
+    container.closest('.feed-panel')?.classList.add('structured');
     return true;
   }
   function hanjukuView(feed, now) {
@@ -1455,12 +1454,14 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
+      feedG.closest('.feed-panel')?.classList.remove('structured');
       if (hanjuku) renderHanjuku(feedG, hanjuku);
       else if (!renderGameDashboard(feedG, g)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
     if (sKey !== lastFeedSKey) {
+      feedS.closest('.feed-panel')?.classList.remove('structured');
       if (!renderOpsDashboard(feedS, s)) renderFeedLines(feedS, s?.text);
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
