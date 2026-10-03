@@ -43,6 +43,7 @@ import tempfile
 import time
 
 from lib.overlay_text import normalize_overlay_text
+from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard
 
 out_file, width, height = sys.argv[1:4]
 raw = normalize_overlay_text(os.environ.get("STATUS_OVERLAY_RAW", ""))
@@ -161,6 +162,9 @@ if span:
     ))
 else:
     body = ansi_to_html(raw_body)
+cards_css = dashboard_css()
+game_cards = render_game_dashboard(raw_body)
+visible = game_cards or f'<pre class="fallback-pre">{body}</pre>'
 generated = time.strftime("%H:%M:%S")
 doc = f"""<!doctype html>
 <html lang="ja">
@@ -203,19 +207,19 @@ html, body {{
   /* 上部 4 枠ヘッダーがテキストとして拾うためだけの行。画面には出さない。 */
   display: none;
 }}
-pre {{
-  margin: 0;
-  white-space: pre;
-  font: 15.5px/1.13 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  letter-spacing: 0;
-  color: #dbeafe;
-}}
+{cards_css}
+.broadcast-card {{ height: calc(100% - 34px); padding: 15px; }}
+.metric-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+.metric-value {{ font-size:25px; line-height:28px; }}
+.card-title {{ font-size:22px; line-height:25px; }}
+.source-pre {{ display:none !important; }}
 </style>
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN STATS</span><span>{html.escape(generated)}</span></div>
-  <pre>{body}</pre>
+  <div class="meta"><span>GAME PERFORMANCE</span><span>{html.escape(generated)}</span></div>
+  <pre class="source-pre">{body}</pre>
+  {visible}
 </div>
 </body>
 </html>
