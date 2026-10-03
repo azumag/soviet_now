@@ -879,6 +879,20 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .ops-dashboard.micro .ops-alerts { gap: 2px; }
 .ops-dashboard.micro .ops-alert { padding: 3px 5px; font-size: 7px; line-height: 9px; }
 .ops-dashboard.micro.has-alerts .ops-kpis { display: none; }
+/* Use one content inset for every game and health view. */
+.feed-head { display: none; }
+#feed { margin-top: 0; height: 680px; }
+html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
+.feed-lines:has(.hanjuku-card) { padding: 0; }
+.hanjuku-card { width: 100%; padding: 5px 2px 0; background: transparent; }
+.hanjuku-card.stale { background: transparent; }
+.hanjuku-details { display: flex; flex-direction: column; gap: 9px; font-size: 10px; line-height: 1.45; }
+.hanjuku-group { min-width: 0; }
+.hanjuku-group-title { margin-bottom: 4px; color: #deedf7; font-size: 10px; font-weight: 800; }
+.hanjuku-detail-row { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 5px; margin-top: 3px; }
+.hanjuku-detail-label { color: #7895a8; font-size: 9px; }
+.hanjuku-detail-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.ops-kpis { grid-template-columns: minmax(0, 1fr); }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
 </style>
@@ -900,7 +914,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   </section>
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
   <aside id="broadcast-sidebar">
-    <div class="feed-head"><span class="live-dot"></span><span>DoCiAI DATA</span><span id="feed-label">GAME + OPS</span><span id="feed-age">--</span></div>
+    <div class="feed-head"><span id="feed-label">GAME + OPS</span><span id="feed-age">--</span></div>
     <section id="prediction-round" aria-label="チャネルポイント予想" aria-live="polite"></section>
     <div id="feed">
       <section class="feed-panel panel-g">
@@ -1231,18 +1245,11 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     workerCell.appendChild(workerValue);
     kpis.appendChild(workerCell);
 
-    const backendCell = dashNode('dash-kpi');
-    backendCell.appendChild(dashNode('dash-kpi-label', 'STREAM'));
     const backend = backendLine
       ? backendLine.replace(/^[●○✓!▸]\s*/, '').replace(/^Backend\s+/, '').trim()
       : '—';
-    const backendPrimary = backend.match(/^(FFMPEG|OBS)\b/i)?.[1]?.toUpperCase()
-      || backend.split(/\s+/)[0] || '—';
-    backendCell.appendChild(dashNode('dash-kpi-value', backendPrimary));
     const backendState = /\bLIVE\b|\bOK\b/.test(backend) ? 'LIVE'
       : /\bDOWN\b|\bFAILED\b/.test(backend) ? 'DOWN' : '';
-    if (backendState) backendCell.appendChild(dashNode('dash-kpi-sub', backendState));
-    kpis.appendChild(backendCell);
     root.appendChild(kpis);
 
     const servicesHead = dashNode('ops-services-head');
@@ -1255,6 +1262,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     const twitch = sections.TWITCH || [];
     const youtube = sections.YOUTUBE || [];
     const services = [
+      ['STREAM', backendState || '—'],
       ['LOOP', firstStatus(health, /^Loop\s+(.+)$/)],
       ['AUDIO', firstStatus(audio, /^(?:Say|Radio)\s+(.+)$/)],
       ['TWITCH', firstStatus(twitch, /^Chat\s+(.+)$/)],
@@ -1395,17 +1403,32 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
         `交戦 ${value.enemy} ${value.enemyHp} / ${value.ally} ${value.allyHp}`));
     }
     const details = node('hanjuku-details');
-    details.appendChild(node('hanjuku-castles', `占領の記録 ${shown(value.captured)}城（現在数ではありません）`));
-    if (value.holds) details.appendChild(node('hanjuku-holds', `保有 ${value.holds}`));
-    if (value.garrison) details.appendChild(node('hanjuku-garrison', `駐留 ${value.garrison}`));
-    if (value.marching) details.appendChild(node('hanjuku-marching', `行軍中 ${value.marching}`));
-    details.appendChild(node('hanjuku-troops',
-      `兵力 ${shown(value.soldiers)}名 / 停滞 ${shown(value.stalled)}秒`));
+    const group = title => {
+      const section = node('hanjuku-group');
+      section.appendChild(node('hanjuku-group-title', title));
+      details.appendChild(section);
+      return section;
+    };
+    const detail = (section, cls, label, text) => {
+      const row = node('hanjuku-detail-row');
+      row.appendChild(node('hanjuku-detail-label', label));
+      row.appendChild(node(cls, text));
+      section.appendChild(row);
+    };
+    const territory = group('領地');
+    detail(territory, 'hanjuku-castles', '占領記録', `${shown(value.captured)}城（累計・現在数ではありません）`);
+    if (value.holds) detail(territory, 'hanjuku-holds', '保有', value.holds);
+    const army = group('軍勢');
+    detail(army, 'hanjuku-troops', '兵力', `${shown(value.soldiers)}名`);
+    if (value.garrison) detail(army, 'hanjuku-garrison', '駐留', value.garrison);
+    if (value.marching) detail(army, 'hanjuku-marching', '行軍中', value.marching);
+    const actions = group('行動の記録');
     if (value.launched !== null) {
-      details.appendChild(node('hanjuku-orders', `出撃 成立 ${value.launched} / 失敗 ${value.failed}`));
+      detail(actions, 'hanjuku-orders', '出撃', `成立 ${value.launched} / 失敗 ${value.failed}`);
     }
-    details.appendChild(node('hanjuku-plan', `計画 ${[value.pending, value.plan].filter(Boolean).join(' / ') || '未確認'}（完了未確認）`));
-    details.appendChild(node('hanjuku-inputs', `実際に送った入力 ${shown(value.actions)}回`));
+    detail(actions, 'hanjuku-plan', '計画', `${[value.pending, value.plan].filter(Boolean).join(' / ') || '未確認'}（完了未確認）`);
+    detail(actions, 'hanjuku-inputs', '送信入力', `${shown(value.actions)}回`);
+    detail(actions, 'hanjuku-stalled', '停滞', `${shown(value.stalled)}秒`);
     card.appendChild(details);
     card.appendChild(node('hanjuku-note', value.fresh ? '記録済みの観測値を表示 / 未読の値は空欄' : '観測が古いか取得できません / 数値は非表示'));
     container.replaceChildren(card);
@@ -1513,7 +1536,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   function summaryClass(text) {
     if (/A\/B\s*残り:/.test(text)) return 'sum-ab';
     if (/A\/B:/.test(text)) return 'sum-ab';
-    if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
+    if (/^SOREN\b/.test(text)) return 'sum-head';
     if (/Recent30/.test(text)) return 'sum-recent';
     if (/Strategy/.test(text)) return 'sum-strategy';
     if (/^Live:/.test(text)) return 'sum-live';
@@ -1566,7 +1589,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
         if (selected.length >= 4) break;
       }
     }
-    return selected.slice(0, 4).map((line) => String(line).replace(/[│┌┐└┘─━]/g, '').trim());
+    return selected.slice(0, 4).map((line) => monitorText(String(line).replace(/[│┌┐└┘─━]/g, '').trim()));
   }
   function renderTopRail() {
     const workState = state?.notifications?.work || {};
@@ -1624,13 +1647,17 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
       }
     }
   }
+  function monitorText(text) {
+    return text.replace(/\bBackend\s+(?:FFMPEG|OBS)\s*/g, '配信 ')
+      .replace(/\bSOREN\/(?:FFMPEG|OBS)\b/g, 'SOREN');
+  }
   function liveStatusCards() {
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
     return [/Backend/, /Game|Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
       .filter(Boolean).map((line) => ({
         category: 'system',
         title: 'LIVE STATUS',
-        body: line.trim(),
+        body: monitorText(line.trim()),
         ts: 0,
         liveStatus: true,
       }));

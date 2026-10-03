@@ -110,6 +110,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
             ? getComputedStyle(document.querySelector('.hanjuku-dots')).display!=='none' : false,
           bars:[...document.querySelectorAll('.work-bar,.gen-top-bar,.toast-bar')].some(e=>getComputedStyle(e).display!=='none'),
           background:getComputedStyle(document.body).backgroundColor,
+          headingVisible:getComputedStyle(document.querySelector('.feed-head')).display!=='none',
+          contentInsets:card?['.hanjuku-card','.ops-dashboard'].map(selector=>{const e=document.querySelector(selector),r=e.getBoundingClientRect(),s=getComputedStyle(e);return [r.left+parseFloat(s.paddingLeft),r.right-parseFloat(s.paddingRight)];}):null,
+          opsBrands:document.querySelector('.ops-dashboard')?.textContent || '',
           feedRows:document.querySelectorAll('#feed-s .feed-line').length,
           gameDashboard:Boolean(document.querySelector('.game-dashboard')),
           opsDashboard:Boolean(document.querySelector('.ops-dashboard')),
@@ -128,6 +131,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(layout.background,'rgba(0, 0, 0, 0)');
       assert.equal(layout.bars,false);
       assert.equal(layout.dotsVisible,false);
+      assert.equal(layout.headingVisible,false,`${kind}: redundant data heading removed`);
+      assert.doesNotMatch(layout.opsBrands,/FFMPEG|OBS/);
+      if(layout.contentInsets && kind!=='improve') assert.deepEqual(layout.contentInsets[0],layout.contentInsets[1],`${kind}: game and health content edges align`);
       if(['work','long','work-two-line'].includes(kind)) {
         const workBounds=await page.locator('#work').evaluate(el=>{
           const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height};};
@@ -161,7 +167,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       }
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
-        assert.equal(await page.locator('.hanjuku-inputs').textContent(),'実際に送った入力 —回');
+        assert.equal(await page.locator('.hanjuku-inputs').textContent(),'—回');
       } else if(!['improve','soren91','jev'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.match(await page.locator('.hanjuku-plan').textContent(),/完了未確認/);
@@ -182,7 +188,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(kind==='stress') {
         assert.equal(layout.feedRows,0,'stress raw OPS logs are summarized');
         assert.ok(layout.opsAlerts>=1,'stress faults remain visible as attention rows');
-        assert.match(layout.opsClass,/micro|compact/,'stress OPS switches to a denser layout');
+        assert.equal(layout.opsOverflow,false,'stress attention fits without clipping');
       }
       if(kind==='soren91'||kind==='jev') {
         assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
