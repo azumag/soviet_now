@@ -125,3 +125,56 @@ def is_public_interest_news_title(title: str) -> bool:
 
 FILTER_REASON_LOW_VALUE_TOPIC = "low_value_topic"
 FILTER_REASON_OUTSIDE_PUBLIC_AFFAIRS = "outside_public_affairs"
+
+
+# A conservative candidate gate, not a semantic proof of public benefit.
+# Broad words (politics, police, school, accident) are deliberately insufficient.
+_PERSONAL_TRAGEDY_RE = re.compile(
+    r"死亡|亡くな|なくなった|命を落と|命を失|死傷|負傷|遺体|死去|殺害|殺人|虐待|重傷|溺れ|溺死|転落|ひき逃げ|刺され|刺殺|性被害|性的被害|自殺|誘拐|行方不明|"
+    r"(?:子ども|子供|幼児|児童|小学生|男児|女児|少年|少女|男性|女性|[0-9]+歳)[^。！？\n]{0,20}(?:事故|けが|被害)|"
+    r"\b(?:die|dies|died|dead|death|deaths|kill|kills|killed|murder(?:ed)?|drown(?:ed|ing)?|"
+    r"abuse(?:d)?|suicide|kidnapped|missing child|seriously injured)\b"
+)
+# Require a concrete subject + institutional/safety action in the same sentence.
+# These are grounded signals in the supplied article, never generated rationales.
+_PUBLIC_BENEFIT_RE = re.compile(
+    r"(?:安全基準|安全対策|安全管理|再発防止策|防止対策|防止装置|点検体制|監督体制|"
+    r"避難指示|避難勧告|避難所|救援物資|救助活動|支援制度|補償制度|救済制度|"
+    r"児童相談所|通学路|道路構造|労働環境|医療体制|事故原因|製品欠陥|熱中症対策|検証報告|調査報告|第三者委員会|"
+    r"停戦案|停戦協定|人道支援|国際人道法|戦争犯罪|政治暴力|選挙妨害|言論弾圧)"
+    r"[^。！？\n]{0,50}(?:義務化|改正|改定|見直|改善|導入|設置|開設|発令|検証|勧告|"
+    r"不備|欠陥|怠|不足|違反|調査|検討|提言|実施|拡大|合意|審議)|"
+    r"\b(?:safety standards?|safety measures?|safety inspections?|warning systems?|"
+    r"child protection|death penalty|evacuation orders?|evacuation shelters?|humanitarian aid|"
+    r"ceasefire agreement|war crimes?)\b[^.!?\n]{0,80}"
+    r"\b(?:reform|review|investigat\w*|require\w*|mandat\w*|implement\w*|"
+    r"fail\w*|violat\w*|abolish\w*|debate\w*|issued|opened|approved|agreed)\b"
+)
+_NO_EVIDENCE_RE = re.compile(
+    r"(?:確認できない|確認されていない|未確認|根拠がない|記載がない|記載なし|報じられていない|"
+    r"(?:実施|検討|見直し|調査)しない|予定はない|事実はない|行わない)|"
+    r"\b(?:no evidence|unconfirmed|not reported|not confirmed|did not|will not)\b"
+)
+
+
+def is_uncontextualized_tragedy(title: str, article_text: str = "") -> bool:
+    """Exclude personal tragedy unless supplied text has concrete public benefit.
+
+    Headline-only tragedy is withheld when it cannot establish that context.
+    Metadata (outlet, feed, URL, timestamp) must not count as article evidence.
+    Matching signals only retain a candidate for the grounded editorial prompt;
+    the model must still reject voyeurism and must never invent a justification.
+    """
+    title = re.sub(r"\s+[-–—|]\s+[^-–—|]{1,80}$", "", title or "")
+    lines = [title] + [
+        line for line in (article_text or "").splitlines()
+        if not re.match(r"\s*(?:https?://|【内部メタ|(?:source|source_key|url|published_at|媒体|出典)\s*[:=：])", line, re.I)
+    ]
+    text = _norm("\n".join(lines))
+    if not _PERSONAL_TRAGEDY_RE.search(text):
+        return False
+    sentences = re.split(r"[。！？.!?\n]", text)
+    return not any(
+        _PUBLIC_BENEFIT_RE.search(sentence) and not _NO_EVIDENCE_RE.search(sentence)
+        for sentence in sentences
+    )

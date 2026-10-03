@@ -23,13 +23,10 @@ except Exception:  # fallback
     def is_sports_title(title: str) -> bool:  # type: ignore
         return False
 
-try:
-    from news_topic_filter import is_low_value_news_title, is_public_interest_news_title  # type: ignore
-except Exception:  # fallback
-    def is_low_value_news_title(title: str) -> bool:  # type: ignore
-        return False
-    def is_public_interest_news_title(title: str) -> bool:  # type: ignore
-        return True
+# Editorial policy must not silently disappear if its module cannot load.
+from news_topic_filter import (
+    is_low_value_news_title, is_public_interest_news_title, is_uncontextualized_tragedy,
+)
 
 
 def key(s: str) -> str:
@@ -371,6 +368,8 @@ def cmd_filter_unread():
         title = b[0][2:].strip()
         # sports filter: exclude baseball/sports topics per user request
         if is_sports_title(title):
+            continue
+        if is_uncontextualized_tragedy(title, "\n".join(b[1:])):
             continue
         if is_low_value_news_title(title):
             continue

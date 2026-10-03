@@ -30,6 +30,8 @@ except Exception:
     _NEWS_FILTER_SPEC.loader.exec_module(_NEWS_FILTER_MODULE)
     topic_family = _NEWS_FILTER_MODULE.topic_family
 
+from news_topic_filter import is_uncontextualized_tragedy
+
 DEFAULT_POLITICAL_SHARE = 0.67
 
 _POLITICAL_SOURCE_KEYS = {
@@ -238,7 +240,10 @@ def choose_news_block(
     recent_titles: list[str] | None = None,
 ) -> str:
     """Choose one news block while preserving legacy within-lane weighting."""
-    blocks = _parse_blocks(blocks_text)
+    blocks = [
+        block for block in _parse_blocks(blocks_text)
+        if not is_uncontextualized_tragedy(_block_title(block), "\n".join(block[1:]))
+    ]
     if not blocks:
         return ""
 
