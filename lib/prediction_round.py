@@ -1,4 +1,4 @@
-"""Prediction-only completed-game accounting; never reads improvement/A-B state."""
+"""Prediction-only completed-game accounting with A/B games excluded."""
 import json
 import hashlib
 import os
@@ -9,14 +9,26 @@ import fcntl
 import time
 
 
-def record_game(state, game_num, started_at, soviet, russia):
+def ab_test_running(path):
+    state_file = Path(os.environ.get('AB_STATE_FILE') or path.parent / 'ab_state.json')
+    return state_file.exists() or bool(os.environ.get('SOREN_AB_ALT_STRATEGY'))
+
+
+def record_game(state, game_num, started_at, soviet, russia, ab_game=False):
     if state.get('round_version') != 2:
         return
     first = state.get('target_first_game')
     eligible = game_num >= first if first else started_at > state['created_at']
-    if not eligible or game_num <= state.get('last_game_num', 0):
+    if not eligible or game_num <= max(state.get('last_game_num', 0),
+                                        state.get('last_ab_game_num', 0)):
         return
     if state['games_completed'] >= state['max_games']:
+        return
+    if ab_game:
+        # Keep the result and remaining-game count unchanged. A fixed ending
+        # game number is no longer valid once a target game has been skipped.
+        state['ab_interrupted'] = True
+        state['last_ab_game_num'] = game_num
         return
     state['games_completed'] += 1
     state['last_game_num'] = game_num
@@ -25,17 +37,28 @@ def record_game(state, game_num, started_at, soviet, russia):
     state['russia_created'] = state.get('russia_created', False) or russia or soviet
 
 
-def display_lines(state, current_game=0):
+def display_lines(state, current_game=0, ab_running=False):
     if state.get('round_version') != 2:
         return []
     first = state.get('target_first_game') or state.get('first_game_num')
     limit = int(state['max_games'])
     count = int(state.get('games_completed', 0))
-    target = f"#{first}〜#{first + limit - 1}" if first else '開始待ち'
-    lines = [f"予想対象：{target}｜終了{count}/{limit}｜残り{max(0, limit-count)}試合"]
+    if ab_running and count < limit:
+        lines = [f"予想：A/B中は一時停止｜終了{count}/{limit}｜残り{max(0, limit-count)}試合"]
+    else:
+        target = ('開始待ち' if not first else
+                  f"#{first}以降の対象{limit}試合" if state.get('ab_interrupted') else
+                  f"#{first}〜#{first + limit - 1}")
+        lines = [f"予想対象：{target}｜終了{count}/{limit}｜残り{max(0, limit-count)}試合"]
     if current_game:
-        included = first and first <= current_game <= first + limit - 1 and count < limit
-        lines.append(f"#{current_game}：今回の予想対象{'（進行中）' if included else '外'}")
+        if ab_running and count < limit:
+            lines.append(f"#{current_game}：A/B中のため予想対象外")
+        else:
+            included = (first and first <= current_game and
+                        current_game > max(state.get('last_game_num', 0),
+                                           state.get('last_ab_game_num', 0)) and
+                        count < limit)
+            lines.append(f"#{current_game}：今回の予想対象{'（進行中）' if included else '外'}")
     return lines
 
 
@@ -64,7 +87,14 @@ def boundary_command(path, command):
         fcntl.flock(lock, fcntl.LOCK_EX)
         marker = path.parent / 'prediction_game.json'
         if command == 'start':
-            atomic_write(marker, dict(game=int(sys.argv[3]), started_at=int(time.time())))
+            atomic_write(marker, dict(game=int(sys.argv[3]), started_at=int(time.time()),
+                                      ab_excluded=ab_test_running(path)))
+        elif command == 'ab-game':
+            game = int(sys.argv[3])
+            current = read_json(marker)
+            if current.get('game') == game and (sys.argv[4] or ab_test_running(path)):
+                current['ab_excluded'] = True
+                atomic_write(marker, current)
         else:
             state = json.load(sys.stdin)
             try:
@@ -81,7 +111,7 @@ def boundary_command(path, command):
 
 def main():
     path = Path(sys.argv[1])
-    if sys.argv[2] in ('start', 'publish'):
+    if sys.argv[2] in ('start', 'ab-game', 'publish'):
         boundary_command(path, sys.argv[2])
         return
     if not path.exists():
@@ -89,7 +119,9 @@ def main():
     state = json.loads(path.read_text())
     if sys.argv[2] == 'display':
         running = read_json(path.parent / 'main_strategy_runner_active.json').get('game', 0)
-        print('\n'.join(display_lines(state, int(running))))
+        game_marker = read_json(path.parent / 'prediction_game.json')
+        ab_running = ab_test_running(path) or (game_marker.get('game') == running and game_marker.get('ab_excluded', False))
+        print('\n'.join(display_lines(state, int(running), ab_running)))
         return
     if sys.argv[2] == 'decision':
         key = hashlib.sha256(state['prediction_id'].encode()).hexdigest()
@@ -109,7 +141,10 @@ def main():
         os.replace(temporary, receipt)
         print(best)
         return
-    record_game(state, int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == 'true', sys.argv[5] == 'true')
+    game_num = int(sys.argv[2])
+    game_marker = read_json(path.parent / 'prediction_game.json')
+    ab_game = ab_test_running(path) or (game_marker.get('game') == game_num and game_marker.get('ab_excluded', False))
+    record_game(state, game_num, int(sys.argv[3]), sys.argv[4] == 'true', sys.argv[5] == 'true', ab_game)
     # The game loop is the sole result writer. Worker settlement waits for its
     # regression_check_in_progress fence; atomic replacement protects readers.
     fd, tmp = tempfile.mkstemp(prefix=path.name, dir=path.parent)

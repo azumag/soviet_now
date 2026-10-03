@@ -341,6 +341,12 @@ play_one_game() {
 			ab_snapshot_source="$AB_SOURCE"
 		fi
 	fi
+	# _ab_gate_before_game may start A/B after prediction's start marker was
+	# written. Remember this game's arm before A/B state can be removed at the
+	# end of the trial, so its result cannot enter an existing prediction round.
+	if [ "${SOREN_PLAYER_POLICY:-existing}" != "jev" ]; then
+		python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" ab-game "$game_num_display" "$AB_ARM" || return 1
+	fi
 	if ! strategy_runtime_create_game_snapshot \
 		"$ab_snapshot_source" \
 		"$strategy_runtime_dir" \
