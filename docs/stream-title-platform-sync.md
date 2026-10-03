@@ -44,6 +44,12 @@ directory. The journal has a 32 KiB cap. Records contain a UTC timestamp, the
 Soren commit SHA, a fixed event name, fixed YouTube/Kick outcome enums, and an
 allowlisted skip reason. They never contain the title, command arguments,
 environment values, credentials, request/response bodies, or exception text.
+Each record also contains `youtube_stream_id_present` and
+`kick_broadcaster_id_present`: booleans for nonempty
+`YOUTUBE_BROADCAST_STREAM_ID` and `KICK_BROADCASTER_USER_ID` in that helper
+process's effective environment. Empty or missing IDs produce false;
+whitespace is nonempty. No ID value or credential presence is recorded.
+The 512-byte row limit and 32 KiB journal cap remain enforced.
 The writer is best-effort and does not change the Twitch update result.
 
 The read-only docich production diagnostics collector may project the newest
@@ -51,3 +57,10 @@ record when it is at most 15 minutes old and its Soren SHA matches the deployed
 gitlink. `updated` means the API read-back matched the requested title; it does
 not confirm what a public viewer sees. The journal itself and integrated
 stream logs are not included in the diagnostic output.
+
+The collector accepts both earlier journal schemas, with these two fields
+unknown (`null`) when absent. Presence is projected only from a fresh, valid
+record with matching reviewed source fingerprints; stale, malformed, future,
+or unavailable/mismatched source records keep both fields unknown. It never
+uses its own process environment to fill them in. Presence does not establish
+validity of an ID, authorization, or successful title delivery.
