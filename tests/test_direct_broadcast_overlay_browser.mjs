@@ -113,6 +113,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           feedRows:document.querySelectorAll('#feed-s .feed-line').length,
           gameDashboard:Boolean(document.querySelector('.game-dashboard')),
           opsDashboard:Boolean(document.querySelector('.ops-dashboard')),
+          gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
+          opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsAlerts:document.querySelectorAll('.ops-alert').length};
       });
       assert.deepEqual(layout.sidebar,[960,0,320,720],kind);
@@ -170,6 +172,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       }
       if(kind==='soren91'||kind==='jev') {
         assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
+        assert.equal(layout.gameOverflow,false,`${kind}: GAME dashboard fits the panel`);
+        assert.equal(layout.opsOverflow,false,`${kind}: OPS dashboard fits the panel`);
         const values=await page.locator('#feed-g .dash-kpi-value').allTextContents();
         assert.equal(values.length,2,`${kind}: two primary game KPIs`);
         assert.ok(await page.locator('#feed-g .game-bars').count(),`${kind}: recent result bars are visible`);
