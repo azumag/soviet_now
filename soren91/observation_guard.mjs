@@ -1,4 +1,6 @@
 /** Temporal state is kept outside the hot-reloaded analyzer, per calibration. */
+import { isUsableCalibration } from './calibration_contract.mjs';
+
 const observations = new WeakMap();
 
 export const DEFAULT_MAX_STALE_MS = 15_000;
@@ -6,9 +8,10 @@ export const DEFAULT_MAX_STALE_MS = 15_000;
 // observations sit just BELOW the old 2500ms guard: the slow-cadence fast
 // path almost never fired and every turn fell back to the strict two-frame
 // stability gate, which re-observed 4-6 times per drop (measured 11-16s
-// turns vs 3.7s when the fast path did fire). The advance evidence already
-// proves a piece was consumed; 1.2s matches the game-side minimum drop
-// spacing (DROP_COOLDOWN_MS) and stays env-overridable.
+// turns vs 3.7s when the fast path did fire). The observed queue shift supports
+// a new controllable piece; 1.2s matches the game-side minimum drop
+// spacing (DROP_COOLDOWN_MS) and stays env-overridable. Queue evidence is
+// observational support, not authoritative confirmation of game acceptance.
 export const DEFAULT_SINGLE_FRAME_ADVANCE_MS = 1_200;
 
 export function maxStaleMs(env = process.env) {
@@ -44,18 +47,12 @@ export function slowCadenceFastPathEnabled(env = process.env) {
 }
 
 export function usableCalibration(cal, width, height) {
-  const b = cal?.board;
-  return !!b && !cal.provisional && !cal.isFallback && (cal.confidence ?? 0) >= 0.6
-    && [b.left, b.right, b.top, b.bottom, b.width, b.height].every(Number.isFinite)
-    && b.left >= 0 && b.top >= 0 && b.right <= width && b.bottom <= height
-    && b.width > 20 && b.height > 20
-    && Math.abs(b.width - (b.right - b.left)) < 1
-    && Math.abs(b.height - (b.bottom - b.top)) < 1
-    && (!cal.screen || (cal.screen.width === width && cal.screen.height === height));
+  return isUsableCalibration(cal, width, height);
 }
 
 function knownPreview(piece) {
-  return !!piece && Number.isInteger(piece.type) && !piece.fallback && (piece.confidence ?? 0) >= 0.58;
+  return !!piece && Number.isInteger(piece.type) && piece.type >= 1 && piece.type <= 15
+    && !piece.fallback && (piece.confidence ?? 0) >= 0.58;
 }
 
 function previewType(piece) {
@@ -95,6 +92,11 @@ export function queueAdvanceEvidence(previousQueue, currentQueue) {
   if (previewType(p[0]) != null && previewType(c[0]) != null && previewType(p[0]) !== previewType(c[0])) {
     evidence += 1;
   }
+  // Repeated equal types fit a shifted queue even when nothing moved. Cross-
+  // slot matches only prove an advance when a freshly observed slot changed.
+  const observedChange = p.some((piece, i) => previewType(piece) != null
+    && previewType(c[i]) != null && previewType(piece) !== previewType(c[i]));
+  if (!observedChange) evidence = 0;
   return { evidence, conflict };
 }
 
@@ -122,10 +124,11 @@ function stabilizeQueue(currentQueue, previous, transition) {
   const out = currentQueue.map(p => copyPreview(p, 'detected'));
   const previousQueue = previous?.nextPieces || [];
   if (transition === 'advanced') {
-    if (!out[0] && knownPreview(previousQueue[1])) out[0] = copyPreview(previousQueue[1], 'shifted');
     if (!out[1] && knownPreview(previousQueue[2])) out[1] = copyPreview(previousQueue[2], 'shifted');
   } else if (transition === 'same') {
-    for (let i = 0; i < 3; i++) {
+    // The current piece must be visible in this frame. Only future previews
+    // can be carried across observations; a hidden current may be falling.
+    for (let i = 1; i < 3; i++) {
       if (!out[i] && knownPreview(previousQueue[i])) out[i] = copyPreview(previousQueue[i], 'same-turn');
     }
   }
@@ -175,7 +178,7 @@ function stableGarbage(previous, state) {
   const columns = state.garbage?.columns || [];
   return columns.length === previousColumns.length && columns.every(c =>
     previousColumns.some(p => Math.abs(c.left - p.left) < 0.02
-      && Math.abs(c.right - p.right) < 0.02 && Math.abs(c.top - p.top) < 0.12));
+      && Math.abs(c.right - p.right) < 0.02 && Math.abs(c.top - p.top) <= 0.12 + 1e-9));
 }
 
 export function gateObservation(state, calibration, now = Date.now()) {
@@ -187,11 +190,12 @@ export function gateObservation(state, calibration, now = Date.now()) {
       perception: { ready: false, reason: state.perception?.reason || 'non-move', stableFrames: 0 } };
   }
 
-  const geometry = JSON.stringify(calibration.board);
+  const geometry = JSON.stringify({ coordinateSchema: calibration.coordinateSchema,
+    board: calibration.board, arena: calibration.arena, hud: calibration.hud });
   const detectedQueue = rawQueue(state);
-  const transition = classifyQueueTransition(previous?.nextPieces, detectedQueue);
+  const transition = classifyQueueTransition(previous?.detectedQueue, detectedQueue);
   const queue = stabilizeQueue(detectedQueue, previous, transition);
-  const next = queue[0] || state.next || null;
+  const next = queue[0] || null;
   const gapMs = previous ? now - previous.at : null;
   const temporalNextUsed = queue.slice(1).some(piece =>
     piece?.temporalSource === 'shifted' || piece?.temporalSource === 'same-turn');
@@ -200,6 +204,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
     ...state,
     next,
     nextPieces: queue,
+    detectedQueue: detectedQueue.map(piece => piece ? { ...piece } : null),
     geometry,
     at: now,
     stableFrames: 1,
@@ -214,8 +219,11 @@ export function gateObservation(state, calibration, now = Date.now()) {
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
   else if (!previous || !previous.usable || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
   else if (gapMs > maxStaleMs()) reason = 'confirm-frame';
+  else if (previewType(previous.next) === previewType(next)
+      && Number.isFinite(previous.next?.y) && Number.isFinite(next.y)
+      && Math.abs(previous.next.y - next.y) > 0.12) reason = 'board-moving';
   else {
-    const advance = queueAdvanceEvidence(previous?.nextPieces, detectedQueue);
+    const advance = queueAdvanceEvidence(previous?.detectedQueue, detectedQueue);
     slowAdvanceUsed = (transition === 'advanced'
         || (singleEvidenceAdvanceEnabled() && advance.evidence >= 1 && advance.conflict === 0))
       && slowCadenceFastPathEnabled()
@@ -238,7 +246,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
   const holdEverSeen = Boolean(previous?.holdEverSeen || rawHoldKnown);
   let emptyHoldFrames = 0;
   if (rawHoldKnown) emptyHoldFrames = 0;
-  else if (!holdEverSeen && !rawHoldPresent && current.usable) {
+  else if (!holdEverSeen && !rawHoldPresent && state.holdObservedEmpty !== false && current.usable) {
     emptyHoldFrames = (previous?.emptyHoldFrames || 0) + 1;
   }
   current.holdEverSeen = holdEverSeen;

@@ -10,6 +10,8 @@
 
 import sharp from 'sharp';
 import { gateObservation, usableCalibration } from './observation_guard.mjs';
+import { detectHudPieces, detectCurrentPiece, extractSpriteComponents,
+  classifySpriteComponent } from './sprite_perception.mjs';
 
 // ピースタイプごとの半径 (ゲーム座標単位)
 // 型番号 → 半径のマッピング (ゲーム内データから抽出)
@@ -30,62 +32,6 @@ const TYPE_RADII = {
   14: 1.385,
   15: 1.600,
 };
-
-// ピースタイプごとの代表色 (HSV/RGB近似) - 実際のゲーム画面で調整が必要
-// これは初期推定値。実際のスクリーンショットで色をキャリブレーションする
-const TYPE_COLORS = {
-  1:  { r: 200, g: 50,  b: 50,  name: 'red-small' },
-  2:  { r: 220, g: 100, b: 50,  name: 'orange-small' },
-  3:  { r: 220, g: 180, b: 50,  name: 'yellow' },
-  4:  { r: 50,  g: 180, b: 50,  name: 'green-small' },
-  5:  { r: 50,  g: 200, b: 200, name: 'cyan' },
-  6:  { r: 50,  g: 100, b: 200, name: 'blue' },
-  7:  { r: 150, g: 50,  b: 200, name: 'purple' },
-  8:  { r: 200, g: 50,  b: 150, name: 'pink' },
-  9:  { r: 180, g: 180, b: 50,  name: 'olive' },
-  10: { r: 100, g: 150, b: 100, name: 'sage' },
-  11: { r: 200, g: 150, b: 100, name: 'tan' },
-  12: { r: 150, g: 100, b: 50,  name: 'brown' },
-  13: { r: 100, g: 50,  b: 50,  name: 'maroon' },
-  14: { r: 200, g: 200, b: 200, name: 'silver' },
-  15: { r: 220, g: 50,  b: 50,  name: 'red-large' },
-};
-
-function getColorStats(r, g, b) {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  return {
-    brightness: (r + g + b) / 3,
-    saturation: max > 0 ? (max - min) / max : 0,
-  };
-}
-
-function rgbToHsv(r, g, b) {
-  const nr = r / 255;
-  const ng = g / 255;
-  const nb = b / 255;
-  const max = Math.max(nr, ng, nb);
-  const min = Math.min(nr, ng, nb);
-  const delta = max - min;
-
-  let h = 0;
-  if (delta > 0) {
-    if (max === nr) h = 60 * (((ng - nb) / delta) % 6);
-    else if (max === ng) h = 60 * (((nb - nr) / delta) + 2);
-    else h = 60 * (((nr - ng) / delta) + 4);
-  }
-
-  return {
-    h: h < 0 ? h + 360 : h,
-    s: max > 0 ? delta / max : 0,
-    v: max,
-  };
-}
-
-function hueDistance(a, b) {
-  const diff = Math.abs(a - b);
-  return Math.min(diff, 360 - diff);
-}
 
 function blobAspectRatio(blob) {
   const shortEdge = Math.max(1, Math.min(blob.bboxWidth, blob.bboxHeight));
@@ -177,6 +123,7 @@ function mergeBlobPair(a, b) {
     maxX,
     minY,
     maxY,
+    sampledPixels: [...(a.sampledPixels || []), ...(b.sampledPixels || [])],
   };
 }
 
@@ -242,27 +189,6 @@ function classifyRadius(gameRadius, maxType = 15) {
   return { type: bestType, diff: bestDiff };
 }
 
-function classifyColorType(avgColor, maxType = 15) {
-  const blobHsv = rgbToHsv(avgColor.r, avgColor.g, avgColor.b);
-  const blobStats = getColorStats(avgColor.r, avgColor.g, avgColor.b);
-  let best = { type: 1, hueDiff: Infinity, brightnessDiff: Infinity, score: Infinity };
-
-  for (const [type, color] of Object.entries(TYPE_COLORS)) {
-    const numericType = parseInt(type, 10);
-    if (numericType > maxType) continue;
-    const colorHsv = rgbToHsv(color.r, color.g, color.b);
-    const colorStats = getColorStats(color.r, color.g, color.b);
-    const currentHueDiff = hueDistance(blobHsv.h, colorHsv.h);
-    const brightnessDiff = Math.abs(blobStats.brightness - colorStats.brightness);
-    const score = currentHueDiff + brightnessDiff * 0.18;
-    if (score < best.score) {
-      best = { type: numericType, hueDiff: currentHueDiff, brightnessDiff, score };
-    }
-  }
-
-  return best;
-}
-
 /**
  * スクリーンショットからゲーム盤面を解析する
  *
@@ -279,7 +205,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
 
   // Calibrate BEFORE the first drop, including an empty first board. Merely
   // suppressing provisional drops would deadlock the old pieces>=N bootstrap.
-  const sceneState = detectGameState(data, width, height, calibration?.board);
+  const sceneState = detectGameState(data, width, height, calibration?.arena || calibration?.board);
   if (sceneState === 'MOVE' && !usableCalibration(calibration, width, height)) {
     const { calibrate } = await import('./calibration.mjs');
     const candidate = await calibrate(screenshotPath);
@@ -298,16 +224,28 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
   }
   const state = sceneState;
 
-  // 2. ピース検出
+  // The controllable piece is in the arena above the deadline, independently
+  // of the three horizontal future icons in the HUD. Only its identified
+  // pixels are removed from physical occupancy; high stack pieces remain.
+  const currentObservation = state === 'MOVE'
+    ? detectCurrentPiece(data, width, height, calibration) : null;
+  const current = canonicalPreview(currentObservation?.piece);
+  if (current && Number.isFinite(currentObservation?.component?.centerY)) {
+    current.y = -5 + (board.bottom - currentObservation.component.centerY) / board.height * 8.32;
+  }
+  const excludedPixels = current && currentObservation?.component?.pixels
+    ? new Set(currentObservation.component.pixels) : null;
+
+  // 2. 物理盤面のピース検出
   const pieces = state === 'MOVE' || state === 'DROP'
-    ? detectPieces(data, width, height, calibration)
+    ? detectPieces(data, width, height, calibration, excludedPixels)
     : [];
 
-  // 3. 次のピース検出 (3つ)
-  const nextPieces = state === 'MOVE'
-    ? detectNextPieces(data, width, height, board)
-    : [];
-  const next = nextPieces.length > 0 ? nextPieces[0] : null;
+  const hudObservation = state === 'MOVE'
+    ? detectHudPieces(data, width, height, calibration) : null;
+  const future = (hudObservation?.nextPieces || []).map(canonicalPreview);
+  const nextPieces = state === 'MOVE' ? [current, future[0] || null, future[1] || null] : [];
+  const next = current;
 
   // 4. おじゃまブロック量を測定 (灰色領域の割合)
   const garbage = state === 'MOVE'
@@ -323,12 +261,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
   }
 
   // 5. HOLD ピース検出
-  const holdCandidate = state === 'MOVE'
-    ? detectHoldPiece(data, width, height, board)
-    : null;
-  const hold = holdCandidate && !(holdCandidate.fallback && (holdCandidate.confidence ?? 0) < 0.45)
-    ? holdCandidate
-    : null;
+  const hold = canonicalPreview(hudObservation?.hold);
 
   // 6. 順位検出 — リアルタイムOCRは精度不足のため無効化
   // ランキング画面からの検出 (detectRankingScreen) に委ねる
@@ -349,9 +282,10 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     state,
     rank,  // 現在の順位 (1-91) or null
     pieces,
-    next,             // { type, r } — 1つ目 (後方互換)
-    nextPieces,       // [{ type, r }, ...] — 最大3つ
+    next,             // Visible controllable current, never a HUD future icon.
+    nextPieces,       // [current, NEXT-left, NEXT-middle], preserving holes.
     hold,             // { type, r } or null
+    holdObservedEmpty: hudObservation?.holdObservedEmpty === true,
     garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ, gauge: 0-1 おじゃまゲージレベル }
     confidence: Math.round(confidence * 100) / 100,
   }, calibration);
@@ -578,19 +512,18 @@ function detectGameState(data, width, height, board) {
  * 色領域を検出し、国旗の断片のみを結合してサイズ分類する。
  * 低信頼度の形状は障害物として残し、戦略側では合体を確定しない。
  */
-function detectPieces(data, width, height, calibration) {
+function detectPieces(data, width, height, calibration, excludedPixels = null) {
   const { board } = calibration;
+  const arena = calibration.arena || board;
   const rawBlobs = [];
 
   // ボード領域内をグリッドスキャンし、色付きブロブを検出
   const gridStep = Math.max(1, Math.round(width / 1280 * 4));
   const visited = new Set();
 
-  // デッドラインUI要素の誤検出を防ぐため、ボード上端に余白を設ける
-  // (y=3.25, y=3.14付近のゴーストピースを排除)
-  const topMargin = gridStep * 3;
-  for (let y = Math.ceil(board.top + topMargin); y < Math.min(height, board.bottom); y += gridStep) {
-    for (let x = Math.ceil(board.left); x < Math.min(width, board.right); x += gridStep) {
+  for (let y = Math.ceil(arena.top / gridStep) * gridStep; y < Math.min(height, arena.bottom); y += gridStep) {
+    for (let x = Math.ceil(arena.left); x < Math.min(width, arena.right); x += gridStep) {
+      if (excludedPixels?.has(y * width + x)) continue;
       const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
       if (visited.has(key)) continue;
 
@@ -613,33 +546,82 @@ function detectPieces(data, width, height, calibration) {
       if (saturation < 0.1 && brightness > 100 && brightness < 200) continue;
 
       // この色が新しいblobの開始点か確認
-      const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited, board);
+      const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited, arena, excludedPixels);
       if (blob && blob.pixelCount > 5) { // 最小ブロブサイズ (ゲームの小ピースは小さい)
         rawBlobs.push(blob);
       }
     }
   }
 
-  const pieces = [];
+  const records = [];
   const maxMergedRadiusPx = Math.max(40, (board.width / 7.0) * 1.65);
   const mergedBlobs = mergeNearbyBlobs(rawBlobs, maxMergedRadiusPx);
   for (const blob of mergedBlobs) {
     const piece = classifyBlob(blob, calibration);
-    if (piece) pieces.push(piece);
+    if (piece) records.push({ piece, blob });
   }
 
-  return pieces;
+  // A white/red flag can be split into thin strips that the colour-blob path
+  // rejects entirely. A connected full-colour silhouette can recover it. Keep
+  // the fragment path for touching/rotated pieces when the template is unknown.
+  const ppu = board.width / 7;
+  const components = extractSpriteComponents(data, width, height, arena, {
+    background: [50, 50, 50], excludePixels: excludedPixels || undefined,
+    minPixels: Math.max(12, Math.round(ppu * ppu * 0.035)),
+    pixelFilter: (r, g, b, a) => {
+      const brightness = (r + g + b) / 3;
+      const maximum = Math.max(r, g, b);
+      const saturation = maximum > 0 ? (maximum - Math.min(r, g, b)) / maximum : 0;
+      return a >= 200 && (saturation > 0.15 || brightness > 215 || brightness < 28);
+    },
+  });
+  for (const component of components) {
+    const bounds = component.bounds;
+    const blob = { centerX: component.centerX, centerY: component.centerY,
+      pixelCount: component.pixelCount, sampleStep: 1,
+      bboxWidth: bounds.width - 1, bboxHeight: bounds.height - 1,
+      minX: bounds.left, maxX: bounds.right - 1, minY: bounds.top, maxY: bounds.bottom - 1 };
+    const shape = classifyBlob(blob, calibration);
+    if (!shape) continue;
+    const pixels = new Set(component.pixels);
+    const overlap = records.map(record => ({ record,
+      count: (record.blob.sampledPixels || []).filter(pixel => pixels.has(pixel)).length,
+    })).filter(match => match.count > 0);
+    // A merged colour record can span multiple disconnected flag fragments.
+    // Its box need not fit any one silhouette. A partial pixel overlap must
+    // not add that silhouette on top of the existing physical obstacle.
+    const represented = overlap.filter(match =>
+      match.count >= match.record.blob.sampledPixels.length * 0.85).map(match => match.record);
+    if (overlap.some(match => !represented.includes(match.record))) continue;
+    const label = classifySpriteComponent(data, width, height, component);
+    const radius = TYPE_RADII[label?.type];
+    const known = radius && label.confidence >= 0.65 && !component.touchesBoundary
+      && Math.abs(shape.measuredRadius - radius) <= radius * 0.45;
+    if (known) {
+      for (const record of represented) records.splice(records.indexOf(record), 1);
+      records.push({ blob, piece: { ...shape, type: label.type, r: radius,
+        confidence: label.confidence, recognitionSource: 'flag-template' } });
+    } else if (overlap.length === 0 && !records.some(record => {
+      const b = blobBounds(record.blob);
+      return b.left < bounds.right && b.right >= bounds.left
+        && b.top < bounds.bottom && b.bottom >= bounds.top;
+    })) {
+      records.push({ blob, piece: { ...shape, confidence: Math.min(shape.confidence, 0.45) } });
+    }
+  }
+  return records.map(record => record.piece);
 }
 
 /**
  * 簡易フラッドフィル: 同色領域のサイズと中心を推定
  */
-function floodFillEstimate(data, width, height, startX, startY, targetR, targetG, targetB, gridStep, visited, board) {
+function floodFillEstimate(data, width, height, startX, startY, targetR, targetG, targetB, gridStep, visited, board, excludedPixels = null) {
   const colorThreshold = 50; // RGB差の許容値
   const queue = [{ x: startX, y: startY }];
   let totalX = 0, totalY = 0, count = 0;
   let sumR = 0, sumG = 0, sumB = 0;
   let minX = startX, maxX = startX, minY = startY, maxY = startY;
+  const sampledPixels = [];
 
   // Index-based queue avoids quadratic Array.shift work on large solid blobs.
   for (let head = 0; head < queue.length; head++) {
@@ -648,6 +630,7 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     if (visited.has(key)) continue;
     if (x < 0 || x >= width || y < 0 || y >= height
         || x < board.left || x >= board.right || y < board.top || y >= board.bottom) continue;
+    if (excludedPixels?.has(y * width + x)) continue;
 
     const idx = (y * width + x) * 4;
     const r = data[idx], g = data[idx + 1], b = data[idx + 2];
@@ -655,6 +638,7 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     if (diff > colorThreshold) continue;
 
     visited.add(key);
+    sampledPixels.push(y * width + x);
     totalX += x;
     totalY += y;
     count++;
@@ -686,6 +670,7 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     maxX,
     minY,
     maxY,
+    sampledPixels,
     avgColor: {
       r: Math.round(sumR / count),
       g: Math.round(sumG / count),
@@ -742,118 +727,22 @@ function classifyBlob(blob, calibration) {
   };
 }
 
-/**
- * HOLD領域のピースを検出する
- * 画面上部のHOLD表示領域(YOURとNEXTの間)からピースのタイプを推定
- */
-function detectHoldPiece(data, width, height, board) {
-  // HOLD領域: ボード上部左寄り (YOURの右、NEXTの左)
-  const holdAreaTop = 0;
-  const holdAreaBottom = board.top + 30 * height / 720;
-  const holdAreaLeft = board.left + Math.floor(board.width * 0.15);
-  const holdAreaRight = board.left + Math.floor(board.width * 0.45);
-
-  return detectPieceInArea(data, width, height, holdAreaTop, holdAreaBottom, holdAreaLeft, holdAreaRight);
+/** Project only checked label fields; pixel masks stay local to recognition. */
+function canonicalPreview(piece) {
+  if (!piece || !Number.isInteger(piece.type) || !TYPE_RADII[piece.type]
+      || piece.fallback || !(piece.confidence >= 0.58)) return null;
+  return { type: piece.type, r: TYPE_RADII[piece.type],
+    confidence: piece.confidence, fallback: false, recognitionSource: 'flag-template' };
 }
 
-/**
- * NEXT領域から最大3つのピースを検出する
- * NEXT表示は縦に3つ並んでいる
- */
-function detectNextPieces(data, width, height, board) {
-  const nextAreaLeft = board.left + Math.floor(board.width * 0.55);
-  const nextAreaRight = board.right;
-  // NEXT領域は上部UIから盤面内に延びる (3ピース分の高さ)
-  const nextAreaTop = 0;
-  const nextAreaBottom = board.top + 90 * height / 720;
-  const slotHeight = Math.floor((nextAreaBottom - nextAreaTop) / 3);
-
-  const results = [];
-  for (let i = 0; i < 3; i++) {
-    const slotTop = nextAreaTop + slotHeight * i;
-    const slotBottom = slotTop + slotHeight;
-    const piece = detectPieceInArea(data, width, height, slotTop, slotBottom, nextAreaLeft, nextAreaRight);
-    results.push(piece && !piece.fallback && piece.confidence >= 0.58 ? piece : null);
-  }
-
-  // Preserve all three slot indices. No fabricated type-1 current piece.
-  return results;
+/** The HOLD icon has its own HUD cell, independent of the world deadline. */
+function detectHoldPiece(data, width, height, calibration) {
+  return canonicalPreview(detectHudPieces(data, width, height, calibration).hold);
 }
 
-/**
- * 指定領域内の最大色ブロブからピースタイプを推定 (HOLD/NEXT共通)
- * ピースが無い場合は null を返す
- */
-function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, areaRight) {
-  let bestBlob = null;
-  let bestScore = 0;
-
-  areaTop = Math.max(0, Math.ceil(areaTop));
-  areaBottom = Math.min(height, Math.ceil(areaBottom));
-  areaLeft = Math.max(0, Math.ceil(areaLeft));
-  areaRight = Math.min(width, Math.ceil(areaRight));
-  const gridStep = Math.max(1, Math.round(width / 1280 * 4));
-  const visited = new Set();
-
-  for (let y = areaTop; y < areaBottom; y += gridStep) {
-    for (let x = areaLeft; x < areaRight; x += gridStep) {
-      const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
-      if (visited.has(key)) continue;
-
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const brightness = (r + g + b) / 3;
-      if (brightness < 40) continue;
-
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const saturation = max > 0 ? (max - min) / max : 0;
-      if (saturation < 0.15) continue;
-
-      const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited,
-        { left: areaLeft, right: areaRight, top: areaTop, bottom: areaBottom });
-
-      if (!blob || blob.pixelCount < 4) continue;
-
-      const aspect = blobAspectRatio(blob);
-      if (aspect > 3.2) continue;
-
-      const sampledArea = Math.max(1, blob.pixelCount * gridStep * gridStep);
-      const bboxArea = Math.max(1, blob.bboxWidth * blob.bboxHeight);
-      const fillRatio = Math.min(1.5, sampledArea / bboxArea);
-      const blobColorStats = getColorStats(blob.avgColor.r, blob.avgColor.g, blob.avgColor.b);
-      const compactness = aspect > 2.0 ? 0.45 : 1.0;
-      const score = blob.pixelCount * Math.max(0.25, fillRatio) * compactness * (0.6 + blobColorStats.saturation);
-      if (score > bestScore) {
-        bestScore = score;
-        bestBlob = blob;
-      }
-    }
-  }
-
-  if (!bestBlob) return null;
-
-  const colorGuess = classifyColorType(bestBlob.avgColor, 5);
-  const colorStats = getColorStats(bestBlob.avgColor.r, bestBlob.avgColor.g, bestBlob.avgColor.b);
-  const bestType = Math.max(1, Math.min(5, colorGuess.type));
-  const confidence = Math.max(
-    0.25,
-    Math.min(
-      0.9,
-      0.82
-        - Math.max(0, colorGuess.hueDiff - 12) / 48
-        - Math.max(0, 0.22 - colorStats.saturation) * 1.5
-        - (blobAspectRatio(bestBlob) > 2.0 ? 0.18 : 0),
-    ),
-  );
-  const fallback = confidence < 0.58;
-
-  return {
-    type: bestType,
-    r: TYPE_RADII[bestType],
-    fallback,
-    confidence: Math.round(confidence * 100) / 100,
-  };
+/** Three horizontal future icons; the controllable current is separate. */
+function detectNextPieces(data, width, height, calibration) {
+  return detectHudPieces(data, width, height, calibration).nextPieces.map(canonicalPreview);
 }
 
 /**
@@ -862,6 +751,7 @@ function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, a
  */
 function measureGarbage(data, width, height, calibration, pieces = []) {
   const { board } = calibration;
+  const arena = calibration.arena || board;
   const step = Math.max(1, Math.round(width / 1280 * 6));
   const columns = [];
   let garbageCount = 0;
@@ -872,7 +762,7 @@ function measureGarbage(data, width, height, calibration, pieces = []) {
     const right = board.left + board.width * (col + 1) / bins;
     let previousGray = false;
     let top = null;
-    for (let y = Math.ceil(board.top + step * 2); y < Math.min(height, board.bottom - step); y += step) {
+    for (let y = Math.ceil(arena.top + step * 2); y < Math.min(height, arena.bottom - step); y += step) {
       let gray = 0, samples = 0;
       for (let x = Math.ceil(Math.max(board.left + step, left)); x < Math.min(width, board.right - step, right); x += step) {
         const idx = (y * width + x) * 4;
@@ -910,13 +800,14 @@ function measureGarbage(data, width, height, calibration, pieces = []) {
  */
 function detectOjamaGauge(data, width, height, calibration) {
   const { board, walls } = calibration;
+  const arena = calibration.arena || board;
   if (!walls) return { level: 0 };
 
   // ゲージ領域: ボード左壁の外側〜壁境界にかけての細い縦領域
   const scanLeft = Math.max(0, Math.ceil(walls.leftOuter - 15 * height / 720));
   const scanRight = Math.min(width, Math.ceil(walls.leftOuter + 3 * height / 720));
-  const scanTop = Math.max(0, Math.ceil(board.top + 10 * height / 720));
-  const scanBottom = Math.min(height, Math.floor(board.bottom - 5 * height / 720));
+  const scanTop = Math.max(0, Math.ceil(arena.top + 10 * height / 720));
+  const scanBottom = Math.min(height, Math.floor(arena.bottom - 5 * height / 720));
   const totalHeight = scanBottom - scanTop;
 
   if (totalHeight <= 0 || scanLeft >= scanRight) return { level: 0 };

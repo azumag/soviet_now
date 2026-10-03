@@ -6,7 +6,7 @@ import { gateObservation } from '../soren91/observation_guard.mjs';
 const width = 1280;
 const height = 720;
 const calibration = () => ({
-  screen: { width, height }, confidence: 0.82, method: 'profile',
+  screen: { width, height }, confidence: 0.82, method: 'deadline-floor', coordinateSchema: 2, arena: { left: 450, right: 800, top: 130, bottom: 636, width: 350, height: 506 }, hud: { top: 0, bottom: 130 },
   board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 },
 });
 const next = { type: 1, r: 0.207, confidence: 0.9 };
@@ -149,4 +149,14 @@ test('nearby fragments keep a one-to-one match independently of detector order',
   gateObservation(board([piece(1, 0, 0.207), piece(1, 0.4, 0.207)]), c, 1000);
   const twoForOne = board([piece(1, 0.01, 0.207), piece(1, 0.02, 0.207)]);
   assert.equal(gateObservation(twoForOne, c, 4000).perception.reason, 'board-moving');
+});
+
+test('one sampled garbage-row step tolerates floating-point roundoff, while a larger rise waits', () => {
+  // At 50 pixels/world unit a six-pixel sample row is 0.12. A one-pixel
+  // raster shift across the grid can produce this full row step in the readout.
+  const state = top => board([], { garbage: { columns: [{ left: -3.5, right: -3.25, top }] } });
+  const c = calibration();
+  gateObservation(state(-0.88), c, 1000);
+  assert.equal(gateObservation(state(-1), c, 4000).state, 'MOVE');
+  assert.equal(gateObservation(state(-0.75), c, 7000).perception.reason, 'board-moving');
 });

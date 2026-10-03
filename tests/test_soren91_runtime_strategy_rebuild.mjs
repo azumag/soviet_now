@@ -19,7 +19,7 @@ const board = (pieces = [], next = piece(1), extra = {}) => ({
   garbage: { ratio: 0, height: -5, gauge: 0, columns: [] }, ...extra,
 });
 const cal = () => ({
-  screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'profile',
+  screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'deadline-floor', coordinateSchema: 2, arena: { left: 450, right: 800, top: 130, bottom: 636, width: 350, height: 506 }, hud: { top: 0, bottom: 130 },
   board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 },
 });
 

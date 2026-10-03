@@ -8,11 +8,12 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { decide, landingAt, simulateDrop, TYPE_RADII } from '../soren91/strategy.mjs';
 import { TYPE_RADII as IMAGE_RADII, detectPieces, detectNextPieces, measureGarbage, analyzeScreenshot } from '../soren91/screenshot_analyzer.mjs';
+import { detectCalibration } from '../soren91/calibration.mjs';
 import { DEFAULT_MAX_STALE_MS, gateObservation, maxStaleMs, usableCalibration } from '../soren91/observation_guard.mjs';
 const sharp = createRequire(new URL('../soren91/package.json', import.meta.url))('sharp');
 const piece = (type, x = 0, y = -5 + TYPE_RADII[type], extra = {}) => ({ type, r: TYPE_RADII[type], x, y, confidence: 0.9, ...extra });
 const board = (pieces = [], next = piece(1), extra = {}) => ({ state: 'MOVE', pieces, next, nextPieces: [next], garbage: { ratio: 0, height: -5, gauge: 0 }, ...extra });
-const cal = () => ({ screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'profile', board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 } });
+const cal = () => ({ screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'deadline-floor', coordinateSchema: 2, arena: { left: 450, right: 800, top: 130, bottom: 636, width: 350, height: 506 }, hud: { top: 0, bottom: 130 }, board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 } });
 function image(w = 1280, h = 720) {
   const data = Buffer.alloc(w * h * 4);
   for (let i = 0; i < data.length; i += 4) { data[i] = data[i + 1] = data[i + 2] = 50; data[i + 3] = 255; }
@@ -142,20 +143,38 @@ test('image: real piece at former magic ghost coordinate is retained', () => {
   const im = image(), c = cal(); disc(im, 450 + (-1.64 + 3.5) * 50, 636 - (1.91 + 5) * 50, 10.35);
   assert.equal(detectPieces(im.data, im.w, im.h, c).length, 1);
 });
-test('image: blank NEXT has three null slots, never fabricated type 1', () => {
-  const im = image(); assert.deepEqual(detectNextPieces(im.data, im.w, im.h, cal().board), [null, null, null]);
+test('image: disconnected flag colours are not counted again as whole-colour obstacles', () => {
+  const c = cal();
+  const detect = blueLeft => {
+    const im = image();
+    for (let y = 480; y < 504; y++) for (let x = 580; x < 605; x++) {
+      const rgb = x < 592 ? [220, 50, 50] : x >= blueLeft && x < blueLeft + 12 ? [50, 100, 220] : null;
+      if (rgb) { const i = (y * im.w + x) * 4; im.data.set(rgb, i); }
+    }
+    return detectPieces(im.data, im.w, im.h, c);
+  };
+  const apart = detect(593), touching = detect(592);
+  assert.equal(apart.length, 1, JSON.stringify(apart));
+  assert.equal(touching.length, 1, JSON.stringify(touching));
+  gateObservation(board(apart), c, 1000);
+  assert.equal(gateObservation(board(touching), c, 4000).state, 'MOVE');
 });
-test('image: missing first/second NEXT does not shift subsequent slots', () => {
+test('image: blank NEXT has three null slots, never fabricated type 1', () => {
+  const im = image(); assert.deepEqual(detectNextPieces(im.data, im.w, im.h, cal()), [null, null, null]);
+});
+test('image: a coloured fragment in the former vertical NEXT ROI is not a country', () => {
   const im = image(); disc(im, 730, 155, 14, [220, 100, 50]);
-  const q = detectNextPieces(im.data, im.w, im.h, cal().board);
-  assert.equal(q.length, 3); assert.equal(q[0], null); assert.equal(q[1].type, 2); assert.equal(q[2], null);
+  assert.deepEqual(detectNextPieces(im.data, im.w, im.h, cal()), [null, null, null]);
 });
 test('image: proportional resolution and fractional ROI are bounded', () => {
   const im = image(640, 360), c = cal();
   c.board = Object.fromEntries(Object.entries(c.board).map(([k, v]) => [k, v / 2 + (k === 'left' ? 0.1 : 0)]));
+  c.arena = Object.fromEntries(Object.entries(c.arena).map(([k, v]) => [k, v / 2]));
+  c.hud = { top: 0, bottom: c.arena.top };
+  c.screen = { width: 640, height: 360 };
   disc(im, 312.5, 275, TYPE_RADII[3] * 25);
   assert.ok(detectPieces(im.data, im.w, im.h, c).length > 0);
-  assert.equal(detectNextPieces(im.data, im.w, im.h, c.board).length, 3);
+  assert.equal(detectNextPieces(im.data, im.w, im.h, c).length, 3);
 });
 test('image: garbage occupancy counts background and reports local surfaces', () => {
   const im = image(), c = cal();
@@ -213,11 +232,19 @@ test('gate: stale window is bounded and configurable', () => {
   assert.equal(gateObservation(b, c, 1000 + DEFAULT_MAX_STALE_MS + 1).state, 'DROP');
   assert.equal(gateObservation(b, c, 1000 + DEFAULT_MAX_STALE_MS + 2).state, 'MOVE');
 });
-test('Sharp decode → recognition → gate → real strategy contract', async () => {
-  const im = image(), c = cal(); disc(im, 730, 50, 14); disc(im, 600, 550, 10.35);
-  const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();
+async function realFrame() {
+  const png = readFileSync(new URL('./fixtures/soren91-sprites/game_0013_turn_1.jpg', import.meta.url));
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { png, data, w: info.width, h: info.height, c: detectCalibration(data, info.width, info.height) };
+}
+test('Sharp decode → current/HUD/physical board → guard → real strategy contract', async () => {
+  const { png, c } = await realFrame();
   assert.equal((await analyzeScreenshot(png, c)).state, 'DROP');
   const state = await analyzeScreenshot(png, c); assert.equal(state.state, 'MOVE', JSON.stringify(state));
+  assert.equal(state.next.type, 7, 'the visible Azerbaijan is current');
+  assert.deepEqual(state.nextPieces.map(p => p?.type ?? null), [7, 5, 3]);
+  assert.ok(state.pieces.some(p => p.y < 0), 'the dropped Belarus remains a physical obstacle');
+  assert.ok(state.pieces.every(p => p.y < 3.32), 'the controllable current is not physical occupancy');
   assert.ok(Number.isFinite(decide(state).x));
 });
 test('image: dark warm result/ranking panel is WAITING, never a moving board', async () => {
@@ -269,14 +296,12 @@ test('gate: low-confidence frame is not the first of two trusted frames', () => 
   assert.equal(gateObservation(board(), c, 1600).state, 'MOVE');
 });
 test('gate history survives analyzer cache-busting imports', async () => {
-  const im = image(), c = cal(); disc(im, 730, 50, 14);
-  const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();
+  const { png, c } = await realFrame();
   const first = await import('../soren91/screenshot_analyzer.mjs?round-a');
   const second = await import('../soren91/screenshot_analyzer.mjs?round-b');
   assert.equal((await first.analyzeScreenshot(png, c)).state, 'DROP');
   assert.equal((await second.analyzeScreenshot(png, c)).state, 'MOVE');
 });
-
 
 test('preview radii use canonical physics, not scaled UI radii', () => {
   const normal = decide(board([], piece(3)));
@@ -299,17 +324,20 @@ test('gate: HOLD must be confirmed without blocking a known current drop', () =>
 });
 
 async function bootstrapFixture(withWalls) {
-  const im = image();
+  let im = image();
   if (withWalls) {
-    for (let y = 0; y < im.h; y++) for (let x = 0; x < im.w; x++) {
-      const value = y >= 220 && y < 636 && x >= 450 && x < 800 ? 50 : 180;
-      const i = (y * im.w + x) * 4; im.data[i] = im.data[i + 1] = im.data[i + 2] = value;
-      if (y >= 220 && y < 636 && ((x >= 440 && x < 450) || (x >= 800 && x < 810))) {
-        im.data[i] = im.data[i + 1] = im.data[i + 2] = 240;
+    // Keep the photographed HUD, walls, deadline and floor, but clear physical
+    // occupancy. An empty first board must calibrate before any input.
+    const source = readFileSync(new URL('./fixtures/soren91-sprites/game_0013_turn_1.jpg', import.meta.url));
+    const { data, info } = await sharp(source).resize(1280, 720).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    im = { data, w: info.width, h: info.height };
+    const c = detectCalibration(data, im.w, im.h);
+    for (let y = Math.ceil(c.board.top) + 3; y < c.board.bottom; y++) {
+      for (let x = Math.ceil(c.board.left); x < c.board.right; x++) {
+        const i = (y * im.w + x) * 4; data[i] = data[i + 1] = data[i + 2] = 50;
       }
     }
   }
-  disc(im, 730, 50, 14);
   const png = await sharp(im.data, { raw: { width: im.w, height: im.h, channels: 4 } }).png().toBuffer();
   const dir = mkdtempSync(join(tmpdir(), 'soren91-bootstrap-'));
   try {
@@ -323,7 +351,7 @@ async function bootstrapFixture(withWalls) {
       const second = await analyzeScreenshot('frame.png', c);
       console.log(JSON.stringify({ first: first.state, second: second.state,
         reason: second.perception.reason, count: second.pieces.length,
-        provisional: c.provisional, method: c.method, dropArea: c.dropArea }));
+        provisional: c.provisional, method: c.method, dropArea: c.dropArea, board: c.board }));
     `;
     const output = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
       cwd: dir, encoding: 'utf8', timeout: 15000,
@@ -335,7 +363,7 @@ test('real calibration bootstraps an empty board before the first drop', async (
   const result = await bootstrapFixture(true);
   assert.equal(result.provisional, false); assert.equal(result.method, 'profile');
   assert.equal(result.count, 0); assert.equal(result.first, 'DROP'); assert.equal(result.second, 'MOVE');
-  assert.ok(result.dropArea.pixelLeft > 450 && result.dropArea.pixelRight < 800);
+  assert.ok(result.dropArea.pixelLeft > result.board.left && result.dropArea.pixelRight < result.board.right);
 });
 test('failed real calibration remains no-input, not false round-end', async () => {
   const result = await bootstrapFixture(false);
