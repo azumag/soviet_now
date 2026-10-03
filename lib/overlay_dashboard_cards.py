@@ -265,7 +265,7 @@ def render_ops_dashboard(raw: str) -> str:
 def dashboard_css() -> str:
     return r"""
 .dashboard-shell { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; min-height:0; flex:1; }
-.broadcast-card { box-sizing:border-box; min-height:0; overflow:hidden; border:1px solid #25495d; border-radius:12px; background:linear-gradient(180deg,#071925,#04111a); padding:18px; box-shadow:0 8px 28px rgba(0,0,0,.24); font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.broadcast-card { box-sizing:border-box; min-height:0; overflow:hidden; border:0; border-radius:0; background:transparent; padding:10px 8px; box-shadow:none; font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 .card-head { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 .eyebrow { color:#6f91a5; font-size:11px; font-weight:900; letter-spacing:.14em; }
 .card-title { margin-top:3px; color:#effbff; font-size:26px; line-height:30px; font-weight:900; letter-spacing:.01em; }
@@ -275,7 +275,7 @@ def dashboard_css() -> str:
 .state-pill.down { color:#fecaca; border-color:#7d3434; background:rgba(239,68,68,.12); }
 .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin-bottom:12px; }
 .metric-grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
-.metric { min-width:0; padding:12px 13px; border:1px solid #244658; border-radius:9px; background:#081b27; }
+.metric { min-width:0; padding:12px 13px; border:0; border-radius:7px; background:#081b27; }
 .metric-label { color:#7896a8; font-size:10px; font-weight:900; letter-spacing:.13em; }
 .metric-value { margin-top:3px; color:#f2fbff; font-size:30px; line-height:33px; font-weight:950; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .metric-value.accent { color:#a5f3fc; }
@@ -297,20 +297,20 @@ def dashboard_css() -> str:
 .bar.current { background:linear-gradient(180deg,#fde68a,#d97706); opacity:1; }
 .bar-label { margin-top:4px; color:#7894a6; font-size:9px; line-height:11px; text-align:center; font-weight:800; font-variant-numeric:tabular-nums; }
 .service-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
-.service { min-width:0; padding:9px 11px; border:1px solid #254355; border-radius:7px; background:#071720; display:flex; align-items:center; gap:8px; }
+.service { min-width:0; padding:9px 11px; border:0; border-radius:6px; background:#071720; display:flex; align-items:center; gap:8px; }
 .service-label { color:#7894a6; font-size:10px; font-weight:900; letter-spacing:.09em; }
 .service-value { margin-left:auto; min-width:0; color:#c0d3dd; font-size:11px; font-weight:900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.service.ok { border-color:#255844; background:rgba(16,185,129,.06); } .service.ok .service-value{color:#a7f3d0;}
-.service.warn { border-color:#72571d; background:rgba(245,158,11,.07); } .service.warn .service-value{color:#fde68a;}
-.service.down { border-color:#713535; background:rgba(239,68,68,.08); } .service.down .service-value{color:#fecaca;}
+.service.ok .service-value{color:#a7f3d0;}
+.service.warn .service-value{color:#fde68a;}
+.service.down .service-value{color:#fecaca;}
 .activity-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin-top:10px; }
-.activity-box { padding:8px 10px; border:1px solid #223f50; border-radius:7px; background:#071720; }
+.activity-box { padding:8px 10px; border:0; border-radius:6px; background:#071720; }
 .activity-box span { display:block; color:#708da0; font-size:9px; font-weight:900; letter-spacing:.10em; }
 .activity-box b { display:block; margin-top:3px; color:#c4d7e1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .attention-list { display:flex; flex-direction:column; gap:5px; }
 .attention { padding:7px 9px; border-radius:6px; background:rgba(245,158,11,.10); color:#fde68a; font-size:11px; font-weight:850; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .attention.down { background:rgba(239,68,68,.12); color:#fecaca; }
-.all-clear { margin-top:10px; padding:9px 10px; border:1px solid #255844; border-radius:7px; background:rgba(16,185,129,.06); color:#9fe4c5; font-size:10px; font-weight:900; text-align:center; letter-spacing:.06em; }
+.all-clear { margin-top:10px; padding:9px 10px; border:0; border-radius:6px; background:rgba(16,185,129,.06); color:#9fe4c5; font-size:10px; font-weight:900; text-align:center; letter-spacing:.06em; }
 .source-pre { display:none !important; }
 .fallback-pre { margin:0; white-space:pre-wrap; color:#dbeafe; font:13px/1.32 "SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
 """
