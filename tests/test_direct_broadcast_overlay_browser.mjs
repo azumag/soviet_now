@@ -113,6 +113,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           feedRows:document.querySelectorAll('#feed-s .feed-line').length,
           gameDashboard:Boolean(document.querySelector('.game-dashboard')),
           opsDashboard:Boolean(document.querySelector('.ops-dashboard')),
+          opsClass:document.querySelector('.ops-dashboard')?.className || '',
           gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsAlerts:document.querySelectorAll('.ops-alert').length};
@@ -166,9 +167,13 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.equal(layout.feedRows,0,'long raw OPS logs are summarized instead of shrinking typography');
         assert.equal(layout.opsAlerts,0,'informational observer rows do not become alerts');
       }
+      if(['normal','prediction','stress'].includes(kind)) {
+        assert.equal(layout.opsOverflow,false,`${kind}: adaptive OPS dashboard fits the available rail height`);
+      }
       if(kind==='stress') {
         assert.equal(layout.feedRows,0,'stress raw OPS logs are summarized');
         assert.ok(layout.opsAlerts>=1,'stress faults remain visible as attention rows');
+        assert.match(layout.opsClass,/micro|compact/,'stress OPS switches to a denser layout');
       }
       if(kind==='soren91'||kind==='jev') {
         assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
