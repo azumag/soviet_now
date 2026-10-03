@@ -315,6 +315,7 @@ test('one-shot inline refresh attaches without navigating or restarting the game
   assert.match(source, /soren-direct-stream-overlay-broadcastSidebar/);
   assert.match(source, /installInlineDirectBroadcastOverlay\(page, config, \{ watch: false \}\)/);
   assert.match(source, /broadcastOverlayVersion === '4'/);
+  assert.match(source, /must be loopback for inline rail refresh/);
   assert.doesNotMatch(source, /page[.]goto\(/);
   assert.doesNotMatch(source, /kill\(|SIGTERM|SIGKILL|spawn\(/);
 });
