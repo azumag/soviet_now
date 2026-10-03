@@ -22,9 +22,44 @@ function fixture(kind) {
   if(kind==='long-card'||kind==='stress') text=text.replace('カストーラ/スペンソニア','保有将軍'.repeat(10))
     .replace('アルマムーン=ゼウス/ユイートル','駐留将軍'.repeat(15))
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
-  const ops = ['● Backend FFMPEG LIVE', 'Game: hanjuku-hero', 'Chat: RUNNING', 'Audio: READY',
-    'YouTube: connected', 'Kick: connected', 'LastDrop: observed'];
-  if (kind === 'long'||kind==='stress') ops.push(...Array.from({length:24}, (_, i) => `INFO Observer ${i+1}: ${'観測を確認中 '.repeat(12)}`));
+  if (kind === 'soren91') {
+    text = 'SOREN/CORNER: SOREN91 / soren91 / ACTIVE\n'
+      + 'Live: this corner results 42\n'
+      + 'Stats: 120 results / best=1 / Recent30=5.2\n'
+      + '  Trend: -2.1 vs previous 30 / better\n'
+      + '  wins=7 / lower rank is better\n'
+      + 'Rank Timeline\nLast8: 12 9 4 7 1 3 2 5';
+  } else if (kind === 'jev') {
+    text = 'SOREN/CORNER: JEV / sorengame / ACTIVE\n'
+      + 'Live: player policy=jev generation=4\n'
+      + 'Stats: 52 reports / best=8080 / Recent30=6120\n'
+      + '  Trend: +430.0 vs previous 22 / better\n'
+      + '  Reported scores; may include interrupted runs\n'
+      + 'Score Timeline\nLast8: 4100 4800 5300 5100 6200 6800 7200 8080';
+  }
+  const ops = [
+    '━━━ SOREN OPS ━━━',
+    '  HEALTH',
+    '    ● Loop        RUNNING  PID=101',
+    '    ● Workers     7/7 ONLINE  [████████████]',
+    '    ● Backend     FFMPEG LIVE  relay=ok',
+    '',
+    '  ACTIVITY',
+    '    ◆ Game        3試合目 (games) R1 [120,220,330]',
+    '    ▸ QueueMeter  [██░░░░░░░░]  A=3 C=1 T=0',
+    '    ▾ LastDrop    observed',
+    '',
+    '  AUDIO',
+    '    ♪ Say         PLAYING  PID=202',
+    '',
+    '  TWITCH',
+    '    ● Chat        CONNECTED  PID=303',
+    '',
+    '  YOUTUBE',
+    '    ● Chat        CONNECTED  PID=404',
+  ];
+  if (kind === 'long') ops.push(...Array.from({length:24}, (_, i) => `INFO Observer ${i+1}: ${'観測を確認中 '.repeat(12)}`));
+  if (kind === 'stress') ops.push('    ! Unexpected  KickW', '    ! Duplicates  DETECTED  chat_worker=10,11');
   if (kind === 'prediction'||kind==='stress') ops.push('予想対象：#23｜終了まで20秒', '#23：今回の予想対象');
   return {version:1, updatedAt:now, feeds:{
     showStatusG:{text, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
@@ -58,7 +93,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line']) {
+    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -71,10 +106,17 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         return {sidebar:box('broadcast-sidebar'),top:box('top-rail'),bottom:box('bottom-rail'),
           health:window.__sorenBroadcastOverlayHealth, cardClipped:bounds?bounds.bottom>Math.min(panel.bottom,document.getElementById('feed').getBoundingClientRect().bottom)+1:false,
           cardWidthClipped:card?card.scrollWidth>card.clientWidth+1:false,
-          dotsVisible:getComputedStyle(document.querySelector('.hanjuku-dots')).display!=='none',
+          dotsVisible:document.querySelector('.hanjuku-dots')
+            ? getComputedStyle(document.querySelector('.hanjuku-dots')).display!=='none' : false,
           bars:[...document.querySelectorAll('.work-bar,.gen-top-bar,.toast-bar')].some(e=>getComputedStyle(e).display!=='none'),
           background:getComputedStyle(document.body).backgroundColor,
-          feedRows:document.querySelectorAll('#feed-s .feed-line').length};
+          feedRows:document.querySelectorAll('#feed-s .feed-line').length,
+          gameDashboard:Boolean(document.querySelector('.game-dashboard')),
+          opsDashboard:Boolean(document.querySelector('.ops-dashboard')),
+          opsClass:document.querySelector('.ops-dashboard')?.className || '',
+          gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
+          opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
+          opsAlerts:document.querySelectorAll('.ops-alert').length};
       });
       assert.deepEqual(layout.sidebar,[960,0,320,720],kind);
       assert.deepEqual(layout.top,[0,0,960,90],kind);
@@ -115,18 +157,31 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').textContent(),'実際に送った入力 —回');
-      } else if(kind!=='improve') {
+      } else if(!['improve','soren91','jev'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.match(await page.locator('.hanjuku-plan').textContent(),/完了未確認/);
         assert.match(await page.locator('.hanjuku-note').textContent(),/観測/);
       }
-      if(kind==='long'||kind==='stress') {
-        assert.equal(layout.feedRows,kind==='stress'?33:31,'all log lines retained');
-        const clipping=await page.locator('#feed-s').evaluate(el=>{
-          const bottom=el.parentElement.getBoundingClientRect().bottom-1;
-          return [...el.children].filter(row=>row.getBoundingClientRect().bottom>bottom+1).map(row=>row.textContent);
-        });
-        assert.deepEqual(clipping,[],'all log rows remain visibly inside the panel');
+      assert.equal(layout.opsDashboard,true,`${kind}: OPS uses structured dashboard`);
+      if(kind==='long') {
+        assert.equal(layout.feedRows,0,'long raw OPS logs are summarized instead of shrinking typography');
+        assert.equal(layout.opsAlerts,0,'informational observer rows do not become alerts');
+      }
+      if(['normal','prediction','stress'].includes(kind)) {
+        assert.equal(layout.opsOverflow,false,`${kind}: adaptive OPS dashboard fits the available rail height`);
+      }
+      if(kind==='stress') {
+        assert.equal(layout.feedRows,0,'stress raw OPS logs are summarized');
+        assert.ok(layout.opsAlerts>=1,'stress faults remain visible as attention rows');
+        assert.match(layout.opsClass,/micro|compact/,'stress OPS switches to a denser layout');
+      }
+      if(kind==='soren91'||kind==='jev') {
+        assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
+        assert.equal(layout.gameOverflow,false,`${kind}: GAME dashboard fits the panel`);
+        assert.equal(layout.opsOverflow,false,`${kind}: OPS dashboard fits the panel`);
+        const values=await page.locator('#feed-g .dash-kpi-value').allTextContents();
+        assert.equal(values.length,2,`${kind}: two primary game KPIs`);
+        assert.ok(await page.locator('#feed-g .game-bars').count(),`${kind}: recent result bars are visible`);
       }
     }
     state=fixture('work-two-line');

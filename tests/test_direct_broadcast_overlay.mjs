@@ -804,9 +804,9 @@ test('game feed renders allowlisted color segments as styled spans without inner
   assert.equal(rows[1].children[1].textContent, '\\');
   assert.equal(rows[1].children[1].style.color, '#facc15');
 
-  const opsRow = overlay.feedS.children[0];
-  assert.equal(opsRow.children.length, 0, 'feeds without segments keep the plain text path');
-  assert.match(opsRow.textContent, /Backend/);
+  const opsCard = overlay.feedS.children[0];
+  assert.equal(opsCard.className, 'ops-dashboard', 'recognized OPS feed uses the structured dashboard path');
+  assert.ok(opsCard.children.length > 0, 'structured OPS dashboard contains visible summary cards');
 
   overlay.setState({
     ...base,
