@@ -1002,6 +1002,7 @@ AI ループの稼働状況は以下で監視できる。
 - 表示調整:
   - `SHOW_STATUS_AI_OUTPUT_LINES` (既定: `6`) — 表示する `AIOutput` 行数
   - `SHOW_STATUS_AI_TAIL_LINES` (既定: `400`) — ログ解析時に末尾から読む行数
+  - `SHOW_STATUS_WORKER_DETAIL=verbose` — `show-status` のworkerを従来どおり1行ずつ表示（既定は正常workerを集約する `compact`）
 
 ## コマンドインターフェース
 
