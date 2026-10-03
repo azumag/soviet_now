@@ -193,13 +193,12 @@ def render_ops_dashboard(raw: str) -> str:
 
     backend_clean = _clean(backend_line)
     backend = re.sub(r"^Backend\s+", "", backend_clean).strip() if backend_clean else "—"
-    backend_primary_match = re.match(r"(FFMPEG|OBS)\b", backend, re.I)
-    backend_primary = backend_primary_match.group(1).upper() if backend_primary_match else (backend.split()[0] if backend else "—")
     backend_state = "LIVE" if re.search(r"\bLIVE\b|\bOK\b", backend) else (
         "DOWN" if re.search(r"\bDOWN\b|\bFAILED\b", backend) else ""
     )
 
     services = [
+        _service("STREAM", backend_state or "—"),
         _service("LOOP", _find_status(health, r"^Loop\s+(.+)$")),
         _service("AUDIO", _find_status(audio, r"^(?:Say|Radio)\s+(.+)$")),
         _service("TWITCH", _find_status(twitch, r"^Chat\s+(.+)$")),
@@ -250,9 +249,8 @@ def render_ops_dashboard(raw: str) -> str:
         '<div><div class="eyebrow">OPERATIONS</div><div class="card-title">SYSTEM HEALTH</div></div>'
         f'<span class="state-pill {_tone(overall)}">{_esc(overall)}</span>'
         "</div>"
-        '<div class="metric-grid two">'
+        '<div class="metric-grid one">'
         f'{_metric("WORKERS", worker_value, tone=_tone(overall), sub=workers.group(3) if workers else "")}'
-        f'{_metric("STREAM", backend_primary, tone="accent2", sub=backend_state)}'
         "</div>"
         '<div class="section-heading"><span>SERVICES</span><span>LIVE STATE</span></div>'
         f'<div class="service-grid">{"".join(services)}</div>'
@@ -275,6 +273,7 @@ def dashboard_css() -> str:
 .state-pill.down { color:#fecaca; border-color:#7d3434; background:rgba(239,68,68,.12); }
 .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin-bottom:12px; }
 .metric-grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.metric-grid.one { grid-template-columns:minmax(0,1fr); }
 .metric { min-width:0; padding:12px 13px; border:0; border-radius:7px; background:#081b27; }
 .metric-label { color:#7896a8; font-size:10px; font-weight:900; letter-spacing:.13em; }
 .metric-value { margin-top:3px; color:#f2fbff; font-size:30px; line-height:33px; font-weight:950; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

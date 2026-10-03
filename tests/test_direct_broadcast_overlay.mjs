@@ -740,7 +740,7 @@ test('top summary shows how many games remain while an A/B is running', async ()
     'remaining games must be visible in the top rail',
   );
   assert.ok(!summaryTexts.some((text) => /Strategy:/.test(text)), 'redundant Strategy slot yields to remaining games');
-  assert.ok(summaryTexts.some((text) => /SOREN\/FFMPEG/.test(text)), 'boxed SOREN/FFMPEG header is still picked up');
+  assert.ok(summaryTexts.some((text) => /SOREN.*#54104/.test(text)), 'game identity and result count remain without backend branding');
   const summaryClasses = overlay.summary.children.map((line) => line.className);
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')));
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-ab')));
@@ -1072,7 +1072,7 @@ test('Hanjuku details distinguish recorded castles, planned work and sent input'
   const ui = await runBroadcastOverlayScript(f);
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
   assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /5城.*現在数ではありません/);
-  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '計画 出撃 / F1（完了未確認）');
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '出撃 / F1（完了未確認）');
   assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /412回/);
   await ui.tick(31);
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '年月 未確認');
@@ -1083,11 +1083,12 @@ test('Hanjuku details distinguish recorded castles, planned work and sent input'
 test('Hanjuku card surfaces the live observed battle, roster and sortie state', async () => {
   const ui = await runBroadcastOverlayScript(hanjukuFixture());
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
-  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, '保有 カストーラ/スペンソニア');
-  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, '駐留 アルマムーン=ゼウス/ユイートル');
-  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, '行軍中 どうし→ナキューメラ');
-  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '兵力 9名 / 停滞 3秒');
-  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 4 / 失敗 1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ/スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
+  assert.equal(ui.feedG.querySelector('.hanjuku-stalled').textContent, '3秒');
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '成立 4 / 失敗 1');
   // The battle line carries a trailing strategy field; it must not hide the screen.
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
   assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4勝 1敗');
@@ -1113,12 +1114,13 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
-  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, '保有 カストーラ/スペンソニア');
-  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, '駐留 アルマムーン=ゼウス/ユイートル');
-  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, '行軍中 どうし→ナキューメラ');
-  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '兵力 9名 / 停滞 3秒');
-  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 1 / 失敗 1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ/スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
+  assert.equal(ui.feedG.querySelector('.hanjuku-stalled').textContent, '3秒');
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '成立 1 / 失敗 1');
   assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /2城/);
-  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '計画 出撃 / J3（完了未確認）');
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '出撃 / J3（完了未確認）');
   assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /412回/);
 });
