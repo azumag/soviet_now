@@ -2600,16 +2600,20 @@ PY
 	if (( workers_online < workers_expected )); then
 		worker_health_color="$C_RED"
 		worker_health_label="DEGRADED"
+	elif (( workers_online > workers_expected )); then
+		worker_health_color="$C_YELLOW"
+		worker_health_label="CHECK"
 	fi
 	printf "    ${worker_health_color}●${C_RESET} Workers     ${worker_health_color}%d/%d %s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" \
 		"$workers_online" "$workers_expected" "$worker_health_label" "$workers_bar"
 
 	local worker_detail_mode="${SHOW_STATUS_WORKER_DETAIL:-compact}"
 	local _w_i _w_name _w_running _w_pid
-	local -a _w_paused_names _w_disabled_names _w_stopped_names
+	local -a _w_paused_names _w_disabled_names _w_stopped_names _w_unexpected_names
 	_w_paused_names=()
 	_w_disabled_names=()
 	_w_stopped_names=()
+	_w_unexpected_names=()
 	for ((_w_i = 1; _w_i <= ${#_worker_rows[@]}; _w_i += 3)); do
 		_w_name="${_worker_rows[$_w_i]}"
 		_w_running="${_worker_rows[$((_w_i + 1))]}"
@@ -2646,12 +2650,20 @@ PY
 
 		if [[ "$_w_paused" == "true" ]]; then
 			_w_paused_names+=("$_w_name")
+		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
+		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
 		elif [[ "$_w_running" == "true" ]]; then
 			:
-		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
-			_w_disabled_names+=("$_w_name")
-		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
-			_w_disabled_names+=("$_w_name")
 		else
 			_w_stopped_names+=("$_w_name")
 		fi
@@ -2663,6 +2675,11 @@ PY
 			_w_names="${(j:, :)_w_stopped_names}"
 			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
 			printf "    ${C_RED}!${C_RESET} Stopped     ${C_RED}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_unexpected_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_unexpected_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}!${C_RESET} Unexpected  ${C_YELLOW}%s${C_RESET}\n" "$_w_names"
 		fi
 		if (( ${#_w_paused_names[@]} > 0 )); then
 			_w_names="${(j:, :)_w_paused_names}"
