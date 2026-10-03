@@ -929,10 +929,27 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .ops-kpis { grid-template-columns: minmax(0, 1fr); }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
+/* Dedicated surface behind the native game window. It draws only measured padding. */
+#hanjuku-gap { display: none; position: absolute; top: 90px; height: 540px;
+  padding: 12px; background: #040e17; overflow: hidden; font-family: system-ui,sans-serif; }
+.hanjuku-gap-title { font-size: 15px; color: #bdcdd9; margin-bottom: 8px; }
+#hanjuku-gap .hanjuku-group { font-size: 18px; line-height: 1.4; margin-bottom: 8px;
+  overflow-wrap: anywhere; white-space: normal; }
+#hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
+html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
+html[data-soren-region="game-gap"] #broadcast-overlay { width: 960px; height: 540px; }
+html[data-soren-region="game-gap"] #hanjuku-gap { top: 0; }
+html[data-soren-region="game-gap"] .rail,
+html[data-soren-region="game-gap"] #broadcast-sidebar { display: none; }
+html[data-soren-region="sidebar"] #hanjuku-gap,
+html[data-soren-region="top"] #hanjuku-gap,
+html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
+
 </style>
 </head>
 <body>
 <main id="broadcast-overlay" data-broadcast-overlay-version="4">
+  <section id="hanjuku-gap" aria-label="半熟英雄の観測詳細"></section>
   <section id="top-rail" class="rail" aria-live="polite">
     <div id="summary"></div>
     <div id="work">
@@ -1388,7 +1405,17 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
       monster_menu:'召喚獣の戦闘', world_map:'戦況を確認中', map:'行軍・探索', map_target:'行先を選択',
       castle_menu:'城の管理', general_list:'将軍を選択', month_menu:'月初の処理',
       sortie_confirm:'出撃を確認中', unknown:'画面を確認中'};
-    return {fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
+    const geometry = pick(/^投影余白: x=(\d+) w=(\d+) until=(\d+(?:\.\d+)?)$/);
+    const gapLeft = number(geometry?.[1]), gapWidth = number(geometry?.[2]);
+    const timedRows = prefix => lines.filter(s=>s.startsWith(prefix)).map(s=>s.slice(prefix.length).match(/^until=(\d+(?:\.\d+)?) (.{1,500})$/))
+      .filter(m=>m && now <= Number(m[1]) && Number(m[1])-now <= 30).map(m=>m[2]);
+    const gap = fresh && gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960 && now <= Number(geometry?.[3]) && Number(geometry?.[3])-now <= 30
+      ? {left:gapLeft, width:gapWidth,
+         captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
+         garrison:timedRows('余白駐留: '),
+         marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
+         hp:timedRows('余白交戦HP: ')[0] || null} : null;
+    return {gap, fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
       gold:fresh ? number(values?.[2]) : null,
       year:fresh && number(calendar?.[1]) >= 1 && number(calendar?.[1]) <= 9999 ? number(calendar[1]) : null,
       month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
@@ -1435,7 +1462,7 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
       cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
     }
     card.appendChild(kpis);
-    if (value.enemyHp !== null) {
+    if (!value.gap && value.enemyHp !== null) {
       card.appendChild(node('hanjuku-duel',
         `交戦 ${value.enemy} ${value.enemyHp} / ${value.ally} ${value.allyHp}`));
     }
@@ -1452,12 +1479,12 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
       row.appendChild(node(cls, text));
       section.appendChild(row);
     };
-    if (value.holds) {
-      const territory = group('保有拠点');
+    if (!value.gap && value.holds) {
+      const territory = group('占領した拠点（累計記録）');
       territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
     }
-    if (value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
-    if (value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    if (!value.gap && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
+    if (!value.gap && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
     const records = node('hanjuku-records');
     records.appendChild(node('hanjuku-castles', `占領記録 ${shown(value.captured)}城（累計）`));
@@ -1466,6 +1493,50 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
     card.appendChild(details);
     if (!value.fresh) card.appendChild(node('hanjuku-note', '観測が古いため数値は非表示'));
     container.replaceChildren(card);
+  }
+  function renderHanjukuGap(value) {
+    const surface = document.getElementById('hanjuku-gap');
+    surface.replaceChildren(); surface.style.display = 'none';
+    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) return;
+    const gap = value.gap;
+    surface.style.left = `${gap.left}px`; surface.style.width = `${gap.width}px`;
+    surface.style.display = 'block';
+    const title = document.createElement('div'); title.className = 'hanjuku-gap-title';
+    title.textContent = '最終観測・記録'; surface.appendChild(title);
+    const items = [];
+    const add = (label, text) => {
+      const card = document.createElement('div'); card.className = 'hanjuku-group';
+      const head = document.createElement('div'); head.className = 'hanjuku-group-title'; head.textContent = label;
+      const body = document.createElement('div'); body.textContent = text;
+      card.append(head, body); items.push(card);
+    };
+    if (gap.hp) add('交戦HP（10秒以内の観測）', gap.hp);
+    for (const row of gap.garrison) {
+      const [castle, generals] = row.split('=');
+      const names = (generals || '').split('/').filter(Boolean);
+      for (let i=0;i<names.length;i+=3) add(`駐留 ${castle}（30秒以内）`, names.slice(i,i+3).join(' ・ '));
+    }
+    for (const row of gap.marching) add('行軍（成立未確認を含む）', row);
+    const castles = (gap.captured || '').split(' / ').filter(Boolean);
+    for (let i=0;i<castles.length;i+=3) add('占領した拠点（累計記録）', castles.slice(i,i+3).join(' ・ '));
+    if (!items.length) add('観測詳細', '新しい観測を待っています');
+    // Keep large type and whole cards. Paginate using actual DOM heights;
+    // every bounded roster/castle row is available without a two-line clamp.
+    const pages = [[]]; let used = 0;
+    const capacity = surface.clientHeight - title.offsetHeight - 44;
+    for (const card of items) {
+      surface.appendChild(card);
+      const height = card.getBoundingClientRect().height + 8;
+      card.remove();
+      if (used && used + height > capacity) {pages.push([]); used = 0;}
+      pages.at(-1).push(card); used += height;
+    }
+    const index = Math.floor(Date.now()/10000) % pages.length;
+    surface.append(...pages[index]);
+    if (pages.length > 1) {
+      const footer = document.createElement('div'); footer.className = 'hanjuku-gap-pages';
+      footer.textContent = `${index+1} / ${pages.length}`; surface.appendChild(footer);
+    }
   }
   function setPanelState(element, label, tone) {
     if (!element) return;
@@ -1507,8 +1578,10 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
     setPanelState(feedSState, opsStateLabel, opsStateTone);
     document.documentElement.dataset.improveActive = improveActive ? '1' : '';
     const hanjuku = hanjukuView(g, Date.now() / 1000);
+    if (hanjuku && state.gameGapEnabled !== true) hanjuku.gap = null;
     document.documentElement.dataset.hanjukuActive = hanjuku ? '1' : '';
-    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}:${hanjuku?.fresh}`;
+    renderHanjukuGap(hanjuku);
+    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}:${hanjuku?.fresh}:${Boolean(hanjuku?.gap)}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);

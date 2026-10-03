@@ -341,6 +341,7 @@ async function runBroadcastOverlayScript(initialState) {
     'prediction-round': new FakeElement('div'),
     'gen-top': new FakeElement('div'),
     'feed-g': new FakeElement('div'),
+    'hanjuku-gap': new FakeElement('div'),
     'feed-s': new FakeElement('div'),
     'feed-i': new FakeElement('div'),
     'feed-g-lines': new FakeElement('span'),

@@ -319,6 +319,49 @@ class HanjukuStatusTest(unittest.TestCase):
     def snapshot(self):
         return load_active_corner(self.root)
 
+    def test_measured_gap_is_fenced_and_observation_deadlines_are_preserved(self):
+        import time
+        now=time.time()
+        projection=dict(align='left',viewport=[0,90,960,540],content=[0,0,721,540])
+        _write_json(self.runtime / 'presentation.json', dict(status='ready', projection=projection))
+        bot=json.loads((self.runtime / 'hanjuku_bot.json').read_text())
+        names=['長い城の名前'+str(i) for i in range(10)]
+        bot['policy'].update(captured=names, tick=100,
+            garrison={'アルマムーン':['長い将軍の名前です','ゼウス'], '古い城':['どうし']},
+            garrison_observed_at={'アルマムーン':now-5,'古い城':now-31},
+            battle=dict(enemy='シェーブル',ally='どうし',enemy_hp=55,ally_hp=70,hp_observed_at=now-3))
+        _write_json(self.runtime / 'hanjuku_bot.json',bot)
+        value=self.snapshot()['hanjuku']; gap=value['gap']
+        self.assertEqual((gap['left'],gap['width']),(721,239))
+        self.assertEqual(gap['captured_names'],names)
+        self.assertEqual([g['castle'] for g in gap['garrison']],['アルマムーン'])
+        self.assertAlmostEqual(gap['garrison'][0]['until'],now+25)
+        self.assertAlmostEqual(gap['hp']['until'],now+7)
+        text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
+        self.assertIn(' / '.join(names),text)
+        self.assertIn('長い将軍の名前です',text)
+        # Projection failure, mismatched geometry, narrow gap and old generations
+        # must never reserve an area over a different or unmeasured game plane.
+        for changed in [dict(status='presentation_failed',projection=projection),
+                        dict(status='ready',projection=dict(projection,content=[0,0,900,540])),
+                        dict(status='ready',projection=dict(projection,viewport=[0,0,960,540])),
+                        dict(status='ready',projection=dict(projection,content=[120,0,721,540]))]:
+            _write_json(self.runtime / 'presentation.json',changed)
+            self.assertIsNone(self.snapshot()['hanjuku']['gap'])
+
+    def test_gap_hp_and_rosters_hide_missing_future_and_expired_observations(self):
+        import time
+        now=time.time()
+        _write_json(self.runtime / 'presentation.json',dict(status='ready',projection=
+            dict(align='left',viewport=[0,90,960,540],content=[0,0,721,540])))
+        for stamp in [None, True, now+2, now-31]:
+            bot=json.loads((self.runtime / 'hanjuku_bot.json').read_text())
+            bot['policy'].update(garrison={'城':['将軍']},garrison_observed_at={'城':stamp},
+                battle=dict(enemy='敵',ally='我',enemy_hp=10,ally_hp=20,hp_observed_at=stamp))
+            _write_json(self.runtime / 'hanjuku_bot.json',bot)
+            gap=self.snapshot()['hanjuku']['gap']
+            self.assertEqual(gap['garrison'],[]); self.assertIsNone(gap['hp'])
+
     def test_cached_observations_render_without_score_inference(self):
         corner = self.snapshot()
         self.assertEqual(corner['hanjuku']['availability'], 'fresh')

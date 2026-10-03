@@ -177,7 +177,7 @@ class FakeOverlayFrame {
     const region = this.dataset.sorenOverlayRegion || 'full';
     const rendered = html.includes('broadcast-overlay');
     const width = region === 'sidebar' ? 320 : 960;
-    const height = region === 'sidebar' ? 720 : 90;
+    const height = region === 'sidebar' ? 720 : region === 'game-gap' ? 540 : 90;
     const overlay = rendered ? {
       getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
     } : null;
@@ -536,6 +536,7 @@ test('HTTP service serves only health, blank root, and configured overlay routes
       '/healthz', '/', '/__soren_overlay/broadcast/state',
       '/__soren_overlay/broadcast/sidebar',
       '/__soren_overlay/broadcast/top',
+      '/__soren_overlay/broadcast/game-gap',
       '/__soren_overlay/broadcast/bottom',
       '/__soren_overlay/twica',
       '/__soren_overlay/wildcard',
@@ -576,7 +577,7 @@ test('required frame readiness follows the visible direct-overlay buffer after f
   // into view.  Let those first load handlers run before checking readiness.
   await new Promise((resolve) => setImmediate(resolve));
   await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
-  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom']) {
     const elementId = config.direct.surfaces.find((item) => item.key === key).elementId;
     const primary = page.document.getElementById(elementId);
     const buffer = page.document.getElementById(`${elementId}-buffer`);

@@ -397,23 +397,23 @@ def _hanjuku_name(value, each=10):
     return names[0] if names else None
 
 
-def _hanjuku_garrison(policy: Mapping[str, object]):
+def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
     """castle -> generals actually read from a castle panel, bounded."""
     raw = policy.get("garrison")
     if not isinstance(raw, dict):
         return []
     rows = []
     for castle in sorted(raw):
-        castle_name = _hanjuku_name(castle)
-        generals = _hanjuku_names(raw[castle], limit=3, each=8)
+        castle_name = _hanjuku_name(castle, each=max(10, each))
+        generals = _hanjuku_names(raw[castle], limit=8, each=each)
         if castle_name and generals:
             rows.append({"castle": castle_name, "generals": generals})
-        if len(rows) >= 3:
+        if len(rows) >= limit:
             break
     return rows
 
 
-def _hanjuku_marching(policy: Mapping[str, object], tick):
+def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
     """Sorties still counted as marching by the policy's own busy window."""
     raw = policy.get("sorties")
     if not isinstance(raw, dict) or type(tick) is not int:
@@ -425,7 +425,7 @@ def _hanjuku_marching(policy: Mapping[str, object], tick):
             continue
         if sortie.get("status") not in ("en_route", "launched_unconfirmed"):
             continue
-        general = _hanjuku_name(sortie.get("general"))
+        general = _hanjuku_name(sortie.get("general"), each=each)
         if general is None:
             continue
         seen = sortie.get("tick")
@@ -434,10 +434,51 @@ def _hanjuku_marching(policy: Mapping[str, object], tick):
         age = tick - seen
         if not 0 <= age < SORTIE_BUSY_TICKS:
             continue
-        rows.append({"general": general, "target": _hanjuku_name(sortie.get("target"))})
-        if len(rows) >= 3:
+        rows.append({"general": general, "target": _hanjuku_name(sortie.get("target"), each=each)})
+        if len(rows) >= limit:
             break
     return rows
+
+
+def _hanjuku_gap(runtime, policy, now):
+    """Only a measured left projection of this fenced runtime may expose cards."""
+    try:
+        state, _ = _bounded_state(runtime / 'presentation.json')
+    except (OSError, ValueError, TypeError):
+        return None
+    projection = state.get('projection')
+    if state.get('status') != 'ready' or not isinstance(projection, dict):
+        return None
+    content = projection.get('content')
+    if (projection.get('align') != 'left' or projection.get('viewport') != [0, 90, 960, 540]
+            or not isinstance(content, list) or len(content) != 4
+            or any(type(n) is not int for n in content)):
+        return None
+    x, y, w, h = content
+    if x != 0 or not (0 < w <= 960 and 0 < h <= 540) or y != (540-h)//2:
+        return None
+    # A narrow gap cannot maintain 18px text with readable Japanese rows.
+    if 960-w < 180:
+        return None
+    def recent(stamp, age=30):
+        return type(stamp) in (int, float) and math.isfinite(stamp) and 0 <= now-stamp <= age
+    stamps = policy.get('garrison_observed_at')
+    stamps = stamps if isinstance(stamps, dict) else {}
+    garrison = [dict(row, until=stamps[row['castle']]+30) for row in _hanjuku_garrison(policy, limit=24, each=24)
+                if recent(stamps.get(row['castle']))]
+    battle = policy.get('battle')
+    battle = battle if isinstance(battle, dict) else {}
+    hp = None
+    if recent(battle.get('hp_observed_at'), 10) and not battle.get('egg_battle'):
+        values = [battle.get('enemy_hp'), battle.get('ally_hp')]
+        if all(type(n) is int and 0 <= n <= 1000000 for n in values):
+            hp = {'until': battle['hp_observed_at']+10, 'enemy': _hanjuku_name(battle.get('enemy'), each=24),
+                  'ally': _hanjuku_name(battle.get('ally'), each=24),
+                  'enemy_hp': values[0], 'ally_hp': values[1]}
+    return {'width': 960-w, 'left': w,
+            'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
+            'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
+            'hp': hp}
 
 
 def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
@@ -500,7 +541,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         orders = policy.get("orders") if isinstance(policy.get("orders"), dict) else None
         egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
         # Chapter and currency are last observations, not predictions or orders.
-        result = {"availability": "fresh", "age": int(now - observed),
+        result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
                   "year": int(month_match[1]) if month_match else None,
@@ -552,6 +593,8 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "variant": _hanjuku_name(policy.get("variant"), each=24),
                   "chart_step": _hanjuku_name(policy.get("active"), each=24)}
         # Recheck generation after reads; never carry the previous game into a switch.
+        if result.get('gap'):
+            result['gap']['until'] = observed + 30
         latest, _ = _bounded_state(root / "game_switch.json")
         if latest.get("phase") != "ready" or latest.get("active") != active:
             return unavailable

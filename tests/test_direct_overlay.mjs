@@ -38,7 +38,7 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.equal(enabled.elementId, DIRECT_OVERLAY_ELEMENT_ID);
   assert.match(enabled.htmlFile, /tmp\/state\/event_overlay[.]html$/);
   assert.deepEqual(enabled.surfaces.map((item) => item.key), [
-    'broadcastSidebar', 'broadcastTop', 'broadcastBottom', 'twica', 'wildcard', 'avsync',
+    'broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom', 'twica', 'wildcard', 'avsync',
   ]);
   assert.equal(enabled.broadcast.stateRoute, '/__soren_overlay/broadcast/state');
   assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
@@ -63,7 +63,7 @@ test('overlay installer persists across reload and installs current page', async
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
   assert.equal(await installDirectOverlay(page, config), true);
   assert.deepEqual(calls.map(([kind]) => kind), ['init', 'evaluate']);
-  assert.equal(calls[0][2].length, 6);
+  assert.equal(calls[0][2].length, 7);
   assert.match(String(calls[0][1]), /window[.]top !== window/);
   assert.equal(calls[0][2][0].route, '/__soren_overlay/broadcast/sidebar');
   assert.equal(calls[0][2][0].elementId, 'soren-direct-stream-overlay-broadcastSidebar');
@@ -129,8 +129,8 @@ test('default FFmpeg stage keeps a 960x540 game and a 320px dashboard', () => {
   const byKey = Object.fromEntries(config.surfaces.map((item) => [item.key, item]));
   assert.equal(config.stage.gameWidth, 960);
   assert.deepEqual(
-    ['broadcastSidebar', 'broadcastTop', 'broadcastBottom'].map((key) => byKey[key].region),
-    ['sidebar', 'top', 'bottom'],
+    ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom'].map((key) => byKey[key].region),
+    ['sidebar', 'top', 'game-gap', 'bottom'],
   );
   assert.deepEqual(byKey.broadcastSidebar.style, {
     left: '960px', top: '0', width: '320px', height: '720px', zIndex: '2147483630',
@@ -141,7 +141,7 @@ test('default FFmpeg stage keeps a 960x540 game and a 320px dashboard', () => {
   assert.deepEqual(byKey.broadcastBottom.style, {
     left: '0', top: '630px', width: '960px', height: '90px', zIndex: '2147483630',
   });
-  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom']) {
     assert.match(byKey[key].htmlFile, /overlays\/direct_broadcast_overlay[.]html$/);
   }
   assert.equal(byKey.event, undefined);
@@ -201,7 +201,7 @@ test('alternate game stage stays above the public page while rails stay above it
   assert.match(installer, /zIndex: '2147483620'/);
   assert.match(installer, /zIndex: '2147483621'/);
   const config = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg' }, 'linux');
-  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom']) {
     const rail = config.surfaces.find((item) => item.key === key);
     assert.ok(Number(rail.style.zIndex) > 2147483621);
   }
