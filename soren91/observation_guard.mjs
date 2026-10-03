@@ -133,24 +133,41 @@ function stabilizeQueue(currentQueue, previous, transition) {
 }
 
 function stableBoard(previous, state) {
-  const unmatched = previous.pieces.map(p => ({ ...p }));
-  let stable = previous.pieces.length === state.pieces.length;
-  for (const p of state.pieces) {
-    let best = -1;
-    let distance = Infinity;
-    for (let i = 0; i < unmatched.length; i++) {
-      const q = unmatched[i];
+  if (previous.pieces.length !== state.pieces.length) return false;
+  const candidates = state.pieces.map(p => {
+    const matches = [];
+    for (let i = 0; i < previous.pieces.length; i++) {
+      const q = previous.pieces[i];
       const d = Math.hypot(p.x - q.x, p.y - q.y);
-      if ((q.type === p.type || (q.confidence < 0.6 && p.confidence < 0.6))
-          && Math.abs(q.r - p.r) < 0.08 && d < distance) {
-        distance = d;
-        best = i;
+      // A sampled flag can cross a type boundary without physically changing.
+      // Keep the existing canonical-size match (rotation changes the measured
+      // outline), and also accept a matching measured size across a type jump.
+      // Neither kind of agreement bypasses position, count or garbage checks.
+      const measured = Number.isFinite(p.measuredRadius) && p.measuredRadius > 0
+        && Number.isFinite(q.measuredRadius) && q.measuredRadius > 0;
+      const sameSize = Math.abs(q.r - p.r) < 0.08
+        || (measured && Math.abs(q.measuredRadius - p.measuredRadius) < 0.08);
+      if (sameSize && d <= 0.12) matches.push(i);
+    }
+    return matches;
+  });
+  // Removing type as a motion signal creates more possible correspondences.
+  // Nearest-first can steal the only match of another fragment and make the
+  // result depend on detector enumeration. Require a one-to-one assignment;
+  // the existing 256-piece validity bound also bounds this search.
+  const assigned = new Array(previous.pieces.length).fill(-1);
+  function assign(piece, seen) {
+    for (const candidate of candidates[piece]) {
+      if (seen[candidate]) continue;
+      seen[candidate] = 1;
+      if (assigned[candidate] === -1 || assign(assigned[candidate], seen)) {
+        assigned[candidate] = piece;
+        return true;
       }
     }
-    if (best < 0 || distance > 0.12) stable = false;
-    else unmatched.splice(best, 1);
+    return false;
   }
-  return stable;
+  return candidates.every((_matches, i) => assign(i, new Uint8Array(assigned.length)));
 }
 
 function stableGarbage(previous, state) {
@@ -186,7 +203,8 @@ export function gateObservation(state, calibration, now = Date.now()) {
     geometry,
     at: now,
     stableFrames: 1,
-    pieces: state.pieces.map(p => ({ type: p.type, x: p.x, y: p.y, r: p.r, confidence: p.confidence })),
+    pieces: state.pieces.map(p => ({ type: p.type, x: p.x, y: p.y, r: p.r,
+      measuredRadius: p.measuredRadius, confidence: p.confidence })),
   };
 
   let reason = null;
