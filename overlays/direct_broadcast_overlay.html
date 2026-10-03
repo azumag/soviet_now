@@ -618,11 +618,17 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   min-width: 0;
   color: #f0fbff;
   font-size: 15px;
+  line-height: 18px;
   font-weight: 900;
   letter-spacing: .02em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ops-title-row .game-title {
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: .05em;
 }
 .dash-pill {
   margin-left: auto;
@@ -673,16 +679,51 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dash-kpi-sub {
+  margin-top: 3px;
+  color: #7392a4;
+  font-size: 6px;
+  line-height: 8px;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
 .ops-kpis .dash-kpi-value { font-size: 19px; }
 .game-live,
-.game-trend-line,
-.ops-activity {
+.game-trend-line {
   padding: 6px 8px;
   border-radius: 5px;
   background: #071720;
   color: #aac3d2;
   font-size: 9px;
   line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.ops-activity-item {
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid #233f50;
+  border-radius: 5px;
+  background: #071720;
+}
+.ops-activity-label {
+  color: #6f8b9e;
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.ops-activity-value {
+  margin-top: 2px;
+  color: #b8d0dc;
+  font-size: 8px;
+  line-height: 10px;
+  font-weight: 900;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1143,7 +1184,12 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     const backend = backendLine
       ? backendLine.replace(/^[●○✓!▸]\s*/, '').replace(/^Backend\s+/, '').trim()
       : '—';
-    backendCell.appendChild(dashNode('dash-kpi-value', backend.replace(/\s{2,}.*/, '')));
+    const backendPrimary = backend.match(/^(FFMPEG|OBS)\b/i)?.[1]?.toUpperCase()
+      || backend.split(/\s+/)[0] || '—';
+    backendCell.appendChild(dashNode('dash-kpi-value', backendPrimary));
+    const backendState = /\bLIVE\b|\bOK\b/.test(backend) ? 'LIVE'
+      : /\bDOWN\b|\bFAILED\b/.test(backend) ? 'DOWN' : '';
+    if (backendState) backendCell.appendChild(dashNode('dash-kpi-sub', backendState));
     kpis.appendChild(backendCell);
     root.appendChild(kpis);
 
@@ -1176,28 +1222,42 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     const game = activity.find(line => /\bGame\s+/.test(line));
     const queue = activity.find(line => /QueueMeter/.test(line));
     const lastDrop = activity.find(line => /LastDrop/.test(line));
-    const activityText = [game, queue, lastDrop].filter(Boolean)
-      .map(line => line.replace(/^[◆▸▾]\s*/, '').replace(/\s{2,}/g, ' ')).join('  ·  ');
-    if (activityText) root.appendChild(dashNode('ops-activity', activityText));
 
     const alerts = text.split('\n').map(line => line.trim()).filter(line =>
       /\b(?:STOPPED|DOWN|FAILED|INVALID|DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(line)
       || /Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429/.test(line)
-    ).slice(0, 3);
-    const alertHead = dashNode('ops-alerts-head');
-    alertHead.appendChild(dashNode('', 'ATTENTION'));
-    alertHead.appendChild(dashNode('', alerts.length ? `${alerts.length} ITEM${alerts.length === 1 ? '' : 'S'}` : 'CLEAR'));
-    root.appendChild(alertHead);
-    const alertBox = dashNode('ops-alerts');
+    ).slice(0, 2);
+
     if (alerts.length) {
+      const alertHead = dashNode('ops-alerts-head');
+      alertHead.appendChild(dashNode('', 'ATTENTION'));
+      alertHead.appendChild(dashNode('', `${alerts.length} ITEM${alerts.length === 1 ? '' : 'S'}`));
+      root.appendChild(alertHead);
+      const alertBox = dashNode('ops-alerts');
       for (const line of alerts) {
         alertBox.appendChild(dashNode(`ops-alert ${opsTone(line) === 'down' ? 'down' : ''}`,
           line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').replace(/\s{2,}/g, ' ')));
       }
+      root.appendChild(alertBox);
     } else {
-      alertBox.appendChild(dashNode('ops-clear', '異常なし · 詳細ログはバックグラウンドで継続監視'));
+      const activityGrid = dashNode('ops-activity-grid');
+      const gameValue = game?.match(/Game\s+(\d+)試合目/)?.[1]
+        || game?.replace(/^[◆]\s*/, '').replace(/^Game\s+/, '').trim() || '—';
+      const queueMatch = queue?.match(/A=(\d+)\s+C=(\d+)\s+T=(\d+)/);
+      const queueValue = queueMatch
+        ? String(Number(queueMatch[1]) + Number(queueMatch[2]) + Number(queueMatch[3]))
+        : '—';
+      const dropValue = lastDrop
+        ? lastDrop.replace(/^[▾]\s*/, '').replace(/^LastDrop\s+/, '').trim().split(/\s+/)[0]
+        : '—';
+      for (const [label, value] of [['GAME', gameValue], ['QUEUE', queueValue], ['DROP', dropValue]]) {
+        const item = dashNode('ops-activity-item');
+        item.appendChild(dashNode('ops-activity-label', label));
+        item.appendChild(dashNode('ops-activity-value', value));
+        activityGrid.appendChild(item);
+      }
+      root.appendChild(activityGrid);
     }
-    root.appendChild(alertBox);
 
     container.replaceChildren(root);
     return true;
