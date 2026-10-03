@@ -894,7 +894,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     if (/STATE (?:CONFLICT|INVALID)|unavailable/i.test(text)) return ['ALERT', 'down'];
     const best = text.match(/Stats:\s*\d+\s+(?:results|reports)\s*\/\s*best=([^/\n]+)/);
     if (best) return [`BEST ${best[1].trim()}`, 'info'];
-    if (/^Live:/m.test(text)) return ['LIVE', 'ok'];
+    if (/^Live:/m.test(text) || /SOREN\/CORNER:.*(?:進行中|ACTIVE)/i.test(text)
+        || /最終観測・記録/.test(text)) return ['LIVE', 'ok'];
     return ['DATA', 'info'];
   }
   function opsPanelState(feed) {
@@ -908,6 +909,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     if (legacy) return [`${legacy[1]}/${legacy[2]} OK`, 'ok'];
     if (/\b(?:STOPPED|DOWN|FAILED|INVALID)\b|Duplicates\s+DETECTED/.test(text)) return ['ALERT', 'down'];
     if (/\b(?:DEGRADED|UNKNOWN|PAUSED)\b/.test(text)) return ['CHECK', 'warn'];
+    if (/Backend\s+.*(?:FFMPEG LIVE|OBS)|Chat:\s*RUNNING/.test(text)) return ['LIVE', 'ok'];
     return ['OPS', 'info'];
   }
 
