@@ -11,6 +11,7 @@ on:
       - 'lib/direct_broadcast_overlay.mjs'
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -34,6 +35,7 @@ on:
       - 'lib/direct_broadcast_overlay.mjs'
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -82,5 +84,18 @@ jobs:
           tests/test_twica_legacy_owner.mjs
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
+      - name: Install isolated Chromium for overlay geometry regression
+        run: npx playwright install --with-deps chromium
+      - name: Check approved design with synthetic states and cropped surfaces
+        env:
+          SOREN_OVERLAY_BROWSER_TESTS: '1'
+          SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
+        run: node --test tests/test_direct_broadcast_overlay_browser.mjs
+      - name: Save synthetic rendering evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: overlay-v2-synthetic-screens
+          path: ${{ runner.temp }}/overlay-v2-screens
+          if-no-files-found: error
       - name: Run game lifecycle shell regression
         run: bash tests/test_game_lifecycle.sh
