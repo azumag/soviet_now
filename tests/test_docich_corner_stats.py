@@ -143,8 +143,9 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertEqual(corner["session_matches"], 2)
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
         self.assertIn("Rank Timeline", rendered)
-        self.assertIn("Rank Distribution", rendered)
+        self.assertNotIn("Rank Distribution", rendered)
         self.assertIn("best=1", rendered)
+        self.assertIn("Recent30=", rendered)
         self.assertIn("wins=1 / lower rank is better", rendered)
         plot, colors = sd._render_timeline_grid([50, 1], 5, 3, 1, 50, lower_is_better=True)
         self.assertEqual(plot[0][-1], "*")
@@ -159,8 +160,17 @@ class DocichCornerStatsTest(unittest.TestCase):
         rendered = "\n".join(sd.render_docich_corner_stats(corner))
         self.assertIn("policy=jev generation=3", rendered)
         self.assertIn("1 reports / best=80", rendered)
+        self.assertIn("Recent30=80", rendered)
         self.assertIn("may include interrupted runs", rendered)
+        self.assertNotIn("Score Distribution", rendered)
         self.assertNotIn("999999", rendered)
+
+    def test_compact_corner_rank_trend_treats_lower_as_better(self):
+        scores = ([10] * 30) + ([5] * 30)
+        rendered = "\n".join(sd._corner_score_panels(scores, rank=True, compact=True))
+        self.assertIn("Trend: -5.0 vs previous 30 / better", rendered)
+        self.assertIn("Rank Timeline", rendered)
+        self.assertNotIn("Rank Distribution", rendered)
 
     def test_multiple_active_corners_fail_closed(self):
         self._state("retro_corner.json", game="robots")
