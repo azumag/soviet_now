@@ -114,6 +114,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           gameDashboard:Boolean(document.querySelector('.game-dashboard')),
           opsDashboard:Boolean(document.querySelector('.ops-dashboard')),
           opsClass:document.querySelector('.ops-dashboard')?.className || '',
+          opsChrome:(()=>{const panel=document.querySelector('.panel-s'),head=panel?.querySelector('.panel-head'),kpi=panel?.querySelector('.dash-kpi'); if(!panel)return null; const p=getComputedStyle(panel); return {border:[p.borderTopWidth,p.borderRightWidth,p.borderBottomWidth,p.borderLeftWidth],shadow:p.boxShadow,headDisplay:head?getComputedStyle(head).display:null,kpiShadow:kpi?getComputedStyle(kpi).boxShadow:null};})(),
+          gameChrome:(()=>{const panel=document.querySelector('.panel-g'),head=panel?.querySelector('.panel-head'),kpi=panel?.querySelector('.dash-kpi'); if(!panel)return null; const p=getComputedStyle(panel); return {structured:panel.classList.contains('structured'),border:[p.borderTopWidth,p.borderRightWidth,p.borderBottomWidth,p.borderLeftWidth],shadow:p.boxShadow,headDisplay:head?getComputedStyle(head).display:null,kpiShadow:kpi?getComputedStyle(kpi).boxShadow:null};})(),
           gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsAlerts:document.querySelectorAll('.ops-alert').length};
@@ -163,6 +165,10 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.match(await page.locator('.hanjuku-note').textContent(),/観測/);
       }
       assert.equal(layout.opsDashboard,true,`${kind}: OPS uses structured dashboard`);
+      assert.deepEqual(layout.opsChrome.border,['0px','0px','0px','0px'],`${kind}: OPS outer panel border removed`);
+      assert.equal(layout.opsChrome.shadow,'none',`${kind}: OPS outer panel shadow removed`);
+      assert.equal(layout.opsChrome.headDisplay,'none',`${kind}: redundant OPS panel header hidden`);
+      assert.equal(layout.opsChrome.kpiShadow,'none',`${kind}: decorative KPI left accent removed`);
       if(kind==='long') {
         assert.equal(layout.feedRows,0,'long raw OPS logs are summarized instead of shrinking typography');
         assert.equal(layout.opsAlerts,0,'informational observer rows do not become alerts');
@@ -177,6 +183,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       }
       if(kind==='soren91'||kind==='jev') {
         assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
+        assert.deepEqual(layout.gameChrome.border,['0px','0px','0px','0px'],`${kind}: GAME outer panel border removed`);
+        assert.equal(layout.gameChrome.headDisplay,'none',`${kind}: redundant GAME panel header hidden`);
+        assert.equal(layout.gameChrome.kpiShadow,'none',`${kind}: GAME KPI left accent removed`);
         assert.equal(layout.gameOverflow,false,`${kind}: GAME dashboard fits the panel`);
         assert.equal(layout.opsOverflow,false,`${kind}: OPS dashboard fits the panel`);
         const values=await page.locator('#feed-g .dash-kpi-value').allTextContents();
