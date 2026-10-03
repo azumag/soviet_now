@@ -125,3 +125,95 @@ def is_public_interest_news_title(title: str) -> bool:
 
 FILTER_REASON_LOW_VALUE_TOPIC = "low_value_topic"
 FILTER_REASON_OUTSIDE_PUBLIC_AFFAIRS = "outside_public_affairs"
+
+
+# A candidate gate, not a semantic proof of public benefit.
+# Concrete institutional consequences and ongoing/widespread public danger
+# also retain candidates; an enumerated preventive measure is not required.
+# Broad words (politics, police, school, accident) are deliberately insufficient.
+_PERSONAL_TRAGEDY_RE = re.compile(
+    r"死亡|亡くな|なくなった|命を落と|命を失|死傷|負傷|遺体|死去|殺害|殺人|虐待|重傷|溺れ|溺死|転落|ひき逃げ|刺され|刺殺|性被害|性的被害|自殺|誘拐|行方不明|"
+    r"(?:子ども|子供|幼児|児童|小学生|男児|女児|少年|少女|男性|女性|[0-9]+歳)[^。！？\n]{0,20}(?:事故|けが|被害)|"
+    r"\b(?:die|dies|died|dead|death|deaths|kill|kills|killed|murder(?:ed)?|drown(?:ed|ing)?|"
+    r"abuse(?:d)?|suicide|kidnapped|missing child|seriously injured)\b"
+)
+# Require a concrete subject + institutional/safety action in the same sentence.
+# These are grounded signals in the supplied article, never generated rationales.
+_PUBLIC_BENEFIT_RE = re.compile(
+    r"(?:安全基準|安全対策|安全管理|再発防止策|防止対策|防止装置|点検体制|監督体制|"
+    r"避難指示|避難勧告|避難所|救援物資|救助活動|支援制度|補償制度|救済制度|"
+    r"児童相談所|通学路|道路構造|労働環境|医療体制|事故原因|製品欠陥|熱中症対策|検証報告|調査報告|第三者委員会|"
+    r"停戦案|停戦協定|人道支援|国際人道法|戦争犯罪|政治暴力|選挙妨害|言論弾圧)"
+    r"[^。！？\n]{0,50}(?:義務化|改正|改定|見直|改善|導入|設置|開設|発令|検証|勧告|"
+    r"不備|欠陥|怠|不足|違反|調査|検討|提言|実施|拡大|合意|審議)|"
+    r"\b(?:safety standards?|safety measures?|safety inspections?|warning systems?|"
+    r"child protection|death penalty|evacuation orders?|evacuation shelters?|humanitarian aid|"
+    r"ceasefire agreement|war crimes?)\b[^.!?\n]{0,80}"
+    r"\b(?:reform|review|investigat\w*|require\w*|mandat\w*|implement\w*|"
+    r"fail\w*|violat\w*|abolish\w*|debate\w*|issued|opened|approved|agreed)\b"
+)
+# Separate retention boundaries for political consequences and public safety.
+# Neither politicians mentioning victims nor a generic government response is
+# enough. These patterns describe a reported change, a public warning, or the
+# scale/progression of a hazard, rather than a hypothetical lesson to invent.
+_INSTITUTIONAL_IMPACT_RE = re.compile(
+    r"(?:非常事態|緊急事態)[^。！？\n]{0,20}(?:宣言|発令)|"
+    r"(?:選挙|投票|議会|国会|政権|憲法|統治)[^。！？\n]{0,20}"
+    r"(?:延期|中止|停止|解散|継承|移譲|移行|権限移管)|"
+    r"(?:現職の?)?(?:首相|大統領|国家元首|党首|選挙候補者)"
+    r"(?:(?:が|は)(?:選挙演説中に|演説中に|襲撃で|銃撃で)?"
+    r"(?:暗殺され|殺害され|銃撃され)|を(?:暗殺|殺害))|"
+    r"\b(?:state of emergency|elections?|voting|parliament|transfer of power)\b"
+    r"[^.!?\n]{0,50}\b(?:declared|postponed|cancelled|canceled|suspended|dissolved|transferred)\b|"
+    r"\b(?:prime minister|president|head of state|election candidate)\s+"
+    r"(?:was\s+)?(?:assassinated|killed during (?:an? )?(?:election |campaign )?(?:speech|rally))\b"
+)
+_PUBLIC_DANGER_RE = re.compile(
+    r"(?:津波警報|大雨特別警報|避難命令|緊急安全確保)[^。！？\n]{0,20}(?:発表|発令|継続)|"
+    r"(?:堤防|ダム)[^。！？\n]{0,15}決壊|"
+    r"(?:山火事|洪水|浸水|感染症|有害物質)[^。！？\n]{0,20}(?:拡大|拡散|流出)|"
+    r"(?:広域|広範囲|県全域|複数の市町村|大規模)[^。！？\n]{0,20}"
+    r"(?:地震|津波|洪水|浸水|山火事|停電|断水|避難|被害)|"
+    r"(?:地震|津波|洪水|台風|山火事|土砂災害)[^。！？\n]{0,30}"
+    r"(?:(?:[1-9][0-9]+|数十|数百|数千|多数)(?:人|名)(?:が|の)?(?:死亡|死傷|行方不明)|"
+    r"死者(?:[1-9][0-9]+|数十|数百|数千|多数)(?:人|名))|"
+    r"\b(?:tsunami warning|flood warning|evacuation order)\b[^.!?\n]{0,40}\b(?:issued|active|extended)\b|"
+    r"\b(?:wildfire|flooding|toxic spill)\b[^.!?\n]{0,40}\b(?:spreading|expanding|widespread)\b|"
+    r"\b(?:earthquake|tsunami|floods?|wildfire)\b[^.!?\n]{0,40}"
+    r"\b(?:[1-9][0-9]+|dozens|hundreds|thousands) (?:people )?(?:dead|killed|missing)\b"
+)
+_NO_EVIDENCE_RE = re.compile(
+    r"(?:確認できない|確認されていない|未確認|根拠がない|記載がない|記載なし|報じられていない|"
+    r"(?:実施|検討|見直し|調査)しない|予定はない|事実はない|行わない|"
+    r"(?:宣言|延期|中止|停止|解散|発令)(?:しない|していない|せず|されず|されていない|されなかった)|"
+    r"という噂|との噂|するべき|すべき|仮に|もし|された場合)|"
+    r"\b(?:no evidence|unconfirmed|not reported|not confirmed|did not|will not)\b"
+)
+
+
+def is_uncontextualized_tragedy(title: str, article_text: str = "") -> bool:
+    """Exclude personal tragedy unless supplied text has concrete public benefit.
+
+    Retain documented institutional impacts, public warnings and widespread
+    hazards even when no preventive measure is yet reported. A disaster casualty
+    count of ten or more is a scale signal, not an assertion of a policy lesson.
+    Headline-only personal tragedy is withheld without one of these contexts.
+    Metadata (outlet, feed, URL, timestamp) must not count as article evidence.
+    Matching signals only retain a candidate for the grounded editorial prompt;
+    the model must still reject voyeurism and must never invent a justification.
+    """
+    title = re.sub(r"\s+[-–—|]\s+[^-–—|]{1,80}$", "", title or "")
+    lines = [title] + [
+        line for line in (article_text or "").splitlines()
+        if not re.match(r"\s*(?:https?://|【内部メタ|(?:source|source_key|url|published_at|媒体|出典)\s*[:=：])", line, re.I)
+    ]
+    text = _norm("\n".join(lines))
+    if not _PERSONAL_TRAGEDY_RE.search(text):
+        return False
+    sentences = re.split(r"[。！？.!?\n]", text)
+    return not any(
+        any(pattern.search(sentence) for pattern in (
+            _PUBLIC_BENEFIT_RE, _INSTITUTIONAL_IMPACT_RE, _PUBLIC_DANGER_RE,
+        )) and not _NO_EVIDENCE_RE.search(sentence)
+        for sentence in sentences
+    )

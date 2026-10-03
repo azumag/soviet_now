@@ -164,11 +164,10 @@ try:
     _topic_spec.loader.exec_module(_topic_mod)
     is_low_value_news_title = _topic_mod.is_low_value_news_title
     is_public_interest_news_title = _topic_mod.is_public_interest_news_title
+    is_uncontextualized_tragedy = _topic_mod.is_uncontextualized_tragedy
 except Exception:
-    def is_low_value_news_title(title: str) -> bool:
-        return False
-    def is_public_interest_news_title(title: str) -> bool:
-        return True
+    # Withhold candidates if the editorial policy cannot be loaded.
+    raise
 
 try:
     _news_filter_dir = os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib")
@@ -322,6 +321,8 @@ out = []
 for b in blocks:
     title = b[0][2:].strip()
     if is_sports_title(title):
+        continue
+    if is_uncontextualized_tragedy(title, "\n".join(b[1:])):
         continue
     if is_low_value_news_title(title):
         continue

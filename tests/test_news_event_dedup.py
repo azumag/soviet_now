@@ -139,7 +139,7 @@ class SameEventTest(unittest.TestCase):
 class FilterUnreadTest(unittest.TestCase):
     """CLI 経由で、既読事件の別見出しが候補から落ちることを確認する。"""
 
-    def run_filter(self, past_titles, headlines, env=None):
+    def run_filter(self, past_titles, headlines, env=None, *, safety_context=False):
         with tempfile.TemporaryDirectory() as tmp:
             past = os.path.join(tmp, "past_titles.txt")
             keys = os.path.join(tmp, "past_keys.txt")
@@ -148,7 +148,10 @@ class FilterUnreadTest(unittest.TestCase):
                 f.write("\n".join(past_titles) + "\n")
             open(keys, "w", encoding="utf-8").close()
             with open(news, "w", encoding="utf-8") as f:
-                f.write("\n".join("■ " + h for h in headlines) + "\n")
+                # Synthetic context only for isolated dedup tests; raw production
+                # fixtures below stay unchanged and cannot imply public benefit.
+                body = "\nSafety inspections failed, inquiry found." if safety_context else ""
+                f.write("\n".join("■ " + h + body for h in headlines) + "\n")
             run_env = dict(os.environ)
             run_env.update(env or {})
             out = subprocess.run(
@@ -157,22 +160,25 @@ class FilterUnreadTest(unittest.TestCase):
             ).stdout
             return [ln[2:].strip() for ln in out.splitlines() if ln.startswith("■ ")]
 
-    def test_production_snapshot_drops_only_already_covered_events(self):
+    def test_production_snapshot_drops_covered_events_and_ungrounded_tragedies(self):
         survivors = self.run_filter(PAST_TITLES, HEADLINES)
         blocked = [h for h in HEADLINES if h not in survivors]
-        # 当日の実データで落ちるべきもの: 既読事件の別見出しだけ
+        # 既読事件と、公益的文脈のない悲劇が候補から落ちる
         self.assertIn(PAKISTAN[3], blocked)
         self.assertIn("Gulf ship traffic via Strait of Hormuz hovers below 10-day average, data shows - Reuters", blocked)
         # 別事件は残る
         self.assertIn("New Tanker Strike in Hormuz as Iran Vows Retaliation for U.S. Economic Offensive - WSJ", survivors)
         self.assertIn("Vatican foreign minister, in Moscow, says Ukraine war must end - Reuters", survivors)
-        # 過剰に弾いていないこと (41 件中 8 件以内)
-        self.assertLessEqual(len(blocked), 8, f"blocked too many: {blocked}")
+        # 重複フィルタ単独で過剰に弾いていないこと (41 件中 8 件以内)
+        tragedies = [h for h in blocked if nf.is_uncontextualized_tragedy(h)]
+        self.assertIn("Six Chinese nationals among seven killed in Russian gas plant fire - Reuters", tragedies)
+        dedup_only = [h for h in blocked if h not in tragedies]
+        self.assertLessEqual(len(dedup_only), 8, f"dedup blocked too many: {dedup_only}")
 
     def test_batch_offers_one_headline_per_event(self):
         # 既読ゼロでも、同じ batch に並んだ 4 媒体の見出しからは 1 本しか通さない。
         # 言い回しが離れた見出し同士は、間に入る見出しを経由して同一事件と繋がる。
-        survivors = self.run_filter([], PAKISTAN + NEPAL + HEADLINES)
+        survivors = self.run_filter([], PAKISTAN + NEPAL + HEADLINES, safety_context=True)
         self.assertEqual([s for s in survivors if s in PAKISTAN], [PAKISTAN[0]])
         self.assertEqual([s for s in survivors if s in NEPAL], [NEPAL[0]])
 
@@ -181,7 +187,7 @@ class FilterUnreadTest(unittest.TestCase):
         self.assertEqual(survivors, [STORM_17[0]])
 
     def test_kill_switch_restores_old_behaviour(self):
-        survivors = self.run_filter([PAKISTAN[0]], PAKISTAN, env={"NEWS_EVENT_DEDUP": "0"})
+        survivors = self.run_filter([PAKISTAN[0]], PAKISTAN, env={"NEWS_EVENT_DEDUP": "0"}, safety_context=True)
         self.assertEqual(survivors, PAKISTAN[1:])
 
 
