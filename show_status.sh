@@ -2538,11 +2538,11 @@ PY
 
 	# ========== 描画 ==========
 	echo ""
-	printf "${C_BOLD}${C_CYAN}━━━ SOREN STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
+	printf "${C_BOLD}${C_CYAN}━━━ SOREN OPS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 	echo ""
 
 	# === セクション: Core ===
-	printf "  ${C_BOLD}CORE${C_RESET}\n"
+	printf "  ${C_BOLD}HEALTH${C_RESET}\n"
 
 	# メインループ
 	if $loop_running; then
@@ -2552,10 +2552,14 @@ PY
 			printf "    ${C_GREEN}●${C_RESET} Loop        ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=${loop_pid}${C_RESET}\n"
 		fi
 	else
-		printf "    ${C_RED}○${C_RESET} Loop        ${C_DIM}STOPPED${C_RESET}\n"
+		printf "    ${C_RED}●${C_RESET} Loop        ${C_RED}STOPPED${C_RESET}\n"
 	fi
 
-	# Worker 個別状態
+	# Worker health: make the aggregate state the primary scan target.  The
+	# individual healthy PID rows are useful for debugging but too noisy for
+	# the broadcast OPS rail, so compact mode expands only intentional pauses,
+	# disabled optional workers, and faults.  Set SHOW_STATUS_WORKER_DETAIL=verbose
+	# to restore the legacy per-worker rows.
 	local _worker_rows=(
 		"ChatW" "$chat_worker_running" "$chat_worker_pid"
 		"YouTubeW" "$youtube_worker_running" "$youtube_worker_pid"
@@ -2566,41 +2570,10 @@ PY
 		"PollW" "$poll_worker_running" "$poll_worker_pid"
 		"ImproveD" "$improve_daemon_running" "$improve_daemon_pid"
 	)
-	local _w_i _w_name _w_running _w_pid
-	for ((_w_i = 1; _w_i <= ${#_worker_rows[@]}; _w_i += 3)); do
-		_w_name="${_worker_rows[$_w_i]}"
-		_w_running="${_worker_rows[$((_w_i + 1))]}"
-		_w_pid="${_worker_rows[$((_w_i + 2))]}"
-		local _w_paused=false
-		case "$_w_name" in
-		ChatW) _w_paused=$chat_worker_paused ;;
-		YouTubeW) _w_paused=$youtube_worker_paused ;;
-		KickW) _w_paused=$kick_worker_paused ;;
-		AudioW) _w_paused=$audio_worker_paused ;;
-		RadioW) _w_paused=$radio_worker_paused ;;
-		PredW) _w_paused=$prediction_worker_paused ;;
-		PollW) _w_paused=$poll_worker_paused ;;
-		esac
-		if [[ "$_w_paused" == "true" ]]; then
-			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
-		elif [[ "$_w_running" == "true" ]]; then
-			if [[ "$_w_pid" == activity:* ]]; then
-				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$_w_name" "${_w_pid#activity:}"
-			else
-				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
-			fi
-		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
-			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
-		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
-			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
-		else
-			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
-		fi
-	done
 
-	# ワーカー稼働メーター
-	local workers_online=0 workers_total=7 workers_expected=7
-	# paused workers (tmp/state/<name>.paused) are intentionally idle → drop from expected & online
+	# Preserve the existing expected/online semantics; this is a presentation
+	# refactor, not a worker-health policy change.
+	local workers_online=0 workers_expected=7
 	$prediction_worker_paused && workers_expected=$((workers_expected - 1))
 	$poll_worker_paused && workers_expected=$((workers_expected - 1))
 	$chat_worker_paused && workers_expected=$((workers_expected - 1))
@@ -2619,16 +2592,117 @@ PY
 	{ $prediction_worker_running && ! $prediction_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $poll_worker_running && ! $poll_worker_paused; } && workers_online=$((workers_online + 1))
 	$improve_daemon_running && workers_online=$((workers_online + 1))
-	local workers_bar
+
+	local workers_bar worker_health_color worker_health_label
 	workers_bar=$(_bar_meter "$workers_online" "$workers_expected" 12)
-	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/%d expected online${C_RESET}\n" "$workers_bar" "$workers_online" "$workers_expected"
+	worker_health_color="$C_GREEN"
+	worker_health_label="ONLINE"
+	if (( workers_online < workers_expected )); then
+		worker_health_color="$C_RED"
+		worker_health_label="DEGRADED"
+	elif (( workers_online > workers_expected )); then
+		worker_health_color="$C_YELLOW"
+		worker_health_label="CHECK"
+	fi
+	printf "    ${worker_health_color}●${C_RESET} Workers     ${worker_health_color}%d/%d %s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" \
+		"$workers_online" "$workers_expected" "$worker_health_label" "$workers_bar"
+
+	local worker_detail_mode="${SHOW_STATUS_WORKER_DETAIL:-compact}"
+	local _w_i _w_name _w_running _w_pid
+	local -a _w_paused_names _w_disabled_names _w_stopped_names _w_unexpected_names
+	_w_paused_names=()
+	_w_disabled_names=()
+	_w_stopped_names=()
+	_w_unexpected_names=()
+	for ((_w_i = 1; _w_i <= ${#_worker_rows[@]}; _w_i += 3)); do
+		_w_name="${_worker_rows[$_w_i]}"
+		_w_running="${_worker_rows[$((_w_i + 1))]}"
+		_w_pid="${_worker_rows[$((_w_i + 2))]}"
+		local _w_paused=false
+		case "$_w_name" in
+		ChatW) _w_paused=$chat_worker_paused ;;
+		YouTubeW) _w_paused=$youtube_worker_paused ;;
+		KickW) _w_paused=$kick_worker_paused ;;
+		AudioW) _w_paused=$audio_worker_paused ;;
+		RadioW) _w_paused=$radio_worker_paused ;;
+		PredW) _w_paused=$prediction_worker_paused ;;
+		PollW) _w_paused=$poll_worker_paused ;;
+		esac
+
+		if [[ "$worker_detail_mode" == "verbose" ]]; then
+			if [[ "$_w_paused" == "true" ]]; then
+				printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
+			elif [[ "$_w_running" == "true" ]]; then
+				if [[ "$_w_pid" == activity:* ]]; then
+					printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$_w_name" "${_w_pid#activity:}"
+				else
+					printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
+				fi
+			elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+				printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+			elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+				printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+			else
+				printf "    ${C_RED}○${C_RESET} %-11s ${C_RED}STOPPED${C_RESET}\n" "$_w_name"
+			fi
+			continue
+		fi
+
+		if [[ "$_w_paused" == "true" ]]; then
+			_w_paused_names+=("$_w_name")
+		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
+		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
+		elif [[ "$_w_running" == "true" ]]; then
+			:
+		else
+			_w_stopped_names+=("$_w_name")
+		fi
+	done
+
+	if [[ "$worker_detail_mode" != "verbose" ]]; then
+		local _w_names
+		if (( ${#_w_stopped_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_stopped_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_RED}!${C_RESET} Stopped     ${C_RED}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_unexpected_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_unexpected_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}!${C_RESET} Unexpected  ${C_YELLOW}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_paused_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_paused_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}◌${C_RESET} Paused      ${C_YELLOW}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_disabled_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_disabled_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_DIM}○ OptionalOff ${_w_names}${C_RESET}\n"
+		fi
+	fi
+
+	# Duplicate scans are quiet when healthy in compact mode; faults and unknown
+	# scans remain explicit because they require operator attention.
 	if [[ "$duplicate_status" == "duplicate" ]]; then
 		printf "    ${C_RED}!${C_RESET} Duplicates  ${C_RED}DETECTED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$duplicate_detail"
-	elif [[ "$duplicate_status" == "ok" ]]; then
-		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
 	elif [[ "$duplicate_status" == "unknown" ]]; then
 		printf "    ${C_YELLOW}!${C_RESET} Duplicates  ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${duplicate_detail:-duplicate scan unavailable}"
+	elif [[ "$worker_detail_mode" == "verbose" ]]; then
+		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
 	fi
+
 	local stream_status_line stream_status stream_detail
 	case "$STREAM_BACKEND" in
 	ffmpeg)
@@ -2699,7 +2773,10 @@ PY
 		printf "    ${C_YELLOW}!${C_RESET} ImproveD    ${C_YELLOW}restart soon${C_RESET}  ${C_DIM}%d games to improve gate${C_RESET}\n" "$(( min_games - acc_count ))"
 	fi
 
-		# 蓄積ゲーム (最低試合ゲート付き)
+	echo ""
+	printf "  ${C_BOLD}ACTIVITY${C_RESET}\n"
+
+	# 蓄積ゲーム (最低試合ゲート付き)
 		if (( acc_count > 0 )); then
 			local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"

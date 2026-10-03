@@ -513,15 +513,15 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
   </section>
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
   <aside id="broadcast-sidebar">
-    <div class="feed-head"><span class="live-dot"></span><span>DoCiAI DATA</span><span id="feed-label">G + STATUS</span><span id="feed-age">--</span></div>
+    <div class="feed-head"><span class="live-dot"></span><span>DoCiAI DATA</span><span id="feed-label">GAME + OPS</span><span id="feed-age">--</span></div>
     <section id="prediction-round" aria-label="チャネルポイント予想" aria-live="polite"></section>
     <div id="feed">
       <section class="feed-panel panel-g">
-        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">SHOW-STATUS-G</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">GAME STATS</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
         <div class="feed-lines" id="feed-g"></div>
       </section>
       <section class="feed-panel panel-s">
-        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">SHOW-STATUS</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">OPS HEALTH</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
         <div class="feed-lines" id="feed-s"></div>
       </section>
       <section class="feed-panel panel-i">
@@ -818,7 +818,7 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
         feedIStatus.textContent = '';
         lastFeedIKey = '';
       }
-      feedLabel.textContent = 'G + STATUS';
+      feedLabel.textContent = 'GAME + OPS';
     }
     feedAge.textContent = ageLabel(Math.max(
       g?.updatedAt || 0,
