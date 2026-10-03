@@ -14,6 +14,9 @@ on:
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'generate_show_status_overlay.sh'
+      - 'lib/overlay_dashboard_cards.py'
+      - 'tests/test_overlay_dashboard_cards.py'
       - 'tests/test_status_dashboard_ab.py'
       - 'tests/test_status_dashboard_founding_rate.py'
       - 'tests/test_country_stage_names.py'
@@ -35,6 +38,9 @@ on:
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'generate_show_status_overlay.sh'
+      - 'lib/overlay_dashboard_cards.py'
+      - 'tests/test_overlay_dashboard_cards.py'
       - 'tests/test_status_dashboard_ab.py'
       - 'tests/test_status_dashboard_founding_rate.py'
       - 'tests/test_country_stage_names.py'
@@ -62,7 +68,7 @@ jobs:
           python3 -m unittest
           tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
           tests.test_country_stage_names tests.test_score_timeline
-          tests.test_docich_corner_stats
+          tests.test_docich_corner_stats tests.test_overlay_dashboard_cards
       - run: python3 -m py_compile status_dashboard.py
       # zsh -n / bash -n は第2引数以降を $1.. として扱い構文検査しないので、
       # 1 ファイル 1 ステップにする。
@@ -70,4 +76,5 @@ jobs:
       - run: zsh -n show_status_g.sh
       - run: bash -n direct_stream_soak.sh
       - run: bash -n generate_status_overlay.sh
+      - run: bash -n generate_show_status_overlay.sh
       - run: bash -n generate_soren_overlay.sh

@@ -48,6 +48,7 @@ import tempfile
 import time
 
 from lib.overlay_text import normalize_overlay_text
+from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard, render_ops_dashboard
 
 out_file, width, height = sys.argv[1:4]
 ops_raw = normalize_overlay_text(os.environ.get("SOREN_OPS_RAW", ""))
@@ -168,6 +169,17 @@ if not filtered_stats.strip():
 
 html_ops = ansi_to_html(filtered_ops.rstrip())
 html_stats = ansi_to_html(filtered_stats.rstrip())
+ops_cards = render_ops_dashboard(filtered_ops)
+game_cards = render_game_dashboard(filtered_stats)
+cards_css = dashboard_css()
+ops_visible = ops_cards or (
+    '<section class="broadcast-card"><div class="eyebrow">OPERATIONS / RAW FALLBACK</div>'
+    f'<pre class="fallback-pre">{html_ops}</pre></section>'
+)
+game_visible = game_cards or (
+    '<section class="broadcast-card"><div class="eyebrow">GAME / RAW FALLBACK</div>'
+    f'<pre class="fallback-pre">{html_stats}</pre></section>'
+)
 generated = time.strftime("%H:%M:%S")
 refresh = max(1, int(os.environ.get("SOREN_OVERLAY_REFRESH_SEC", "2") or 2))
 # width/height are numeric strings; escape for safety
@@ -191,84 +203,49 @@ html, body {{
   box-sizing: border-box;
   width: {w_esc}px;
   height: {h_esc}px;
-  padding: 10px 10px 8px;
+  padding: 14px;
   color: #e5f7ff;
-  background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88));
+  background: linear-gradient(180deg, rgba(2, 8, 23, .96), rgba(3, 7, 18, .94));
   border: 1px solid rgba(125, 211, 252, .30);
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }}
 .meta {{
+  height: 42px;
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font: 700 14px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #bae6fd;
-  letter-spacing: 0;
-  padding-bottom: 6px;
+  padding: 0 5px 10px;
   border-bottom: 1px solid rgba(125,211,252,.18);
+  font: 900 17px/1.1 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e2f7ff;
+  letter-spacing: .08em;
 }}
 .meta span:last-child {{
-  color: #94a3b8;
-  font-weight: 600;
+  color: #7896aa;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
 }}
-.grid {{
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  flex: 1;
-  min-height: 0;
-}}
-.panel {{
-  box-sizing: border-box;
-  border: 1px solid rgba(125,211,252,.18);
-  border-radius: 6px;
-  background: rgba(255,255,255,.02);
-  padding: 8px 8px 6px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}}
-.panel-title {{
-  font: 700 12px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #7dd3fc;
-  letter-spacing: .04em;
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(125,211,252,.12);
-}}
-.panel.ops .panel-title {{ color: #facc15; border-bottom-color: rgba(250,204,21,.18); }}
-.panel.stats .panel-title {{ color: #7dd3fc; }}
-.panel pre {{
-  margin: 0;
-  white-space: pre;
-  font: 11.5px/1.16 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  letter-spacing: 0;
-  color: #dbeafe;
-  overflow: hidden;
-  flex: 1;
-}}
-.hint {{
-  font: 600 10px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #94a3b8;
-  text-align: center;
-  padding-top: 4px;
-  opacity: .7;
-}}
+{cards_css}
+.dashboard-shell {{ grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }}
+.broadcast-card {{ height:100%; }}
+.source-pre {{ display:none !important; }}
 </style>
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN UNIFIED</span><span>{html.escape(generated)} · OPS + STATS 統合 (重複は STATS へ寄せ)</span></div>
-  <div class="grid">
-    <div class="panel ops"><div class="panel-title">OPS — show_status (重複除去済)</div><pre>{html_ops}</pre></div>
-    <div class="panel stats"><div class="panel-title">STATS — status_dashboard</div><pre>{html_stats}</pre></div>
+  <div class="meta"><span>SOREN CONTROL DECK</span><span>{html.escape(generated)} · LIVE GAME + OPS</span></div>
+  <pre class="source-pre">{html_ops}</pre>
+  <pre class="source-pre">{html_stats}</pre>
+  <div class="dashboard-shell">
+    {game_visible}
+    {ops_visible}
   </div>
-  <div class="hint">LastDrop / AI 429 / ChatObs / ImproveBackoff / S91 / ArchiveNext / Wild* / Anneal は STATS 側に一本化 · OPSは Worker/Audio/Queue/Improve詳細を担当</div>
 </div>
 </body>
 </html>
@@ -284,25 +261,30 @@ os.replace(tmp, out_file)
 try:
     ops_legacy_file = os.environ.get("SHOW_STATUS_OVERLAY_HTML_FILE", "tmp/state/show_status_overlay.html")
     stats_legacy_file = os.environ.get("STATUS_OVERLAY_HTML_FILE", "tmp/state/status_overlay.html")
-    # OPS legacy: 520x680, title SOREN OPS
+    # Keep the raw <pre> as the first pre element: direct_broadcast_overlay
+    # extracts it as a data contract even though OBS sees the structured cards.
     ops_body = ansi_to_html(filtered_ops.rstrip() or "show_status.sh returned no output")
+    legacy_ops_visible = ops_cards or f'<pre class="fallback-pre">{ops_body}</pre>'
     ops_doc = f"""<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="{refresh}">
 <style>
-html, body {{ margin: 0; width: 520px; height: 680px; overflow: hidden; background: rgba(0, 0, 0, 0); }}
-.frame {{ box-sizing: border-box; width: 520px; height: 680px; padding: 14px 14px 12px; color: #e5f7ff; background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88)); border: 1px solid rgba(125, 211, 252, .30); border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }}
-.meta {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font: 700 14px/1.2 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bae6fd; }}
-.meta span:last-child {{ color: #94a3b8; font-weight: 600; }}
-pre {{ margin: 0; white-space: pre; font: 12.8px/1.17 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: #dbeafe; }}
+html, body {{ margin:0; width:520px; height:680px; overflow:hidden; background:rgba(0,0,0,0); }}
+.frame {{ box-sizing:border-box; width:520px; height:680px; padding:10px; color:#e5f7ff; background:linear-gradient(180deg,rgba(2,8,23,.96),rgba(3,7,18,.94)); border:1px solid rgba(125,211,252,.30); border-radius:10px; }}
+{cards_css}
+.broadcast-card {{ height:100%; padding:14px; }}
+.metric-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+.metric-value {{ font-size:23px; line-height:26px; }}
+.card-title {{ font-size:21px; line-height:24px; }}
+.source-pre {{ display:none !important; }}
 </style>
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN OPS</span><span>{html.escape(generated)}</span></div>
-  <pre>{ops_body}</pre>
+  <pre class="source-pre">{ops_body}</pre>
+  {legacy_ops_visible}
 </div>
 </body>
 </html>
@@ -314,23 +296,27 @@ pre {{ margin: 0; white-space: pre; font: 12.8px/1.17 "SF Mono", Menlo, Consolas
     os.replace(tmp2, ops_legacy_file)
 
     stats_body = ansi_to_html(filtered_stats.rstrip() or "status_dashboard.py returned no output")
+    legacy_game_visible = game_cards or f'<pre class="fallback-pre">{stats_body}</pre>'
     stats_doc = f"""<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="refresh" content="{refresh}">
 <style>
-html, body {{ margin: 0; width: 560px; height: 820px; overflow: hidden; background: rgba(0, 0, 0, 0); }}
-.frame {{ box-sizing: border-box; width: 560px; height: 820px; padding: 10px 10px 8px; color: #e5f7ff; background: linear-gradient(180deg, rgba(2, 8, 23, .92), rgba(3, 7, 18, .88)); border: 1px solid rgba(56, 189, 248, .28); border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04); }}
-.meta {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; font: 700 13px/1.15 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #bae6fd; }}
-.meta span:last-child {{ color: #94a3b8; font-weight: 600; }}
-pre {{ margin: 0; white-space: pre; font: 15.5px/1.13 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; color: #dbeafe; }}
+html, body {{ margin:0; width:560px; height:820px; overflow:hidden; background:rgba(0,0,0,0); }}
+.frame {{ box-sizing:border-box; width:560px; height:820px; padding:10px; color:#e5f7ff; background:linear-gradient(180deg,rgba(2,8,23,.96),rgba(3,7,18,.94)); border:1px solid rgba(56,189,248,.28); border-radius:10px; }}
+{cards_css}
+.broadcast-card {{ height:100%; padding:15px; }}
+.metric-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+.metric-value {{ font-size:25px; line-height:28px; }}
+.card-title {{ font-size:22px; line-height:25px; }}
+.source-pre {{ display:none !important; }}
 </style>
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN STATS</span><span>{html.escape(generated)}</span></div>
-  <pre>{stats_body}</pre>
+  <pre class="source-pre">{stats_body}</pre>
+  {legacy_game_visible}
 </div>
 </body>
 </html>
