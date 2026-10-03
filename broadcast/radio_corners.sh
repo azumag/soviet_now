@@ -1729,7 +1729,8 @@ _filter_unread_jiji_blocks() {
 		"$TMP_HISTORY_DIR/.past_jiji_keys.txt" \
 		"$jiji_tmp" \
 		"$PAST_JIJI_URL_HASHES" \
-		"tmp/google_headlines_meta.json"
+		"tmp/google_headlines_meta.json" \
+		"${PAST_NEWS_READ:-}" "${PAST_NEWS_READ_KEYS:-}" "${PAST_NEWS_URL_HASHES:-}"
 	rm -f "$jiji_tmp"
 }
 
@@ -1758,7 +1759,7 @@ _run_opencode_jiji_research_unqueued() {
 	# opencode 1.3.x 以降は非 TTY でも動くため script(1) pty ラッパは廃止
 	_opencode_rotation_gate_run env OPENCODE_PERMISSION="$permission" LC_ALL=en_US.UTF-8 \
 		timeout "${RADIO_JIJI_RESEARCH_TIMEOUT:-${RADIO_OPENCODE_TIMEOUT}}" \
-		opencode run --agent "$agent" "$(cat "$prompt_file")" \
+		opencode run --title "docich:radio_prepass" --agent "$agent" "$(cat "$prompt_file")" \
 		>"$raw_file" 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then

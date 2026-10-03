@@ -976,7 +976,10 @@ _ai_call_claude_unqueued() {
 	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] claude timeout (${timeout_sec}s, model=$model)" >&2
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトはレート制限の証拠ではない (2026-10-02 実測)。
+		# rc=124 では stderr に 429 相当の文言が残っていても、応答が
+		# 返っていないので bench の根拠にできない。下の rc!=0 分岐が
+		# 明示的なレート制限だけを拾う。
 		return 1
 	fi
 	if [ "$provider_error" = "true" ]; then
@@ -1020,7 +1023,7 @@ _ai_call_ollama_unqueued() {
 	if [ $rc -eq 124 ]; then
 		log "[${label}] ollama timeout (${timeout_sec}s, model=$model)" >&2
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1093,7 +1096,7 @@ PY
 	if [ $rc -eq 124 ]; then
 		log "[${label}] local LLM timeout (${timeout_sec}s, model=$model)" >&2
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1133,6 +1136,25 @@ _ai_call_local_llm() {
 
 # === Opencode (free tier via opencode CLI) ===
 
+# OpenCode session title は prompt 本文ではなく固定bucketだけを保存する。
+# default XDG の巨大sessionを metadata-only で caller 帰属できるようにしつつ、
+# topic / user text / model名など可変・機微な値をDB titleへ流さない。
+_opencode_session_title() {
+	local label="${1:-}"
+	case "$label" in
+	COMMENT*) printf '%s' "docich:comment" ;;
+	IMPROVE* | IMPROVEMENT* | ROLLBACK-POSTMORTEM*) printf '%s' "docich:improvement" ;;
+	PROBE*) printf '%s' "docich:probe" ;;
+	RADIO* | NEWS* | JIJI* | CELEBRATION*)
+		case "$label" in
+		*prepass* | *PREPASS* | *RESEARCH*) printf '%s' "docich:radio_prepass" ;;
+		*) printf '%s' "docich:radio_main" ;;
+		esac
+		;;
+	*) printf '%s' "docich:other" ;;
+	esac
+}
+
 # _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT]
 # opencode:deepseek-v4-flash-free などは opencode CLI で直接呼ぶ。
 # 検証済み: /snap/bin/opencode run --model opencode/deepseek-v4-flash-free は litellm の zen/v1 429 と異なり成功する。
@@ -1157,6 +1179,14 @@ _ai_call_opencode_unqueued() {
 	[ -x "$opencode_bin" ] || opencode_bin="opencode"
 	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
 	local out_file stderr_file stderr_preview rc cleaned rate_limited=false
+	local session_title
+	session_title=$(_opencode_session_title "$label")
+	local opencode_session_title_args=()
+	# OPENCODE_BIN is an explicit test/stub override; production leaves it unset.
+	# Preserve stub argv compatibility unless attribution is explicitly forced.
+	if [ -z "${OPENCODE_BIN:-}" ] || [ "${OPENCODE_SESSION_ATTRIBUTION_FORCE:-0}" = "1" ]; then
+		opencode_session_title_args=(--title "$session_title")
+	fi
 	local opencode_agent_args=()
 	case "$agent" in
 	vercel:*|amd:*)
@@ -1186,10 +1216,10 @@ _ai_call_opencode_unqueued() {
 		case "$model" in
 		opencode/muse-spark-1.[23]-contributor-free)
 			_opencode_rotation_gate_run python3 "${ELOOP_LIB_DIR:-.}/lib/opencode_rate_limit_guard.py" "$timeout_sec" \
-				"$opencode_bin" run --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+				"$opencode_bin" run "${opencode_session_title_args[@]}" --print-logs "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		*)
-		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
+		_opencode_rotation_gate_run timeout --kill-after=10s "$timeout_sec" "$opencode_bin" run "${opencode_session_title_args[@]}" "${opencode_agent_args[@]}" --model "$model" "$(cat "$prompt_file")" >"$out_file" 2>"$stderr_file"
 			;;
 		esac
 		rc=$?
@@ -1230,7 +1260,9 @@ _ai_call_opencode_unqueued() {
 		log "[${label}] opencode timeout (${timeout_sec}s, model=$model)" >&2
 		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file" "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
+		# opencode は上流 429 を出したまま内部リトライで 30s を超えることがあり、
+		# stderr の 429 を根拠にすると生きているモデルを 18000s bench した。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1348,7 +1380,7 @@ _ai_call_codex_unqueued() {
 		_ai_error_preview_set "timeout after ${timeout_sec}s"
 		rm -f "$out_file"
 		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
+		# タイムアウトは bench しない ( claude backend と同じ根拠)。
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
-  validGeometry, sameGeometry } from '../soren91/realtime_io.mjs';
+  validGeometry, sameGeometry, captureTimeoutMs, captureErrorBackoffMs,
+  captureErrorLimit } from '../soren91/realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
@@ -273,4 +274,22 @@ test('runtime wiring retains guards, bounds both ranking bursts, and avoids per-
   assert.match(mainSource, /latency\.flush\(loopOutcome\)/);
   assert.match(extract('loadModule', '// comment.mjs'), /st\.mtimeMs/);
   assert.doesNotMatch(extract('loadStrategy', '// --- シグナル'), /Date\.now/);
+});
+
+test('capture timeout default covers the measured p95 capture cost', () => {
+  assert.equal(captureTimeoutMs({}), 6000);
+  assert.equal(captureTimeoutMs({ SOREN91_CAPTURE_TIMEOUT_MS: '9000' }), 9000);
+  assert.equal(captureTimeoutMs({ SOREN91_CAPTURE_TIMEOUT_MS: '99999' }), 9000);
+  assert.equal(captureTimeoutMs({ SOREN91_CAPTURE_TIMEOUT_MS: '10' }), 200);
+});
+
+test('consecutive-error policy backs off exponentially and only stops after a generous limit', () => {
+  assert.equal(captureErrorBackoffMs(1, {}), 1000);
+  assert.equal(captureErrorBackoffMs(2, {}), 2000);
+  assert.equal(captureErrorBackoffMs(5, {}), 15000);
+  assert.equal(captureErrorBackoffMs(9, {}), 15000);
+  assert.equal(captureErrorBackoffMs(3, { SOREN91_ERROR_BACKOFF_MAX_MS: '4000' }), 4000);
+  assert.equal(captureErrorLimit({}), 30);
+  assert.equal(captureErrorLimit({ SOREN91_ERROR_LIMIT: '5' }), 5);
+  assert.equal(captureErrorLimit({ SOREN91_ERROR_LIMIT: '0' }), 30);
 });

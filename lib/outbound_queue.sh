@@ -427,6 +427,26 @@ enqueue_audio_text() {
 	return 0
 }
 
+# enqueue_weather_audio_request REQUEST_JSON
+#   Weather-corner only entrypoint. The consumer validates the request and
+#   GameSwitch identity before publishing into the shared comment queue.
+#   Its receipt ledger is metadata in that queue, not a second playback queue.
+enqueue_weather_audio_request() {
+	local request_json="${1:-}"
+	[ -n "$request_json" ] || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" enqueue \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$request_json"
+}
+
+# get_weather_audio_receipt ITEM_KEY
+#   Return the durable per-item consumer receipt, or JSON null before enqueue.
+get_weather_audio_receipt() {
+	local item_key="${1:-}"
+	[ -n "$item_key" ] || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" get \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$item_key"
+}
+
 # enqueue_audio_file FILE [SOURCE] [SPEAKER_OVERRIDE]
 #   既存のテキストファイルを comment queue にコピーして積む。
 enqueue_audio_file() {

@@ -351,8 +351,10 @@ _comment_card_consolidation_gate() {
 		_comment_card_hold_clear "$source"
 		return 0
 	fi
-	quiet=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_QUIET_SEC:-20}" 20 300)
-	max=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_MAX_SEC:-180}" 180 600)
+	# Production draws by one viewer land ~1-2 minutes apart (measured
+	# 31-600s), so a 20s quiet window replied to every single card.
+	quiet=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_QUIET_SEC:-150}" 150 300)
+	max=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_MAX_SEC:-420}" 420 600)
 	[ "$max" -lt "$quiet" ] && max="$quiet"
 	state_file=$(_comment_card_hold_state_path "$source")
 	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -955,4 +956,156 @@ test('unboxed corner charts after an AI box stay visible in the live sidebar', a
   assert.match(rendered, /SCORE TIMELINE/);
   assert.match(rendered, /▁▃▅█/);
   assert.match(rendered, /SCORE DISTRIBUTION/);
+});
+
+// Render a Hanjuku card with the real status_dashboard.py / docich_corner_stats
+// code so the card parsers can never drift away from the producer's line format.
+function renderHanjukuCardText() {
+  const script = `
+import json, sys, tempfile, time
+from pathlib import Path
+sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
+from lib.docich_corner_stats import load_active_corner
+import status_dashboard as sd
+root = Path(tempfile.mkdtemp())
+ident = dict(game='hanjuku-hero', runtime_id='g530-abcdef12', generation=530, lease_id='l')
+rt = root / 'runtimes' / ident['runtime_id']
+rt.mkdir(parents=True)
+def w(p, v):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(v, ensure_ascii=False), encoding='utf-8')
+w(root / 'retro_corner.json', dict(schema_version=1, status='active', game='hanjuku-hero', bot_identity=ident))
+w(root / 'game_switch.json', dict(phase='ready', active=ident))
+w(rt / 'hanjuku_run.json', dict(ident, observed_at=time.time(), phase='battle', actions_sent=412,
+    battles_started=9, battles_finished=8, observations=5300, unchanged_seconds=3.2))
+w(rt / 'hanjuku_bot.json', dict(decision_trace=ident, screen_kind='battle_menu', policy=dict(
+    chapter=2, gold=176, month='1-11', captured=['カストーラ', 'スペンソニア'], lost=['ジョンリギ'],
+    home_lost=False, active='J3', variant='chart_adjusted',
+    stats=dict(wins=4, losses=1, unclassified=1, cards_confirmed=4), soldiers_seen=9, tick=5300,
+    orders={'A1': 'launched', 'A2': 'failed'},
+    garrison={'アルマムーン': ['ゼウス', 'ユイートル']},
+    sorties={'J3': dict(general='どうし', target='ナキューメラ', status='en_route', tick=5290)},
+    battle={'enemy': 'dragon', 'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44})))
+print("\\n".join(sd.render_docich_corner_stats(load_active_corner(root))))
+`;
+  const out = spawnSync('python3', ['-c', script], { encoding: 'utf8' });
+  assert.equal(out.status, 0, `renderer probe failed: ${out.stderr}`);
+  assert.ok(out.stdout.includes('半熟英雄 / 最終観測・記録'), out.stdout);
+  return out.stdout;
+}
+
+// The card parsers anchor on the leading fields of each status_dashboard.py
+// line. Keep this text byte-identical to the current renderer output so a new
+// card field cannot silently stop reaching the broadcast sidebar.
+function hanjukuFixture(overrides = {}) {
+  return { version:1, updatedAt:1780001000,
+    feeds:{showStatusG:{updatedAt:1780001000,lineCount:10,text:
+      'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
+      + '  第2話 / 所持金 123G\n  ゲーム内: 1年11月（最終観測）\n'
+      + '  兵力: 9名 / 停滞 3秒\n  占領記録 5城（現在の城数ではない）\n'
+      + '  保有: カストーラ/スペンソニア\n  戦闘結果: 4勝 / 1敗 / 未分類 1\n'
+      + '  交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
+      + '  駐留: アルマムーン=ゼウス/ユイートル\n  行軍中: どうし→ナキューメラ\n'
+      + '  出撃: 成立 4 / 失敗 1\n  画面: battle_menu / battle / 方針 chart_adjusted\n'
+      + '  計画段階: J3（完了未確認）\n  保留計画: sortie\n'
+      + '  実入力: 412回 / 観測 0秒前（5300回）', ...overrides},
+      showStatus:{text:'● Backend FFMPEG LIVE',updatedAt:1780001000}},
+    notifications:{visibleSec:18,events:[],work:{active:false},generators:[]} };
+}
+
+test('Hanjuku sidebar uses large current-chapter cards without changing the top rail source', async () => {
+  const state = hanjukuFixture(); const ui = await runBroadcastOverlayScript(state);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '123 G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x => x.className.includes('current')).length, 1);
+  assert.match(state.feeds.showStatusG.text, /SOREN\/CORNER/);
+});
+
+test('Hanjuku cached figures disappear when source stops updating even without a new payload', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-badge').textContent, '要確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '— G');
+});
+
+test('switching away removes Hanjuku layout and renders the new game without stale figures', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  ui.setState(hanjukuFixture({text:'SOREN/CORNER: RETRO / robots / 進行中\nLive: next game'}));
+  await ui.tick(1);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '');
+  assert.equal(ui.feedG.querySelector('.hanjuku-card'), null);
+});
+
+test('unavailable, future or malformed Hanjuku status never becomes fabricated progress', async () => {
+  for (const overrides of [
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / ゲーム状況\n状態: 未確認'},
+    {updatedAt:1780002000},
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第99話 / 所持金 不明G\n画面: <script> / battle'},
+  ]) {
+    const ui = await runBroadcastOverlayScript(hanjukuFixture(overrides));
+    assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+    assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x=>x.className.includes('current')).length, 0);
+  }
+});
+
+
+test('Hanjuku details distinguish recorded castles, planned work and sent input', async () => {
+  const f = hanjukuFixture();
+  f.feeds.showStatusG.text = f.feeds.showStatusG.text.replace(
+    '計画段階: J3（完了未確認）', '計画段階: F1（完了未確認）');
+  const ui = await runBroadcastOverlayScript(f);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
+  assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /5城.*現在数ではありません/);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '計画 出撃 / F1（完了未確認）');
+  assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /412回/);
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '年月 未確認');
+  assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /—回/);
+  assert.doesNotMatch(ui.feedG.querySelector('.hanjuku-plan').textContent, /F1/);
+});
+
+test('Hanjuku card surfaces the live observed battle, roster and sortie state', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, '保有 カストーラ/スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, '駐留 アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, '行軍中 どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '兵力 9名 / 停滞 3秒');
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 4 / 失敗 1');
+  // The battle line carries a trailing strategy field; it must not hide the screen.
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4勝 1敗');
+});
+
+test('Hanjuku card omits the live-battle strip when no battle is observed', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({
+    text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
+      + '第2話 / 所持金 123G\n交戦HP: 戦闘記録なし\n画面: world_map / field'}));
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '戦況を確認中');
+});
+
+test('the card parsers still read every field the real renderer emits', async () => {
+  // Regression guard: a hand-written fixture can drift from status_dashboard.py
+  // and silently drop a value. Drive the card with the renderer's own output.
+  const rendered = renderHanjukuCardText();
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: rendered }));
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '176 G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4勝 1敗');
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, '保有 カストーラ/スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, '駐留 アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, '行軍中 どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '兵力 9名 / 停滞 3秒');
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 1 / 失敗 1');
+  assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /2城/);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan').textContent, '計画 出撃 / J3（完了未確認）');
+  assert.match(ui.feedG.querySelector('.hanjuku-inputs').textContent, /412回/);
 });

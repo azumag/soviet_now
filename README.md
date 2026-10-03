@@ -42,6 +42,32 @@ claim時、TTS待機後の実プレイヤー起動直前、再生中100ms間隔�
 この関数変更の反映に共通音声workerの再起動は不要です。既に始まった旧版の読み上げが
 なくなったことと、次の実況でfenceが有効になったことは配備後に別途検証します。
 
+## 天気corner共有audio consumer（producer未接続）
+
+`enqueue_weather_audio_request REQUEST_JSON` は `weather_corner` 専用の値契約を検証し、
+既存の共有comment queueへ項目を積みます。`execution_id` と `item_index` のitem keyで冪等化し、
+正規化したrequest全体のSHA-256が同じ場合だけretryとして扱います。同じkeyに本文・runtime・
+予報metadataの異なるrequestを送ると拒否します。既存の本文MD5 dedupはweather項目には使いません。
+
+queue受理・claim時のruntime確認は既存のGameSwitch lockを0.5秒単位で待ち、競合中にreceipt
+ledgerを無期限に保持しません。owned player起動直前にはcanonical `game_switch.json` のready状態・
+`weather-view` runtime ID・generation・lease ID・expiryを確認します。開始後の監視はreceipt ledger lockの
+外で完全runtime tupleを検査します。identity loss時はweatherが起動したowned player groupを先に停止し、
+その後`interrupted/runtime_fence_lost`を確定します。そのためexclusive GameSwitch lock中にcheck/enqueueが
+ledgerを保持しても音声停止を遅らせません（expiryは開始gateであり、開始済み音声は切りません）。
+再生側は既存`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、実player終了時に
+チャンクごとの完了証跡を記録します。`say_enqueue.sh` が全チャンク数を事前に固定し、各owned playerの
+終了コードと厳格な再生尺確認が通った後だけ、そのチャンクをackします。`finish`は計画した全チャンクが
+ackされた場合だけitemを `played` に確定し、未確定・不足・失敗は `interrupted` または `rejected` のまま
+扱います。itemをclaimしたworkerが落ちた場合は再投入せず `interrupted` を保存します。
+`queued` は受理済みだけを表し、再生完了の意味ではありません。`get_weather_audio_receipt ITEM_KEY` は
+そのdurable receiptを返します。
+
+receiptは既存comment queue内の `.weather_audio_receipts/` に保持します。別playback queue、worker、
+timer、forecast fetch、原稿生成、producer activationは追加していません。入力原稿は呼び出し側が
+渡したliteral textのまま使用し、このconsumerは予報を補完・予測・生成しません。詳細は
+[`docs/weather-audio-consumer.md`](docs/weather-audio-consumer.md) を参照してください。
+
 ## アーキテクチャ
 
 ```
@@ -350,6 +376,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。
 - ニュース見出しや試合終了後のスコア進捗などの自動チャット投稿は `lib/outbound_queue.sh` の outbound queue を経由して Twitch へ送る。Twitch は `TWITCH_CLIENT_ID` / `TWITCH_BROADCASTER_ID` がある場合 `chat/messages` API を優先し、失敗時は `tmp/debug/outbound_chat_twitch.log` と `show_status.sh` の `OutboundErr` に残して pending へ戻す。Twitch OAuth が無効な場合は `tmp/.outbound_chat_queue/twitch_backoff_until` / `twitch_backoff_count` で指数的に再送間隔を伸ばし、同じ古い投稿でチャット worker を毎分詰まらせない。成功したら Twitch backoff state は消える。`YOUTUBE_CHAT_SEND_ENABLED=1` の時だけ YouTube へミラーする。YouTube の cached `live_chat_id` が 403 を返した場合や `YOUTUBE_VIDEO_ID` の配信が終了している場合は stale とみなし、保存済み/設定済みの channel ID から現在ライブ中の video ID を探して `activeLiveChatId` を再取得する。send 経路では OAuth access token を取得してから live chat ID を解決し、API key の `videos.list` / `search.list` が 403 の場合でも bearer 認証で送信先解決を試す。poll 経路も API key の `liveChatMessages.list` が 403 の時は OAuth bearer で live chat ID を再解決して読み取りを再試行し、API quota / 403 が続く時は `tmp/.youtube_chat/web_live_chat_continuation` を使う YouTube web live chat fallback で読み取りだけ継続する。再解決も web fallback も使えない場合は `tmp/.youtube_chat/api_backoff_until` で短期 backoff し、`show_status.sh` の YouTube 行を `DEGRADED` にして、送信停止を「接続中」に見せない。outbound mirror も同じ backoff を読んで、期限中は YouTube 送信だけをスキップするため、Twitch 側の自動投稿成功を YouTube quota 失敗ログで汚さない。
 - YouTube 送信 mirror は curl の stderr と API response の両方を `tmp/.youtube_chat/last_send_error.txt` に残す。403 の時は stale `live_chat_id` / page token を破棄し、channel live discovery で一度だけ再解決して再送する。これにより YouTube 側だけ止まっている状態を Twitch outbound 成功と混同しない。
+- YouTube の未読取得と ack 契約は `twitch_chat.sh` / `kick_chat.sh` と同じ。`tmp/.youtube_chat/pending.log` は `id=<message-id>\tuser-id=…\tdisplay=…\tflags=…\t<本文>` の envelope で、モデル用の OUTFILE (`tmp/youtube_comments.txt`) は `lib/comment_viewer_memory.py emit-batch` が NFKC 正規化するため本文の句読点（全角 `？！` → 半角 `?!`）が provider 原文と食い違う。`youtube_chat.sh ack-batch` は `id=<message-id>` が一致する行だけを除去し、無 id の legacy/plain バッチは NFKC 正規化テキストで照合する。バイト一致だけで照合すると何も除去できず pending に残り、`COMMENT_PROCESSED_LINES_TTL`（1800秒）が切れた時点で**同じコメントが再生成・再読み上げされる**（2026-10-01 実測: 1コメントが30分間隔で10回）。照合処理が失敗した場合は pending を維持して fail closed になる
 - YouTube映像は、encoderがingestへ送信中でも対応するliveBroadcast枠が終了すると公開ページだけ停止し得る。`YOUTUBE_BROADCAST_GUARD_ENABLED=1` はOAuthでactive/upcoming枠を監視し、3回連続で枠が無い場合にだけ復旧候補とする。さらに `YOUTUBE_BROADCAST_GUARD_AUTO_CREATE=1` を明示した時だけ、公開枠を `enableAutoStart=true` / `enableAutoStop=false` で1件作成し、単独のactive liveStream（複数なら停止、または `YOUTUBE_BROADCAST_STREAM_ID` で固定）へbindする。その後、`/proc/<pid>/cmdline` がローカルRTMP宛のffmpegと一致した場合だけpublisherをTERMし、supervisorの新PIDとYouTubeのactive枠を確認する。ゲームプロセスは操作しない。OAuth不正・複数stream・既存枠・cooldown中はfail closedで、stateは `tmp/state/youtube_broadcast_guard.json` に秘密情報なしで記録する。既定は監視・作成ともOFF。
 - Kick のコメントは `kick_chat_daemon.mjs` が Kick web クライアントと同じ公開 Pusher チャンネル (`chatrooms.<chatroom_id>.v2`) を**読み取り専用・認証なし**で購読し、`tmp/.kick_chat/raw.log` へ `id=<msg-id>\t<user>: <本文>` 形式で追記する。`chatroom_id` は `KICK_CHATROOM_ID` 未設定なら `https://kick.com/api/v2/channels/<slug>` から解決する。`kick_chat.sh fetch` / `ack-batch` の契約は `twitch_chat.sh` と同じで、`workers/kick_worker.sh` が daemon の死活監視と `generate_comment_response kick` を回す。有効化は `KICK_CHAT_ENABLED=1`、対象は `KICK_CHANNEL`（既定 `dociai`）。Kick のエモートは `[emote:ID:NAME]` で届くので `NAME` だけに正規化して Twitch と同じ見え方に揃える。Kick への**送信**は別途 Kick 側の認証が要るため未対応なので、返答は Twitch / YouTube にだけ出る。送信していない＝エコーが発生しないため `KICK_IGNORE_AUTHORS` の既定は**空**で、自チャンネル (`dociai`) の投稿も配信者本人のコメントとして読む（2026-08-26 に既定で無視していて実コメントを取りこぼした）。Kick 送信を実装したら、その送信元アカウントを `KICK_IGNORE_AUTHORS` に入れないと自分の返答を読み返す
 - `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する

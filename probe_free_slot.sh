@@ -18,6 +18,11 @@ mkdir -p "$STATE_DIR" 2>/dev/null || true
 
 opencode_bin="${OPENCODE_BIN:-/snap/bin/opencode}"
 [ -x "$opencode_bin" ] || opencode_bin="opencode"
+gate_exec="${OPENCODE_ROTATION_GATE_EXEC:-./lib/opencode_rotation_gate_exec.sh}"
+if [ ! -f "$gate_exec" ]; then
+	log "[FreeProbe] rotation gate helper missing; skip probes"
+	exit 0
+fi
 
 IFS=',' read -ra _models <<<"$MODELS"
 for agent in "${_models[@]}"; do
@@ -42,11 +47,11 @@ for agent in "${_models[@]}"; do
 
 	case "$model" in
 	opencode/muse-spark-1.[23]-contributor-free)
-		out=$(python3 lib/opencode_rate_limit_guard.py "$TIMEOUT_SEC" "$opencode_bin" run --print-logs --model "$model" \
+		out=$(python3 lib/opencode_rate_limit_guard.py "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --title docich:probe --print-logs --model "$model" \
 			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	*)
-		out=$(timeout --kill-after=5s "$TIMEOUT_SEC" "$opencode_bin" run --model "$model" \
+		out=$(timeout --kill-after=5s "$TIMEOUT_SEC" bash "$gate_exec" "$opencode_bin" run --title docich:probe --model "$model" \
 			'「はい」とだけ返してください。他の文字は出力しないでください。' </dev/null 2>&1)
 		;;
 	esac

@@ -583,6 +583,11 @@ export function startCdpProxy({ bindIp, proxyPort, cdpPort, allowedPeerIp }) {
     const destroy = () => { try { client.destroy(); } catch {} try { upstream.destroy(); } catch {} };
     client.on('error', destroy);
     upstream.on('error', destroy);
+    // An abrupt close (destroy/RST) emits 'close' without 'end', so pipe()
+    // never ends the other side; tear both down so no half-open DevTools
+    // socket is left behind after the bot disconnects.
+    client.on('close', destroy);
+    upstream.on('close', destroy);
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);

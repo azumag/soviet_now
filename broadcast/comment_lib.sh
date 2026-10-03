@@ -1,6 +1,27 @@
 # broadcast/comment_lib.sh - コメント再生・生成の関数ライブラリ (source される)
 
 
+_comment_weather_audio_sidecar_path() {
+	local base="$1"
+	case "$base" in *.txt) base="${base%.txt}" ;; *.playing) base="${base%.playing}" ;; esac
+	printf '%s.weather_audio.json' "$base"
+}
+
+_comment_weather_audio_managed() {
+	local target="$1" sidecar
+	sidecar=$(_comment_weather_audio_sidecar_path "$target")
+	case "$target" in *_weather_audio_item.txt|*_weather_audio_item.playing) return 0 ;; esac
+	[ -e "$sidecar" ] || [ -L "$sidecar" ]
+}
+
+_comment_weather_audio_finish() {
+	local target="$1" outcome="${2:-failure}" result
+	result=$(python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" finish \
+		--queue-dir "$COMMENT_QUEUE_DIR" "$target" "$outcome" 2>/dev/null) || return 1
+	printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", ""), end="")' 2>/dev/null
+}
+
+
 _comment_runtime_fence_path() {
 	local base="$1"
 	case "$base" in *.txt) base="${base%.txt}" ;; *.playing) base="${base%.playing}" ;; esac
@@ -9,6 +30,11 @@ _comment_runtime_fence_path() {
 
 _comment_runtime_fence_valid() {
 	local target="$1" fence
+	if _comment_weather_audio_managed "$target"; then
+		python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" check \
+			--queue-dir "$COMMENT_QUEUE_DIR" "$target" >/dev/null 2>&1
+		return $?
+	fi
 	fence=$(_comment_runtime_fence_path "$target")
 	case "$target" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) ;; *)
 		[ -e "$fence" ] || [ -L "$fence" ] || return 0 ;;
@@ -33,6 +59,18 @@ _recover_orphan_comment_playing_files() {
 		# 直近で生成された .playing はリネーム直後の可能性があるためスキップ
 		[ "$age" -lt 30 ] && continue
 		local recovered="${orphan%.playing}.txt"
+		if _comment_weather_audio_managed "$orphan"; then
+			# Once claimed, a worker crash leaves playback uncertain. Preserve the
+			# at-most-once contract: write interrupted and never put it back in FIFO.
+			if python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" recover \
+				--queue-dir "$COMMENT_QUEUE_DIR" "$orphan" >/dev/null 2>&1; then
+				rm -f "$orphan" "$(_comment_weather_audio_sidecar_path "$orphan")"
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] weather_corner孤児をinterruptedとして確定: $(basename "$orphan")" >> tmp/.say_queue/debug.log
+			else
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] weather_corner孤児のreceipt更新待ち: $(basename "$orphan")" >> tmp/.say_queue/debug.log
+			fi
+			continue
+		fi
 		mv "$orphan" "$recovered" 2>/dev/null
 		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
 	done
@@ -84,6 +122,10 @@ _comment_clear_speaker_sidecars() {
 
 _comment_playback_context_label() {
 	local target="$1" sidecar label base
+	if _comment_weather_audio_managed "$target"; then
+		printf '%s' "weather_corner"
+		return 0
+	fi
 	sidecar=$(_comment_meta_sidecar_path "$target")
 	if [ -f "$sidecar" ]; then
 		label=$(python3 - "$sidecar" <<'PY' 2>/dev/null
@@ -105,6 +147,7 @@ PY
 	*soren91_ranking_comment*) printf '%s' "soren91:ranking_comment" ;;
 	*soren91_midgame_comment*)  printf '%s' "soren91:midgame_comment" ;;
 	*soren91_beat_comment*)     printf '%s' "soren91:beat_comment" ;;
+	*hanjuku_terminal*)        printf '%s' "hanjuku_terminal" ;;
 	*crypto_paper*)             printf '%s' "crypto_paper" ;;
 	*)                         printf '%s' "comment" ;;
 	esac
@@ -122,6 +165,7 @@ _comment_playback_overlay_title() {
 	soren91:midgame_comment)   printf '%s' "試合中実況 playback" ;;
 	soren91:beat_comment)      printf '%s' "メリケンAIひとこと playback" ;;
 	soren91:*)                 printf '%s' "メリケンAIコメント playback" ;;
+	hanjuku_terminal)          printf '%s' "半熟英雄終了結果 playback" ;;
 	crypto_paper)              printf '%s' "PAPERコーナー playback" ;;
 	comment)                   printf '%s' "コメント返信 playback" ;;
 	*)                         printf '%s' "${label} playback" ;;
@@ -278,10 +322,18 @@ _play_comment_queue() {
 	for qf in $(_comment_queue_ordered_files); do
 		if [ -f "$qf" ]; then
 			if ! _comment_runtime_fence_valid "$qf"; then
+				local _weather_reject_pending=0
+				if _comment_weather_audio_managed "$qf"; then
+					_comment_weather_audio_finish "$qf" failure >/dev/null 2>&1 || _weather_reject_pending=1
+				fi
 				_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 				_comment_clear_generation_meta "$qf" 2>/dev/null || true
 				_comment_clear_speaker_sidecars "$qf" 2>/dev/null || true
-				rm -f "$qf"
+				if [ "$_weather_reject_pending" -eq 0 ]; then
+					rm -f "$qf"
+				else
+					mv "$qf" "${qf%.txt}.playing" 2>/dev/null || true
+				fi
 				continue
 			fi
 			local expected_mode="" current_mode=""
@@ -310,6 +362,7 @@ _play_comment_queue() {
 			local _skip_duplicate_check=0
 			case "$_comment_context_label_for_dedupe" in
 			soren91:ranking_comment|soren91:midgame_comment) _skip_duplicate_check=1 ;;
+			weather_corner) _skip_duplicate_check=1 ;;
 			# crypto_paper (docich PAPER corner) already carries its own durable,
 			# never-expiring per-announcement dedupe upstream (event_id ->
 			# receipt marker in _enqueue_audio_delivery), so a queue file here
@@ -320,6 +373,9 @@ _play_comment_queue() {
 			# dedupe has no notion of "occasion" and would otherwise drop the
 			# later one as a false-positive replay (2026-09-18 outage: every
 			# delivery in a 10-minute corner test was skipped this way).
+			# Hanjuku terminal deliveries carry a run-scoped durable receipt upstream.
+			# Identical summaries from different finished runs are separate events.
+			hanjuku_terminal) _skip_duplicate_check=1 ;;
 			crypto_paper) _skip_duplicate_check=1 ;;
 			esac
 				if [ "$_comment_context_label_for_dedupe" = "improve_progress" ] && _comment_improve_progress_already_played; then
@@ -383,6 +439,9 @@ _play_comment_queue() {
 				local _cw_playback_ok=0
 				if ! _comment_runtime_fence_valid "$playing_file"; then
 					: # switched/terminated after claim; clean up without speaking
+					if _comment_weather_audio_managed "$playing_file"; then
+						_comment_weather_audio_finish "$playing_file" failure >/dev/null 2>&1 || true
+					fi
 				elif _comment_has_bilingual_speech "$playing_file"; then
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英語翻訳 → 日本語返信の順で再生: $playing_file" >>tmp/.say_queue/debug.log
 					if _comment_play_bilingual_speech "$playing_file" "$_cw_vo_speaker" "$_cw_context_label"; then
@@ -393,6 +452,15 @@ _play_comment_queue() {
 				elif SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 					_cw_playback_ok=1
 				fi
+				local _weather_receipt_pending=0
+				if _comment_weather_audio_managed "$playing_file"; then
+					local _weather_outcome="failure" _weather_receipt_status=""
+					[ "$_cw_playback_ok" -eq 1 ] && _weather_outcome="success"
+					_weather_receipt_status=$(_comment_weather_audio_finish "$playing_file" "$_weather_outcome" 2>/dev/null) || _weather_receipt_pending=1
+					if [ "$_weather_receipt_pending" -eq 0 ] && [ "$_weather_receipt_status" != "played" ]; then
+						_cw_playback_ok=0
+					fi
+				fi
 				if [ "$_cw_playback_ok" -eq 1 ]; then
 					_remember_spoken_comment "$playing_file"
 					[ "$_cw_context_label" = "improve_progress" ] && _comment_mark_improve_progress_played
@@ -402,8 +470,12 @@ _play_comment_queue() {
 				fi
 					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 					_comment_clear_generation_meta "$playing_file" 2>/dev/null || true
-					_comment_clear_speaker_sidecars "$playing_file" "$qf" 2>/dev/null || true
-					rm -f "$playing_file"
+					if [ "$_weather_receipt_pending" -eq 0 ]; then
+						_comment_clear_speaker_sidecars "$playing_file" "$qf" 2>/dev/null || true
+						rm -f "$playing_file"
+					else
+						echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] weather_corner receipt保存を再試行するためplaying項目を保持: $(basename "$playing_file")" >> tmp/.say_queue/debug.log
+					fi
 				fi
 			fi
 	done

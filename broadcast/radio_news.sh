@@ -112,7 +112,9 @@ _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_URL_HASHES" "$news_tmp" <<'PY'
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_URL_HASHES" "$news_tmp" \
+		"${TMP_HISTORY_DIR:-tmp/history}/.past_jiji_titles.txt" \
+		"${TMP_HISTORY_DIR:-tmp/history}/.past_jiji_keys.txt" "${PAST_JIJI_URL_HASHES:-}" <<'PY'
 import hashlib
 import json
 import os
@@ -263,6 +265,18 @@ if os.path.exists(past_url_hash_file):
         if k:
             past_url_hashes.add(k)
 
+# Compare both existing ledgers; keep their ownership and retention unchanged.
+def history_lines(path):
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        return [line.strip() for line in f if line.strip()]
+
+peer_titles = history_lines(sys.argv[6])
+past_keys.update(key(title) for title in peer_titles)
+past_keys.update(history_lines(sys.argv[7]))
+past_url_hashes.update(history_lines(sys.argv[8]))
+
 blocks = []
 current = []
 for line in news_text.splitlines():
@@ -287,6 +301,12 @@ if event_dedup_enabled() and os.path.exists(past_title_file):
         for ln in open(past_title_file, encoding="utf-8", errors="ignore")
         if ln.strip()
     ][-recent_limit:]
+if event_dedup_enabled():
+    try:
+        peer_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
+    except ValueError:
+        peer_limit = 60
+    past_titles_for_events += peer_titles[-peer_limit:]
 past_event_tokens = [
     tokens for tokens in (event_tokens(title) for title in past_titles_for_events) if tokens
 ]

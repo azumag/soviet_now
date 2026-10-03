@@ -28,15 +28,60 @@ HTML変換では、枠なしのコーナー見出しを直前のAI backoff枠と
 これにより、推移グラフまで `.rail-only` に入って非表示になる問題を防ぐ。
 通常のSorenヘッダー枠の非表示処理は維持する。
 
+## 半熟英雄のカード
+
+半熟英雄はスクリプト走行のコーナー（docich `retro_corner` はゲームオーバーまたは
+画面300秒不変まで観測を続け、scorelogには記録しない）なので、試合成績の推移・分布と
+`Strategy:` のランキングは構造的に空のままになる。空の
+`Stats: no completed results yet` / `Strategy: no corner ranking data` を毎回出さず、
+カード側へ観測値を置く。他のレトロゲームは従来どおりこのパネルも表示する。
+
+カードの値は canonical `game_switch.json` の active _identity に一致する runtime の
+`hanjuku_run.json` と `hanjuku_bot.json` の policy memory からの観測値に限る。
+switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を出さず、
+全体を unavailable / stale に戻す（他ゲームの値を持ち越さない）。
+
+| 表示 | 読み取り元 |
+|---|---|
+| 話数・所持金・ゲーム内年月 | policy の `chapter` / `gold` / `month`（最終観測） |
+| 兵力・停滞秒数 | policy `soldiers_seen` / run `unchanged_seconds` |
+| 占領記録・保有・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
+| 戦闘結果（勝/敗/未分類）・戦闘開始終了・切り札確定 | policy `stats` / run `battles_*` |
+| 交戦HP | policy `battle` の `enemy_hp` / `ally_hp` と将軍名 |
+| 駐留・行軍中・卵 | policy `garrison` / `sorties` / `egg_uses` |
+| 出撃成立/失敗 | policy `orders` の `launched` / `failed` |
+| 画面・方針・計画段階・保留計画・実入力・観測回数 | bot `screen_kind` / policy `variant` / `active` / run |
+
+制約:
+
+- `battle` がない時は交戦HPを「戦闘記録なし」とし、HPを推測しない。片側だけの
+  読み取りも表示しない。
+- 行軍中は policy 自身の判定（`en_route` / `launched_unconfirmed`、busy 400観測以内）
+  と同じ条件で行う。行き先未確定は「未確定」と出す。解決済み・tick 不正は出さない。
+- 城名・将軍名・卵・将軍名は画面から読めた名前だけを最大3件・各10文字で出す。
+  未読の値は `0` ではなく「不明」にする。
+- cached 文字列は ANSI/OSC escape 全体と C0/C1 制御文字を除去してから表示する。
+  `isprintable()` だけでは ESC は落ちるが後続の印字可能な `[31m` が残るため、
+  カードに壊れた escape が混ざる。snapshot 側とレンダラ側の両方で除去し、
+  escape を失った headless な `[2J` も落とす。副作用として `array[0]` のような
+  bracket 構文も削られるが、半熟英雄の将軍名・城名は日本語表示名だけでBracketを
+  持たないため、実データへの影響はない。
+- カード行は `show-status-g` の幅に収める。HTMLカードのパーサは各行の先頭項目
+  だけを行頭固定せず拾う（後ろに観測値が増えても値を落とさない）。
+
 ## 検証と反映
 
 ```sh
 python3 -m unittest tests.test_docich_corner_stats tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate tests.test_dashboard_data
+node --test tests/test_direct_broadcast_overlay.mjs tests/test_shared_overlay.mjs
 bash -n generate_status_overlay.sh
 ```
 
 HTML回帰テストは本番と同じ埋め込みPythonを実行し、コーナー統計の可視性と
-通常ヘッダーの非表示を確認する。運用state・ゲーム・OBSへの書き込みは行わない。
+通常ヘッダーの非表示を確認する。`the card parsers still read every field the real
+renderer emits` は `status_dashboard.py` の実出力（`load_active_corner` 経由）を
+そのまま卡片パスへ通し、パーサと行格式のずれを検出する。fixture を手で書く関連
+テストがこれを手放さないこと。運用state・ゲーム・OBSへの書き込みは行わない。
 
 本番反映はdocichのPR/main/canonical gateway経路を使う。
 Pythonの読み取り処理は毎回起動されるが、HTML変換関数は既存の

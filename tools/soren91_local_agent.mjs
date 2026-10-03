@@ -22,10 +22,17 @@
 //   (max 8KB). When present and valid, the value overrides
 //   SOREN91_LOCAL_SRT_URL in the SPAWNED CHILD's env only (process.env is
 //   never mutated). Absent/empty body keeps the legacy behavior above.
-// - Phase 2a extension (macOS only): `SOREN91_LOCAL_SESSION_MODE=cdp-host`
-//   (or `SOREN91_LOCAL_CDP_HOST=1`) makes POST /v1/start spawn
-//   `tools/soren91_macos_cdp_host.mjs` instead of the self-playing session.
-//   Default `session` preserves the behavior above byte-for-byte.
+// - Phase 2a extension: `SOREN91_LOCAL_SESSION_MODE=cdp-host`
+//   (or `SOREN91_LOCAL_CDP_HOST=1`) makes POST /v1/start spawn the platform
+//   CDP host (`tools/soren91_macos_cdp_host.mjs` on darwin,
+//   `tools/soren91_windows_cdp_host.mjs` on win32) instead of the
+//   self-playing session. Default `session` preserves the behavior above
+//   byte-for-byte.
+// - Windows cdp-host stop is staged: POST /v1/stop closes the host's stdin
+//   (its graceful-stop signal; Windows has no deliverable SIGTERM), then
+//   escalates to `taskkill /T /F` after the grace period. When a Windows
+//   cdp-host session ends, `--reap-orphans` sweeps anything still carrying
+//   the host's dedicated profile marker; the next /v1/start waits for it.
 import http from 'node:http';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -51,9 +58,9 @@ export function sessionScriptForPlatform(platform = process.platform, baseDir = 
 // `SOREN91_LOCAL_SESSION_MODE` selects what POST /v1/start spawns:
 // - `session` (default, legacy): the renderer joins the game itself
 //   (`soren91_macos_session.mjs` on darwin).
-// - `cdp-host`: holds a virtual display + remote-debuggable Chrome and waits
-//   for the OCI bot to drive it over CDP
-//   (`soren91_macos_cdp_host.mjs`, darwin only).
+// - `cdp-host`: holds a remote-debuggable Chrome (macOS: offscreen on a
+//   virtual display; Windows: headless) and waits for the OCI bot to drive
+//   it over CDP (`soren91_macos_cdp_host.mjs` / `soren91_windows_cdp_host.mjs`).
 // `SOREN91_LOCAL_CDP_HOST=1` (1/true/yes/on) is accepted as an alias for
 // `cdp-host`. An explicit SOREN91_LOCAL_SESSION_MODE wins over the alias.
 // Unknown mode values throw (fail closed) so a typo never silently runs the
@@ -74,14 +81,13 @@ export function resolveSessionMode(env = process.env) {
 }
 
 // Mode-aware spawn target. `session` keeps the legacy per-platform script.
-// `cdp-host` is macOS-only (the host's --execute is darwin-gated) and throws
-// on any other platform.
+// `cdp-host` exists for darwin and win32 (each host's --execute is gated to
+// its own platform) and throws on any other platform.
 export function spawnScriptForMode(platform = process.platform, mode = 'session', baseDir = here) {
   if (mode === 'cdp-host') {
-    if (platform !== 'darwin') {
-      throw new Error(`cdp-host mode is macOS-only (unsupported platform: ${platform})`);
-    }
-    return path.join(baseDir, 'soren91_macos_cdp_host.mjs');
+    if (platform === 'darwin') return path.join(baseDir, 'soren91_macos_cdp_host.mjs');
+    if (platform === 'win32') return path.join(baseDir, 'soren91_windows_cdp_host.mjs');
+    throw new Error(`cdp-host mode is macOS/Windows-only (unsupported platform: ${platform})`);
   }
   if (mode === 'session') return sessionScriptForPlatform(platform, baseDir);
   throw new Error(`unknown local agent session mode: ${JSON.stringify(mode)}`);
@@ -206,10 +212,29 @@ function readBody(req, limit = MAX_START_BODY_BYTES) {
   });
 }
 
-export function stopProcessTree(child, platform = process.platform, { killGraceMs = 5000 } = {}) {
+export function taskkillTree(pid) {
+  spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+}
+
+export function stopProcessTree(child, platform = process.platform, { killGraceMs = 5000, taskkillImpl = taskkillTree } = {}) {
   if (!child || child.exitCode != null) return;
   if (platform === 'win32' && child.pid) {
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    // Staged stop: a child with a stdin pipe (the Windows cdp-host) treats
+    // EOF as its graceful-stop request and tears down Chrome/proxy/capture/
+    // ffmpeg itself. taskkill /T /F is the backstop for a child that is
+    // still alive after the grace period, and the only path for children
+    // without a stdin pipe (legacy session).
+    const stdin = child.stdin;
+    if (stdin && !stdin.destroyed && typeof stdin.end === 'function') {
+      try { stdin.end(); } catch {}
+      try {
+        setTimeout(() => {
+          if (child.exitCode == null && child.signalCode == null) taskkillImpl(child.pid);
+        }, killGraceMs).unref?.();
+      } catch {}
+      return;
+    }
+    taskkillImpl(child.pid);
     return;
   }
   try { child.kill('SIGTERM'); } catch { return; }
@@ -237,12 +262,37 @@ function json(res, status, value) {
 // omitted it is resolved from `env` (default process.env) via
 // resolveSessionMode. An invalid mode/platform combination throws here
 // (fail closed) instead of failing on the first POST /v1/start.
-export function createServer(options, { platform = process.platform, spawnImpl = spawn, mode, env = process.env } = {}) {
+// Windows cdp-host sessions end with an orphan sweep (anything still carrying
+// the host's dedicated profile marker). Resolves when the sweep finished.
+export function runWindowsReaper(spawnImpl = spawn, baseDir = here, { timeoutMs = 30_000 } = {}) {
+  return new Promise((resolve) => {
+    let reaper;
+    try {
+      reaper = spawnImpl(process.execPath, [path.join(baseDir, 'soren91_windows_cdp_host.mjs'), '--reap-orphans'], {
+        stdio: 'ignore', windowsHide: true,
+      });
+    } catch {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+    reaper?.once?.('exit', () => { clearTimeout(timer); resolve(); });
+    reaper?.once?.('error', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
+export function createServer(options, {
+  platform = process.platform, spawnImpl = spawn, mode, env = process.env, reapImpl = null,
+} = {}) {
   assertPlatformSupported(platform);
   const backend = backendForPlatform(platform);
   const sessionMode = mode ?? resolveSessionMode(env);
   // Eagerly resolve so a misconfigured mode fails at startup, not at start.
   const spawnArgs = buildSessionArgs(platform, here, sessionMode);
+  const windowsCdpHost = platform === 'win32' && sessionMode === 'cdp-host';
+  const reap = reapImpl || (() => runWindowsReaper(spawnImpl));
+  let reaping = null;
   let child = null;
   let lastExit = null;
   let cdpDriverState = 'idle';
@@ -288,14 +338,21 @@ export function createServer(options, { platform = process.platform, spawnImpl =
       // Both spawn targets take all configuration from the child env
       // (SOREN91_LOCAL_SRT_URL for the srtUrl override above; SOREN91_CDP_*
       // etc. flow through process.env untouched), never from argv.
+      // A previous Windows cdp-host session's orphan sweep must finish first:
+      // it matches every process with the host's profile marker and would
+      // otherwise kill the Chrome this start is about to spawn.
+      if (reaping) await reaping;
+      if (child && child.exitCode == null) return json(res, 409, { ok: false, error: 'already running' });
       if (sessionMode === 'cdp-host') {
         cdpDriverState = 'waiting';
         cdpStdoutTail = '';
       }
+      // Windows cdp-host: stdin is the graceful-stop channel (see
+      // stopProcessTree) and the host runs without a console window.
       child = spawnImpl(process.execPath, spawnArgs, {
         env: childEnv,
-        stdio: ['ignore', sessionMode === 'cdp-host' ? 'pipe' : 'inherit', 'inherit'],
-        windowsHide: platform === 'win32' ? false : undefined,
+        stdio: [windowsCdpHost ? 'pipe' : 'ignore', sessionMode === 'cdp-host' ? 'pipe' : 'inherit', 'inherit'],
+        windowsHide: platform === 'win32' ? windowsCdpHost : undefined,
       });
       if (sessionMode === 'cdp-host' && child?.stdout?.on) {
         child.stdout.on('data', (chunk) => {
@@ -311,6 +368,11 @@ export function createServer(options, { platform = process.platform, spawnImpl =
           cdpStdoutTail = '';
         }
         child = null;
+        if (windowsCdpHost) {
+          const current = Promise.resolve().then(reap).catch(() => {});
+          reaping = current;
+          current.then(() => { if (reaping === current) reaping = null; });
+        }
       });
       return json(res, 202, { ok: true, started: true, pid: child.pid });
     }

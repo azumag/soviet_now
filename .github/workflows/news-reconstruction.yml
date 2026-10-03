@@ -18,6 +18,7 @@ on:
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
       - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_shared_history.py'
       - 'tests/test_news_lane_event_dedup.sh'
       - 'tests/test_news_political_priority.py'
       - 'tests/test_news_political_priority.sh'
@@ -45,6 +46,7 @@ on:
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
       - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_shared_history.py'
       - 'tests/test_news_lane_event_dedup.sh'
       - 'tests/test_news_political_priority.py'
       - 'tests/test_news_political_priority.sh'
@@ -63,7 +65,7 @@ jobs:
         with:
           persist-credentials: false
       - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_news_priority.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/config.sh core/phyrogenetic.sh tests/test_news_lane_event_dedup.sh tests/test_news_political_priority.sh tests/test_radio_mixed_language_repair.sh
-      - run: python3 -m unittest -v tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_political_priority
+      - run: python3 -m unittest -v tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_political_priority tests.test_news_shared_history
       - run: python3 -m unittest -v tests.test_radio_mixed_language
       - run: python3 -m unittest -v tests.test_radio_parser
       - run: bash tests/test_news_lane_event_dedup.sh

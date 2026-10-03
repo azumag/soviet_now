@@ -102,7 +102,7 @@ cleanup_tmp_files() {
 	if command -v _opencode_db_retention_rotate >/dev/null 2>&1; then
 		_opencode_db_retention_rotate "${OPENCODE_DB_RETENTION_DAYS:-3}" \
 			"$_oc/opencode.db" \
-			"${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
+			"${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db" || log "[OPENCODE:retention] incomplete; see structured retention status"
 	fi
 
 	# --- AI dispatch デバッグログ: 2日より古いものを削除 ---

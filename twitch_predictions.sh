@@ -280,16 +280,28 @@ _recover_remote_active_prediction() {
 	remote_json=$(cat "$response_file" 2>/dev/null || true)
 	rm -f "$response_file"
 	prediction_id=$(python3 - "$remote_json" <<'PY' 2>/dev/null
-import json, sys
+import json, re, sys
 try:
     data = json.loads(sys.argv[1])
 except Exception:
     raise SystemExit(1)
-for pred in data.get("data", []):
-    if pred.get("status") not in {"ACTIVE", "LOCKED"}:
+# SOREN_REMOTE_PREDICTION_OWNERSHIP_V1: never adopt another corner's wager.
+if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+    raise SystemExit(1)
+expected = ["建国なし", "ロシア建国(ソ連不成立)", "ソ連建国", "粛清"]
+for pred in data["data"]:
+    if not isinstance(pred, dict) or pred.get("status") not in {"ACTIVE", "LOCKED"}:
         continue
-    outcomes = [str(item.get("id", "")) for item in pred.get("outcomes", []) if item.get("id")]
-    if len(outcomes) < 2 or not pred.get("id"):
+    title, items = pred.get("title"), pred.get("outcomes")
+    if (not isinstance(title, str) or not re.fullmatch(r"次の[1-9][0-9]{0,3}試合で建国できる？", title)
+            or not isinstance(items, list) or len(items) != 4
+            or not all(isinstance(item, dict) for item in items)
+            or [item.get("title") for item in items] != expected):
+        continue
+    outcomes = [item.get("id") for item in items]
+    if (not isinstance(pred.get("id"), str) or not 1 <= len(pred["id"]) <= 128
+            or not all(isinstance(value, str) and 1 <= len(value) <= 128 for value in outcomes)
+            or len(set(outcomes)) != 4):
         continue
     print(json.dumps({"prediction_id": pred["id"], "outcome_ids": outcomes,
                       "game_num": 0, "created_at": 0, "recovered": True}, ensure_ascii=False))

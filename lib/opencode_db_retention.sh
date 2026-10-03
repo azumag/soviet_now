@@ -65,60 +65,66 @@ _opencode_rotation_gate_run() {
 	return "$rc"
 }
 
-# _opencode_db_retention_rotate DAYS DB [DB...]
-# 排他ロックを取ってから、保持期間を超えたセッションを DB ごとに削除する。
+# Returns 0 only for completed/explicitly disabled work; 75 means deferred.
 _opencode_db_retention_rotate() {
-	local days="$1"
-	shift
-	case "$days" in '' | *[!0-9]*) days=3 ;; esac
-	[ "$days" -lt 1 ] && days=1
-	if ! command -v flock >/dev/null 2>&1; then
-		log "[OPENCODE:retention] flock unavailable; skip rotation" >&2
-		return 0
-	fi
-	if ! command -v python3 >/dev/null 2>&1; then
-		log "[OPENCODE:retention] python3 unavailable; skip rotation" >&2
-		return 0
-	fi
-	local libdir gate wait_sec fd db before after default_db
-	libdir="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}"
-	gate="$(_opencode_rotation_gate_path)"
-	wait_sec="${OPENCODE_ROTATION_GATE_WAIT_SEC:-120}"
-	case "$wait_sec" in '' | *[!0-9]*) wait_sec=120 ;; esac
-	[ "$wait_sec" -lt 1 ] && wait_sec=1
-	mkdir -p "$(dirname "$gate")" 2>/dev/null || true
-	# See the note in _opencode_rotation_gate_run: never `exec ... 2>/dev/null`.
-	if ! : >>"$gate" 2>/dev/null; then
-		log "[OPENCODE:retention] cannot open gate; skip rotation" >&2
-		return 1
-	fi
-	exec {fd}>>"$gate"
-	if ! flock -x -w "$wait_sec" "$fd"; then
-		log "[OPENCODE:retention] writers active after ${wait_sec}s; skip rotation" >&2
-		exec {fd}>&-
-		return 0
-	fi
-	default_db="${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
-	for db in "$@"; do
-		[ -f "$db" ] || continue
-		# The default-XDG DB is also written by production-reachable direct
-		# OpenCode callers that do not yet participate in this flock contract
-		# (notably soren91/text_ai.mjs and probe_free_slot.sh). Rotating it while
-		# one of those writers starts would reintroduce the #404 TOCTOU race.
-		# Keep the mutation disabled by default until the writer inventory is
-		# complete and every default-XDG producer holds the shared gate.
-		if [ "$db" = "$default_db" ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-0}" != "1" ]; then
-			log "[OPENCODE:retention] default DB has ungated writers; skip rotation" >&2
-			continue
-		fi
-		before=$(wc -c <"$db" 2>/dev/null | tr -d ' ')
-		if python3 "$libdir/lib/opencode_db_retention.py" "$db" "$days"; then
-			after=$(wc -c <"$db" 2>/dev/null | tr -d ' ')
-			log "[OPENCODE:retention] $db before=${before:-0} after=${after:-0}"
-		else
-			log "[OPENCODE:retention] rotate failed: $db" >&2
-		fi
-	done
-	exec {fd}>&-
-	return 0
+    local days="$1"
+    shift
+    case "$days" in '' | *[!0-9]*) days=3 ;; esac
+    [ "$days" -lt 1 ] && days=1
+    local libdir gate wait_sec fd db default_db result state_dir rc=0 one_rc label
+    libdir="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}"
+    state_dir="${OPENCODE_RETENTION_STATE_DIR:-$libdir/tmp/state}"
+    result="$state_dir/opencode_db_retention.json"
+    command -v python3 >/dev/null 2>&1 || return 1
+    _opencode_retention_record() {
+        python3 "$libdir/lib/opencode_db_retention.py" --result-file "$result" --record "$1"
+    }
+    _opencode_retention_record running || return 1
+    if ! command -v flock >/dev/null 2>&1; then
+        _opencode_retention_record failed
+        return 1
+    fi
+    gate="$(_opencode_rotation_gate_path)"
+    wait_sec="${OPENCODE_ROTATION_GATE_WAIT_SEC:-120}"
+    case "$wait_sec" in '' | *[!0-9]*) wait_sec=120 ;; esac
+    [ "$wait_sec" -lt 1 ] && wait_sec=1
+    [ "$wait_sec" -gt 600 ] && wait_sec=600
+    mkdir -p "$(dirname "$gate")" || return 1
+    if ! : >>"$gate"; then
+        _opencode_retention_record failed
+        return 1
+    fi
+    exec {fd}>>"$gate"
+    if ! flock -x -w "$wait_sec" "$fd"; then
+        log "[OPENCODE:retention] writers active after ${wait_sec}s; skip rotation" >&2
+        exec {fd}>&-
+        _opencode_retention_record gate_timeout
+        return 75
+    fi
+    default_db="${HOME:-/home/ubuntu}/.local/share/opencode/opencode.db"
+    for db in "$@"; do
+        [ -f "$db" ] || continue
+        label=worker
+        [ "$db" = "$default_db" ] && label=default
+        if [ "$label" = default ] && [ "${OPENCODE_DEFAULT_DB_RETENTION_ENABLED:-1}" != 1 ]; then
+            log "[OPENCODE:retention] default DB retention disabled; skip rotation" >&2
+            python3 "$libdir/lib/opencode_db_retention.py" --result-file "$state_dir/opencode_retention_default.json" --record disabled || rc=1
+            continue
+        fi
+        if python3 "$libdir/lib/opencode_db_retention.py" "$db" "$days" --result-file "$state_dir/opencode_retention_${label}.json"; then
+            log "[OPENCODE:retention] completed database=$label"
+        else
+            one_rc=$?
+            [ "$rc" -eq 0 ] && rc="$one_rc"
+            [ "$one_rc" -ne 75 ] && rc=1
+            log "[OPENCODE:retention] incomplete database=$label code=$one_rc" >&2
+        fi
+    done
+    exec {fd}>&-
+    case "$rc" in
+        0) _opencode_retention_record completed || rc=1 ;;
+        75) _opencode_retention_record deferred || rc=1 ;;
+        *) _opencode_retention_record failed || rc=1 ;;
+    esac
+    return "$rc"
 }

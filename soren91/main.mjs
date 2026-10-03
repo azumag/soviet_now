@@ -9,7 +9,15 @@
 import 'dotenv/config';
 import { performance } from 'node:perf_hooks';
 import { statSync } from 'node:fs';
-import { createCanvasIO, boundedMs, probeBudget, postDropProbeEnabled } from './realtime_io.mjs';
+import {
+  createCanvasIO,
+  boundedMs,
+  probeBudget,
+  postDropProbeEnabled,
+  captureTimeoutMs,
+  captureErrorBackoffMs,
+  captureErrorLimit,
+} from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { waitForInlineRails } from './presentation_ready.mjs';
@@ -143,7 +151,7 @@ const canvasIO = createCanvasIO();
 
 async function captureGameScreenshot(page, path, options = {}) {
   const timeoutMs = Math.min(
-    boundedMs(process.env.SOREN91_CAPTURE_TIMEOUT_MS, 3000),
+    captureTimeoutMs(),
     options.timeoutMs ?? Infinity,
   );
   if (!(timeoutMs > 0)) throw new Error('capture-budget-exhausted');
@@ -1942,12 +1950,15 @@ async function gameLoop(page, calibration, gameNumber) {
       consecutiveErrors++;
       console.error(`[game] Error (${consecutiveErrors}):`, err.message);
 
-      if (consecutiveErrors > 10) {
+      if (consecutiveErrors > captureErrorLimit()) {
         console.error('[game] Too many consecutive errors, stopping');
         return;
       }
 
-      await sleep(1000);
+      // Transient remote-capture slowness must not end the corner: back off
+      // (bounded) and keep observing. 2026-09-29: 11 consecutive
+      // capture-timeouts stopped the bot for the rest of the run.
+      await sleep(captureErrorBackoffMs(consecutiveErrors));
     } finally {
       latency.flush(loopOutcome);
     }
