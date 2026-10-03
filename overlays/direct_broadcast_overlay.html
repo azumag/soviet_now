@@ -589,6 +589,224 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .feed-line.game-primary { background: rgba(34, 211, 238, .10); color: #cffafe; font-weight: 900; }
 .feed-line.game-trend { background: rgba(129, 140, 248, .10); color: #c7d2fe; font-weight: 800; }
 .feed-line.g-section { background: #0a202d; color: #8ce5f0; font-weight: 900; }
+
+/* Structured broadcast dashboard. Raw status feeds remain the source of truth,
+   but Soren91/JEV and OPS are projected into a scannable 320px surface. */
+.game-dashboard,
+.ops-dashboard {
+  height: 100%;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.dash-eyebrow {
+  color: #7896aa;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .10em;
+}
+.game-title-row,
+.ops-title-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.game-title {
+  min-width: 0;
+  color: #f0fbff;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-pill {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid #315d70;
+  border-radius: 999px;
+  background: #091923;
+  color: #a9cad8;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.dash-pill.ok { color: #a7f3d0; border-color: #267158; background: rgba(16, 185, 129, .10); }
+.dash-pill.warn { color: #fde68a; border-color: #83631e; background: rgba(245, 158, 11, .11); }
+.dash-pill.down { color: #fecaca; border-color: #7f3434; background: rgba(239, 68, 68, .12); }
+.game-kpis,
+.ops-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.dash-kpi {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #25475a;
+  border-radius: 6px;
+  background: #081a25;
+}
+.game-kpis .dash-kpi:first-child { box-shadow: inset 3px 0 #22d3ee; }
+.game-kpis .dash-kpi:nth-child(2) { box-shadow: inset 3px 0 #818cf8; }
+.ops-kpis .dash-kpi:first-child { box-shadow: inset 3px 0 #34d399; }
+.ops-kpis .dash-kpi:nth-child(2) { box-shadow: inset 3px 0 #38bdf8; }
+.dash-kpi-label {
+  color: #7895a8;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .11em;
+}
+.dash-kpi-value {
+  margin-top: 2px;
+  color: #f1fbff;
+  font-size: 23px;
+  line-height: 1.05;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-kpis .dash-kpi-value { font-size: 19px; }
+.game-live,
+.game-trend-line,
+.ops-activity {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: #071720;
+  color: #aac3d2;
+  font-size: 9px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-trend-line.better { color: #a7f3d0; background: rgba(16, 185, 129, .08); }
+.game-trend-line.worse { color: #fecaca; background: rgba(239, 68, 68, .09); }
+.game-trend-line.flat { color: #cbd5e1; }
+.game-history-head,
+.ops-services-head,
+.ops-alerts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #7895a8;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .10em;
+}
+.game-bars {
+  height: 52px;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  padding: 4px 6px 0;
+  border-radius: 5px;
+  background: #06141d;
+}
+.game-bar-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.game-bar {
+  min-height: 5px;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, #67e8f9, #0e7490);
+  opacity: .88;
+}
+.game-bar-wrap:last-child .game-bar {
+  background: linear-gradient(180deg, #fde68a, #d97706);
+  opacity: 1;
+}
+.game-bar-label {
+  margin-top: 2px;
+  color: #718b9d;
+  font-size: 6px;
+  line-height: 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ops-worker-value.ok { color: #a7f3d0; }
+.ops-worker-value.warn { color: #fde68a; }
+.ops-worker-value.down { color: #fecaca; }
+.ops-services {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.ops-service {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid #233f50;
+  border-radius: 5px;
+  background: #071720;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+}
+.ops-service-name {
+  color: #819bab;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .07em;
+}
+.ops-service-value {
+  min-width: 0;
+  color: #b8ccd8;
+  font-size: 8px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-service.ok { border-color: #255844; background: rgba(16, 185, 129, .06); }
+.ops-service.ok .ops-service-value { color: #a7f3d0; }
+.ops-service.warn { border-color: #72571d; background: rgba(245, 158, 11, .07); }
+.ops-service.warn .ops-service-value { color: #fde68a; }
+.ops-service.down { border-color: #713535; background: rgba(239, 68, 68, .08); }
+.ops-service.down .ops-service-value { color: #fecaca; }
+.ops-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.ops-alert {
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, .10);
+  color: #fde68a;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-alert.down { background: rgba(239, 68, 68, .12); color: #fecaca; }
+.ops-clear {
+  padding: 7px 8px;
+  border: 1px solid #255844;
+  border-radius: 5px;
+  background: rgba(16, 185, 129, .06);
+  color: #9fe4c5;
+  font-size: 8px;
+  font-weight: 850;
+  text-align: center;
+  letter-spacing: .04em;
+}
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
 </style>
@@ -789,6 +1007,201 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
       return row;
     }));
   }
+
+  function dashNode(className, text) {
+    const el = document.createElement('div');
+    el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+  function compactValue(value, fallback = '—') {
+    const text = String(value ?? '').trim();
+    return text || fallback;
+  }
+  function parseLast8(text) {
+    const match = String(text || '').match(/^Last8:\s+(.+)$/m);
+    if (!match) return [];
+    return match[1].trim().split(/\s+/).map(value => Number(value.replace(/,/g, '')))
+      .filter(Number.isFinite).slice(-8);
+  }
+  function renderGameDashboard(container, feed) {
+    const text = String(feed?.text || '');
+    const corner = text.match(/^SOREN\/CORNER:\s*([^/\n]+)\/\s*([^/\n]+)\/\s*(.+)$/m);
+    const stats = text.match(/Stats:\s*(\d+)\s+(results|reports)\s*\/\s*best=([^/\n]+)(?:\s*\/\s*Recent30=([^\n]+))?/);
+    if (!corner || !stats) return false;
+
+    const root = dashNode('game-dashboard');
+    const eyebrow = dashNode('dash-eyebrow', compactValue(corner[1]).toUpperCase());
+    root.appendChild(eyebrow);
+
+    const titleRow = dashNode('game-title-row');
+    titleRow.appendChild(dashNode('game-title', compactValue(corner[2])));
+    const statusText = compactValue(corner[3], 'DATA');
+    const statusTone = /進行中|ACTIVE|LIVE/i.test(statusText) ? 'ok'
+      : /CONFLICT|INVALID|ERROR|FAIL/i.test(statusText) ? 'down' : 'warn';
+    titleRow.appendChild(dashNode(`dash-pill ${statusTone}`, statusText));
+    root.appendChild(titleRow);
+
+    const kpis = dashNode('game-kpis');
+    for (const [label, value] of [
+      ['BEST', compactValue(stats[3])],
+      ['RECENT 30', compactValue(stats[4] || text.match(/Recent30:[^\n]*mean=([^\s]+)/)?.[1])],
+    ]) {
+      const cell = dashNode('dash-kpi');
+      cell.appendChild(dashNode('dash-kpi-label', label));
+      cell.appendChild(dashNode('dash-kpi-value', value));
+      kpis.appendChild(cell);
+    }
+    root.appendChild(kpis);
+
+    const live = text.match(/^Live:\s*(.+)$/m)?.[1];
+    if (live) root.appendChild(dashNode('game-live', live));
+
+    const trend = text.match(/^\s*Trend:\s*(.+)$/m);
+    const wins = text.match(/^\s*wins=(\d+)\s*\/\s*lower rank is better$/m);
+    if (trend) {
+      const tone = /\/\s*better\s*$/i.test(trend[1]) ? 'better'
+        : /\/\s*worse\s*$/i.test(trend[1]) ? 'worse' : 'flat';
+      root.appendChild(dashNode(`game-trend-line ${tone}`, `TREND  ${trend[1]}`));
+    } else if (wins) {
+      root.appendChild(dashNode('game-trend-line better', `WIN  #1 × ${wins[1]}`));
+    }
+
+    const values = parseLast8(text);
+    if (values.length) {
+      const historyHead = dashNode('game-history-head');
+      historyHead.appendChild(dashNode('', 'LAST 8'));
+      historyHead.appendChild(dashNode('', wins ? 'LOWER IS BETTER' : 'RECENT'));
+      root.appendChild(historyHead);
+      const bars = dashNode('game-bars');
+      const lowerBetter = Boolean(wins) || /Rank Timeline/.test(text);
+      const lo = Math.min(...values), hi = Math.max(...values);
+      const span = Math.max(1, hi - lo);
+      values.forEach(value => {
+        const quality = lowerBetter ? (hi - value) / span : (value - lo) / span;
+        const wrap = dashNode('game-bar-wrap');
+        const bar = dashNode('game-bar');
+        bar.style.height = `${Math.round(8 + quality * 30)}px`;
+        wrap.appendChild(bar);
+        wrap.appendChild(dashNode('game-bar-label', value));
+        bars.appendChild(wrap);
+      });
+      root.appendChild(bars);
+    }
+
+    container.replaceChildren(root);
+    return true;
+  }
+  function opsTone(value) {
+    const text = String(value || '').toUpperCase();
+    if (/STOPPED|DOWN|FAILED|INVALID|DISCONNECTED|ALERT/.test(text)) return 'down';
+    if (/DEGRADED|CHECK|UNKNOWN|PAUSED|RETRY|WAITING/.test(text)) return 'warn';
+    return 'ok';
+  }
+  function sectionLines(text) {
+    const result = {};
+    let section = '';
+    for (const raw of String(text || '').split('\n')) {
+      const trimmed = raw.trim();
+      const heading = trimmed.match(/^(HEALTH|ACTIVITY|AUDIO|TWITCH|YOUTUBE|ROLLBACKS|AI IMPROVE)$/);
+      if (heading) { section = heading[1]; continue; }
+      if (trimmed) (result[section] ||= []).push(trimmed);
+    }
+    return result;
+  }
+  function firstStatus(lines, pattern) {
+    for (const line of lines || []) {
+      const match = line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').match(pattern);
+      if (match) return match[1].trim();
+    }
+    return '';
+  }
+  function renderOpsDashboard(container, feed) {
+    const text = String(feed?.text || '');
+    const workers = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
+    const backendLine = text.split('\n').map(line => line.trim()).find(line => /Backend\s+/.test(line));
+    if (!workers && !backendLine) return false;
+
+    const root = dashNode('ops-dashboard');
+    const sections = sectionLines(text);
+    const titleRow = dashNode('ops-title-row');
+    titleRow.appendChild(dashNode('game-title', 'SYSTEM HEALTH'));
+    const overall = workers?.[3] || (/DOWN|FAILED|INVALID/.test(text) ? 'ALERT' : 'LIVE');
+    titleRow.appendChild(dashNode(`dash-pill ${opsTone(overall)}`, overall));
+    root.appendChild(titleRow);
+
+    const kpis = dashNode('ops-kpis');
+    const workerCell = dashNode('dash-kpi');
+    workerCell.appendChild(dashNode('dash-kpi-label', 'WORKERS'));
+    const workerValue = dashNode(`dash-kpi-value ops-worker-value ${opsTone(workers?.[3])}`,
+      workers ? `${workers[1]} / ${workers[2]}` : '—');
+    workerCell.appendChild(workerValue);
+    kpis.appendChild(workerCell);
+
+    const backendCell = dashNode('dash-kpi');
+    backendCell.appendChild(dashNode('dash-kpi-label', 'STREAM'));
+    const backend = backendLine
+      ? backendLine.replace(/^[●○✓!▸]\s*/, '').replace(/^Backend\s+/, '').trim()
+      : '—';
+    backendCell.appendChild(dashNode('dash-kpi-value', backend.replace(/\s{2,}.*/, '')));
+    kpis.appendChild(backendCell);
+    root.appendChild(kpis);
+
+    const servicesHead = dashNode('ops-services-head');
+    servicesHead.appendChild(dashNode('', 'SERVICES'));
+    servicesHead.appendChild(dashNode('', 'LIVE STATE'));
+    root.appendChild(servicesHead);
+
+    const health = sections.HEALTH || [];
+    const audio = sections.AUDIO || [];
+    const twitch = sections.TWITCH || [];
+    const youtube = sections.YOUTUBE || [];
+    const services = [
+      ['LOOP', firstStatus(health, /^Loop\s+(.+)$/)],
+      ['AUDIO', firstStatus(audio, /^(?:Say|Radio)\s+(.+)$/)],
+      ['TWITCH', firstStatus(twitch, /^Chat\s+(.+)$/)],
+      ['YOUTUBE', firstStatus(youtube, /^Chat\s+(.+)$/)],
+    ];
+    const serviceGrid = dashNode('ops-services');
+    for (const [name, raw] of services) {
+      const value = compactValue(raw, '—').replace(/\s{2,}.*/, '');
+      const card = dashNode(`ops-service ${opsTone(value)}`);
+      card.appendChild(dashNode('ops-service-name', name));
+      card.appendChild(dashNode('ops-service-value', value));
+      serviceGrid.appendChild(card);
+    }
+    root.appendChild(serviceGrid);
+
+    const activity = sections.ACTIVITY || [];
+    const game = activity.find(line => /\bGame\s+/.test(line));
+    const queue = activity.find(line => /QueueMeter/.test(line));
+    const lastDrop = activity.find(line => /LastDrop/.test(line));
+    const activityText = [game, queue, lastDrop].filter(Boolean)
+      .map(line => line.replace(/^[◆▸▾]\s*/, '').replace(/\s{2,}/g, ' ')).join('  ·  ');
+    if (activityText) root.appendChild(dashNode('ops-activity', activityText));
+
+    const alerts = text.split('\n').map(line => line.trim()).filter(line =>
+      /\b(?:STOPPED|DOWN|FAILED|INVALID|DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(line)
+      || /Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429/.test(line)
+    ).slice(0, 3);
+    const alertHead = dashNode('ops-alerts-head');
+    alertHead.appendChild(dashNode('', 'ATTENTION'));
+    alertHead.appendChild(dashNode('', alerts.length ? `${alerts.length} ITEM${alerts.length === 1 ? '' : 'S'}` : 'CLEAR'));
+    root.appendChild(alertHead);
+    const alertBox = dashNode('ops-alerts');
+    if (alerts.length) {
+      for (const line of alerts) {
+        alertBox.appendChild(dashNode(`ops-alert ${opsTone(line) === 'down' ? 'down' : ''}`,
+          line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').replace(/\s{2,}/g, ' ')));
+      }
+    } else {
+      alertBox.appendChild(dashNode('ops-clear', '異常なし · 詳細ログはバックグラウンドで継続監視'));
+    }
+    root.appendChild(alertBox);
+
+    container.replaceChildren(root);
+    return true;
+  }
   function hanjukuView(feed, now) {
     const text = String(feed?.text || '');
     if (!/^SOREN\/CORNER:.*\/ hanjuku-hero \//m.test(text)) return null;
@@ -930,12 +1343,12 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
       if (hanjuku) renderHanjuku(feedG, hanjuku);
-      else renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      else if (!renderGameDashboard(feedG, g)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
     if (sKey !== lastFeedSKey) {
-      renderFeedLines(feedS, s?.text);
+      if (!renderOpsDashboard(feedS, s)) renderFeedLines(feedS, s?.text);
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
     }
@@ -968,6 +1381,11 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     // rows below the frame; fit leading/type to the actual remaining height.
     // Structured Hanjuku cards keep their natural height and all observations.
     for (const container of [feedG, feedS, feedI]) {
+      if (container.querySelector('.game-dashboard,.ops-dashboard,.hanjuku-card')) {
+        container.style.fontSize = '';
+        container.style.lineHeight = '';
+        continue;
+      }
       const rows = container.querySelectorAll('.feed-line');
       const panel = container.parentElement;
       const headerHeight = panel?.querySelector('.panel-head')?.offsetHeight;
