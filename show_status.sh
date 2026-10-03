@@ -988,24 +988,14 @@ capture { block = block $0 ORS }
 END { printf "%s", block }
 ')
 		imp_ai_source=$(printf '%s' "$imp_ai_source" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
-		imp_ai_output_block=$(printf '%s' "$imp_ai_output_block" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g')
 		imp_ai_output_block=$(printf '%s\n' "$imp_ai_output_block" \
-			| sed '/^[[:space:]]*$/d' \
-			| grep -v 'opencode thinking' \
-			| grep -v '^Continue if you have next steps' \
-			| grep -v '^[[:space:]]*[✱→←] ' \
+			| perl lib/status_ai_output_filter.pl 0 \
 			| LC_ALL=C awk 'line != prev { print; prev=line }' \
 			| tail -n "$ai_max_lines")
 		if [[ -z "$imp_ai_output_block" ]]; then
 			# START/END が取れない場合でも、直近の改善ログを最低限見せる
 			imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null \
-				| perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g' \
-				| grep -v '^\s*$' \
-				| grep -v 'opencode thinking' \
-				| grep -v '^Continue if you have next steps' \
-				| grep -v '^[[:space:]]*[✱→←] ' \
-				| grep -v '\[IMPROVE\] job start' \
-				| grep -v '\[IMPROVE\] attached pid=' \
+				| perl lib/status_ai_output_filter.pl 1 \
 				| LC_ALL=C awk 'line != prev { print; prev=line }' \
 				| tail -n "$ai_max_lines")
 			if [[ -z "$imp_ai_source" ]] && [[ -n "$imp_ai_output_block" ]]; then

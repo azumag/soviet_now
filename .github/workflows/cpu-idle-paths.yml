@@ -1,0 +1,41 @@
+name: CPU idle path regression
+
+on:
+  pull_request:
+    paths:
+      - 'codex_bug_dispatcher.sh'
+      - 'core/config.sh'
+      - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
+      - 'tests/test_codex_bug_dispatch_lockdown.sh'
+      - 'tests/test_codex_agent_env_redaction.sh'
+      - '.github/workflows/cpu-idle-paths.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'codex_bug_dispatcher.sh'
+      - 'core/config.sh'
+      - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
+      - 'tests/test_codex_bug_dispatch_lockdown.sh'
+      - 'tests/test_codex_agent_env_redaction.sh'
+      - '.github/workflows/cpu-idle-paths.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_cpu_idle_paths
+      - run: bash tests/test_codex_bug_dispatch_lockdown.sh
+      - run: bash tests/test_codex_agent_env_redaction.sh
+      - run: perl -c lib/status_ai_output_filter.pl
+      - run: bash -n codex_bug_dispatcher.sh

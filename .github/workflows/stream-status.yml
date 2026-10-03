@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
       - 'direct_stream_soak.sh'
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
@@ -27,6 +29,8 @@ on:
     branches: [main]
     paths:
       - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
       - 'direct_stream_soak.sh'
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
@@ -69,6 +73,8 @@ jobs:
           tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
           tests.test_country_stage_names tests.test_score_timeline
           tests.test_docich_corner_stats tests.test_overlay_dashboard_cards
+      - run: python3 -m unittest tests.test_cpu_idle_paths
+      - run: perl -c lib/status_ai_output_filter.pl
       - run: python3 -m py_compile status_dashboard.py
       # zsh -n / bash -n は第2引数以降を $1.. として扱い構文検査しないので、
       # 1 ファイル 1 ステップにする。

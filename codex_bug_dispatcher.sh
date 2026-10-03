@@ -4,6 +4,20 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 [ -f .env ] && set -a && . ./.env && set +a
+# Polling workers call kick even when there is no report. The queue default
+# matches core/config.sh; read .env first so configured queues are respected.
+# A report arriving after this check is picked up on the next worker tick.
+if [ "${1:-run}" = "kick" ]; then
+	_pending_report=0
+	for _report in "${CODEX_BUG_QUEUE_DIR:-tmp/codex_bug_queue}"/*.json; do
+		if [ -f "$_report" ]; then
+			_pending_report=1
+			break
+		fi
+	done
+	[ "$_pending_report" -eq 1 ] || exit 0
+	unset _pending_report _report
+fi
 # shellcheck source=/dev/null
 source ./eloop_lib.sh
 

@@ -12803,8 +12803,10 @@ PY
         self.assertIn("find_archive_path", status)
         self.assertIn("anchor_russia", status)
         self.assertIn("anchor_soviet", status)
-        self.assertIn("opencode thinking", status)
-        self.assertIn("Continue if you have next steps", status)
+        status_filter = (REPO_ROOT / "lib/status_ai_output_filter.pl").read_text()
+        self.assertIn("status_ai_output_filter.pl", status)
+        self.assertIn("opencode thinking", status_filter)
+        self.assertIn("Continue if you have next steps", status_filter)
 
     def test_wildcard_progress_milestones_are_reported_to_audio(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
