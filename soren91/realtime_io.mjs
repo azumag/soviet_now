@@ -103,9 +103,14 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
     entry.retiring = true;
     // Do not start another attach if this one never completes. No orphan storm.
     void entry.pending.then(async session => {
-      await session.detach();
-      await entry.work?.catch(() => {});
-      if (sessions.get(page) === entry) sessions.delete(page);
+      try {
+        await session.detach();
+      } finally {
+        // A disconnected session may reject detach. Still retire it, but only
+        // after its in-flight operation settles so retries cannot overlap it.
+        await entry.work?.catch(() => {});
+        if (sessions.get(page) === entry) sessions.delete(page);
+      }
     }).catch(() => {});
   }
 

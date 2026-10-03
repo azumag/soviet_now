@@ -21,7 +21,8 @@ function png(width = 800, height = 450) {
   b.write('IHDR', 12); b.writeUInt32BE(width, 16); b.writeUInt32BE(height, 20);
   return b.toString('base64');
 }
-function mockPage({ geometries = [G], capture = async () => ({ data: png() }) } = {}) {
+function mockPage({ geometries = [G], capture = async () => ({ data: png() }),
+  detach = async () => {} } = {}) {
   const calls = [];
   let reads = 0, attaches = 0, detaches = 0;
   const session = {
@@ -30,7 +31,7 @@ function mockPage({ geometries = [G], capture = async () => ({ data: png() }) } 
       if (method === 'Runtime.evaluate') return { result: { value: geometries[Math.min(reads++, geometries.length - 1)] } };
       throw new Error('Unexpected method');
     },
-    async detach() { detaches++; },
+    async detach() { detaches++; await detach(); },
   };
   return { context: () => ({ async newCDPSession() { attaches++; return session; } }),
     async screenshot(args) {
@@ -116,6 +117,30 @@ test('capture timeout retires only its CDP session and never returns a late fram
   finish({ data: png() });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(page.counts().reads, 1); // No late post-capture geometry/side effects.
+});
+test('failed CDP detach still recovers after the timed-out screenshot settles', async () => {
+  let finish, shots = 0;
+  const page = mockPage({
+    capture: () => ++shots === 1
+      ? new Promise(resolve => { finish = resolve; })
+      : Promise.resolve({ data: png() }),
+    detach: async () => { throw new Error('session already disconnected'); },
+  });
+  const io = createCanvasIO();
+  await assert.rejects(io.capture(page, { timeoutMs: 15 }), /capture-timeout/);
+  assert.equal(page.counts().detaches, 1);
+  // Even a failed detach cannot allow overlapping captures or late input.
+  await assert.rejects(io.capture(page), /session-busy/);
+  assert.equal(page.counts().attaches, 1);
+  assert.equal(shots, 1);
+  finish({ data: png() });
+  await new Promise(resolve => setImmediate(resolve));
+  const recovered = await io.capture(page);
+  assert.equal(recovered.width, 800);
+  assert.equal(page.counts().attaches, 2);
+  assert.equal(page.counts().reads, 3); // The late first frame had no post-capture work.
+  assert.equal(shots, 2);
+  io.close(page);
 });
 test('concurrent calls cannot queue duplicate screenshot operations', async () => {
   let finish;

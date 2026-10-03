@@ -1493,6 +1493,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
   let rankingDetected = false;
+  let roundResultConfirmed = false;
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
@@ -1557,6 +1558,7 @@ async function gameLoop(page, calibration, gameNumber) {
               console.log(`[game] Active ranking screen detected before move: rank=${activeRankResult}`);
             }
             rankingDetected = true;
+            roundResultConfirmed = true;
           }
         } catch (e) {
           console.log(`[game] Active ranking detection error: ${e.message}`);
@@ -1587,6 +1589,7 @@ async function gameLoop(page, calibration, gameNumber) {
             moveCount = 0;
             lastKnownRank = null;
             rankingDetected = false;
+            roundResultConfirmed = false;
             roundEnded = false;
             waitingCount = 0;
             waitingLogged = false;
@@ -1628,6 +1631,8 @@ async function gameLoop(page, calibration, gameNumber) {
                   console.log(`[game] RANKING screen detected! rank=${rankResult}`);
                 }
                 rankingDetected = true;
+                // 起動時や前試合の結果画面を、新試合の終了証拠にしない。
+                if (turn > 0) roundResultConfirmed = true;
               } else if (!rankingDetected) {
                 // 不完全なランキング候補は最初の1枚だけ残す。
                 // 後続の白フェード/遷移フレームで有用な画像を上書きしない。
@@ -1650,6 +1655,7 @@ async function gameLoop(page, calibration, gameNumber) {
               if (burstResult.detectedRank != null) {
                 lastKnownRank = burstResult.detectedRank;
                 rankingDetected = true;
+                roundResultConfirmed = burstResult.detectedRank > 0;
               }
             } catch (e) {
               console.log(`[game] Ranking transition burst error: ${e.message}`);
@@ -1657,14 +1663,16 @@ async function gameLoop(page, calibration, gameNumber) {
           }
         }
 
-        // ラウンド終了判定: 十分に進んだゲームで連続6回以上WAITINGが続いたらラウンド終了
-        // (ランキング画面が完全に表示されるまで待つため、3→6に増加)
-        if (turn >= MIN_RANKING_DETECTION_TURNS && waitingCount >= 6 && !roundEnded) {
+        // 確定したランキングは10手未満の試合でも終了証拠になる。
+        // 順位不明のWAITINGだけの場合は従来の手数条件を維持する。
+        const confirmedShortRound = turn > 0 && roundResultConfirmed;
+        if ((turn >= MIN_RANKING_DETECTION_TURNS || confirmedShortRound)
+            && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
-          // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
+          // 履歴と結果を保存 (非同期 — ゲームループをブロックしない)
           const finishedSnapshot = currentStrategySnapshot;
           pendingGameOver = handleGameOver(page, gameNumber, turn, boardState, historyFile, finishedSnapshot)
             .catch(e => console.error('[game] Post-game error:', e.message))
@@ -1681,13 +1689,16 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
+          roundResultConfirmed = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
           roundStartedAt = null;
           startBeatSent = false;
           pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
-          interRoundWaitingSeen = false;
+          // 終了を確定した現在のWAITINGも観測済み。次のフレームがMOVEでも
+          // 進めるように保持し、古いランキング画面は後段で引き続き除外する。
+          interRoundWaitingSeen = true;
 
 
           // 定時ラジオチェック (親プロジェクトの時刻ベースコーナーをメリケンAIペルソナで実行)
