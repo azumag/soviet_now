@@ -848,6 +848,37 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   text-align: center;
   letter-spacing: .04em;
 }
+.ops-dashboard.compact {
+  padding: 7px 8px;
+  gap: 5px;
+}
+.ops-dashboard.compact .ops-title-row { min-height: 20px; }
+.ops-dashboard.compact .ops-title-row .game-title { font-size: 11px; line-height: 14px; }
+.ops-dashboard.compact .dash-pill { padding: 2px 5px; font-size: 7px; }
+.ops-dashboard.compact .dash-kpi { padding: 5px 7px; }
+.ops-dashboard.compact .dash-kpi-value { font-size: 16px; }
+.ops-dashboard.compact .dash-kpi-sub,
+.ops-dashboard.compact .ops-services-head,
+.ops-dashboard.compact .ops-activity-grid { display: none; }
+.ops-dashboard.compact .ops-services { gap: 4px; }
+.ops-dashboard.compact .ops-service { padding: 4px 6px; }
+.ops-dashboard.micro {
+  padding: 5px 6px;
+  gap: 4px;
+}
+.ops-dashboard.micro .ops-title-row,
+.ops-dashboard.micro .ops-services-head,
+.ops-dashboard.micro .ops-services,
+.ops-dashboard.micro .ops-activity-grid { display: none; }
+.ops-dashboard.micro .ops-kpis { gap: 4px; }
+.ops-dashboard.micro .dash-kpi { padding: 4px 5px; border-radius: 4px; }
+.ops-dashboard.micro .dash-kpi-label { font-size: 5.5px; }
+.ops-dashboard.micro .dash-kpi-value { margin-top: 1px; font-size: 13px; line-height: 14px; }
+.ops-dashboard.micro .dash-kpi-sub { display: none; }
+.ops-dashboard.micro .ops-alerts-head { font-size: 6px; }
+.ops-dashboard.micro .ops-alerts { gap: 2px; }
+.ops-dashboard.micro .ops-alert { padding: 3px 5px; font-size: 7px; line-height: 9px; }
+.ops-dashboard.micro.has-alerts .ops-kpis { display: none; }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
 </style>
@@ -1157,6 +1188,27 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     }
     return '';
   }
+  function adaptOpsDashboard(container) {
+    const dash = container?.querySelector?.('.ops-dashboard');
+    const panel = container?.parentElement;
+    const header = panel?.querySelector?.('.panel-head');
+    if (!dash || !panel || !header || !Number.isFinite(panel.clientHeight) || panel.clientHeight <= 0) return;
+    const available = Math.max(0, panel.clientHeight - header.offsetHeight);
+    container.style.height = `${available}px`;
+    container.style.overflow = 'hidden';
+    dash.className = dash.className.replace(/\s+(?:compact|micro)\b/g, '');
+    if (available < 105) {
+      dash.className += ' micro';
+      return;
+    }
+    if (available < 225 || dash.scrollHeight > available + 1) {
+      dash.className += ' compact';
+      if (dash.scrollHeight > available + 1 && available < 155) {
+        dash.className = dash.className.replace(/\s+compact\b/g, '') + ' micro';
+      }
+    }
+  }
+
   function renderOpsDashboard(container, feed) {
     const text = String(feed?.text || '');
     const workers = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
@@ -1229,6 +1281,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     ).slice(0, 2);
 
     if (alerts.length) {
+      root.className += ' has-alerts';
       const alertHead = dashNode('ops-alerts-head');
       alertHead.appendChild(dashNode('', 'ATTENTION'));
       alertHead.appendChild(dashNode('', `${alerts.length} ITEM${alerts.length === 1 ? '' : 'S'}`));
@@ -1437,6 +1490,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
       improveActive ? (i?.logUpdatedAt || 0) : (i?.updatedAt || 0),
     ));
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
+    adaptOpsDashboard(feedS);
     // Raw feeds retain every source row. New panel chrome must not push the last
     // rows below the frame; fit leading/type to the actual remaining height.
     // Structured Hanjuku cards keep their natural height and all observations.
