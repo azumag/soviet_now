@@ -156,7 +156,10 @@ def truncate_ansi_display(text, max_width):
 
 
 def fit_dashboard_lines(lines, width=W):
-    return [truncate_ansi_display(line, width) for line in lines]
+    # Bounded, sanitized projection records are machine-readable data for the
+    # dedicated large-type cards, not terminal rows. Never truncate their names.
+    prefixes = ('  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:')
+    return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
 
 def gradient_color(val, lo, hi):
@@ -3323,6 +3326,19 @@ def render_hanjuku_status(value):
         f"  占領記録 {num('captured')}城（現在の城数ではない）",
         f"  保有: {_hanjuku_join(value.get('captured_names'))}",
     ]
+    gap = value.get('gap')
+    if isinstance(gap, dict):
+        lines.append(f"  投影余白: x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
+        names = gap.get('captured_names') or []
+        if names:
+            lines.append("  余白占領記録: " + " / ".join(names))
+        for g in gap.get('garrison') or []:
+            lines.append(f"  余白駐留: until={g['until']:.3f} " + g['castle'] + "=" + "/".join(g['generals']))
+        for m in gap.get('marching') or []:
+            lines.append("  余白行軍: " + m['general'] + "→" + (m['target'] or '未確認'))
+        hp = gap.get('hp')
+        if hp and hp.get('enemy') and hp.get('ally'):
+            lines.append(f"  余白交戦HP: until={hp['until']:.3f} {hp['enemy']} {hp['enemy_hp']} / {hp['ally']} {hp['ally_hp']}")
     if value.get("home_lost") is True:
         lines.append("  本拠: 失陥（記録）")
     lost = row("lost_names")

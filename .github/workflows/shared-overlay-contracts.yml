@@ -12,6 +12,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_hanjuku_gap_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -36,6 +37,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_hanjuku_gap_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -90,7 +92,7 @@ jobs:
         env:
           SOREN_OVERLAY_BROWSER_TESTS: '1'
           SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
-        run: node --test tests/test_direct_broadcast_overlay_browser.mjs
+        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_hanjuku_gap_browser.mjs
       - name: Save synthetic rendering evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
