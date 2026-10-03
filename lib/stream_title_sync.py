@@ -192,6 +192,9 @@ def _append_title_event(
         "kick": kick,
         "execution_head": source_sha,
         "call_condition": call_condition,
+        # Sample only these nonsecret IDs in this helper's effective environment.
+        "youtube_stream_id_present": bool(os.environ.get("YOUTUBE_BROADCAST_STREAM_ID")),
+        "kick_broadcaster_id_present": bool(os.environ.get("KICK_BROADCASTER_USER_ID")),
         "update_stream_game_sha256": _source_file_sha256(root / "update_stream_game.sh"),
         "stream_title_sync_sha256": _source_file_sha256(Path(__file__)),
     }

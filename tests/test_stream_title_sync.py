@@ -228,3 +228,45 @@ class TitleSyncJournalTests(unittest.TestCase):
                 root=root, source_sha="e" * 40, call_condition="private condition",
                 now=datetime(2026, 10, 2, tzinfo=timezone.utc),
             ))
+
+    def test_id_presence_comes_from_helper_environment_without_values(self):
+        import subprocess
+        helper = Path(__file__).resolve().parents[1] / "lib/stream_title_sync.py"
+        for env_ids, expected in (
+            ({}, (False, False)),
+            ({"YOUTUBE_BROADCAST_STREAM_ID": "", "KICK_BROADCASTER_USER_ID": ""}, (False, False)),
+            ({"YOUTUBE_BROADCAST_STREAM_ID": "SYNTHETIC-YOUTUBE-ID", "KICK_BROADCASTER_USER_ID": "SYNTHETIC-KICK-ID"}, (True, True)),
+            ({"YOUTUBE_BROADCAST_STREAM_ID": " "}, (True, False)),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "tmp/state").mkdir(parents=True)
+                # Parent IDs intentionally disagree with the helper's isolated env.
+                with mock.patch.dict(os.environ, {"YOUTUBE_BROADCAST_STREAM_ID": "PARENT-ID", "KICK_BROADCASTER_USER_ID": "PARENT-ID"}):
+                    code = "import sys;sys.path.insert(0,sys.argv[1]);import stream_title_sync as m;m._source_root=lambda:__import__('pathlib').Path(sys.argv[2]);m.main(['--call-condition','normal'])"
+                    proc = subprocess.run([sys.executable, "-c", code, str(helper.parent), str(root)], env=env_ids, input="Synthetic game title", capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(proc.stdout), {"youtube": "not_configured", "kick": "not_configured"})
+                self.assertEqual(proc.stderr, "")
+                text = (root / EVENT_FILE).read_text()
+                rows = [json.loads(line) for line in text.splitlines()]
+                self.assertEqual([row["event"] for row in rows], ["started", "result"])
+                for row in rows:
+                    self.assertIs(row["youtube_stream_id_present"], expected[0])
+                    self.assertIs(row["kick_broadcaster_id_present"], expected[1])
+                for value in ("SYNTHETIC-YOUTUBE-ID", "SYNTHETIC-KICK-ID", "PARENT-ID"):
+                    self.assertNotIn(value, text + proc.stdout + proc.stderr)
+
+    def test_all_allowed_record_shapes_fit_existing_line_budget(self):
+        import stream_title_sync as module
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tmp/state").mkdir(parents=True)
+            with mock.patch.object(module, "_source_file_sha256", return_value="f" * 64), mock.patch.dict(os.environ, {}, clear=True):
+                cases = [("result", "none", y, k) for y in YOUTUBE_RESULTS for k in KICK_RESULTS]
+                cases += [(e, "none", "not_run", "not_run") for e in ("invoked", "started")]
+                cases += [("skipped", r, "not_run", "not_run") for r in SKIP_REASONS]
+                for condition in module.CALL_CONDITIONS:
+                    for event, reason, youtube, kick in cases:
+                        self.assertTrue(_append_title_event(event, skip_reason=reason, youtube=youtube, kick=kick, root=root, source_sha="a" * 40, call_condition=condition))
+                        line = (root / EVENT_FILE).read_bytes().splitlines(keepends=True)[-1]
+                        self.assertLessEqual(len(line), module.EVENT_MAX_LINE_BYTES)
