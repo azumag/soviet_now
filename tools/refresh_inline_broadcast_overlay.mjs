@@ -16,7 +16,13 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function cdpEndpoint() {
-  if (process.env.SOREN_CDP_URL) return process.env.SOREN_CDP_URL;
+  const explicit = process.env.SOREN_CDP_URL || '';
+  if (explicit) {
+    if (!/^https?:\/\/(?:127[.]0[.]0[.]1|localhost):\d+$/.test(explicit)) {
+      throw new Error('SOREN_CDP_URL must be loopback for inline rail refresh');
+    }
+    return explicit.replace('localhost', '127.0.0.1');
+  }
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(ROOT, 'tmp', 'cdp_endpoint.json'), 'utf8'));
     if (typeof parsed?.url === 'string' && /^https?:\/\/(?:127[.]0[.]0[.]1|localhost):\d+$/.test(parsed.url)) {
