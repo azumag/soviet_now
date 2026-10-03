@@ -32,8 +32,10 @@ function fixture(kind) {
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
   }, notifications:{visibleSec:18, events:[], generators:kind==='generator'?[{key:'comment',label:'コメント生成中',ts:now-60}]:[],
-    work:{active:kind==='work'||kind==='long',ts:now-240,title:'復旧方針の確認中',
-      body:kind==='long'?'状態確認が長引いた場合にも、通知の説明文と経過時間をゲーム領域へ重ねずに表示します。':'レイド応答の状態を確認しています'}}};
+    work:{active:['work','long','work-two-line'].includes(kind),ts:now-240,
+      title:kind==='work-two-line'?'復旧方針とコメント応答の状態を確認しています。'.repeat(8):'復旧方針の確認中',
+      body:kind==='work-two-line'?'状態を確認し、復旧方針とコメント応答の経過を記録しています。'.repeat(3):
+        kind==='long'?'状態確認が長引いた場合にも、通知の説明文と経過時間をゲーム領域へ重ねずに表示します。':'レイド応答の状態を確認しています'}}};
 }
 
 test('approved v2 rails keep geometry, observed details and region crops in Chromium', {skip:!enabled}, async () => {
@@ -56,10 +58,11 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress']) {
+    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
+      if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}.png`)});
       const layout=await page.evaluate(()=>{
         const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
         const card=document.querySelector('.hanjuku-card');
@@ -81,6 +84,33 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(layout.background,'rgba(0, 0, 0, 0)');
       assert.equal(layout.bars,false);
       assert.equal(layout.dotsVisible,false);
+      if(['work','long','work-two-line'].includes(kind)) {
+        const workBounds=await page.locator('#work').evaluate(el=>{
+          const rect=e=>{const r=e.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height};};
+          const style=getComputedStyle(el), box=rect(el);
+          const inner={left:box.left+parseFloat(style.borderLeftWidth)+parseFloat(style.paddingLeft),
+            right:box.right-parseFloat(style.borderRightWidth)-parseFloat(style.paddingRight),
+            top:box.top+parseFloat(style.borderTopWidth)+parseFloat(style.paddingTop),
+            bottom:box.bottom-parseFloat(style.borderBottomWidth)-parseFloat(style.paddingBottom)};
+          const title=el.querySelector('.work-title'), body=el.querySelector('.work-body');
+          return {box,inner,rail:rect(el.parentElement),children:[title,body,el.querySelector('.work-elapsed')].map(rect),
+            bodyLines:rect(body).height/parseFloat(getComputedStyle(body).lineHeight),bodyOverflow:body.scrollHeight>body.clientHeight+1,
+            titleEllipsis:title.scrollWidth>title.clientWidth,titleSize:getComputedStyle(title).fontSize};
+        });
+        if(artifacts) fs.writeFileSync(path.join(artifacts,`${kind}-bounds.json`),JSON.stringify(workBounds,null,2));
+        for(const box of workBounds.children) {
+          for(const edge of ['left','top']) assert.ok(box[edge]>=workBounds.inner[edge]-.5,`${kind}: ${edge} inside work padding`);
+          for(const edge of ['right','bottom']) assert.ok(box[edge]<=workBounds.inner[edge]+.5,`${kind}: ${edge} inside work padding`);
+        }
+        assert.ok(workBounds.box.top-workBounds.rail.top>=8,`${kind}: rail top margin`);
+        assert.ok(workBounds.rail.bottom-workBounds.box.bottom>=8,`${kind}: rail bottom margin`);
+        assert.equal(workBounds.titleSize,'21px');
+        if(kind==='work-two-line') {
+          assert.ok(Math.abs(workBounds.bodyLines-2)<.06,'fixture must render exactly two body lines');
+          assert.equal(workBounds.bodyOverflow,false,'two lines fit without hidden extra lines');
+          assert.equal(workBounds.titleEllipsis,true,'long title retains ellipsis');
+        }
+      }
       if(kind!=='improve') {assert.equal(layout.cardClipped,false,kind);assert.equal(layout.cardWidthClipped,false,kind);}
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
@@ -98,9 +128,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         });
         assert.deepEqual(clipping,[],'all log rows remain visibly inside the panel');
       }
-      if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}.png`)});
     }
-    state=fixture('work');
+    state=fixture('work-two-line');
     for(const region of ['sidebar','top','bottom']) {
       await page.goto(origin+`/harness/${region}`);
       const frame=page.frames().find(f=>f.url()===origin+'/overlay');
@@ -108,6 +137,18 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(await frame.evaluate(()=>window.__sorenBroadcastOverlayHealth.region),region);
       const expected=region==='sidebar'?[320,720]:[960,90];
       assert.deepEqual(await frame.evaluate(()=>[document.body.clientWidth,document.body.clientHeight]),expected);
+      if(region==='top') {
+        const cropped=await frame.locator('#work').evaluate(el=>{
+          const b=el.getBoundingClientRect();
+          return {box:[b.left,b.top,b.right,b.bottom],children:[...el.querySelectorAll('.work-title,.work-body,.work-elapsed')].map(e=>{
+            const r=e.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom];
+          })};
+        });
+        assert.deepEqual(cropped.box,[8,8,952,81],'fixed card retains crop margins');
+        for(const [left,top,right,bottom] of cropped.children) {
+          assert.ok(left>=21 && right<=939.5 && top>=13 && bottom<=76.5,'work children retain padding in actual top crop');
+        }
+      }
       if(artifacts) await page.screenshot({path:path.join(artifacts,`${region}.png`),clip:{x:0,y:0,width:expected[0],height:expected[1]}});
     }
     await page.goto(origin+'/harness/sidebar/neutral');
