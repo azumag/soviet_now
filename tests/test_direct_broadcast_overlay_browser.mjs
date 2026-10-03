@@ -156,6 +156,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         }
       }
       if(kind!=='improve') {assert.equal(layout.cardClipped,false,kind);assert.equal(layout.cardWidthClipped,false,kind);}
+      if(!['improve','soren91','jev'].includes(kind)) {
+        assert.equal(layout.gameChrome.headDisplay,'none',`${kind}: redundant Hanjuku panel header hidden`);
+      }
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').textContent(),'実際に送った入力 —回');
