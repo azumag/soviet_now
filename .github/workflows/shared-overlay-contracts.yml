@@ -12,12 +12,15 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'lib/twica_overlay_proxy.mjs'
+      - 'lib/twica_legacy_owner.mjs'
+      - 'direct_stream.sh'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
+      - 'tests/test_twica_legacy_owner.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
   push:
@@ -32,12 +35,15 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'lib/twica_overlay_proxy.mjs'
+      - 'lib/twica_legacy_owner.mjs'
+      - 'direct_stream.sh'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
+      - 'tests/test_twica_legacy_owner.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
 
@@ -59,10 +65,12 @@ jobs:
         run: |
           bash -n start_shared_overlay_service.sh
           bash -n game_lifecycle_control.sh
+          bash -n direct_stream.sh
           bash -n tests/test_shared_overlay_service.sh
           node --check shared_overlay.mjs
           node --check lib/shared_overlay.mjs
           node --check lib/direct_overlay.mjs
+          node --check lib/twica_legacy_owner.mjs
       - name: Run shared and TwiCa overlay regressions
         run: >-
           node --test
@@ -71,6 +79,7 @@ jobs:
           tests/test_direct_broadcast_overlay.mjs
           tests/test_twica_overlay_layout.mjs
           tests/test_twica_overlay_proxy.mjs
+          tests/test_twica_legacy_owner.mjs
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
       - name: Run game lifecycle shell regression
