@@ -886,12 +886,46 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .feed-lines:has(.hanjuku-card) { padding: 0; }
 .hanjuku-card { width: 100%; padding: 5px 2px 0; background: transparent; }
 .hanjuku-card.stale { background: transparent; }
-.hanjuku-details { display: flex; flex-direction: column; gap: 9px; font-size: 10px; line-height: 1.45; }
+/* Prioritize the game state over automation telemetry. */
+.hanjuku-card { font-family: system-ui, sans-serif; }
+.hanjuku-period { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 7px; }
+.hanjuku-chapter { font-size: 26px; line-height: 1.2; letter-spacing: 0; }
+.hanjuku-month { margin: 0; font-size: 12px; }
+.hanjuku-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 14px; margin-bottom: 16px; }
+.hanjuku-kpi:nth-child(1) { order: 0; }
+.hanjuku-kpi:nth-child(2) { order: 2; }
+.hanjuku-kpi:nth-child(3) { order: 1; }
+.hanjuku-label { white-space: nowrap; }
+.hanjuku-detail-row + .hanjuku-detail-row { margin-top: 5px; }
+.hanjuku-details { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; color: #edf5fb; font-size: 18px; line-height: 1.35; }
 .hanjuku-group { min-width: 0; }
-.hanjuku-group-title { margin-bottom: 4px; color: #deedf7; font-size: 10px; font-weight: 800; }
-.hanjuku-detail-row { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 5px; margin-top: 3px; }
-.hanjuku-detail-label { color: #7895a8; font-size: 9px; }
+.hanjuku-group-title { margin-bottom: 4px; color: #bdcdd9; font-size: 14px; font-weight: 600; }
+.hanjuku-detail-row { display: block; margin-top: 0; }
+.hanjuku-detail-label { margin-bottom: 3px; color: #bdcdd9; font-size: 14px; }
 .hanjuku-detail-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.hanjuku-troops { color: #f7fafc; font-size: 24px; font-weight: 700; line-height: 1.15; }
+.hanjuku-castles, .hanjuku-orders { color: #deedf7; font-size: 16px; }
+.hanjuku-records { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.hanjuku-note { font-size: 11px; line-height: 1.4; color: #bdcdd9; }
+.hanjuku-kpi { padding: 0; border: 0; background: transparent; }
+.hanjuku-label { color: #bdcdd9; font-size: 12px; }
+.hanjuku-value, .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 24px; line-height: 1.25; }
+.hanjuku-status { padding: 0; border: 0; background: transparent; font-size: 17px; }
+.hanjuku-duel { padding: 0; border: 0; background: transparent; font-size: 18px; line-height: 1.35; }
+/* Game details are distinct cards, without decorative edge accents. */
+.hanjuku-details { gap: 6px; }
+.hanjuku-group, .hanjuku-detail-row, .hanjuku-duel {
+  box-sizing: border-box; padding: 7px 10px; border: 1px solid #28404f;
+  border-radius: 7px; background: #0b1c28;
+}
+.hanjuku-detail-row + .hanjuku-detail-row { margin-top: 0; }
+.hanjuku-duel { background: #211b26; border-color: #493341; }
+.hanjuku-holds, .hanjuku-garrison, .hanjuku-marching {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
+.hanjuku-records > div { padding: 0; }
 .ops-kpis { grid-template-columns: minmax(0, 1fr); }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
@@ -1384,20 +1418,23 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
     const head = node('hanjuku-head', '半熟英雄');
     head.appendChild(node('hanjuku-badge', value.fresh ? '進行中' : '要確認'));
     card.appendChild(head);
-    card.appendChild(node('hanjuku-chapter', value.chapter === null ? '話数 未確認' : `第 ${value.chapter} 話`));
-    card.appendChild(node('hanjuku-month', value.year === null || value.month === null
+    const period = node('hanjuku-period');
+    period.appendChild(node('hanjuku-chapter', value.chapter === null ? '話数 未確認' : `第 ${value.chapter} 話`));
+    period.appendChild(node('hanjuku-month', value.year === null || value.month === null
       ? '年月 未確認' : `${value.year}年 ${value.month}月（最終観測）`));
+    card.appendChild(period);
+    card.appendChild(node('hanjuku-status', value.status));
     const dots = node('hanjuku-dots');
     for (let i = 1; i <= 12; i++) dots.appendChild(node(`hanjuku-dot${i === value.chapter ? ' current' : ''}`));
     card.appendChild(dots);
     const kpis = node('hanjuku-kpis');
-    for (const [label, text] of [['所持金・最終確認', `${shown(value.gold)} G`],
-      ['戦闘結果・記録', `${shown(value.wins)}勝 ${shown(value.losses)}敗`]]) {
+    for (const [label, text] of [['所持金', `${shown(value.gold)} G`],
+      ['勝 / 敗（累計）', `${shown(value.wins)} / ${shown(value.losses)}`],
+      ['兵力', `${shown(value.soldiers)}名`]]) {
       const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
-      cell.appendChild(node('hanjuku-value', text)); kpis.appendChild(cell);
+      cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
     }
     card.appendChild(kpis);
-    card.appendChild(node('hanjuku-status', value.status));
     if (value.enemyHp !== null) {
       card.appendChild(node('hanjuku-duel',
         `交戦 ${value.enemy} ${value.enemyHp} / ${value.ally} ${value.allyHp}`));
@@ -1415,22 +1452,19 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
       row.appendChild(node(cls, text));
       section.appendChild(row);
     };
-    const territory = group('領地');
-    detail(territory, 'hanjuku-castles', '占領記録', `${shown(value.captured)}城（累計・現在数ではありません）`);
-    if (value.holds) detail(territory, 'hanjuku-holds', '保有', value.holds);
-    const army = group('軍勢');
-    detail(army, 'hanjuku-troops', '兵力', `${shown(value.soldiers)}名`);
-    if (value.garrison) detail(army, 'hanjuku-garrison', '駐留', value.garrison);
-    if (value.marching) detail(army, 'hanjuku-marching', '行軍中', value.marching);
-    const actions = group('行動の記録');
-    if (value.launched !== null) {
-      detail(actions, 'hanjuku-orders', '出撃', `成立 ${value.launched} / 失敗 ${value.failed}`);
+    if (value.holds) {
+      const territory = group('保有拠点');
+      territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
     }
-    detail(actions, 'hanjuku-plan', '計画', `${[value.pending, value.plan].filter(Boolean).join(' / ') || '未確認'}（完了未確認）`);
-    detail(actions, 'hanjuku-inputs', '送信入力', `${shown(value.actions)}回`);
-    detail(actions, 'hanjuku-stalled', '停滞', `${shown(value.stalled)}秒`);
+    if (value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
+    if (value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
+    const records = node('hanjuku-records');
+    records.appendChild(node('hanjuku-castles', `占領記録 ${shown(value.captured)}城（累計）`));
+    if (value.launched !== null) records.appendChild(node('hanjuku-orders', `出撃 成立 ${value.launched} / 失敗 ${value.failed}`));
+    details.appendChild(records);
     card.appendChild(details);
-    card.appendChild(node('hanjuku-note', value.fresh ? '記録済みの観測値を表示 / 未読の値は空欄' : '観測が古いか取得できません / 数値は非表示'));
+    if (!value.fresh) card.appendChild(node('hanjuku-note', '観測が古いため数値は非表示'));
     container.replaceChildren(card);
   }
   function setPanelState(element, label, tone) {
