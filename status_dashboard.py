@@ -3187,21 +3187,65 @@ def render_corner_distribution(scores, *, rank=False):
     return lines
 
 
-def _corner_score_panels(values, *, rank=False, reports=False):
+def _corner_score_panels(values, *, rank=False, reports=False, compact=False):
     scores = [value for value in values if type(value) is int]
     noun = "reports" if reports else "results"
     if not scores:
         return [f"Stats: no completed {noun} yet", "  History will appear after a result is recorded."]
+
     best = min(scores) if rank else max(scores)
+    recent = scores[-30:]
+    recent_mean = statistics.mean(recent)
+
+    if compact:
+        # The right-hand broadcast rail is narrow.  Corner-owned Soren91/JEV
+        # status should answer "how is this run doing?" before spending rows on
+        # history.  Keep the timeline and Last8 trace, but omit the redundant
+        # distribution panel that made the live view difficult to scan.
+        lines = [
+            f"Stats: {len(scores)} {noun} / best={_corner_number(best)}"
+            f" / Recent30={_corner_number(recent_mean)}",
+        ]
+        if len(scores) > 30:
+            previous = scores[-60:-30]
+            delta = recent_mean - statistics.mean(previous)
+            if abs(delta) < 0.05:
+                trend = "flat"
+            else:
+                better = delta < 0 if rank else delta > 0
+                trend = "better" if better else "worse"
+            lines.append(f"  Trend: {delta:+.1f} vs previous {len(previous)} / {trend}")
+        if rank:
+            lines.append(f"  wins={scores.count(1)} / lower rank is better")
+        if reports:
+            # Older JEV reports finalize on errors too and do not distinguish
+            # them from game-over. Do not present these as completed matches.
+            lines.append("  Reported scores; may include interrupted runs")
+        lines.append("")
+        timeline = render_score_timeline(
+            scores,
+            chart_h=5,
+            min_samples=1,
+            lower_is_better=rank,
+        )
+        timeline[0] = timeline[0].replace(
+            "Score Timeline",
+            "Rank Timeline" if rank else "Score Timeline",
+        )
+        if reports:
+            timeline[0] = timeline[0].replace("games", "reports")
+        lines += timeline
+        lines.append("Last8: " + " ".join(_corner_number(s) for s in scores[-8:]))
+        return fit_dashboard_lines(lines)
+
     lines = [
         f"Stats: {len(scores)} {noun} / best={_corner_number(best)}",
         f"  mean={_corner_number(statistics.mean(scores))} median={_corner_number(statistics.median(scores))}",
     ]
-    recent = scores[-30:]
-    lines.append(f"Recent30: n={len(recent)} mean={_corner_number(statistics.mean(recent))}")
+    lines.append(f"Recent30: n={len(recent)} mean={_corner_number(recent_mean)}")
     if len(scores) > 30:
         previous = scores[-60:-30]
-        delta = statistics.mean(recent) - statistics.mean(previous)
+        delta = recent_mean - statistics.mean(previous)
         lines.append(f"  vs previous {len(previous)}: {delta:+.1f}")
     if rank:
         lines.append(f"  wins={scores.count(1)} / lower rank is better")
@@ -3438,7 +3482,7 @@ def render_docich_corner_stats(corner):
             f"Live: this corner results {_corner_int(corner.get('session_matches'))}",
         ]
         scores = corner.get("scores") or []
-        lines += _corner_score_panels([item["score"] for item in scores], rank=True)
+        lines += _corner_score_panels([item["score"] for item in scores], rank=True, compact=True)
         return lines
 
     if kind == "jev":
@@ -3450,7 +3494,7 @@ def render_docich_corner_stats(corner):
             f"Live: player policy={policy} generation={generation}",
         ]
         scores = corner.get("scores") or []
-        lines += _corner_score_panels([item["score"] for item in scores], reports=True)
+        lines += _corner_score_panels([item["score"] for item in scores], reports=True, compact=True)
         return lines
 
     return [
