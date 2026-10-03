@@ -494,10 +494,107 @@ html[data-soren-neutral="1"] #broadcast-sidebar,
 html[data-soren-neutral="1"] #top-rail,
 html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
 
+
+/* Broadcast status hierarchy v4: make GAME/OPS readable as cards, not a log dump. */
+#broadcast-sidebar {
+  padding: 8px;
+  background: #030a12;
+  border-left: 2px solid #24485c;
+}
+.feed-head {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #284c61;
+  border-radius: 7px;
+  background: #071823;
+  box-shadow: inset 3px 0 #2dd4bf;
+  color: #e1f7fb;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.live-dot { width: 7px; height: 7px; background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .10); }
+#feed-label { margin-left: auto; color: #8fb2c7; font-size: 8px; font-weight: 700; }
+#feed-age { min-width: 24px; text-align: right; color: #a8c7d8; font-size: 8px; }
+#feed { margin-top: 8px; width: 303px; height: 632px; gap: 8px; }
+html[data-prediction-active="1"] #feed { height: 568px; }
+.feed-panel {
+  flex: 1 1 0;
+  border: 1px solid #29495d;
+  border-radius: 7px;
+  background: #06131d;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .16);
+  overflow: hidden;
+}
+.feed-panel + .feed-panel { padding-top: 0; border-top: 1px solid #29495d; }
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 auto; }
+html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
+.panel-head {
+  height: 30px;
+  padding: 0 8px;
+  gap: 6px;
+  border-bottom: 1px solid #29495d;
+  background: #0a1b27;
+}
+.panel-g .panel-head { box-shadow: inset 3px 0 #22d3ee; }
+.panel-s .panel-head { box-shadow: inset 3px 0 #34d399; }
+.panel-i .panel-head { box-shadow: inset 3px 0 #fb923c; }
+.badge {
+  padding: 2px 6px;
+  border: 1px solid #39677d;
+  border-radius: 999px;
+  background: #07141e;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 12px;
+}
+.badge-g { color: #8debf5; border-color: #257786; }
+.badge-s { color: #9df0c9; border-color: #2d735a; }
+.badge-i { color: #fdba74; border-color: #8a5a2d; }
+.panel-name { color: #d2e3ed; font-size: 9px; font-weight: 800; letter-spacing: .06em; }
+.panel-state {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid #385468;
+  border-radius: 3px;
+  color: #9fb6c7;
+  background: #07131c;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.panel-state.ok { color: #86efac; border-color: #276448; background: rgba(34, 197, 94, .08); }
+.panel-state.warn { color: #fde68a; border-color: #7c6120; background: rgba(245, 158, 11, .09); }
+.panel-state.down { color: #fecaca; border-color: #7f3434; background: rgba(239, 68, 68, .10); }
+.panel-state.info { color: #a5f3fc; border-color: #276775; background: rgba(34, 211, 238, .08); }
+.panel-meta { margin-left: 0; color: #7894a7; font-size: 7px; }
+.feed-lines { width: 100%; padding: 0 5px; }
+.feed-line { width: 100%; padding: 0 5px; border-left: 0; border-radius: 3px; text-shadow: none; }
+.feed-line.s-health,
+.feed-line.s-activity,
+.feed-line.s-core,
+.feed-line.s-audio,
+.feed-line.s-twitch,
+.feed-line.s-youtube,
+.feed-line.s-rollback {
+  margin-top: 2px;
+  background: #0b2330;
+  color: #a9e8f3;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.feed-line.ops-primary { background: rgba(52, 211, 153, .09); color: #b7f7da; font-weight: 900; }
+.feed-line.ops-alert { background: rgba(239, 68, 68, .15); color: #fecaca; font-weight: 900; }
+.feed-line.ops-warn { background: rgba(245, 158, 11, .14); color: #fde68a; font-weight: 900; }
+.feed-line.game-primary { background: rgba(34, 211, 238, .10); color: #cffafe; font-weight: 900; }
+.feed-line.game-trend { background: rgba(129, 140, 248, .10); color: #c7d2fe; font-weight: 800; }
+.feed-line.g-section { background: #0a202d; color: #8ce5f0; font-weight: 900; }
+.feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
+
 </style>
 </head>
 <body>
-<main id="broadcast-overlay" data-broadcast-overlay-version="3">
+<main id="broadcast-overlay" data-broadcast-overlay-version="4">
   <section id="top-rail" class="rail" aria-live="polite">
     <div id="summary"></div>
     <div id="work">
@@ -517,11 +614,11 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
     <section id="prediction-round" aria-label="チャネルポイント予想" aria-live="polite"></section>
     <div id="feed">
       <section class="feed-panel panel-g">
-        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">GAME STATS</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">GAME STATS</span><span class="panel-state info" id="feed-g-state">LIVE</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
         <div class="feed-lines" id="feed-g"></div>
       </section>
       <section class="feed-panel panel-s">
-        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">OPS HEALTH</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">OPS HEALTH</span><span class="panel-state" id="feed-s-state">CHECK</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
         <div class="feed-lines" id="feed-s"></div>
       </section>
       <section class="feed-panel panel-i">
@@ -544,6 +641,8 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
   const feedI = document.getElementById('feed-i');
   const feedGLines = document.getElementById('feed-g-lines');
   const feedSLines = document.getElementById('feed-s-lines');
+  const feedGState = document.getElementById('feed-g-state');
+  const feedSState = document.getElementById('feed-s-state');
   const feedILines = document.getElementById('feed-i-lines');
   const feedIStatus = document.getElementById('feed-i-status');
   const feedLabel = document.getElementById('feed-label');
@@ -576,7 +675,8 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
     const raw = String(line || '');
     const text = raw.replace(/^[│┃\s]+/, '');
     if (/^━+$/.test(raw) || /^[┌└]─+[┐┘]$/.test(raw)) return 'dim';
-    if (/^  CORE$/.test(raw)) return 's-core';
+    if (/^  (?:CORE|HEALTH)$/.test(raw)) return 's-health';
+    if (/^  ACTIVITY$/.test(raw)) return 's-activity';
     if (/^  AUDIO$/.test(raw)) return 's-audio';
     if (/^  TWITCH$/.test(raw)) return 's-twitch';
     if (/^  YOUTUBE$/.test(raw)) return 's-youtube';
@@ -584,6 +684,11 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
     if (/^│? *SOREN[/]|^│? *Best:|^│? *Avg:/.test(raw)) return 'g-head';
     if (/^Score (Timeline|Distribution)/.test(text) || /^Strategy Comparison/.test(text)) return 'g-section';
     if (/^rk hash/.test(text)) return 'g-head';
+    if (/^Stats:/.test(text)) return 'game-primary';
+    if (/^Trend:/.test(text) || /^wins=/.test(text)) return 'game-trend';
+    if (/Workers\s+.*\bONLINE\b/.test(text) || /^Backend\s+.*(?:LIVE|OBS|OK)/.test(text)) return 'ops-primary';
+    if (/\b(?:STOPPED|DOWN|FAILED|INVALID)\b/.test(text) || /Duplicates\s+DETECTED/.test(text)) return 'down ops-alert';
+    if (/\b(?:DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(text) || /^(?:Stopped|Unexpected|Paused|AI 429)\b/.test(text)) return 'ops-warn';
     if (/^► 1 /.test(text)) return 'g-top';
     if (/^[0-9][0-9.,k]*[┃│]/.test(text)) return 'g-dist';
     if (/[⠀-⣿]/.test(text)) return 'g-chart';
@@ -779,11 +884,42 @@ html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
     card.appendChild(node('hanjuku-note', value.fresh ? '記録済みの観測値を表示 / 未読の値は空欄' : '観測が古いか取得できません / 数値は非表示'));
     container.replaceChildren(card);
   }
+  function setPanelState(element, label, tone) {
+    if (!element) return;
+    element.textContent = label;
+    element.className = `panel-state ${tone || ''}`.trim();
+  }
+  function gamePanelState(feed) {
+    const text = String(feed?.text || '');
+    if (/STATE (?:CONFLICT|INVALID)|unavailable/i.test(text)) return ['ALERT', 'down'];
+    const best = text.match(/Stats:\s*\d+\s+(?:results|reports)\s*\/\s*best=([^/\n]+)/);
+    if (best) return [`BEST ${best[1].trim()}`, 'info'];
+    if (/^Live:/m.test(text)) return ['LIVE', 'ok'];
+    return ['DATA', 'info'];
+  }
+  function opsPanelState(feed) {
+    const text = String(feed?.text || '');
+    const compact = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
+    if (compact) {
+      if (compact[3] === 'ONLINE') return [`${compact[1]}/${compact[2]} OK`, 'ok'];
+      return [compact[3], compact[3] === 'DEGRADED' ? 'down' : 'warn'];
+    }
+    const legacy = text.match(/Workers.*?(\d+)\/(\d+) expected online/);
+    if (legacy) return [`${legacy[1]}/${legacy[2]} OK`, 'ok'];
+    if (/\b(?:STOPPED|DOWN|FAILED|INVALID)\b|Duplicates\s+DETECTED/.test(text)) return ['ALERT', 'down'];
+    if (/\b(?:DEGRADED|UNKNOWN|PAUSED)\b/.test(text)) return ['CHECK', 'warn'];
+    return ['OPS', 'info'];
+  }
+
   function renderFeed() {
     const g = state?.feeds?.showStatusG;
     const s = state?.feeds?.showStatus;
     const i = state?.feeds?.improve;
     const improveActive = Boolean(i?.active);
+    const [gameStateLabel, gameStateTone] = gamePanelState(g);
+    const [opsStateLabel, opsStateTone] = opsPanelState(s);
+    setPanelState(feedGState, gameStateLabel, gameStateTone);
+    setPanelState(feedSState, opsStateLabel, opsStateTone);
     document.documentElement.dataset.improveActive = improveActive ? '1' : '';
     const hanjuku = hanjukuView(g, Date.now() / 1000);
     document.documentElement.dataset.hanjukuActive = hanjuku ? '1' : '';

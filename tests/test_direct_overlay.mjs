@@ -299,6 +299,27 @@ test('direct overlay polling strips generated self-refresh navigation', () => {
 });
 
 
+test('Soren91 inline broadcast templates watch the deployed HTML for changes', () => {
+  const source = fs.readFileSync(path.join(TEST_DIR, '..', 'lib', 'direct_overlay.mjs'), 'utf8');
+  assert.match(source, /INLINE_BROADCAST_REFRESH_MS = 5000/);
+  assert.match(source, /inlineBroadcastSignature/);
+  assert.match(source, /fs[.]statSync\(item[.]htmlFile\)/);
+  assert.match(source, /installInlineDirectBroadcastOverlay\(page, config, \{ watch: false \}\)/);
+  assert.match(source, /page[.]once\('close', stop\)/);
+});
+
+
+test('one-shot inline refresh attaches without navigating or restarting the game', () => {
+  const source = fs.readFileSync(path.join(TEST_DIR, '..', 'tools', 'refresh_inline_broadcast_overlay.mjs'), 'utf8');
+  assert.match(source, /chromium[.]connectOverCDP/);
+  assert.match(source, /soren-direct-stream-overlay-broadcastSidebar/);
+  assert.match(source, /installInlineDirectBroadcastOverlay\(page, config, \{ watch: false \}\)/);
+  assert.match(source, /broadcastOverlayVersion === '4'/);
+  assert.doesNotMatch(source, /page[.]goto\(/);
+  assert.doesNotMatch(source, /kill\(|SIGTERM|SIGKILL|spawn\(/);
+});
+
+
 test('disabled overlay performs no page mutation', async () => {
   const page = {
     addInitScript() { throw new Error('must not run'); },

@@ -124,6 +124,15 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /GAME \+ OPS/);
   assert.match(html, /GAME STATS/);
   assert.match(html, /OPS HEALTH/);
+  assert.match(html, /data-broadcast-overlay-version="4"/);
+  assert.match(html, /id="feed-g-state"/);
+  assert.match(html, /id="feed-s-state"/);
+  assert.match(html, /Broadcast status hierarchy v4/);
+  assert.match(html, /feed-line[.]ops-primary/);
+  assert.match(html, /feed-line[.]ops-alert/);
+  assert.match(html, /feed-line[.]game-primary/);
+  assert.match(html, /HEALTH/);
+  assert.match(html, /ACTIVITY/);
   assert.doesNotMatch(html, /G \+ STATUS/);
   assert.match(html, /panel-i/);
   assert.match(html, /data-improve-active="1"/);
