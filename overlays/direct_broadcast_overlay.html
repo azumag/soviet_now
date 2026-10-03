@@ -527,10 +527,10 @@ html[data-prediction-active="1"] #feed { height: 568px; }
   overflow: hidden;
 }
 .feed-panel + .feed-panel { padding-top: 0; border-top: 0; }
-.feed-panel.structured .panel-head { display: none; }
-.feed-panel.structured .feed-lines { padding: 0; }
-.feed-panel.structured .game-dashboard,
-.feed-panel.structured .ops-dashboard { padding: 5px 2px 0; }
+.feed-panel:has(> .feed-lines.structured) .panel-head { display: none; }
+.feed-panel:has(> .feed-lines.structured) .feed-lines { padding: 0; }
+.feed-panel:has(> .feed-lines.structured) .game-dashboard,
+.feed-panel:has(> .feed-lines.structured) .ops-dashboard { padding: 5px 2px 0; }
 html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 auto; }
 html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .panel-head {
@@ -1159,7 +1159,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     }
 
     container.replaceChildren(root);
-    container.closest('.feed-panel')?.classList.add('structured');
+    container.classList.add('structured');
     return true;
   }
   function opsTone(value) {
@@ -1311,7 +1311,7 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     }
 
     container.replaceChildren(root);
-    container.closest('.feed-panel')?.classList.add('structured');
+    container.classList.add('structured');
     return true;
   }
   function hanjukuView(feed, now) {
@@ -1454,14 +1454,14 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
-      feedG.closest('.feed-panel')?.classList.remove('structured');
+      feedG.classList.remove('structured');
       if (hanjuku) renderHanjuku(feedG, hanjuku);
       else if (!renderGameDashboard(feedG, g)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
     if (sKey !== lastFeedSKey) {
-      feedS.closest('.feed-panel')?.classList.remove('structured');
+      feedS.classList.remove('structured');
       if (!renderOpsDashboard(feedS, s)) renderFeedLines(feedS, s?.text);
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
