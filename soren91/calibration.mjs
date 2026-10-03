@@ -7,6 +7,7 @@
 
 import sharp from 'sharp';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { CALIBRATION_COORDINATE_SCHEMA, isUsableCalibration } from './calibration_contract.mjs';
 
 const CALIBRATION_PATH = 'tmp/calibration.json';
 
@@ -71,29 +72,6 @@ function computeColumnStats(data, width, height, x, scanTop, scanBottom, rowStep
   };
 }
 
-function computeRowStats(data, width, y, scanLeft, scanRight, colStep = 6) {
-  let dark = 0;
-  let total = 0;
-  let sum = 0;
-
-  const x1 = Math.max(0, scanLeft);
-  const x2 = Math.min(width, scanRight);
-  for (let x = x1; x < x2; x += colStep) {
-    const brightness = pixelBrightness(data, width, x, y);
-    sum += brightness;
-    total++;
-    if (brightness < 110) dark++;
-  }
-
-  if (total === 0) {
-    return { avgBrightness: 0, darkRatio: 0 };
-  }
-  return {
-    avgBrightness: sum / total,
-    darkRatio: dark / total,
-  };
-}
-
 function findPeakBrightColumn(data, width, height, startX, endX) {
   const scanTop = Math.floor(height * 0.20);
   const scanBottom = Math.floor(height * 0.88);
@@ -114,88 +92,115 @@ function findInnerWallEdge(data, width, height, wallX, direction) {
   const scanTop = Math.floor(height * 0.25);
   const scanBottom = Math.floor(height * 0.88);
 
-  for (let offset = 4; offset <= 64; offset++) {
+  for (let offset = 1; offset <= Math.ceil(width * 0.05); offset++) {
     const x = wallX + direction * offset;
     if (x <= 0 || x >= width - 1) break;
     const stats = computeColumnStats(data, width, height, x, scanTop, scanBottom);
-    if (stats.darkRatio > 0.25 && stats.avgBrightness < 135) {
-      return x;
+    // Leaving a bright wall must work with either empty background or grey
+    // garbage inside it. A minimum dark-pixel ratio shifts a nearly full board.
+    if (stats.brightRatio < 0.25 && stats.avgBrightness < 170) {
+      return direction > 0 ? x : x + 1;
     }
   }
 
-  return Math.max(0, Math.min(width - 1, wallX + direction * 20));
+  return null;
 }
 
 function findBoardVerticalBounds(data, width, height, leftWallInner, rightWallInner) {
   const usableWidth = rightWallInner - leftWallInner;
-  if (usableWidth < 120) return null;
+  if (usableWidth < Math.max(40, width * 0.15)) return null;
 
-  const horizontalMargin = Math.max(12, Math.floor(usableWidth * 0.08));
-  const scanLeft = leftWallInner + horizontalMargin;
-  const scanRight = rightWallInner - horizontalMargin;
-  const startY = Math.floor(height * 0.15);
-  const endY = Math.floor(height * 0.97);
+  const horizontalMargin = Math.max(2, Math.floor(usableWidth * 0.02));
+  const scanLeft = Math.ceil(leftWallInner + horizontalMargin);
+  const scanRight = Math.floor(rightWallInner - horizontalMargin);
+  const colStep = Math.max(1, Math.round(width / 1280 * 2));
   const rows = [];
-
-  for (let y = startY; y <= endY; y += 2) {
-    const stats = computeRowStats(data, width, y, scanLeft, scanRight);
-    rows.push({
-      y,
-      ...stats,
-      active: stats.darkRatio > 0.22 && stats.avgBrightness < 140,
-    });
+  for (let y = 0; y < height; y++) {
+    let samples = 0, red = 0, divider = 0, bright = 0, white = 0;
+    for (let x = scanLeft; x < scanRight; x += colStep) {
+      const i = (y * width + x) * 4;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const brightness = (r + g + b) / 3;
+      const max = Math.max(r, g, b);
+      const saturation = max ? (max - Math.min(r, g, b)) / max : 0;
+      samples++;
+      // The darker red defeat overlay must not merge into the bright line.
+      if (r > 210 && g < 80 && b < 80) red++;
+      if (saturation < 0.18) {
+        if (brightness > 160) divider++;
+        if (brightness > 185) bright++;
+        if (brightness > 210) white++;
+      }
+    }
+    rows.push({ y, red: red / samples, divider: divider / samples,
+      bright: bright / samples, white: white / samples });
   }
 
-  const isStableActive = (index) => {
-    let activeCount = 0;
-    let total = 0;
-    for (let i = Math.max(0, index - 2); i <= Math.min(rows.length - 1, index + 2); i++) {
-      total++;
-      if (rows[i].active) activeCount++;
+  const bands = (key, threshold) => {
+    const result = [];
+    for (const row of rows) {
+      if (row[key] < threshold) continue;
+      const previous = result.at(-1);
+      if (previous && previous.bottom === row.y) {
+        previous.bottom = row.y + 1;
+      } else {
+        result.push({ top: row.y, bottom: row.y + 1 });
+      }
     }
-    return total > 0 && activeCount >= Math.min(3, total);
+    return result;
   };
 
-  let top = -1;
-  let bottom = -1;
-  for (let i = 0; i < rows.length; i++) {
-    if (isStableActive(i)) {
-      top = rows[i].y;
-      break;
-    }
-  }
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (isStableActive(i)) {
-      bottom = rows[i].y;
-      break;
-    }
-  }
+  // Red loss overlays cover a region; the deadline is a thin horizontal line.
+  const maxLineThickness = Math.max(3, Math.ceil(height / 720 * 8));
+  const deadlines = bands('red', 0.7)
+    .filter(band => band.bottom - band.top <= maxLineThickness);
+  const floors = bands('bright', 0.75).filter(band =>
+    band.bottom - band.top <= maxLineThickness
+    && rows.slice(band.top, band.bottom).some(row => row.white >= 0.6));
+  const dividers = bands('divider', 0.8)
+    .filter(band => band.bottom - band.top <= maxLineThickness);
+  const expectedHeight = usableWidth * (GAME_Y_MAX - GAME_Y_MIN) / getBoardGameWidth();
+  const tolerance = Math.max(3, usableWidth * 0.03);
+  const candidates = [];
 
-  if (top === -1 || bottom === -1 || bottom - top < 140) return null;
-  return { top, bottom };
+  for (const deadline of deadlines) {
+    const top = (deadline.top + deadline.bottom - 1) / 2;
+    for (const floor of floors) {
+      // The first wall pixel is the exclusive lower edge of the play area.
+      const bottom = floor.top;
+      const error = Math.abs((bottom - top) - expectedHeight);
+      if (error > tolerance) continue;
+      const headers = dividers.filter(band =>
+        band.bottom < deadline.top - usableWidth * 0.08
+        && band.bottom > deadline.top - usableWidth * 0.5);
+      if (headers.length !== 1) continue;
+      candidates.push({ top, bottom, arenaTop: headers[0].bottom });
+    }
+  }
+  // Ambiguous or obscured anchors cannot become a new trusted calibration.
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 /**
- * スクリーンショットからゲームボード領域を検出する。
- * ゲームボードの壁（明るい縦線）を検出して正確な領域を特定。
+ * RGBA画像から、壁・deadline・床・HUD境界を検出する（I/Oなし）。
  *
  * ゲーム画面構造:
  *   左側: 他プレイヤーのミニボード (黄色/オレンジ)
  *   中央: 自分のプレイエリア (暗い背景 + 壁)
  *   右側: 他プレイヤーのミニボード
  *
- * @param {string} screenshotPath - スクリーンショットのパス
+ * @param {Uint8Array} data - RGBA画素
+ * @param {number} width - 画像の幅
+ * @param {number} height - 画像の高さ
  * @returns {object} キャリブレーションデータ
  */
-export async function calibrate(screenshotPath) {
-  const image = sharp(screenshotPath);
-  const metadata = await image.metadata();
-  const { width, height } = metadata;
-  const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
-
+export function detectCalibration(data, width, height) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0
+      || !data || data.length !== width * height * 4) throw new TypeError('Expected a finite RGBA image');
   let leftWallOuter = -1, leftWallInner = -1;
   let rightWallInner = -1, rightWallOuter = -1;
   let boardTop = -1, boardBottom = -1;
+  let arenaTop = -1;
   let confidence = 0.35;
   let method = 'fallback';
 
@@ -223,27 +228,30 @@ export async function calibrate(screenshotPath) {
     rightWallOuter = rightPeak.x;
     leftWallInner = findInnerWallEdge(data, width, height, leftWallOuter, +1);
     rightWallInner = findInnerWallEdge(data, width, height, rightWallOuter, -1);
-    const verticalBounds = findBoardVerticalBounds(data, width, height, leftWallInner, rightWallInner);
+    const verticalBounds = leftWallInner !== null && rightWallInner !== null
+      ? findBoardVerticalBounds(data, width, height, leftWallInner, rightWallInner)
+      : null;
     if (verticalBounds && leftWallInner < rightWallInner) {
       boardTop = verticalBounds.top;
       boardBottom = verticalBounds.bottom;
+      arenaTop = verticalBounds.arenaTop;
       confidence = 0.82;
       method = 'profile';
     }
   }
 
   if (
-    leftWallInner === -1 || rightWallInner === -1 ||
+    leftWallInner === -1 || rightWallInner === -1 || leftWallInner === null || rightWallInner === null ||
     boardTop === -1 || boardBottom === -1 ||
     rightWallInner - leftWallInner < Math.floor(width * 0.15)
   ) {
-    console.log('[calibration] Profile detection failed, using fallback');
     leftWallInner = Math.floor(width * 0.35);
     rightWallInner = Math.floor(width * 0.65);
     leftWallOuter = Math.max(0, leftWallInner - 20);
     rightWallOuter = Math.min(width - 1, rightWallInner + 20);
     boardTop = Math.floor(height * 0.42);
     boardBottom = Math.floor(height * 0.96);
+    arenaTop = Math.floor(height * 0.18);
     confidence = 0.35;
     method = 'fallback';
   }
@@ -260,6 +268,7 @@ export async function calibrate(screenshotPath) {
   const pixelsPerUnit = boardWidth / boardGameWidth;
 
   const calibration = {
+    coordinateSchema: CALIBRATION_COORDINATE_SCHEMA,
     screen: { width, height },
     board: {
       left: boardLeft,
@@ -269,6 +278,15 @@ export async function calibrate(screenshotPath) {
       width: boardWidth,
       height: boardHeight,
     },
+    arena: {
+      left: boardLeft,
+      right: boardRight,
+      top: arenaTop,
+      bottom: boardBottom,
+      width: boardWidth,
+      height: boardBottom - arenaTop,
+    },
+    hud: { top: 0, bottom: arenaTop },
     walls: {
       leftOuter: leftWallOuter,
       leftInner: leftWallInner,
@@ -287,28 +305,39 @@ export async function calibrate(screenshotPath) {
     timestamp: new Date().toISOString(),
   };
 
-  // 保存
+  return calibration;
+}
+
+/** Decode a screenshot and persist only the calibration computed from it. */
+export async function calibrate(screenshotPath) {
+  const { data, info } = await sharp(screenshotPath).toColourspace('srgb').raw().ensureAlpha()
+    .toBuffer({ resolveWithObject: true });
+  const calibration = detectCalibration(data, info.width, info.height);
+  if (calibration.isFallback) console.log('[calibration] Anchor detection failed, using fallback');
   writeFileSync(CALIBRATION_PATH, JSON.stringify(calibration, null, 2));
   console.log('[calibration] Saved:', CALIBRATION_PATH);
-  console.log('[calibration] Board area:', `${boardWidth}x${boardHeight} at (${boardLeft},${boardTop})`);
+  const { board, method, confidence } = calibration;
+  console.log('[calibration] Board area:', `${board.width}x${board.height} at (${board.left},${board.top})`);
   console.log('[calibration] Method:', `${method} (confidence=${confidence.toFixed(2)})`);
-
   return calibration;
 }
 
 /**
  * キャッシュされたキャリブレーションを読み込む
  */
-export function loadCalibration() {
-  if (existsSync(CALIBRATION_PATH)) {
-    const calibration = JSON.parse(readFileSync(CALIBRATION_PATH, 'utf-8'));
-    if (calibration?.isFallback) {
-      console.log('[calibration] Ignoring cached fallback calibration; recalibration required');
-      return null;
-    }
-    return withBoardDerivedDropArea(calibration);
+export function loadCalibration(calibrationPath = CALIBRATION_PATH) {
+  if (!existsSync(calibrationPath)) return null;
+  let calibration;
+  try {
+    calibration = JSON.parse(readFileSync(calibrationPath, 'utf-8'));
+  } catch {
+    return null;
   }
-  return null;
+  if (!isUsableCalibration(calibration)) {
+    console.log('[calibration] Ignoring unverified cached geometry; recalibration required');
+    return null;
+  }
+  return withBoardDerivedDropArea(calibration);
 }
 
 /**

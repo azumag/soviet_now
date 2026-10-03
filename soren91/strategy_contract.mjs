@@ -3,7 +3,8 @@ export const STRATEGY_CONTRACT = `
 Required strategy invariants (checked before adoption):
 - Return a finite x inside [-3,3] and respect piece-radius wall clearance.
 - Do not mutate the observation. Never HOLD when canHold is false.
-- nextPieces preserves three UI slots and can contain null. Stop lookahead at
+- next is the visible current piece. nextPieces is [current, NEXT-left,
+  NEXT-middle] and can contain null. Stop lookahead at
   the first unknown slot; never compact it or fabricate type 1.
 - A null hold is unknown unless holdKnownEmpty is explicitly true.
 - Avoid a deadline-height landing when a clear lower lane exists. Negative

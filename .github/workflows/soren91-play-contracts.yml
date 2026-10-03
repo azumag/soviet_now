@@ -17,6 +17,12 @@ on:
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
+      - 'soren91/calibration_contract.mjs'
+      - 'soren91/sprite_perception.mjs'
+      - 'soren91/flag_templates.mjs'
+      - 'tools/build_soren91_flag_templates.mjs'
+      - 'soviet_now.png'
+      - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
@@ -39,6 +45,12 @@ on:
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
+      - 'soren91/calibration_contract.mjs'
+      - 'soren91/sprite_perception.mjs'
+      - 'soren91/flag_templates.mjs'
+      - 'tools/build_soren91_flag_templates.mjs'
+      - 'soviet_now.png'
+      - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
@@ -73,6 +85,10 @@ jobs:
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
           node --check soren91/observation_guard.mjs
+          node --check soren91/calibration.mjs
+          node --check soren91/calibration_contract.mjs
+          node --check soren91/sprite_perception.mjs
+          node --check soren91/flag_templates.mjs
           node --check soren91/critical_turn_screenshots.mjs
       - name: Run play and existing Soren91 regressions
         run: |

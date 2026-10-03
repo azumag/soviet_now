@@ -93,8 +93,6 @@ const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
-const CALIBRATION_MIN_CONFIDENCE = 0.55;
-const CALIBRATION_MIN_PIECES = 3;
 const MIN_RANKING_DETECTION_TURNS = 10;
 const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
@@ -1487,8 +1485,6 @@ async function gameLoop(page, calibration, gameNumber) {
   let consecutiveErrors = 0;
   let waitingLogged = false;
   let waitingCount = 0;
-  let calibrated = false;
-  let moveCount = 0;
   let roundEnded = false;
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
@@ -1585,8 +1581,6 @@ async function gameLoop(page, calibration, gameNumber) {
               console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
             }
             turn = 0;
-            calibrated = false;
-            moveCount = 0;
             lastKnownRank = null;
             rankingDetected = false;
             roundResultConfirmed = false;
@@ -1685,8 +1679,6 @@ async function gameLoop(page, calibration, gameNumber) {
           currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
           console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;
-          calibrated = false;
-          moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
           roundResultConfirmed = false;
@@ -1803,30 +1795,9 @@ async function gameLoop(page, calibration, gameNumber) {
       waitingCount = 0;
       roundEnded = false;
 
-      // MOVE状態が安定してからキャリブレーション (初回のみ)
-      if (!calibrated) {
-        const shouldAcceptForCalibration =
-          (boardState.pieces?.length ?? 0) >= CALIBRATION_MIN_PIECES &&
-          (
-            (boardState.confidence ?? 0) >= CALIBRATION_MIN_CONFIDENCE ||
-            calibration?.provisional === true
-          );
-        if (shouldAcceptForCalibration) {
-          moveCount++;
-        } else {
-          moveCount = 0;
-        }
-        if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
-          console.log('[game] Game board stable, running calibration...');
-          const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
-          await latency.measure('capture', () => captureGameScreenshot(page, calScreenshot));
-          const { calibrate } = await loadModule('./calibration.mjs');
-          calibration = await calibrate(calScreenshot);
-          calibrated = true;
-          continue; // Re-observe with the new calibration; the old board/frame is not compatible.
-        }
-      }
-
+      // analyzeScreenshot validates the world/HUD anchors before the first
+      // input and recalibrates incompatible geometry. A second pieces>=3 path
+      // could replace valid anchors while pieces or garbage were moving.
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
         await latency.measure('poll', () => sleep(POLL_INTERVAL_MS));
