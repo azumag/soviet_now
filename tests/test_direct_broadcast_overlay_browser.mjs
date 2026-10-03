@@ -167,11 +167,16 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       }
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
-        assert.equal(await page.locator('.hanjuku-inputs').textContent(),'—回');
+        assert.equal(await page.locator('.hanjuku-inputs').count(),0);
       } else if(!['improve','soren91','jev'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
-        assert.match(await page.locator('.hanjuku-plan').textContent(),/完了未確認/);
-        assert.match(await page.locator('.hanjuku-note').textContent(),/観測/);
+        assert.equal(await page.locator('.hanjuku-plan').count(),0);
+        assert.equal(await page.locator('.hanjuku-inputs').count(),0);
+        assert.equal(await page.locator('.hanjuku-troops').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),24);
+        for(const selector of ['.hanjuku-duel','.hanjuku-holds','.hanjuku-garrison','.hanjuku-marching']) {
+          assert.equal(await page.locator(selector).evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),18,`${kind}: ${selector} stays readable`);
+        }
+        assert.equal(await page.locator('.hanjuku-orders').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),16);
       }
       assert.equal(layout.opsDashboard,true,`${kind}: OPS uses structured dashboard`);
       assert.deepEqual(layout.opsChrome.border,['0px','0px','0px','0px'],`${kind}: OPS outer panel border removed`);
