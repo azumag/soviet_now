@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -24,6 +25,24 @@ class GameLifecycleBrokerTests(unittest.TestCase):
         )
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         return result, payload
+
+    def bridge_pid(self) -> int:
+        # Advertise a synthetic, bounded process with the production cmdline
+        # marker. Do not weaken the Linux live-bridge capability validation or
+        # start the actual bridge/browser/game in these subprocess regressions.
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", "soviet_local.mjs"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        def cleanup():
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        self.addCleanup(cleanup)
+        return process.pid
 
     @staticmethod
     def request(root: Path, request_id: str, deadline: float = 60.0) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -96,7 +115,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             lifecycle.mkdir(parents=True, exist_ok=True)
             (lifecycle / "player_capabilities.json").write_text(
                 json.dumps({
-                    "schema": 1, "game": "sorengame", "pid": os.getpid(),
+                    "schema": 1, "game": "sorengame", "pid": self.bridge_pid(),
                     "capabilities": ["player_policy_v1"],
                 }),
                 encoding="utf-8",
@@ -206,7 +225,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
                 json.dumps({
                     "schema": 1,
                     "game": "sorengame",
-                    "pid": os.getpid(),
+                    "pid": self.bridge_pid(),
                     "capabilities": ["player_policy_v1"],
                 }),
                 encoding="utf-8",
@@ -323,7 +342,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             }))
             self.assertEqual(self.run_broker(root, "mark-jev-one-game")[0].returncode, 1)
             (lifecycle / "player_capabilities.json").write_text(json.dumps({
-                "schema": 1, "game": "sorengame", "pid": os.getpid(),
+                "schema": 1, "game": "sorengame", "pid": self.bridge_pid(),
                 "capabilities": ["player_policy_v1"],
             }))
             request_id = str(uuid.uuid4())
