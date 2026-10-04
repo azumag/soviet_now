@@ -22,7 +22,9 @@ function fixture(kind) {
   if(kind==='long-card'||kind==='stress') text=text.replace('カストーラ/スペンソニア','保有将軍'.repeat(10))
     .replace('アルマムーン=ゼウス/ユイートル','駐留将軍'.repeat(15))
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
-  if (kind === 'soren91') {
+  if (kind === 'monitor') {
+    text = process.env.SOREN_MONITOR_FEED ? JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).text : fs.readFileSync(path.join(root, 'tests/fixtures/soren-monitor.txt'),'utf8');
+  } else if (kind === 'soren91') {
     text = 'SOREN/CORNER: SOREN91 / soren91 / ACTIVE\n'
       + 'Live: this corner results 42\n'
       + 'Stats: 120 results / best=1 / Recent30=5.2\n'
@@ -62,7 +64,7 @@ function fixture(kind) {
   if (kind === 'stress') ops.push('    ! Unexpected  KickW', '    ! Duplicates  DETECTED  chat_worker=10,11');
   if (kind === 'prediction'||kind==='stress') ops.push('予想対象：#23｜終了まで20秒', '#23：今回の予想対象');
   return {version:1, updatedAt:now, feeds:{
-    showStatusG:{text, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
+    showStatusG:{text, segments:kind==='monitor'&&process.env.SOREN_MONITOR_FEED?JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).segments:undefined, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
@@ -93,7 +95,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev']) {
+    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -162,13 +164,13 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         }
       }
       if(kind!=='improve') {assert.equal(layout.cardClipped,false,kind);assert.equal(layout.cardWidthClipped,false,kind);}
-      if(!['improve','soren91','jev'].includes(kind)) {
+      if(!['improve','soren91','jev','monitor'].includes(kind)) {
         assert.equal(layout.gameChrome.headDisplay,'none',`${kind}: redundant Hanjuku panel header hidden`);
       }
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
-      } else if(!['improve','soren91','jev'].includes(kind)) {
+      } else if(!['improve','soren91','jev','monitor'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
@@ -177,6 +179,18 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           assert.equal(await page.locator(selector).evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),18,`${kind}: ${selector} stays readable`);
         }
         assert.equal(await page.locator('.hanjuku-orders').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),16);
+      }
+      if(kind==='monitor') {
+        assert.ok(await page.locator('.monitor-section').count()>=4);
+        const checks=await page.locator('.soren-monitor').evaluate(e=>({
+          bottom:e.getBoundingClientRect().bottom,
+          limit:Math.min(document.querySelector('.panel-g').getBoundingClientRect().bottom,document.querySelector('#feed').getBoundingClientRect().bottom),
+          overflow:[...e.querySelectorAll('.monitor-section-body')].some(b=>b.scrollWidth>b.clientWidth+1),
+          borders:[...e.querySelectorAll('.monitor-section')].every(b=>getComputedStyle(b).borderLeftWidth==='1px'),
+        }));
+        assert.ok(checks.bottom<=checks.limit+1,'all Soren monitor sections fit');
+        assert.equal(checks.overflow,false,'ASCII graphs retain their full width');
+        if(artifacts) await page.screenshot({path:path.join(artifacts,'monitor-sidebar.png'),clip:{x:960,y:0,width:320,height:720}});
       }
       assert.equal(layout.opsDashboard,true,`${kind}: OPS uses structured dashboard`);
       assert.deepEqual(layout.opsChrome.border,['0px','0px','0px','0px'],`${kind}: OPS outer panel border removed`);

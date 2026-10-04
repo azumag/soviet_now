@@ -927,6 +927,23 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 .ops-kpis { grid-template-columns: minmax(0, 1fr); }
+html[data-soren-monitor="1"] .feed-panel.panel-g { flex: 0 0 auto; }
+.feed-panel:has(.soren-monitor) .panel-head { display: none; }
+.feed-panel:has(.soren-monitor) .feed-lines { padding: 0; }
+.soren-monitor { display: flex; flex-direction: column; gap: 6px; padding: 5px 2px 0; color: #b9d9da; font-family: "SFMono-Regular", Consolas, monospace; }
+.monitor-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 1px 5px; color: #e8fbf5; font-size: 14px; font-weight: 800; letter-spacing: .12em; }
+.monitor-header span { color: #71b7b3; font-size: 9px; letter-spacing: .08em; }
+.monitor-section { min-width: 0; border: 1px solid #264650; border-radius: 4px; background: #08171d; overflow: hidden; }
+.monitor-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 5px 7px; border-bottom: 1px solid #203c46; background: #0d222a; color: #83e2d0; font-size: 10px; line-height: 12px; font-weight: 700; letter-spacing: .04em; }
+.monitor-section-head small { color: #83a8ae; font-size: 8px; font-weight: 500; letter-spacing: 0; text-align: right; }
+.monitor-section-body { font-weight: 500; padding: 5px 6px; color: #a8d6cc; font-size: 8px; line-height: 10px; white-space: pre; }
+.monitor-section-body > div { min-height: 10px; }
+.monitor-section[data-kind="timeline"] .monitor-section-body { color: #e7bf75; }
+.monitor-section[data-kind="distribution"] .monitor-section-body { color: #93ddd0; }
+.monitor-section[data-kind="strategy"] .monitor-section-head { color: #e3c97d; }
+.monitor-section[data-kind="observer"] .monitor-section-body,
+.monitor-section[data-kind="events"] .monitor-section-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; line-height: 12px; }
+.monitor-section[data-kind="events"] .monitor-section-head { color: #edca7f; }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
 /* Dedicated surface behind the native game window. It draws only measured padding. */
@@ -1226,6 +1243,43 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       root.appendChild(bars);
     }
 
+    container.replaceChildren(root);
+    return true;
+  }
+  function renderSorenMonitor(container, feed, view) {
+    const raw = String(feed?.text || '');
+    if (!/SOREN\/(?:OBS|FFMPEG)\b/.test(raw)
+        || !/Strategy Comparison/.test(raw) || !/Score Timeline/.test(raw)) return false;
+    const root = dashNode('soren-monitor');
+    const header = dashNode('monitor-header', 'SOREN');
+    const tag = document.createElement('span'); tag.textContent = 'TELEMETRY';
+    header.appendChild(tag); root.appendChild(header);
+    let section = null;
+    const lines = String(view.text || '').split('\n');
+    const addSection = (kind, title, meta = '') => {
+      const card = dashNode('monitor-section'); card.dataset.kind = kind;
+      const head = dashNode('monitor-section-head', title);
+      if (meta) { const caption = document.createElement('small'); caption.textContent = meta; head.appendChild(caption); }
+      const body = dashNode('monitor-section-body');
+      card.appendChild(head); card.appendChild(body); root.appendChild(card);
+      return body;
+    };
+    lines.forEach((line, index) => {
+      const title = line.trim().match(/^(Score Timeline|Score Distribution|Strategy Comparison|Observer Status)(.*)$/);
+      if (title) {
+        const names = {'Score Timeline':['timeline','SCORE TRACE'], 'Score Distribution':['distribution','DISTRIBUTION'],
+          'Strategy Comparison':['strategy','STRATEGY MATRIX'], 'Observer Status':['observer','OBSERVER']};
+        const [kind, label] = names[title[1]];
+        section = addSection(kind, label, title[2].trim());
+      } else if (line.trim()) {
+        if (!section) section = addSection('events', 'EVENT LOG');
+        const row = dashNode('');
+        const chartText = text => String(text).replace(/[█▓▒░]/g, '=');
+        const segments = view.segments?.[index]?.map(segment => ({...segment, t: chartText(segment.t)}));
+        appendFeedLineContent(row, monitorText(chartText(line)), segments);
+        section.appendChild(row);
+      }
+    });
     container.replaceChildren(root);
     return true;
   }
@@ -1586,7 +1640,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
       if (hanjuku) renderHanjuku(feedG, hanjuku);
-      else if (!renderGameDashboard(feedG, g)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      else if (!renderGameDashboard(feedG, g) && !renderSorenMonitor(feedG, g, gView)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      document.documentElement.dataset.sorenMonitor = feedG.querySelector('.soren-monitor') ? '1' : '';
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
