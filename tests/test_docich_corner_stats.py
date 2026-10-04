@@ -51,8 +51,9 @@ class DocichCornerStatsTest(unittest.TestCase):
             "retro_corner.json",
             game="ninvaders",
             started_at=started,
-            target_matches=3,
+            target_matches=3, rotation_runtime_id="g1",
         )
+        _write_json(self.root / "game_switch.json", {"phase":"ready", "active":{"game":"ninvaders","runtime_id":"g1"}})
         log = self.root / "scores/ninvaders.jsonl"
         log.parent.mkdir(parents=True)
         rows = [
@@ -582,3 +583,136 @@ class HanjukuStatusTest(unittest.TestCase):
         text = '\n'.join(sd.render_docich_corner_stats(load_active_corner(self.root)))
         self.assertIn('Stats: 4 results', text)
         self.assertIn('Strategy: no corner ranking data', text)
+
+class ConsoleProgressTest(unittest.TestCase):
+    setUp = DocichCornerStatsTest.setUp
+    tearDown = DocichCornerStatsTest.tearDown
+    _state = DocichCornerStatsTest._state
+
+    def console(self, *, status="active", game="nsnake", start=100, deadline=500, **extra):
+        self._state("retro_corner.json", status=status, game=game, started_at=start,
+                    ends_at=deadline, target_matches=3, rotation_runtime_id="g7", **extra)
+        _write_json(self.root / "game_switch.json", {"phase": "ready", "active":
+                    {"game": game, "runtime_id": "g7"}})
+        log = self.root / f"scores/{game}.jsonl"
+        log.parent.mkdir(exist_ok=True)
+        log.write_text("\n".join(json.dumps(row) for row in [
+            {"game": game, "score": 900, "ts": 90},
+            {"game": game, "score": 10, "ts": 110},
+            {"game": game, "score": 30, "ts": 160},
+            {"game": game, "score": 999, "ts": 300},
+            {"game": "other", "score": 888, "ts": 150}]))
+        return load_active_corner(self.root, now=200)
+
+    def test_session_excludes_previous_future_and_other_game_results(self):
+        for game in ["ninvaders", "nsnake", "bastet", "moon-buggy", "pacman4console"]:
+            with self.subTest(game=game):
+                c = self.console(game=game)
+                p = c["console"]
+                self.assertNotIn(999, [r["score"] for r in c["scores"]])
+                self.assertEqual((p["session_count"], p["session_best"], p["session_mean"]), (2, 30, 20))
+                self.assertEqual((p["remaining"], p["remaining_seconds"]), (1, 300))
+                self.assertEqual(p["latest"], {"score": 30, "at": 160, "age": 40})
+                text = "\n".join(sd.render_console_progress(p))
+                self.assertIn("Session: n=2 / best=30 / mean=20", text)
+                self.assertIn("1 matches left / limit 5:00", text)
+                self.assertIn("40s ago", text)
+                self.assertIn("live score unobserved", text)
+                self.assertNotIn("999", text)
+                self.assertNotIn("900", text)
+                for line in sd.render_console_progress(p):
+                    self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+                self.assertEqual(sd.fit_dashboard_lines(sd.render_console_progress(p)),
+                                 sd.render_console_progress(p))
+
+    def test_absent_invalid_and_undated_history_are_unknown_not_zero(self):
+        self.console()
+        path = self.root / "scores/nsnake.jsonl"
+        for content in [None, "{partial", json.dumps({"game": "nsnake", "score": 42})]:
+            with self.subTest(content=content):
+                if content is None: path.unlink()
+                else: path.write_text(content)
+                p = load_active_corner(self.root, now=200)["console"]
+                self.assertIsNone(p["session_count"])
+                self.assertIsNone(p["remaining"])
+                self.assertIsNone(p["latest"])
+                self.assertIn("history unavailable", "\n".join(sd.render_console_progress(p)))
+        path.write_text("")
+        self.assertEqual(load_active_corner(self.root, now=200)["console"]["session_count"], 0)
+
+    def test_unidentified_history_rows_make_session_unknown(self):
+        self.console()
+        path = self.root / "scores/nsnake.jsonl"
+        valid = {"game": "nsnake", "score": 10, "ts": 110}
+        for invalid in [None, [], {}, {"score": 42, "ts": 150},
+                        {"game": None}, {"game": ""}, {"game": 7}]:
+            for rows in [[invalid], [valid, invalid]]:
+                with self.subTest(rows=rows):
+                    path.write_text("\n".join(json.dumps(row) for row in rows))
+                    p = load_active_corner(self.root, now=200)["console"]
+                    self.assertEqual(p["history_status"], "partial")
+                    self.assertIsNone(p["session_count"])
+                    self.assertIsNone(p["remaining"])
+                    self.assertIsNone(p["latest"])
+                    text = "\n".join(sd.render_console_progress(p))
+                    self.assertIn("history unavailable", text)
+                    self.assertNotIn("n=0", text)
+                    self.assertNotIn("matches left", text)
+
+    def test_identified_other_game_rows_do_not_make_history_partial(self):
+        self.console()
+        path = self.root / "scores/nsnake.jsonl"
+        other = {"game": "bastet", "score": 42, "ts": 150}
+        valid = {"game": "nsnake", "score": 10, "ts": 110}
+        for rows, count in [([other], 0), ([valid, other], 1)]:
+            with self.subTest(rows=rows):
+                path.write_text("\n".join(json.dumps(row) for row in rows))
+                p = load_active_corner(self.root, now=200)["console"]
+                self.assertEqual(p["history_status"], "readable")
+                self.assertEqual(p["session_count"], count)
+                self.assertEqual(p["remaining"], 3 - count)
+
+    def test_old_same_game_runtime_and_switching_never_claim_current_plan(self):
+        self.console()
+        for canonical in [{"phase": "ready", "active": {"game": "nsnake", "runtime_id": "g8"}},
+                          {"phase": "draining", "active": {"game": "nsnake", "runtime_id": "g7"}},
+                          {"phase": "ready", "active": {"game": "bastet", "runtime_id": "g7"}}, {}]:
+            _write_json(self.root / "game_switch.json", canonical)
+            p = load_active_corner(self.root, now=200)["console"]
+            self.assertEqual(p["next"], "unverified")
+            if canonical.get("phase") != "draining":
+                self.assertIsNone(p["session_count"])
+                self.assertIsNone(p["latest"])
+            self.assertNotIn("matches left", "\n".join(sd.render_console_progress(p)))
+
+    def test_target_time_and_transition_plans_are_distinct(self):
+        for status, start, end, expected in [
+                ("starting", 100, 500, "switch-wait"), ("restoring", 100, 500, "restore-wait"),
+                ("active", 100, 150, "deadline-passed"), ("active", 50, 500, "target-recorded")]:
+            c = self.console(status=status, start=start, deadline=end)
+            self.assertEqual(c["console"]["next"], expected)
+            if status == "starting": self.assertIsNone(c["console"]["session_count"])
+        c = self.console(start=300)
+        self.assertIsNone(c["console"]["session_count"])
+        self.assertIsNone(c["console"]["remaining"])
+
+    def test_reasons_are_allowlisted_and_other_corners_are_unchanged(self):
+        c = self.console(status="restoring", end_reason="manual_saved_stop", last_error="private detail")
+        self.assertIn("Reason: saved stop (record)", "\n".join(sd.render_console_progress(c["console"])))
+        self.assertNotIn("private", "\n".join(sd.render_docich_corner_stats(c)))
+        c = self.console(end_reason=["arbitrary"], last_error_code="sentinel-secret")
+        self.assertIsNone(c["console"]["reason"])
+        c = self.console(game="robots")
+        self.assertNotIn("console", c)
+
+    def test_every_reason_keeps_live_score_unobserved_in_the_fitted_feed(self):
+        for reason in ["game_over", "screen_stalled", "manual_saved_stop", "manual_forced_stop",
+                       "switch-terminal-before-corner-active", "recovery_required", "quiesce_failed",
+                       "readiness_timeout", "deadline_exceeded"]:
+            with self.subTest(reason=reason):
+                c = self.console(status="restoring", end_reason=reason, last_error_code=reason)
+                lines = sd.render_console_progress(c["console"])
+                self.assertEqual(len(lines), 4)
+                self.assertIn("live score unobserved", lines[3])
+                self.assertLessEqual(sd.ansi_display_width(lines[3]), sd.W)
+                self.assertEqual(sd.fit_dashboard_lines(lines), lines)
