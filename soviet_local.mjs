@@ -34,6 +34,7 @@ import {
 import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
 import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
 import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
+import { GameObservationWriter } from './lib/game_observation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,7 @@ for (const signal of ['SIGTERM', 'SIGHUP']) {
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
+const gameObservation = new GameObservationWriter('tmp/state/game_observation.json');
 const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
 const PLAYER_STATE_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_state.json');
 const PLAYER_CAPABILITY_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_capabilities.json');
@@ -1247,8 +1249,11 @@ async function getGameState(page) {
     // the same long-lived process.
     refreshCommittedPlayerState();
     const state = await page.evaluate(() => window.__sorenGameState);
-    return annotateJevState(state || null);
+    const annotated = annotateJevState(state || null);
+    gameObservation.observe(annotated);
+    return annotated;
   } catch (e) {
+    gameObservation.observe(null);
     console.error('Error getting game state:', e.message);
     return null;
   }
@@ -1783,6 +1788,12 @@ async function processGameLifecycleControl(page, runtime = {}) {
     if (!lifecycleStopRequestStillCurrent(control)) {
       return { handled: false, status: 'stale' };
     }
+    if (readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot?.stale_founding_stop) {
+      // Re-observe the actual bridge after overlay readiness, before claiming.
+      // A resumed MOVE revokes the exceptional boundary without any input.
+      await getGameState(page);
+      // The broker revokes the ACK/control if this observation changed or failed.
+    }
     // This is the atomic no-restore fence.  Cancellation remains possible up
     // to this point; after it succeeds, the bridge must finish or fail closed.
     const claim = await claimLifecycleStop(control.request_id);
@@ -2026,12 +2037,14 @@ function stateChanged(prev, curr) {
   if (!prev || !curr) return true;
   return prev.state !== curr.state ||
          prev.score !== curr.score ||
+         prev.makeSorenCount !== curr.makeSorenCount ||
          JSON.stringify(prev.pieces) !== JSON.stringify(curr.pieces);
 }
 
 // Execute a command via JS Bridge
 async function executeCommand(page, command, externalGameAudio = null, jevDropGuard = null) {
   if (command.action === 'retry') {
+    gameObservation.reset();
     console.log('Executing: RETRY');
     externalGameAudio?.resetForNewGame();
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });

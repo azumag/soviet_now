@@ -28,6 +28,7 @@ import uuid
 
 from lib.country_names import country_named_reason
 from lib.game_terminal import is_terminal as is_terminal_game_state
+from lib.game_founding_boundary import FoundingBoundaryWitness
 
 # --- 定数 ---
 GAME_STATE = "game_state.json"
@@ -3335,10 +3336,14 @@ def run_game():
     prev_actual_deadline_contact = False
     last_decision = {}
     soviet_resume_at = 0.0
+    founding_boundary = FoundingBoundaryWitness()
 
     def observe_soviet(gs):
         nonlocal soviet_created, soviet_resume_at
-        if soviet_created or gs.get("makeSorenCount", 0) <= 0:
+        founding_boundary.observe(gs, soviet_created)
+        count = gs.get("makeSorenCount", 0)
+        if (soviet_created or type(count) not in (int, float)
+                or not 0 < count <= 2**53 - 1 or not math.isfinite(count) or int(count) != count):
             return
         soviet_created = True
         score = gs.get("score", 0)

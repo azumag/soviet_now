@@ -9,6 +9,9 @@ on:
       - 'strategy_runner.py'
       - 'lib/game_lifecycle.sh'
       - 'lib/game_lifecycle.py'
+      - 'lib/game_terminal.py'
+      - 'lib/game_founding_boundary.py'
+      - 'lib/game_observation.mjs'
       - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
       - 'lib/jev_*.py'
@@ -16,6 +19,10 @@ on:
       - 'tests/test_jev_*.py'
       - 'tests/test_game_lifecycle.mjs'
       - 'tests/test_game_lifecycle.sh'
+      - 'tests/test_game_lifecycle.py'
+      - 'tests/test_game_founding_boundary.py'
+      - 'tests/test_game_observation.mjs'
+      - 'tests/test_soviet_continuation.py'
   push:
     branches: [main]
     paths:
@@ -25,6 +32,9 @@ on:
       - 'strategy_runner.py'
       - 'lib/game_lifecycle.sh'
       - 'lib/game_lifecycle.py'
+      - 'lib/game_terminal.py'
+      - 'lib/game_founding_boundary.py'
+      - 'lib/game_observation.mjs'
       - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
       - 'lib/jev_*.py'
@@ -32,6 +42,10 @@ on:
       - 'tests/test_jev_*.py'
       - 'tests/test_game_lifecycle.mjs'
       - 'tests/test_game_lifecycle.sh'
+      - 'tests/test_game_lifecycle.py'
+      - 'tests/test_game_founding_boundary.py'
+      - 'tests/test_game_observation.mjs'
+      - 'tests/test_soviet_continuation.py'
 
 permissions:
   contents: read
@@ -51,6 +65,10 @@ jobs:
           python3 --version
           node --check soviet_local.mjs
           python3 -m py_compile \
+            lib/game_lifecycle.py \
+            lib/game_terminal.py \
+            lib/game_founding_boundary.py \
+            strategy_runner.py \
             lib/jev_player_contract.py \
             lib/jev_player_worker.py \
             lib/jev_player_candidates.py \
@@ -62,10 +80,14 @@ jobs:
             tests/test_jev_game_nonce.mjs \
             tests/test_jev_drop_piece.mjs \
             tests/test_jev_guarded_drop.mjs \
-            tests/test_game_lifecycle.mjs
+            tests/test_game_lifecycle.mjs \
+            tests/test_game_observation.mjs
       - name: Run bounded JEV player regressions
         run: |
           python3 -m unittest \
+            tests.test_game_lifecycle \
+            tests.test_game_founding_boundary \
+            tests.test_soviet_continuation \
             tests.test_jev_player_worker \
             tests.test_jev_player_contract \
             tests.test_jev_player_candidates \

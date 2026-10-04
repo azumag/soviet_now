@@ -28,6 +28,22 @@ class SovietContinuationTest(unittest.TestCase):
         self.assertFalse(is_terminal(stop, state_mtime=100, now=1000, founding_seen=True))
         self.assertFalse(is_terminal({**stop, "makeSorenCount": 1}, state_mtime=100, now=1000))
 
+    def test_old_founded_stop_new_marker_waits_for_move_in_real_runner_path(self):
+        stop = {"state": "STOP", "makeSorenCount": 1, "pieces": []}
+        move = {**stop, "state": "MOVE"}
+        def observed(state):
+            self.assertFalse(is_terminal(state, state_mtime=100, now=401, founding_seen=True))
+        with mock.patch.object(strategy_runner, "load_game_state", side_effect=[stop, move]), mock.patch.object(
+            strategy_runner.os.path, "getmtime", return_value=100
+        ), mock.patch.object(strategy_runner.os.path, "exists", side_effect=lambda p: p.endswith(".soviet_created")), mock.patch.object(
+            strategy_runner.time, "time", return_value=401
+        ), mock.patch.object(strategy_runner.time, "sleep"), mock.patch.object(
+            strategy_runner, "is_board_settled", return_value=True
+        ), mock.patch.object(strategy_runner, "SETTLE_REQUIRED", 1):
+            state, is_move = strategy_runner.wait_for_move_state(False, on_state=observed)
+        self.assertIs(state, move)
+        self.assertTrue(is_move)
+
     def test_runner_ends_quiet_non_founding_stop(self):
         stop = {"state": "STOP", "score": 1470, "makeSorenCount": 0}
         with mock.patch.object(strategy_runner, "load_game_state", return_value=stop), mock.patch.object(
