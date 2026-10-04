@@ -93,6 +93,33 @@ done
 check '[ "$(grep -c "再生開始" tmp/.say_queue/debug.log)" -eq 2 ]' '異なるterminal2batchは再生、同batch再配達は再生しない'
 check '[ "$(grep -c "重複スキップ" tmp/.say_queue/debug.log)" -eq 1 ]' 'terminal再生dedupはbatch単位'
 
+# --- real consumer rejection: retry only after failure, complete only on success ---
+cat >say_enqueue.sh <<'SH'
+#!/usr/bin/env bash
+printf 'attempt\n' >>say-attempts
+[ -e say-success ] || exit 42
+exit 0
+SH
+chmod +x say_enqueue.sh
+third=cccccccccccccccccccccccccccccccc
+retry_file="$COMMENT_QUEUE_DIR/comment_terminal_twitch_${third}_4_4.txt"
+printf '%s\n' "$terminal" >"$retry_file"
+meta=$(_comment_meta_sidecar_path "$retry_file")
+printf '{"mode":"main","model":"fixture"}\n' >"$meta"
+retry_key=$(_outbound_chat_hash "terminal-batch:twitch:$third")
+_play_comment_queue
+check '[ -f "$retry_file" ] && [ -f "$meta" ]' 'say exit42後は同じterminal queueとmetadataを保持'
+check '! grep -qF "$retry_key" "$COMMENT_PLAYED_HASHES_FILE"' 'say失敗を完了hashに記録しない'
+_play_comment_queue
+check '[ "$(wc -l <say-attempts | tr -d " ")" -eq 2 ] && [ -f "$retry_file" ]' '次tickで実consumerを再試行'
+touch say-success
+_play_comment_queue
+check '[ "$(wc -l <say-attempts | tr -d " ")" -eq 3 ] && [ ! -f "$retry_file" ]' 'consumer成功後にqueueを消費'
+check 'grep -qF "$retry_key" "$COMMENT_PLAYED_HASHES_FILE"' 'consumer成功後に完了hashを記録'
+printf '%s\n' "$terminal" >"$COMMENT_QUEUE_DIR/comment_terminal_twitch_${third}_5_5.txt"
+_play_comment_queue
+check '[ "$(wc -l <say-attempts | tr -d " ")" -eq 3 ]' '成功確認済の同batch再配送はconsumerを再実行しない'
+
 # --- control: ordinary (non-exempt) comment playback still dedupes ---
 : >tmp/.say_queue/debug.log
 printf '%s\n' "同じ内容のコメント返信テストです。" >"$COMMENT_QUEUE_DIR/comment_ordinary_1.txt"
