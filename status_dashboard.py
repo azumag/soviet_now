@@ -3426,7 +3426,12 @@ def render_console_progress(value):
     reason = value.get("reason")
     evidence = "Evidence: completed results / live score unobserved"
     if reason:
-        evidence = f"Reason: {reason} (recorded)"
+        reasons = {"game_over": "game over", "screen_stalled": "screen stalled",
+                   "manual_saved_stop": "saved stop", "manual_forced_stop": "forced stop",
+                   "switch-terminal-before-corner-active": "switch stopped",
+                   "recovery_required": "recovery needed", "quiesce_failed": "quiesce failed",
+                   "readiness_timeout": "ready timeout", "deadline_exceeded": "deadline passed"}
+        evidence = f"Reason: {reasons.get(reason, 'unknown')} (record) / live score unobserved"
     return [result, observed, planned, evidence]
 
 

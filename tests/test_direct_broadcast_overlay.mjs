@@ -1160,14 +1160,14 @@ test('Soren telemetry panels preserve chart values and switch away cleanly', asy
 });
 
 test('console record lines reach the actual dashboard, including empty and interrupted sessions', async () => {
-  const makeText = (next, count) => {
+  const makeText = (next, count, reason = null) => {
     const script = `
 import sys, json
 sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
 import status_dashboard as sd
 value={'history_status':'readable', 'session_count':${count}, 'session_mean':20 if ${count} else None,
        'session_best':30 if ${count} else None, 'latest':{'score':30,'at':160,'age':40} if ${count} else None,
-       'next':${JSON.stringify(next)}, 'remaining':1, 'remaining_seconds':300, 'reason':None}
+       'next':${JSON.stringify(next)}, 'remaining':1, 'remaining_seconds':300, 'reason':${reason ? JSON.stringify(reason) : 'None'}}
 corner={'kind':'retro','label':'RETRO','game':'nsnake','status':'active','target_matches':3,
         'session_matches':${count},'scores':[{'score':10},{'score':30}] if ${count} else [],'console':value}
 print('\\n'.join(sd.render_docich_corner_stats(corner)))`;
@@ -1188,6 +1188,12 @@ print('\\n'.join(sd.render_docich_corner_stats(corner)))`;
     assert.match(text,next==='restore-wait'?/restoration pending/:/runtime unverified/);
     assert.doesNotMatch(text,/matches left/);
   }
-  ui.setState(hanjukuFixture()); await ui.tick(2);
+  for (const reason of ['manual_saved_stop','manual_forced_stop','readiness_timeout']) {
+    ui.setState({feeds:{showStatusG:{text:makeText('restore-wait',2,reason)}}}); await ui.tick(2);
+    const records=ui.feedG.querySelector('.game-records').children.map(r=>r.textContent);
+    assert.equal(records.length,4);
+    assert.match(records[3],/^Reason: .*\(record\) \/ live score unobserved$/);
+  }
+  ui.setState(hanjukuFixture()); await ui.tick(3);
   assert.equal(ui.feedG.querySelector('.game-records'),null,'console records disappear on a game switch');
 });

@@ -183,7 +183,14 @@ def _score_history(root: Path, state: Mapping[str, object]) -> tuple[list[dict[s
         except (TypeError, ValueError):
             complete = False
             continue
-        if not isinstance(item, dict) or item.get("game") != game:
+        if not isinstance(item, dict):
+            complete = False
+            continue
+        item_game = _safe_game(item.get("game"))
+        if item_game is None:
+            complete = False
+            continue
+        if item_game != game:
             continue
         score = _int_value(item.get("score"))
         if score is None:

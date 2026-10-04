@@ -25,14 +25,15 @@ function fixture(kind) {
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
   if (kind.startsWith('console')) {
     const count = kind === 'console-empty' ? 0 : 2;
-    const next = kind === 'console-restore' ? 'restore-wait' : kind === 'console-unknown' ? 'unverified' : 'collect-results';
+    const next = ['console-restore','console-saved-stop','console-forced-stop','console-timeout'].includes(kind) ? 'restore-wait' : kind === 'console-unknown' ? 'unverified' : 'collect-results';
+    const reason = {'console-saved-stop':'manual_saved_stop','console-forced-stop':'manual_forced_stop','console-timeout':'readiness_timeout'}[kind];
     const script = `
 import sys
 sys.path.insert(0, ${JSON.stringify(root)})
 import status_dashboard as sd
 value={'history_status':'readable','session_count':${count},'session_mean':20 if ${count} else None,
        'session_best':30 if ${count} else None,'latest':{'score':30,'at':1780000000,'age':${kind === 'console-old' ? 86400 : 40}} if ${count} else None,
-       'next':${JSON.stringify(next)},'remaining':1,'remaining_seconds':300,'reason':None}
+       'next':${JSON.stringify(next)},'remaining':1,'remaining_seconds':300,'reason':${reason ? JSON.stringify(reason) : 'None'}}
 print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','game':'pacman4console',
       'status':'restoring' if ${JSON.stringify(next)}=='restore-wait' else 'active','session_matches':${count},
       'target_matches':3,'scores':[{'score':10},{'score':30}] if ${count} else [],'console':value})))`;
@@ -111,7 +112,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old']) {
+    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -229,7 +230,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         const records=await page.locator('.game-record').allTextContents();
         assert.equal(records.length,4,`${kind}: all four observation/plan rows visible`);
         assert.match(records[3],/live score unobserved/);
-        assert.match(records[2],kind==='console-restore'?/restoration pending/:kind==='console-unknown'?/runtime unverified/:/matches left/);
+        if(['console-saved-stop','console-forced-stop','console-timeout'].includes(kind)) assert.match(records[3],/^Reason: .*\(record\)/);
+        assert.match(records[2],['console-restore','console-saved-stop','console-forced-stop','console-timeout'].includes(kind)?/restoration pending/:kind==='console-unknown'?/runtime unverified/:/matches left/);
         assert.equal(layout.gameOverflow,false,`${kind}: records fit without shrinking`);
         const bounds=await page.locator('.game-records').evaluate(el=>({
           overflow:el.scrollWidth>el.clientWidth+1, bottom:el.getBoundingClientRect().bottom,
