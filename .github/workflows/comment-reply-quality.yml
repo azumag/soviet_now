@@ -101,3 +101,28 @@ jobs:
           done
       - name: Comment pipeline schema/corpus contract (soviet_now#144)
         run: python3 -m unittest -v tests.test_comment_pipeline_schemas
+
+  routing-queue-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: azumag/docich
+          ref: 232f8af4606af779916f3037e2ee7b53b19ff963
+          path: _test_docich
+          persist-credentials: false
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gettext-base jq
+          python3 -m pip install -r _test_docich/requirements-test.txt
+      - name: Actual stream fetch, routing, queue and ack with fixture AI (no APIs)
+        env:
+          DOCICH_REQUIRE_QUEUE_E2E: "1"
+          DOCICH_SOREN_TEST_ROOT: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/_test_docich/src
+        run: python3 -m pytest -q _test_docich/tests/test_comment_queue_e2e.py
