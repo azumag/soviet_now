@@ -27,6 +27,7 @@ REASONS = {
 }
 BASE_ROW_KEYS = {"index", "user", "comment", "category", "is_english"}
 OPTIONAL_ROW_KEYS = {"screen_need", "screen_confidence", "screen_status"}
+MAX_STREAM_BATCH_ROWS = 10
 
 
 def _pairs(items):
@@ -44,7 +45,7 @@ def load(path: str | Path) -> dict:
     if type(raw) is not dict or set(raw) != {"schema_version", "rows", "routing"} or raw["schema_version"] != 1:
         raise ValueError("invalid_envelope")
     rows, route = raw["rows"], raw["routing"]
-    if type(rows) is not list or not 1 <= len(rows) <= 512:
+    if type(rows) is not list or not 1 <= len(rows) <= MAX_STREAM_BATCH_ROWS:
         raise ValueError("invalid_rows")
     for index, row in enumerate(rows, 1):
         if (type(row) is not dict or not BASE_ROW_KEYS <= set(row)
@@ -107,6 +108,8 @@ def main(argv=None) -> int:
         envelope = load(argv[1])
         route = envelope["routing"]
         if argv[0] == "rows":
+            if route["status"] != "ready":
+                raise ValueError("route_not_ready")
             print(json.dumps(envelope["rows"], ensure_ascii=False, separators=(",", ":")))
         elif argv[0] == "metadata":
             print("\t".join((route["status"], route["scope"], route["research_status"])))
