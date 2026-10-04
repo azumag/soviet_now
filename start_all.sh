@@ -258,53 +258,84 @@ PY
 esac
 
 _pidfile_for_worker() {
+	local _worker_lookup_value=""
 	case "$1" in
-	soren_loop) echo "tmp/.soren_loop.lock/pid" ;;
-	chat_worker) echo "tmp/state/chat_worker.pid" ;;
-	youtube_worker) echo "tmp/state/youtube_worker.pid" ;;
-	kick_worker) echo "tmp/state/kick_worker.pid" ;;
-	audio_worker) echo "tmp/state/audio_worker.pid" ;;
-	deadline_monitor) echo "tmp/state/deadline_monitor.pid" ;;
-	radio_worker) echo "tmp/state/radio_worker.pid" ;;
-	prediction_worker) echo "tmp/state/prediction_worker.pid" ;;
-	poll_worker) echo "tmp/state/poll_worker.pid" ;;
-	goal_worker) echo "tmp/state/goal_worker.pid" ;;
-	improve_daemon) echo "${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
-	obs_capture_watchdog) echo "tmp/state/obs_capture_watchdog.pid" ;;
-	soviet_watchdog) echo "tmp/state/.soviet_watchdog.lock/owner" ;;
-	status_overlay_watch) echo "tmp/state/status_overlay_watch.pid" ;;
-	show_status_overlay_watch) echo "tmp/state/show_status_overlay_watch.pid" ;;
-	soren_overlay_watch) echo "tmp/state/soren_overlay_watch.pid" ;;
-	direct_stream) echo "tmp/state/direct_stream.pid" ;;
-	stream_noon_audit) echo "tmp/state/stream_noon_audit.pid" ;;
-	youtube_broadcast_guard) echo "${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}" ;;
-	*) echo "" ;;
+	soren_loop) _worker_lookup_value="tmp/.soren_loop.lock/pid" ;;
+	chat_worker) _worker_lookup_value="tmp/state/chat_worker.pid" ;;
+	youtube_worker) _worker_lookup_value="tmp/state/youtube_worker.pid" ;;
+	kick_worker) _worker_lookup_value="tmp/state/kick_worker.pid" ;;
+	audio_worker) _worker_lookup_value="tmp/state/audio_worker.pid" ;;
+	deadline_monitor) _worker_lookup_value="tmp/state/deadline_monitor.pid" ;;
+	radio_worker) _worker_lookup_value="tmp/state/radio_worker.pid" ;;
+	prediction_worker) _worker_lookup_value="tmp/state/prediction_worker.pid" ;;
+	poll_worker) _worker_lookup_value="tmp/state/poll_worker.pid" ;;
+	goal_worker) _worker_lookup_value="tmp/state/goal_worker.pid" ;;
+	improve_daemon) _worker_lookup_value="${IMPROVE_DAEMON_PID_FILE:-tmp/state/improve_daemon.pid}" ;;
+	obs_capture_watchdog) _worker_lookup_value="tmp/state/obs_capture_watchdog.pid" ;;
+	soviet_watchdog) _worker_lookup_value="tmp/state/.soviet_watchdog.lock/owner" ;;
+	status_overlay_watch) _worker_lookup_value="tmp/state/status_overlay_watch.pid" ;;
+	show_status_overlay_watch) _worker_lookup_value="tmp/state/show_status_overlay_watch.pid" ;;
+	soren_overlay_watch) _worker_lookup_value="tmp/state/soren_overlay_watch.pid" ;;
+	direct_stream) _worker_lookup_value="tmp/state/direct_stream.pid" ;;
+	stream_noon_audit) _worker_lookup_value="tmp/state/stream_noon_audit.pid" ;;
+	youtube_broadcast_guard) _worker_lookup_value="${YOUTUBE_BROADCAST_GUARD_PID_FILE:-tmp/state/youtube_broadcast_guard.pid}" ;;
+	*) _worker_lookup_value="" ;;
 	esac
+	# Keep stdout callers compatible; the poll loop uses a destination variable
+	# to avoid spawning a subshell for a fixed lookup on every worker/tick.
+	if [ -n "${2:-}" ]; then
+		# Match the old $(echo "$value") result, including echo-only options
+		# and removal of every trailing LF. Do not constrain configured paths.
+		if shopt -q xpg_echo && [[ "$_worker_lookup_value" == *\\* ]]; then
+			# Non-default escape handling can produce \c or NUL; use echo itself
+			# for exact compatibility on this rare path, accepting one subshell.
+			_worker_lookup_value="$(echo "$_worker_lookup_value")"
+		else
+			if ! { shopt -q xpg_echo && [[ -o posix ]]; } &&
+				[[ "$_worker_lookup_value" == -?* && "${_worker_lookup_value#-}" != *[!neE]* ]]; then
+				_worker_lookup_value=""
+			fi
+			while [[ "$_worker_lookup_value" == *$'\n' ]]; do
+				_worker_lookup_value="${_worker_lookup_value%$'\n'}"
+			done
+		fi
+		printf -v "$2" '%s' "$_worker_lookup_value"
+	else
+		echo "$_worker_lookup_value"
+	fi
 }
 
 _pattern_for_worker() {
+	local _worker_lookup_value=""
 	case "$1" in
-	soren_loop) echo '[/ ]soren_loop[.]sh([[:space:]]|$)' ;;
-	chat_worker) echo '[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
-	youtube_worker) echo '[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
-	kick_worker) echo '[/ ]workers/kick_worker[.]sh([[:space:]]|$)' ;;
-	audio_worker) echo '[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
-	deadline_monitor) echo '[/ ]workers/deadline_monitor[.]sh([[:space:]]|$)|[/ ]deadline_misplacement_monitor[.]py([[:space:]]|$)' ;;
-	radio_worker) echo '[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
-	prediction_worker) echo '[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
-	poll_worker) echo '[/ ]workers/poll_worker[.]sh([[:space:]]|$)' ;;
-	goal_worker) echo '[/ ]workers/goal_worker[.]sh([[:space:]]|$)' ;;
-	improve_daemon) echo '[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
-	obs_capture_watchdog) echo '[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
-	soviet_watchdog) echo '[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
-	status_overlay_watch) echo '[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
-	show_status_overlay_watch) echo '[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
-	soren_overlay_watch) echo '[/ ]generate_soren_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
-	direct_stream) echo '[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
-	stream_noon_audit) echo '[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
-	youtube_broadcast_guard) echo '[/ ]lib/youtube_broadcast_guard[.]py[[:space:]]+run([[:space:]]|$)' ;;
-	*) echo "" ;;
+	soren_loop) _worker_lookup_value='[/ ]soren_loop[.]sh([[:space:]]|$)' ;;
+	chat_worker) _worker_lookup_value='[/ ]workers/chat_worker[.]sh([[:space:]]|$)' ;;
+	youtube_worker) _worker_lookup_value='[/ ]workers/youtube_worker[.]sh([[:space:]]|$)' ;;
+	kick_worker) _worker_lookup_value='[/ ]workers/kick_worker[.]sh([[:space:]]|$)' ;;
+	audio_worker) _worker_lookup_value='[/ ]workers/audio_worker[.]sh([[:space:]]|$)' ;;
+	deadline_monitor) _worker_lookup_value='[/ ]workers/deadline_monitor[.]sh([[:space:]]|$)|[/ ]deadline_misplacement_monitor[.]py([[:space:]]|$)' ;;
+	radio_worker) _worker_lookup_value='[/ ]workers/radio_worker[.]sh([[:space:]]|$)' ;;
+	prediction_worker) _worker_lookup_value='[/ ]workers/prediction_worker[.]sh([[:space:]]|$)' ;;
+	poll_worker) _worker_lookup_value='[/ ]workers/poll_worker[.]sh([[:space:]]|$)' ;;
+	goal_worker) _worker_lookup_value='[/ ]workers/goal_worker[.]sh([[:space:]]|$)' ;;
+	improve_daemon) _worker_lookup_value='[/ ]improve_daemon[.]sh([[:space:]]|$)' ;;
+	obs_capture_watchdog) _worker_lookup_value='[/ ]obs_capture_watchdog[.]sh([[:space:]]|$)' ;;
+	soviet_watchdog) _worker_lookup_value='[/ ]soviet_watchdog[.]sh([[:space:]]|$)' ;;
+	status_overlay_watch) _worker_lookup_value='[/ ]generate_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	show_status_overlay_watch) _worker_lookup_value='[/ ]generate_show_status_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	soren_overlay_watch) _worker_lookup_value='[/ ]generate_soren_overlay[.]sh[[:space:]]+watch([[:space:]]|$)' ;;
+	direct_stream) _worker_lookup_value='[/ ]lib/direct_stream[.]py[[:space:]]+run([[:space:]]|$)' ;;
+	stream_noon_audit) _worker_lookup_value='[/ ]workers/stream_noon_audit[.]sh([[:space:]]|$)' ;;
+	youtube_broadcast_guard) _worker_lookup_value='[/ ]lib/youtube_broadcast_guard[.]py[[:space:]]+run([[:space:]]|$)' ;;
+	*) _worker_lookup_value="" ;;
 	esac
+	# Keep stdout callers compatible; the poll loop uses a destination variable
+	# to avoid spawning a subshell for a fixed lookup on every worker/tick.
+	if [ -n "${2:-}" ]; then
+		printf -v "$2" '%s' "$_worker_lookup_value"
+	else
+		echo "$_worker_lookup_value"
+	fi
 }
 
 _pid_matches_worker() {
@@ -812,7 +843,7 @@ while true; do
 	for idx in "${!WORKER_NAMES[@]}"; do
 		_w_pid="${WORKER_PIDS[$idx]:-}"
 		_w_name="${WORKER_NAMES[$idx]}"
-		_w_pattern="$(_pattern_for_worker "$_w_name")"
+		_pattern_for_worker "$_w_name" _w_pattern
 
 		# worker が生きていればスキップ
 		if _pid_matches_worker "$_w_pid" "$_w_pattern"; then
@@ -820,7 +851,7 @@ while true; do
 				WORKER_PIDS[$idx]=""
 				_w_pid=""
 			else
-			_w_pid_file="$(_pidfile_for_worker "$_w_name")"
+			_pidfile_for_worker "$_w_name" _w_pid_file
 			if [ "$_w_name" != "soren_loop" ] && [ -n "$_w_pid_file" ] && [ -n "$_w_pid" ]; then
 				_w_recorded_pid=$(cat "$_w_pid_file" 2>/dev/null || true)
 				if [ "$_w_recorded_pid" != "$_w_pid" ]; then
