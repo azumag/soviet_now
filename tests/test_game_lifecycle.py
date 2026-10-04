@@ -299,6 +299,9 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertTrue(snapshot["stale_founding_stop"])
             self.assertTrue(snapshot["runner_alive"])
             self.assertEqual(snapshot["make_soren_count"], 1)
+            self.assertEqual(snapshot["founding_boundary_board"],
+                             {key: json.loads((root / "game_state.json").read_text()).get(key)
+                              for key in ("state", "score", "makeSorenCount", "pieces")})
 
     def test_founded_ack_is_revoked_before_stop_or_claim_on_resumed_move(self):
         for stage in ("stop", "claim-stop"):

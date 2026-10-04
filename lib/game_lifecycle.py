@@ -160,6 +160,9 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         ),
         "stale_founding_stop": stale_founding_stop,
         "founding_boundary_token": founding_token,
+        "founding_boundary_board": {key: state.get(key) for key in
+                                   ("state", "score", "makeSorenCount", "pieces")}
+        if stale_founding_stop else None,
         "founding_seen": founding_seen,
         "make_soren_count": count if valid_count else None,
         "score": state.get("score"),

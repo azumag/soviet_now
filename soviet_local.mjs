@@ -1804,16 +1804,44 @@ async function processGameLifecycleControl(page, runtime = {}) {
     return { handled: false, status: 'stale' };
   }
 
+  const boundarySnapshot = readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot;
+  const foundingGate = {
+    required: boundarySnapshot?.stale_founding_stop === true,
+    board: boundarySnapshot?.founding_boundary_board ?? null,
+  };
   let evidence;
   let quitInvocationUncertain = false;
   runtime.markLifecycleIrreversible?.();
   try {
-    evidence = await withTimeout(page.evaluate(() => {
+    evidence = await withTimeout(page.evaluate((foundingGate) => {
       const canvas = document.querySelector('canvas');
       const unity = window.unityInstance;
       if (!unity || typeof unity.Quit !== 'function') {
         return {
           quit_supported: false,
+          canvas_present: Boolean(canvas),
+        };
+      }
+      // Claim IPC and page.evaluate both yield. Check the claimed STOP inside
+      // the same browser task as Quit(), with no await or input in between.
+      if (foundingGate.required) {
+        const state = window.__sorenGameState;
+        const board = state && Object.fromEntries(
+          ['state', 'score', 'makeSorenCount', 'pieces'].map(key => [key, state[key] ?? null]),
+        );
+        const canonical = value => JSON.stringify(value, (_key, item) => {
+          if (typeof item === 'number' && !Number.isFinite(item)) throw new Error('invalid board');
+          return item && typeof item === 'object' && !Array.isArray(item)
+            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item;
+        });
+        let same = false;
+        try {
+          same = board?.state === 'STOP' && Number.isSafeInteger(board.makeSorenCount)
+            && board.makeSorenCount > 0 && foundingGate.board !== null
+            && canonical(board) === canonical(foundingGate.board);
+        } catch {}
+        if (!same) return {
+          quit_supported: true, quit_called: false, boundary_gate_rejected: true,
           canvas_present: Boolean(canvas),
         };
       }
@@ -1836,7 +1864,7 @@ async function processGameLifecycleControl(page, runtime = {}) {
           canvas_present: Boolean(canvas),
         };
       }
-    }), 3000, 'game-only Unity Quit');
+    }, foundingGate), 3000, 'game-only Unity Quit');
   } catch (error) {
     // A context/page error can happen after the browser accepted Quit but
     // before Playwright returned.  Keep the fence in that ambiguous case.
@@ -1850,7 +1878,11 @@ async function processGameLifecycleControl(page, runtime = {}) {
 
   if (!evidence?.quit_supported || !evidence?.quit_called) {
     if (!quitInvocationUncertain) runtime.clearLifecycleIrreversible?.();
-    if (!quitInvocationUncertain) await restoreGameOnlyRuntime(page, runtime);
+    // A denied gate has not changed resources. Restoring would reload the
+    // resumed game, so keep the existing fenced failure without recovery input.
+    if (!quitInvocationUncertain && !evidence?.boundary_gate_rejected) {
+      await restoreGameOnlyRuntime(page, runtime);
+    }
     // Quit evaluation is async: re-verify currency before writing failed so a
     // superseded request never overwrites the newer resource.
     if (!lifecycleStopWriteStillCurrent(control)) {

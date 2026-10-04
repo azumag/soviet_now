@@ -8,7 +8,7 @@
 - 現在の runner PID・試合番号・起動時刻、game_count、markerのinode/mtime/size、bridgeのgame/STOP nonce、盤面が一致する。Linuxではboot IDとprocess start ticksも照合し、PID再利用・再起動を拒否する。
 - この runner が同じ建国 STOP を、観測間隔3秒以内で連続300秒以上、monotonic clockで観測している。新runner、新marker、MOVE、観測欠落やwall-clockのジャンプは待機証拠をリセットする。現在の bridge観測とrunner証跡の両方が3秒以内で、未来timestamp、不正counter（NaN/Infinity/bool/非整数/0）を拒否する。
 
-ACKは終端のbookkeepingやゲーム入力を発生させない。資源解放には既存の明示stop controlが必要。例外ACKの証跡tokenはstop要求時・不可逆claim時に再照合し、MOVE/鮮度切れ/帰属変更はwaitingに戻す。bridgeはoverlay readinessの待機後、claim直前に実盤面を再観測する。
+ACKは終端のbookkeepingやゲーム入力を発生させない。資源解放には既存の明示stop controlが必要。例外ACKの証跡tokenはstop要求時・不可逆claim時に再照合し、MOVE/鮮度切れ/帰属変更はwaitingに戻す。bridgeはoverlay readinessの待機後、claim直前に実盤面を再観測する。claim後にMOVEや盤面変化が起きるTOCTOUに対して、ACKが保持する盤面と現在のSTOP盤面を不可逆なUnity Quitと同じbrowser task内で最終照合する。ここにawaitや入力を挟まない。拒否時はQuit・音声停止・browser close・ページ復元を行わず、既存fenceを維持したfailedとして明示的な回復を待つ。
 
 ## 反映と依存
 

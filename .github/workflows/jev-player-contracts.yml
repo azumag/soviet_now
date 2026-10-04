@@ -22,6 +22,7 @@ on:
       - 'tests/test_game_lifecycle.py'
       - 'tests/test_game_founding_boundary.py'
       - 'tests/test_game_observation.mjs'
+      - 'tests/test_bridge_stop_fence.mjs'
       - 'tests/test_soviet_continuation.py'
   push:
     branches: [main]
@@ -45,6 +46,7 @@ on:
       - 'tests/test_game_lifecycle.py'
       - 'tests/test_game_founding_boundary.py'
       - 'tests/test_game_observation.mjs'
+      - 'tests/test_bridge_stop_fence.mjs'
       - 'tests/test_soviet_continuation.py'
 
 permissions:
@@ -81,7 +83,8 @@ jobs:
             tests/test_jev_drop_piece.mjs \
             tests/test_jev_guarded_drop.mjs \
             tests/test_game_lifecycle.mjs \
-            tests/test_game_observation.mjs
+            tests/test_game_observation.mjs \
+            tests/test_bridge_stop_fence.mjs
       - name: Run bounded JEV player regressions
         run: |
           python3 -m unittest \
