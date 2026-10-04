@@ -1,11 +1,13 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 import uuid
 from pathlib import Path
+from tests.test_game_founding_boundary import seed_founding
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,24 @@ class GameLifecycleBrokerTests(unittest.TestCase):
         )
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         return result, payload
+
+    def bridge_pid(self) -> int:
+        # Advertise a synthetic, bounded process with the production cmdline
+        # marker. Do not weaken the Linux live-bridge capability validation or
+        # start the actual bridge/browser/game in these subprocess regressions.
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", "soviet_local.mjs"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        def cleanup():
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        self.addCleanup(cleanup)
+        return process.pid
 
     @staticmethod
     def request(root: Path, request_id: str, deadline: float = 60.0) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -95,7 +115,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             lifecycle.mkdir(parents=True, exist_ok=True)
             (lifecycle / "player_capabilities.json").write_text(
                 json.dumps({
-                    "schema": 1, "game": "sorengame", "pid": os.getpid(),
+                    "schema": 1, "game": "sorengame", "pid": self.bridge_pid(),
                     "capabilities": ["player_policy_v1"],
                 }),
                 encoding="utf-8",
@@ -205,7 +225,7 @@ class GameLifecycleBrokerTests(unittest.TestCase):
                 json.dumps({
                     "schema": 1,
                     "game": "sorengame",
-                    "pid": os.getpid(),
+                    "pid": self.bridge_pid(),
                     "capabilities": ["player_policy_v1"],
                 }),
                 encoding="utf-8",
@@ -261,6 +281,118 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             boundary, payload = self.run_broker(root, "boundary", "--request-id", request_id)
             self.assertEqual(boundary.returncode, 0)
             self.assertEqual(payload["ack"]["status"], "boundary")
+
+    def test_stale_completed_founding_stop_is_boundary_with_live_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            seed_founding(root)
+
+            boundary, payload = self.run_broker(
+                root, "boundary", "--request-id", request_id
+            )
+
+            self.assertEqual(boundary.returncode, 0)
+            self.assertEqual(payload["ack"]["status"], "boundary")
+            snapshot = payload["ack"]["boundary_snapshot"]
+            self.assertTrue(snapshot["stale_founding_stop"])
+            self.assertTrue(snapshot["runner_alive"])
+            self.assertEqual(snapshot["make_soren_count"], 1)
+            self.assertEqual(snapshot["founding_boundary_board"],
+                             {key: json.loads((root / "game_state.json").read_text()).get(key)
+                              for key in ("state", "score", "makeSorenCount", "pieces")})
+
+    def test_founded_ack_is_revoked_before_stop_or_claim_on_resumed_move(self):
+        for stage in ("stop", "claim-stop"):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                request_id = str(uuid.uuid4())
+                self.request(root, request_id)
+                seed_founding(root)
+                self.assertEqual(self.run_broker(root, "boundary", "--request-id", request_id)[0].returncode, 0)
+                if stage == "claim-stop":
+                    self.assertEqual(self.run_broker(root, "stop", "--request-id", request_id)[0].returncode, 0)
+                self.write_state(root, "MOVE")
+                result, payload = self.run_broker(root, stage, "--request-id", request_id)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(payload["ack"]["status"], "waiting")
+                self.assertFalse((root / "tmp/state/game_lifecycle/control.json").exists())
+
+    def test_legacy_old_stop_new_marker_has_no_live_boundary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            seed_founding(root)
+            (root / "tmp/state/founding_boundary.json").unlink()
+            (root / "tmp/markers/.soviet_created").touch()
+            result, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(payload["ack"]["snapshot"]["terminal"])
+            self.assertFalse(payload["ack"]["snapshot"]["stale_founding_stop"])
+
+    def test_founded_witness_does_not_park_live_jev_or_prepare_player_change(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_founding(root)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            lifecycle.mkdir(parents=True, exist_ok=True)
+            run_id = str(uuid.uuid4())
+            (lifecycle / "player_state.json").write_text(json.dumps({
+                "schema": 1, "game": "sorengame", "game_generation": 1,
+                "policy": "jev", "player_generation": 0, "run_id": run_id,
+            }))
+            self.assertEqual(self.run_broker(root, "mark-jev-one-game")[0].returncode, 1)
+            (lifecycle / "player_capabilities.json").write_text(json.dumps({
+                "schema": 1, "game": "sorengame", "pid": self.bridge_pid(),
+                "capabilities": ["player_policy_v1"],
+            }))
+            request_id = str(uuid.uuid4())
+            self.assertEqual(self.run_broker(
+                root, "request", "--request-id", request_id, "--game", "sorengame",
+                "--generation", "1", "--deadline-sec", "60", "--operation", "player_change",
+                "--target-policy", "existing", "--run-id", str(uuid.uuid4()),
+                "--expected-player-generation", "0", "--config-hash", "b" * 64,
+            )[0].returncode, 0)
+            result, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(payload["ack"]["status"], "waiting")
+            self.assertFalse((lifecycle / "jev_one_game.json").exists())
+
+    def test_real_boundary_rejects_299_second_witness_with_live_runner(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            seed_founding(root, 299)
+            result, payload = self.run_broker(root, "boundary", "--request-id", request_id)
+            self.assertEqual(result.returncode, 1)
+            self.assertTrue(payload["ack"]["snapshot"]["runner_alive"])
+            self.assertFalse(payload["ack"]["snapshot"]["stale_founding_stop"])
+
+    def test_founding_stop_requires_positive_counter_and_long_quiet_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            marker_dir = root / "tmp/markers"
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            (marker_dir / ".soviet_created").touch()
+            state_path = root / "game_state.json"
+
+            for count, age in ((0, 1000), (1, 299)):
+                state_path.write_text(json.dumps({
+                    "state": "STOP", "score": 6401, "makeSorenCount": count,
+                }))
+                old = time.time() - age
+                os.utime(state_path, (old, old))
+                waiting, payload = self.run_broker(
+                    root, "boundary", "--request-id", request_id
+                )
+                self.assertEqual(waiting.returncode, 1, (count, age))
+                self.assertEqual(payload["ack"]["status"], "waiting")
+                self.assertFalse(payload["ack"]["snapshot"]["stale_founding_stop"])
 
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

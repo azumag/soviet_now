@@ -16,16 +16,13 @@ def is_terminal(
     founding_seen: bool = False,
     now: float | None = None,
 ) -> bool:
-    """Accept a quiet, non-founding STOP as the legacy end-of-game signal.
-
-    A fresh STOP can be the beginning of a Soviet founding animation.  Its
-    counter may still be zero at that instant, so the counter alone is not a
-    safe discriminator.  A missing timestamp is never evidence of a boundary.
-    """
+    """Accept GAMEOVER or a conservatively quiet legacy STOP boundary."""
     state = game_state.get("state")
     if state == "GAMEOVER":
         return True
-    if state != "STOP" or founding_seen:
+    if state != "STOP":
+        return False
+    if founding_seen:
         return False
     count = game_state.get("makeSorenCount")
     if isinstance(count, bool) or not isinstance(count, (int, float)) or count != 0:

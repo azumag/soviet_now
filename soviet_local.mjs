@@ -34,6 +34,7 @@ import {
 import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
 import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
 import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
+import { GameObservationWriter } from './lib/game_observation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,7 @@ for (const signal of ['SIGTERM', 'SIGHUP']) {
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
+const gameObservation = new GameObservationWriter('tmp/state/game_observation.json');
 const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
 const PLAYER_STATE_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_state.json');
 const PLAYER_CAPABILITY_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_capabilities.json');
@@ -1247,8 +1249,11 @@ async function getGameState(page) {
     // the same long-lived process.
     refreshCommittedPlayerState();
     const state = await page.evaluate(() => window.__sorenGameState);
-    return annotateJevState(state || null);
+    const annotated = annotateJevState(state || null);
+    gameObservation.observe(annotated);
+    return annotated;
   } catch (e) {
+    gameObservation.observe(null);
     console.error('Error getting game state:', e.message);
     return null;
   }
@@ -1783,6 +1788,12 @@ async function processGameLifecycleControl(page, runtime = {}) {
     if (!lifecycleStopRequestStillCurrent(control)) {
       return { handled: false, status: 'stale' };
     }
+    if (readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot?.stale_founding_stop) {
+      // Re-observe the actual bridge after overlay readiness, before claiming.
+      // A resumed MOVE revokes the exceptional boundary without any input.
+      await getGameState(page);
+      // The broker revokes the ACK/control if this observation changed or failed.
+    }
     // This is the atomic no-restore fence.  Cancellation remains possible up
     // to this point; after it succeeds, the bridge must finish or fail closed.
     const claim = await claimLifecycleStop(control.request_id);
@@ -1793,16 +1804,44 @@ async function processGameLifecycleControl(page, runtime = {}) {
     return { handled: false, status: 'stale' };
   }
 
+  const boundarySnapshot = readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot;
+  const foundingGate = {
+    required: boundarySnapshot?.stale_founding_stop === true,
+    board: boundarySnapshot?.founding_boundary_board ?? null,
+  };
   let evidence;
   let quitInvocationUncertain = false;
   runtime.markLifecycleIrreversible?.();
   try {
-    evidence = await withTimeout(page.evaluate(() => {
+    evidence = await withTimeout(page.evaluate((foundingGate) => {
       const canvas = document.querySelector('canvas');
       const unity = window.unityInstance;
       if (!unity || typeof unity.Quit !== 'function') {
         return {
           quit_supported: false,
+          canvas_present: Boolean(canvas),
+        };
+      }
+      // Claim IPC and page.evaluate both yield. Check the claimed STOP inside
+      // the same browser task as Quit(), with no await or input in between.
+      if (foundingGate.required) {
+        const state = window.__sorenGameState;
+        const board = state && Object.fromEntries(
+          ['state', 'score', 'makeSorenCount', 'pieces'].map(key => [key, state[key] ?? null]),
+        );
+        const canonical = value => JSON.stringify(value, (_key, item) => {
+          if (typeof item === 'number' && !Number.isFinite(item)) throw new Error('invalid board');
+          return item && typeof item === 'object' && !Array.isArray(item)
+            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item;
+        });
+        let same = false;
+        try {
+          same = board?.state === 'STOP' && Number.isSafeInteger(board.makeSorenCount)
+            && board.makeSorenCount > 0 && foundingGate.board !== null
+            && canonical(board) === canonical(foundingGate.board);
+        } catch {}
+        if (!same) return {
+          quit_supported: true, quit_called: false, boundary_gate_rejected: true,
           canvas_present: Boolean(canvas),
         };
       }
@@ -1825,7 +1864,7 @@ async function processGameLifecycleControl(page, runtime = {}) {
           canvas_present: Boolean(canvas),
         };
       }
-    }), 3000, 'game-only Unity Quit');
+    }, foundingGate), 3000, 'game-only Unity Quit');
   } catch (error) {
     // A context/page error can happen after the browser accepted Quit but
     // before Playwright returned.  Keep the fence in that ambiguous case.
@@ -1839,7 +1878,11 @@ async function processGameLifecycleControl(page, runtime = {}) {
 
   if (!evidence?.quit_supported || !evidence?.quit_called) {
     if (!quitInvocationUncertain) runtime.clearLifecycleIrreversible?.();
-    if (!quitInvocationUncertain) await restoreGameOnlyRuntime(page, runtime);
+    // A denied gate has not changed resources. Restoring would reload the
+    // resumed game, so keep the existing fenced failure without recovery input.
+    if (!quitInvocationUncertain && !evidence?.boundary_gate_rejected) {
+      await restoreGameOnlyRuntime(page, runtime);
+    }
     // Quit evaluation is async: re-verify currency before writing failed so a
     // superseded request never overwrites the newer resource.
     if (!lifecycleStopWriteStillCurrent(control)) {
@@ -2026,12 +2069,14 @@ function stateChanged(prev, curr) {
   if (!prev || !curr) return true;
   return prev.state !== curr.state ||
          prev.score !== curr.score ||
+         prev.makeSorenCount !== curr.makeSorenCount ||
          JSON.stringify(prev.pieces) !== JSON.stringify(curr.pieces);
 }
 
 // Execute a command via JS Bridge
 async function executeCommand(page, command, externalGameAudio = null, jevDropGuard = null) {
   if (command.action === 'retry') {
+    gameObservation.reset();
     console.log('Executing: RETRY');
     externalGameAudio?.resetForNewGame();
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
