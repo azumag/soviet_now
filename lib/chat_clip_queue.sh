@@ -115,4 +115,3 @@ PY
 	# done/ クリーンアップ (1時間超)
 	find "$CLIP_QUEUE_DONE_DIR" -name '*.json' -mmin +60 -delete 2>/dev/null || true
 }
-
