@@ -101,9 +101,16 @@ jobs:
           SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg
-          xvfb-run -a -s '-screen 0 1280x720x24' node --test tests/test_game_gap_webgl_browser.mjs
+          sudo apt-get install -y xvfb ffmpeg openbox
+          xvfb-run -a -s '-screen 0 1280x720x24' bash <<'SH'
+          set -e
+          openbox --sm-disable >/dev/null 2>&1 &
+          test_wm_pid=$!
+          trap 'kill "$test_wm_pid" 2>/dev/null || true' EXIT
+          node --test tests/test_game_gap_webgl_browser.mjs
+          SH
       - name: Save synthetic rendering evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: overlay-v2-synthetic-screens

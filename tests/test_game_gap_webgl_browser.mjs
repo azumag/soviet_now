@@ -7,6 +7,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {installDirectOverlay, installInlineDirectBroadcastOverlay, loadDirectOverlayConfig} from '../lib/direct_overlay.mjs';
+import {enforceVisibleWindow} from '../shared_overlay.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
@@ -45,11 +46,28 @@ async function contract(headed) {
     ...(headed ? ['--kiosk', '--test-type', '--disable-infobars', '--window-position=0,0', '--window-size=1280,720'] : []),
   ], ignoreDefaultArgs: headed ? ['--enable-automation'] : []});
   const artifactDir = process.env.SOREN_OVERLAY_ARTIFACT_DIR;
+  let page;
+  const geometry = () => page.evaluate(() => {
+    const r = document.querySelector('canvas').getBoundingClientRect();
+    return {inner: [innerWidth, innerHeight], outer: [outerWidth, outerHeight],
+      origin: [screenX, screenY], screen: [screen.width, screen.height], dpr: devicePixelRatio,
+      canvas: [r.x, r.y, r.width, r.height]};
+  });
   try {
-    const page = await browser.newPage({viewport: headed ? null : {width: 1280, height: 720}});
+    page = await browser.newPage({viewport: headed ? null : {width: 1280, height: 720}});
     await page.addInitScript(() => { Date.now = () => (window.parent.fixtureNow || window.fixtureNow) * 1000; });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => window.fixtureFrame > 2);
+    if (headed) {
+      // Kiosk flags alone do not position a newly created CDP target at (0,0).
+      // Use the existing headed-window contract and verify its physical bounds.
+      await enforceVisibleWindow(page);
+      await page.waitForFunction(() => innerWidth === 1280 && innerHeight === 720
+        && outerWidth === 1280 && outerHeight === 720 && screenX === 0 && screenY === 0,
+      undefined, {timeout: 10000});
+      assert.deepEqual(await geometry(), {inner: [1280, 720], outer: [1280, 720],
+        origin: [0, 0], screen: [1280, 720], dpr: 1, canvas: [0, 90, 960, 540]});
+    }
     const gameSession = await page.evaluate(() => window.fixtureSession);
     const config = loadDirectOverlayConfig({SOREN_STREAM_BACKEND: 'ffmpeg'}, 'linux');
     config.surfaces = config.surfaces.filter(s => s.region === 'game-gap');
@@ -77,6 +95,8 @@ async function contract(headed) {
         fs.mkdirSync(artifactDir, {recursive: true});
         await sharp(raw, {raw: {width: 1280, height: 720, channels: 3}}).png()
           .toFile(path.join(artifactDir, `${headed ? 'xvfb' : 'headless'}-${label}.png`));
+        fs.writeFileSync(path.join(artifactDir, `${headed ? 'xvfb' : 'headless'}-${label}.json`),
+          JSON.stringify(await geometry(), null, 2));
       }
       for (const point of [[50, 100], [350, 350], [700, 600]]) {
         const actual = at(...point);
@@ -142,6 +162,14 @@ async function contract(headed) {
     assert.ok(await page.evaluate(start => window.fixtureFrame > start, startFrame));
     assert.equal(await page.evaluate(() => window.fixtureSession), gameSession);
     assert.deepEqual(await page.evaluate(() => [document.querySelector('canvas').width, document.querySelector('canvas').height]), [576, 324]);
+  } catch (error) {
+    if (artifactDir && page && !page.isClosed()) {
+      fs.mkdirSync(artifactDir, {recursive: true});
+      fs.writeFileSync(path.join(artifactDir, `${headed ? 'xvfb' : 'headless'}-failure.json`),
+        JSON.stringify(await geometry(), null, 2));
+      await page.screenshot({path: path.join(artifactDir, `${headed ? 'xvfb' : 'headless'}-failure-page.png`)});
+    }
+    throw error;
   } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
 }
 
