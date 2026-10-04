@@ -1138,3 +1138,23 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.equal(ui.feedG.querySelector('.hanjuku-plan'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-inputs'), null);
 });
+
+
+test('Soren telemetry panels preserve chart values and switch away cleanly', async () => {
+  const text = fs.readFileSync(new URL('./fixtures/soren-monitor.txt', import.meta.url), 'utf8');
+  const f = hanjukuFixture({text});
+  const ui = await runBroadcastOverlayScript(f);
+  const monitor = ui.feedG.querySelector('.soren-monitor');
+  assert.ok(monitor);
+  assert.equal(monitor.children.filter(e => e.className === 'monitor-section').length, 5);
+  assert.equal(ui.documentElement.dataset.sorenMonitor, '1');
+  const sections = monitor.children.filter(e => e.className === 'monitor-section');
+  const rows = sections.flatMap(e => e.querySelector('.monitor-section-body').children.map(r => r.textContent));
+  assert.ok(rows.some(t => t.includes('5691')));
+  assert.ok(rows.some(t => t.includes('3722 4145 2822')));
+  assert.ok(rows.some(t => t.includes('LastStep +240')));
+  assert.ok(rows.every(t => !t.includes('FFMPEG')));
+  ui.setState(hanjukuFixture()); await ui.tick(1);
+  assert.equal(ui.feedG.querySelector('.soren-monitor'), null);
+  assert.equal(ui.documentElement.dataset.sorenMonitor, '');
+});

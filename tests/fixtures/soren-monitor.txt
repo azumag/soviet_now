@@ -1,0 +1,27 @@
+SOREN/FFMPEG: #55100 / strategy 3a7b11ee
+  Score Timeline (last 100 games; old -> now)
+ 5691│                                          
+     │ \    \    \    \    \   *    *    *    * 
+     │ /\ -* \ -* \--*\ --* \-/ \ -/ \ -/ \ -/ *
+     │/  /    /   /    /    /    /    /    /    
+     │/                                         
+     │*                                         
+ 1500│                                          
+     └----------------------------------------->
+     │old                                    now
+  Score Distribution (n=100)
+    0-500┃                                             0
+   500-1K┃                                             0
+  1K-1.5K┃                                             0
+  1.5K-2K┃▌                                            1
+  2K-2.5K┃                                             0
+  2.5K-3K┃████████████████████                        33
+  3K-3.5K┃                                             0
+    3500+┃████████████████████████████████████████    66
+  Strategy Comparison (eval, mature n>=12)
+ rk hash      n/t  │bar                    comp p50  p25
+► 1 3a7b11ee 100/180│██████████████████████ 3722 4145 2822
+Observer Status (annealing observe-only)
+  ChatObs OK / Radio ON / game 23
+  Anchor 3a7b11ee / Branch e815cb22
+  LastStep +240 / acceptance=0.72
