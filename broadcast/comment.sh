@@ -3169,6 +3169,7 @@ $advice_text"
 	local classification_json="" comment_route_enabled=false comment_route_hold=false
 	local comment_route_file="" comment_evidence_file="" comment_route_status="legacy"
 	local comment_route_scope="unknown" comment_route_research_status="not_requested"
+	local comment_route_terminal=""
 	case "${DOCICH_REPLY_ROUTING_ENABLED:-0}" in
 	0)
 		classification_json=$(_classify_comments "$comment_prompt_batch_file")
@@ -3193,13 +3194,28 @@ $advice_text"
 			comment_route_file=$(mktemp /tmp/eloop_comment_reply_route_XXXXXXXX.json 2>/dev/null || true)
 			umask "$route_previous_umask"
 			local route_cli="${DOCICH_COMMENT_REPLY_ROUTER:-/home/ubuntu/docich/bin/docich-comment-reply-route}"
-			if [ -z "$comment_route_file" ] || [ ! -x "$route_cli" ] ||
-				! timeout --kill-after=5s 55s "$route_cli" "$comment_prompt_batch_file" >"$comment_route_file" 2>/dev/null; then
+			local route_cache="${TMP_STATE_DIR:-tmp/state}/comment_route_cache"
+            mkdir -p "$route_cache"
+            chmod 700 "$route_cache"
+            local route_cache_file="$route_cache/${viewer_chat_source}_${comment_batch_hash}.json"
+            if [ -f "$route_cache_file" ] && [ ! -L "$route_cache_file" ]; then
+                cp "$route_cache_file" "$comment_route_file"
+            fi
+            if [ -z "$comment_route_file" ] || { [ ! -s "$comment_route_file" ] && { [ ! -x "$route_cli" ] ||
+                ! timeout --kill-after=5s 55s "$route_cli" "$comment_prompt_batch_file" >"$comment_route_file" 2>/dev/null; }; }; then
 				comment_route_hold=true
 			else
 				local route_metadata=""
 				route_metadata=$(_comment_route_read metadata "$comment_route_file" 2>/dev/null || true)
 				IFS=$'\t' read -r comment_route_status comment_route_scope comment_route_research_status <<<"$route_metadata"
+                if [ "$comment_route_status" = "ready" ] || [ "$comment_route_status" = "hold" ]; then
+                    local route_cache_tmp
+                    route_cache_tmp=$(mktemp "$route_cache/.route_XXXXXXXX")
+                    chmod 600 "$route_cache_tmp"
+                    cp "$comment_route_file" "$route_cache_tmp" && mv "$route_cache_tmp" "$route_cache_file"
+                    # Fixed bounded cache lifetime; no source comments/credentials in logs.
+                    find "$route_cache" -maxdepth 1 -type f -mtime +1 -delete 2>/dev/null || true
+                fi
 				if [ "$comment_route_status" != "ready" ]; then
 					comment_route_hold=true
 				else
@@ -3292,32 +3308,32 @@ else:
 		fi
 	fi
 	if [ "$comment_route_hold" = "true" ]; then
-		log "[COMMENT] 根拠未確認のため返信生成・ackを行わずpendingを維持"
-		rm -f "$comment_batch_file" "$comment_prompt_batch_file" \
-			"$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
-		[ -n "$comment_route_file" ] && rm -f "$comment_route_file"
-		[ -n "$comment_evidence_file" ] && rm -f "$comment_evidence_file"
-		return 0
-	fi
-	if [ "$comment_route_enabled" = "true" ]; then
-		local _route_mode="" _route_agents=""
-		_route_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		if [ "$_route_mode" = "soren91" ]; then
-			_route_agents="${COMMENT_SOREN91_AGENT:-amd:DeepSeek-V4-Flash}"
-			[ -n "${COMMENT_SOREN91_FALLBACK:-}" ] &&
-				_route_agents="${_route_agents},${COMMENT_SOREN91_FALLBACK}"
-		else
-			_route_agents="${COMMENT_AGENTS:-amd:DeepSeek-V4-Flash}"
-		fi
-		if [ -z "$(_comment_api_only_agent_list "$_route_agents")" ]; then
-			log "[COMMENT] 根拠ルーティング有効時の直接API候補が未設定のため返信・ackを保留"
-			rm -f "$comment_batch_file" "$comment_prompt_batch_file" \
-				"$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
-			[ -n "$comment_route_file" ] && rm -f "$comment_route_file"
-			[ -n "$comment_evidence_file" ] && rm -f "$comment_evidence_file"
-			return 0
-		fi
-	fi
+        # Terminal response enters the SAME guard/queue/ack contract. It never
+        # invokes another provider or invents facts after a routing failure.
+        comment_route_terminal=$(_comment_route_read terminal "$comment_route_file" 2>/dev/null || true)
+        [ -n "$comment_route_terminal" ] || comment_route_terminal="必要な資料を上限内に確認できませんでした。確認できた根拠がないため、詳しい内容はまだ断定できません。"
+        if [ -n "${route_cache_file:-}" ] && [ ! -f "$route_cache_file" ]; then
+            local terminal_cache_tmp
+            terminal_cache_tmp=$(mktemp "$route_cache/.terminal_XXXXXXXX")
+            chmod 600 "$terminal_cache_tmp"
+            # Fixed fallback envelope contains no source text/identity. The cache
+            # also covers a router timeout/malformed output before metadata exists.
+            python3 - "$terminal_cache_tmp" <<'TERMINALCACHE'
+import json,sys
+row={"index":1,"user":"","comment":"","category":"chitchat","is_english":False}
+route={"status":"hold","scope":"unknown","reason":"classifier_unavailable","confidence":None,
+       "research_status":"not_requested","notes":"","sources":[]}
+with open(sys.argv[1],"w") as f:
+    json.dump({"schema_version":1,"rows":[row],"routing":route},f)
+TERMINALCACHE
+            mv "$terminal_cache_tmp" "$route_cache_file"
+        fi
+        log "[COMMENT] 根拠ルーティングを不足説明または確認質問で終端"
+        classification_json="[]"
+        comment_evidence_file=""
+        comment_route_hold=false
+    fi
+
 	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
 		strategy_advice_candidates=""
 		strategy_advice_candidates_main=""
@@ -3527,10 +3543,9 @@ PY
 		local comment_agent_list_peak="$comment_agent_list"
 		if [ "$comment_route_enabled" = "true" ]; then
 			comment_agent_list=$(_comment_api_only_agent_list "$comment_agent_list")
-			if [ -z "$comment_agent_list" ]; then
-				log "[COMMENT] 直接API候補が消えたため返信・ackを保留"
-				exit 0
-			fi
+			if [ -z "$comment_agent_list" ] && [ -z "$comment_route_terminal" ]; then
+                comment_route_terminal="返信APIを利用できず、確認した内容を返せませんでした。時間をおいて、もう一度質問してください。"
+            fi
 		fi
 		if [ "$comment_agent_list_peak" != "$comment_agent_list_before" ]; then
 			comment_peak_note=" peak=1"
@@ -3568,9 +3583,15 @@ RETRYCOMMENT
 			local comment_last_agent_file comment_failure_kind_file attempt_failure_kind
 			comment_last_agent_file=$(mktemp /tmp/eloop_comment_last_agent_XXXXXXXX)
 			comment_failure_kind_file=$(mktemp /tmp/eloop_comment_failure_kind_XXXXXXXX)
+            if [ -n "$comment_route_terminal" ]; then
+                attempt_talk="$comment_route_terminal"
+                attempt_rc=0
+                printf '%s' "fixed-terminal" >"$comment_last_agent_file"
+            else
 			attempt_talk=$(ai_generate_list "COMMENT" "$prompt_for_attempt" "$comment_agent_list" \
 				"${COMMENT_CODEX_TIMEOUT:-90}" "_comment_is_valid_generation_candidate" "$comment_last_agent_file" "$comment_failure_kind_file")
 			attempt_rc=$?
+            fi
 			attempt_model=$(cat "$comment_last_agent_file" 2>/dev/null)
 			attempt_failure_kind=$(cat "$comment_failure_kind_file" 2>/dev/null)
 			rm -f "$comment_last_agent_file"
@@ -3780,7 +3801,7 @@ RETRYCOMMENT
 			comment_speech_meta_file=""
 			local new_hash
 			new_hash=$(_comment_hash_file "$queue_file" 2>/dev/null || true)
-			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
+			if [ -z "$comment_route_terminal" ] && [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
 				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
 				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
 				_comment_clear_generation_meta "$queue_file"
@@ -3807,6 +3828,7 @@ RETRYCOMMENT
 					_record_processed_comment_lines "$twitch_comments"
 					_mark_comment_batch_processed "$comment_batch_hash"
 				fi
+				[ -z "${route_cache_file:-}" ] || rm -f "$route_cache_file"
 				generation_ok=true
 				break
 			fi
@@ -3935,6 +3957,7 @@ RETRYCOMMENT
 				timeout "${COMMENT_OVERLAY_NOTIFY_TIMEOUT_SEC:-3}" ./overlay_notify.sh chat "コメント返信 queued" "model=${comment_model_used:-unknown} chars=${#comments_talk} attempt=${attempt}/${comment_retry_max} batch=${comment_batch_hash:-none}${_ov_reply:+ | 返信:${_ov_reply}}" "info" >/dev/null 2>&1 || true
 			fi
 			_comment_failure_backoff_clear
+			[ -z "${route_cache_file:-}" ] || rm -f "$route_cache_file"
 			generation_ok=true
 			break
 		done

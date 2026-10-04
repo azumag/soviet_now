@@ -19,7 +19,7 @@ CATEGORIES = {
     "comment_advice", "stream_bug_report", "chitchat", "other",
 }
 STATUSES = {"ready", "hold"}
-RESEARCH_STATUSES = {"not_requested", "ok", "unavailable"}
+RESEARCH_STATUSES = {"not_requested", "ok", "partial", "unavailable"}
 REASONS = {
     "jev", "local_notification", "classifier_unavailable", "invalid_result", "empty_result",
     "classification_unavailable", "scope_unknown", "runtime_evidence_unavailable",
@@ -91,7 +91,7 @@ def load(path: str | Path) -> dict:
             if route["research_status"] != "not_requested" or route["notes"] or route["sources"]:
                 raise ValueError("invalid_api_route")
         elif route["scope"] in {"web", "code", "web_and_code"}:
-            if route["research_status"] != "ok" or not route["notes"] or not route["sources"]:
+            if route["research_status"] not in {"ok", "partial"} or not route["notes"] or not route["sources"]:
                 raise ValueError("missing_evidence")
         else:
             raise ValueError("invalid_ready_scope")
@@ -102,12 +102,21 @@ def load(path: str | Path) -> dict:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 2 or argv[0] not in {"rows", "metadata", "evidence"}:
+    if len(argv) != 2 or argv[0] not in {"rows", "metadata", "evidence", "terminal"}:
         return 2
     try:
         envelope = load(argv[1])
         route = envelope["routing"]
-        if argv[0] == "rows":
+        if argv[0] == "terminal":
+            if route["status"] != "hold":
+                raise ValueError("not_terminal")
+            if route["reason"] == "scope_unknown":
+                print("どの対象について知りたいですか？サービス名や、確認したい実装を教えてください。")
+            elif route["scope"] == "runtime":
+                print("現在の状態を示すログや観測がないため、原因はまだ確認できません。観測した症状や時刻を教えてください。")
+            else:
+                print("必要な資料を上限内に確認できませんでした。確認できた根拠がないため、詳しい内容はまだ断定できません。")
+        elif argv[0] == "rows":
             if route["status"] != "ready":
                 raise ValueError("route_not_ready")
             print(json.dumps(envelope["rows"], ensure_ascii=False, separators=(",", ":")))

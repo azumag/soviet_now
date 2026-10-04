@@ -1188,6 +1188,7 @@ _ai_call_opencode_unqueued() {
 		opencode_session_title_args=(--title "$session_title")
 	fi
 	local opencode_agent_args=()
+    case "$label" in COMMENT*|RADIO*) opencode_agent_args=(--agent soren-lite) ;; esac
 	case "$agent" in
 	vercel:*|amd:*)
 		case "$label" in
@@ -1345,68 +1346,8 @@ sys.stdout.write(text.strip())
 # _ai_call_codex LABEL AGENT PROMPT_FILE [TIMEOUT]
 #   codex CLI 経由で agent が示すモデルを呼ぶ。
 _ai_call_codex_unqueued() {
-	local label="$1" agent="$2" prompt_file="$3"
-	case "$agent" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
-	local timeout_sec="${4:-${CODEX_TIMEOUT:-300}}"
-	local model
-	model=$(_ai_codex_model_from_agent "$agent")
-	local codex_bin="${CODEX_BIN:-codex}"
-	local out_file stderr_file stderr_preview raw_failure rc cleaned rate_limited=false
-	[ -s "$prompt_file" ] || { _ai_error_preview_set "empty prompt file"; return 1; }
-	out_file=$(mktemp /tmp/ai_codex_out_XXXXXXXX)
-	stderr_file=$(mktemp /tmp/ai_codex_stderr_XXXXXXXX)
-	case "$timeout_sec" in
-	'' | *[!0-9]*) timeout_sec=300 ;;
-	esac
-	[ "$timeout_sec" -lt 1 ] && timeout_sec=1
-	log "[${label}] codex call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
-	# stdin を /dev/null へ固定する。codex exec は stdin がパイプだとプロンプト
-	# 引数ありでも `<stdin>` ブロックとして読み込むため、呼び出し元の stdin
-	# 状態に応じて出力が汚れたりブロックしたりするのを防ぐ。
-	timeout --kill-after=10s "$timeout_sec" "$codex_bin" exec \
-		--skip-git-repo-check -m "$model" -o "$out_file" "$(cat "$prompt_file")" \
-		</dev/null >/dev/null 2>"$stderr_file"
-	rc=$?
-	stderr_preview=$(head -c 4000 "$stderr_file" 2>/dev/null || true)
-	raw_failure="$stderr_preview"
-	# -o の本文はモデル出力であり、通常の失敗時に「rate limit」という
-	# 語を含むだけでもバックオフを発火させてしまうため判定対象にしない。
-	# 明示的なプロバイダ診断はCLIのstderr（rc非0/出力欠落時）だけを見る。
-	if [ $rc -ne 0 ] || [ ! -s "$out_file" ]; then
-		_ai_rate_limit_text_detected "$raw_failure" && rate_limited=true
-	fi
-	if [ $rc -eq 124 ]; then
-		log "[${label}] codex timeout (${timeout_sec}s, model=$model)" >&2
-		_ai_error_preview_set "timeout after ${timeout_sec}s"
-		rm -f "$out_file"
-		rm -f "$stderr_file"
-		# タイムアウトは bench しない ( claude backend と同じ根拠)。
-		return 1
-	fi
-	if [ $rc -ne 0 ]; then
-		log "[${label}] codex failed (rc=$rc, model=$model)" >&2
-		_ai_error_preview_set "rc=$rc: $(_ai_error_preview_from_text "$stderr_preview")"
-		rm -f "$out_file"
-		rm -f "$stderr_file"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	cleaned=$(_ai_strip_reasoning_blocks <"$out_file")
-	rm -f "$out_file"
-	rm -f "$stderr_file"
-	if [ -z "$cleaned" ]; then
-		log "[${label}] codex empty after cleanup (model=$model)" >&2
-		_ai_error_preview_set "empty output"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	if _contains_provider_error_text "$cleaned"; then
-		log "[${label}] codex provider error (model=$model)" >&2
-		_ai_error_preview_set "provider error: $(_ai_error_preview_from_text "$cleaned")"
-		[ "$rate_limited" = "true" ] && return "$AI_RATE_LIMIT_RC"
-		return 1
-	fi
-	printf '%s' "$cleaned"
+    _ai_error_preview_set "Codex provider removed"
+    return 1
 }
 
 _ai_call_codex() {
