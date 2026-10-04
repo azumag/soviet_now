@@ -1,5 +1,6 @@
 """Supervisor lookups keep liveness inputs without polling subprocesses."""
 import os
+from itertools import product
 from pathlib import Path
 import re
 import subprocess
@@ -73,15 +74,25 @@ _pattern_for_worker() {
 }
 '''
 
+PID_OVERRIDE_VALUES = (
+    "", "fixture with spaces/worker.pid", r"fixture\backslash\worker.pid",
+    "fixture%08s/worker.pid", "fixture$(printf injected)$HOME/worker.pid",
+    "-fixture.pid", "-", "--", "-nX",
+    "fixture.pid\n", "fixture.pid\n\n", "fixture\nworker.pid", "\n\n",
+    "-n\n", "-ne\n\n",
+) + tuple("-" + "".join(flags) for length in range(1, 4)
+          for flags in product("neE", repeat=length))
+
 
 class SupervisorLookupForkTests(unittest.TestCase):
-    def run_shell(self, body, extra_env=None, lookups=LOOKUPS):
+    def run_shell(self, body, extra_env=None, lookups=LOOKUPS,
+                  shell_options="set +o posix\nshopt -u xpg_echo"):
         env = dict(os.environ)
         env.pop("IMPROVE_DAEMON_PID_FILE", None)
         env.pop("YOUTUBE_BROADCAST_GUARD_PID_FILE", None)
         env.update(extra_env or {})
         result = subprocess.run(
-            ["bash", "-c", "set -euo pipefail\nshopt -u xpg_echo\n" + lookups + "\n" + body],
+            ["bash", "-c", "set -euo pipefail\n" + shell_options + "\n" + lookups + "\n" + body],
             env=env, text=True, capture_output=True, timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -132,14 +143,10 @@ probe direct_stream
                         f'{helper} "$FIXTURE_WORKER" {destination}'), env)
                     self.assertEqual(after, before)
 
-    def test_literal_pid_overrides_keep_legacy_bytes_and_caller_scope(self):
-        # Option-only echo values and trailing newlines have distinct historical
-        # semantics; do not silently include them in the normal-path contract.
+    def test_pid_overrides_keep_legacy_bytes_status_and_caller_scope(self):
         for worker, variable in (("improve_daemon", "IMPROVE_DAEMON_PID_FILE"),
                                  ("youtube_broadcast_guard", "YOUTUBE_BROADCAST_GUARD_PID_FILE")):
-            for value in ("", "fixture with spaces/worker.pid", r"fixture\backslash\worker.pid",
-                          "fixture%08s/worker.pid", "fixture$(printf injected)$HOME/worker.pid",
-                          "-fixture.pid"):
+            for value in PID_OVERRIDE_VALUES:
                 with self.subTest(worker=worker, override=value):
                     env = {"FIXTURE_WORKER": worker, variable: value}
                     raw = '_pidfile_for_worker "$FIXTURE_WORKER"'
@@ -149,6 +156,33 @@ probe direct_stream
                     after = self.run_shell(self.scope_probe(
                         '_pidfile_for_worker "$FIXTURE_WORKER" _w_pid_file'), env)
                     self.assertEqual(after, before)
+                    cold = self.run_shell(self.scope_probe(
+                        '_w_pid_file="$(_pidfile_for_worker "$FIXTURE_WORKER")"'), env)
+                    self.assertEqual(cold, before)
+
+    def test_alternate_echo_modes_keep_existing_semantics(self):
+        # Do not change the caller's options. For XPG escapes use echo itself,
+        # rather than attempting another general-purpose escape interpreter.
+        for options in ("set -o posix\nshopt -u xpg_echo",
+                        "set +o posix\nshopt -s xpg_echo",
+                        "set -o posix\nshopt -s xpg_echo"):
+            for value in PID_OVERRIDE_VALUES + (r"fixture\cignored", r"fixture\0123.pid"):
+                with self.subTest(options=options, override=value):
+                    env = {"YOUTUBE_BROADCAST_GUARD_PID_FILE": value}
+                    raw = '_pidfile_for_worker youtube_broadcast_guard'
+                    self.assertEqual(self.run_shell(raw, env, shell_options=options),
+                                     self.run_shell(raw, env, LEGACY_LOOKUPS, options))
+                    before = self.run_shell(self.scope_probe(
+                        '_w_pid_file="$(_pidfile_for_worker youtube_broadcast_guard)"'),
+                        env, LEGACY_LOOKUPS, options)
+                    after = self.run_shell(self.scope_probe(
+                        '_pidfile_for_worker youtube_broadcast_guard _w_pid_file'),
+                        env, shell_options=options)
+                    self.assertEqual(after, before)
+                    cold = self.run_shell(self.scope_probe(
+                        '_w_pid_file="$(_pidfile_for_worker youtube_broadcast_guard)"'),
+                        env, shell_options=options)
+                    self.assertEqual(cold, before)
 
     @staticmethod
     def scope_probe(statement):
@@ -158,7 +192,12 @@ _w_pattern=outer-pattern
 _worker_lookup_value=outer-internal
 probe() {
     local _w_pid_file=inner _w_pattern=inner-pattern _worker_lookup_value=caller-internal
+    local fixture_xpg=0 fixture_posix=0
+    if shopt -q xpg_echo; then fixture_xpg=1; fi
+    if [[ -o posix ]]; then fixture_posix=1; fi
 ''' + statement + r'''
+    if shopt -q xpg_echo; then [ "$fixture_xpg" = 1 ]; else [ "$fixture_xpg" = 0 ]; fi
+    if [[ -o posix ]]; then [ "$fixture_posix" = 1 ]; else [ "$fixture_posix" = 0 ]; fi
     printf '%s\0%s\0%s\0' "$_w_pid_file" "$_w_pattern" "$_worker_lookup_value"
 }
 probe
@@ -192,32 +231,52 @@ printf '%s\n' "$value"
         ])
 
     def test_poll_lookup_path_runs_in_parent_shell(self):
-        # Execute the actual hot lookup statements, with DEBUG inherited into
-        # command substitutions. A stdout call is a positive control for the
-        # detector; its subshell must be observed before checking the hot path.
+        # The old 19-worker path is a positive control: 2 subshells per worker.
+        # Execute the actual new hot statements with every override boundary.
+        for value in PID_OVERRIDE_VALUES:
+            with self.subTest(override=value):
+                self.assert_scan_subshell_counts({
+                    "IMPROVE_DAEMON_PID_FILE": value,
+                    "YOUTUBE_BROADCAST_GUARD_PID_FILE": value,
+                }, expected_after=0)
+
+    def test_xpg_escape_fallback_is_limited_to_affected_override(self):
+        for posix in (False, True):
+            for xpg in (False, True):
+                options = ("set " + ("-" if posix else "+") + "o posix\nshopt " +
+                           ("-s" if xpg else "-u") + " xpg_echo")
+                for value in (r"fixture\cignored", "-n\n"):
+                    with self.subTest(posix=posix, xpg=xpg, override=value):
+                        self.assert_scan_subshell_counts(
+                            {"YOUTUBE_BROADCAST_GUARD_PID_FILE": value},
+                            expected_after=int(xpg and "\\" in value), shell_options=options)
+
+    def assert_scan_subshell_counts(self, extra_env, expected_after, shell_options=None):
         hot_pattern = next(line.strip() for line in SOURCE.splitlines()
                            if line.strip() == '_pattern_for_worker "$_w_name" _w_pattern')
         hot_path = next(line.strip() for line in SOURCE.splitlines()
                         if line.strip() == '_pidfile_for_worker "$_w_name" _w_pid_file')
         names = re.findall(r"^\t([a-z_]+)\) echo", LEGACY_LOOKUPS.split("_pattern_for_worker()")[0], re.M)
         with tempfile.TemporaryDirectory() as temp:
-            trace = str(Path(temp) / "subshells")
-            self.run_shell(r'''
+            trace = Path(temp) / "subshells"
+            trace.touch()
+            env = dict(extra_env, TRACE=str(trace))
+            prefix = r'''
 parent_shell=$BASHPID
 set -T
-trap 'if [ "$BASHPID" != "$parent_shell" ]; then printf "subshell\n" >> "$TRACE"; fi' DEBUG
-control="$(_pattern_for_worker youtube_broadcast_guard)"
-trap - DEBUG
-[ -s "$TRACE" ]
-: > "$TRACE"
-trap 'if [ "$BASHPID" != "$parent_shell" ]; then printf "subshell\n" >> "$TRACE"; fi' DEBUG
-''' + "for _w_name in " + " ".join(names) + "; do\n" + hot_pattern + "\n" + hot_path + r'''
-done
-trap - DEBUG
-[ ! -s "$TRACE" ]
-[ "$_w_pattern" = "$control" ]
-[ "$_w_pid_file" = 'tmp/state/youtube_broadcast_guard.pid' ]
-''', {"TRACE": trace})
+trap 'if [ "$BASHPID" != "$parent_shell" ]; then printf "%s\n" "$BASHPID" >> "$TRACE"; fi' DEBUG
+''' + "for _w_name in " + " ".join(names) + "; do\n"
+            suffix = "\ndone\ntrap - DEBUG\n"
+            options = {} if shell_options is None else {"shell_options": shell_options}
+            self.assertEqual(self.run_shell(prefix + r'''
+_w_pattern="$(_pattern_for_worker "$_w_name")"
+_w_pid_file="$(_pidfile_for_worker "$_w_name")"
+''' + suffix, env, LEGACY_LOOKUPS, **options), "")
+            self.assertEqual(len(set(trace.read_text().splitlines())), 38)
+            trace.write_text("")
+            self.assertEqual(self.run_shell(prefix + hot_pattern + "\n" + hot_path + suffix,
+                                           env, **options), "")
+            self.assertEqual(len(set(trace.read_text().splitlines())), expected_after)
 
 
 if __name__ == "__main__":

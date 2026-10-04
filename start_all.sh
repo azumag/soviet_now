@@ -284,9 +284,24 @@ _pidfile_for_worker() {
 	# Keep stdout callers compatible; the poll loop uses a destination variable
 	# to avoid spawning a subshell for a fixed lookup on every worker/tick.
 	if [ -n "${2:-}" ]; then
+		# Match the old $(echo "$value") result, including echo-only options
+		# and removal of every trailing LF. Do not constrain configured paths.
+		if shopt -q xpg_echo && [[ "$_worker_lookup_value" == *\\* ]]; then
+			# Non-default escape handling can produce \c or NUL; use echo itself
+			# for exact compatibility on this rare path, accepting one subshell.
+			_worker_lookup_value="$(echo "$_worker_lookup_value")"
+		else
+			if ! { shopt -q xpg_echo && [[ -o posix ]]; } &&
+				[[ "$_worker_lookup_value" == -?* && "${_worker_lookup_value#-}" != *[!neE]* ]]; then
+				_worker_lookup_value=""
+			fi
+			while [[ "$_worker_lookup_value" == *$'\n' ]]; do
+				_worker_lookup_value="${_worker_lookup_value%$'\n'}"
+			done
+		fi
 		printf -v "$2" '%s' "$_worker_lookup_value"
 	else
-		printf '%s\n' "$_worker_lookup_value"
+		echo "$_worker_lookup_value"
 	fi
 }
 
@@ -319,7 +334,7 @@ _pattern_for_worker() {
 	if [ -n "${2:-}" ]; then
 		printf -v "$2" '%s' "$_worker_lookup_value"
 	else
-		printf '%s\n' "$_worker_lookup_value"
+		echo "$_worker_lookup_value"
 	fi
 }
 
