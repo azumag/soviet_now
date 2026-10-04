@@ -262,6 +262,59 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(boundary.returncode, 0)
             self.assertEqual(payload["ack"]["status"], "boundary")
 
+    def test_stale_completed_founding_stop_is_boundary_with_live_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            marker_dir = root / "tmp/markers"
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            (marker_dir / ".soviet_created").touch()
+            state_path = root / "game_state.json"
+            state_path.write_text(json.dumps({
+                "state": "STOP", "score": 6401, "makeSorenCount": 1,
+                "pieces": [{"type": 16}],
+            }))
+            old = time.time() - 301
+            os.utime(state_path, (old, old))
+            runner_path = root / "tmp/state/main_strategy_runner_active.json"
+            runner_path.parent.mkdir(parents=True, exist_ok=True)
+            runner_path.write_text(json.dumps({"pid": os.getpid(), "game": 55202}))
+
+            boundary, payload = self.run_broker(
+                root, "boundary", "--request-id", request_id
+            )
+
+            self.assertEqual(boundary.returncode, 0)
+            self.assertEqual(payload["ack"]["status"], "boundary")
+            snapshot = payload["ack"]["boundary_snapshot"]
+            self.assertTrue(snapshot["stale_founding_stop"])
+            self.assertTrue(snapshot["runner_alive"])
+            self.assertEqual(snapshot["make_soren_count"], 1)
+
+    def test_founding_stop_requires_positive_counter_and_long_quiet_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            marker_dir = root / "tmp/markers"
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            (marker_dir / ".soviet_created").touch()
+            state_path = root / "game_state.json"
+
+            for count, age in ((0, 1000), (1, 299)):
+                state_path.write_text(json.dumps({
+                    "state": "STOP", "score": 6401, "makeSorenCount": count,
+                }))
+                old = time.time() - age
+                os.utime(state_path, (old, old))
+                waiting, payload = self.run_broker(
+                    root, "boundary", "--request-id", request_id
+                )
+                self.assertEqual(waiting.returncode, 1, (count, age))
+                self.assertEqual(payload["ack"]["status"], "waiting")
+                self.assertFalse(payload["ack"]["snapshot"]["stale_founding_stop"])
+
     def test_stop_requires_boundary_ack_and_finish_requires_matching_resource(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
