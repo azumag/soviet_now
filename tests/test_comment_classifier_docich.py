@@ -135,15 +135,16 @@ class DocichClassifierDelegationTests(unittest.TestCase):
             self.assertNotEqual(rejected.returncode, 0)
 
             route["rows"][0]["user"] = "Nightbot"
-            route["routing"].update(scope="api_only", reason="local_notification",
+            route["routing"].update(status="hold", scope="unknown", reason="local_notification",
                                     confidence=None, research_status="not_requested",
                                     notes="", sources=[])
             path.write_text(json.dumps(route), encoding="utf-8")
-            accepted = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+            accepted_hold = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
                                       capture_output=True, text=True, timeout=5)
-            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(accepted_hold.returncode, 0, accepted_hold.stderr)
 
             route["rows"][0]["user"] = "viewer"
+            route["routing"].update(status="ready", scope="api_only")
             path.write_text(json.dumps(route), encoding="utf-8")
             rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
                                       capture_output=True, text=True, timeout=5)
