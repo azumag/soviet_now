@@ -1,10 +1,10 @@
 name: Record clip delivery
 on:
   pull_request:
-    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', '.github/workflows/record-clips.yml']
+    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'lib/chat_clip_queue.sh', 'eloop_lib.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', 'tests/fixtures/record-clips/**', '.github/workflows/record-clips.yml']
   push:
     branches: [main]
-    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', '.github/workflows/record-clips.yml']
+    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'lib/chat_clip_queue.sh', 'eloop_lib.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', 'tests/fixtures/record-clips/**', '.github/workflows/record-clips.yml']
 permissions:
   contents: read
 jobs:
@@ -16,4 +16,4 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_twitch_clip_delivery tests.test_record_clip_queue
-      - run: bash -n twitch_clip.sh workers/chat_worker.sh
+      - run: bash -n twitch_clip.sh workers/chat_worker.sh lib/chat_clip_queue.sh eloop_lib.sh
