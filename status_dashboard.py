@@ -3393,6 +3393,43 @@ def render_hanjuku_status(value):
     return lines
 
 
+def render_console_progress(value):
+    """Four short record/plan lines for the terminal and common overlay."""
+    if not isinstance(value, dict):
+        return []
+    n = _corner_int(value.get("session_count"))
+    mean, best = value.get("session_mean"), value.get("session_best")
+    result = f"Session: n={n} / best={_corner_number(best) if best is not None else '--'}"
+    result += f" / mean={_corner_number(mean) if mean is not None else '--'}"
+    if value.get("history_status") != "readable":
+        result += " (history unavailable)"
+    latest = value.get("latest")
+    if isinstance(latest, dict):
+        at = datetime.fromtimestamp(latest["at"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        observed = f"Result: {latest['score']} @ {at} / {latest['age']}s ago"
+    else:
+        observed = "Result: no timestamped result in this session"
+    steps = {"switch-wait": "switch completion pending", "restore-wait": "restoration pending",
+             "recovery-wait": "recovery required", "unverified": "runtime unverified",
+             "target-recorded": "target recorded; corner completion pending",
+             "deadline-passed": "limit passed; completion unconfirmed",
+             "collect-results": "collect results"}
+    planned = "Plan: " + steps.get(value.get("next"), "unverified")
+    left = value.get("remaining")
+    secs = value.get("remaining_seconds")
+    if value.get("next") == "collect-results":
+        if left is not None:
+            planned += f" / {left} matches left"
+        if secs is not None:
+            planned += f" / limit {secs//60}:{secs%60:02}"
+    # Records, plans and current observation have deliberately different labels.
+    reason = value.get("reason")
+    evidence = "Evidence: completed results / live score unobserved"
+    if reason:
+        evidence = f"Reason: {reason} (recorded)"
+    return [result, observed, planned, evidence]
+
+
 def render_docich_corner_stats(corner):
     """Render a corner-owned stats feed without consulting Soren score history."""
     if not isinstance(corner, dict):
@@ -3431,8 +3468,9 @@ def render_docich_corner_stats(corner):
         progress = f"{matches}/{target}" if target != "--" else matches
         lines += [
             f"SOREN/CORNER: {label} / {game} / {status}",
-            f"Live: this corner matches {progress}",
+            f"{'Record' if corner.get('console') else 'Live'}: this corner matches {progress}",
         ]
+        lines += render_console_progress(corner.get("console"))
         if corner.get("game") == "hanjuku-hero":
             lines += render_hanjuku_status(corner.get("hanjuku"))
         # Hanjuku is a scripted corner: it never appends to scores/<game>.jsonl

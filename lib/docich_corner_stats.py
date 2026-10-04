@@ -24,6 +24,7 @@ from typing import Mapping
 
 
 DEFAULT_DOCICH_STATE_DIR = Path("/home/ubuntu/docich/run-soren-live")
+CONSOLE_GAMES = frozenset({"ninvaders", "nsnake", "bastet", "moon-buggy", "pacman4console"})
 ACTIVE_STATUSES = frozenset(
     {"preparing", "starting", "active", "restoring", "recovery_required"}
 )
@@ -162,31 +163,38 @@ def _active_states(root: Path) -> list[dict[str, object]]:
     return active
 
 
-def _score_history(root: Path, state: Mapping[str, object]) -> list[dict[str, object]]:
+def _score_history(root: Path, state: Mapping[str, object]) -> tuple[list[dict[str, object]], str]:
     game = _safe_game(state.get("game"))
     if game is None:
-        return []
+        return [], "unavailable"
     path = root / "scores" / f"{game}.jsonl"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
+    except FileNotFoundError:
+        return [], "missing"
+    except (OSError, UnicodeError):
+        return [], "unreadable"
 
     history: list[dict[str, object]] = []
+    complete = True
     for order, line in enumerate(lines):
         try:
             item = json.loads(line)
         except (TypeError, ValueError):
+            complete = False
             continue
         if not isinstance(item, dict) or item.get("game") != game:
             continue
         score = _int_value(item.get("score"))
         if score is None:
+            complete = False
             continue
         timestamp = _parse_timestamp(item.get("ts"))
+        if timestamp is None:
+            complete = False
         history.append({"score": score, "ts": timestamp, "order": order})
     history.sort(key=lambda item: (item.get("ts") is not None, item.get("ts") or 0, item["order"]))
-    return history
+    return history, "readable" if complete else "partial"
 
 
 def _session_count(history: list[dict], state: Mapping[str, object]) -> int | None:
@@ -603,8 +611,87 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         return unavailable
 
 
+def _console_progress(root, state, history, history_status, now):
+    """Display recorded outcomes and the plan, never infer a current score.
+
+    A result timestamp is an observation of a completed match. The corner
+    state's mtime and this projection's creation time are not gameplay
+    observations. Missing or unreadable history must not become zero results.
+    """
+    start = _parse_timestamp(state.get("started_at"))
+    completed = _parse_timestamp(state.get("completed_at"))
+    stop = completed if completed is not None else now
+    valid_window = (start is not None and 0 < start <= stop <= now)
+    session = ([row for row in history if row["ts"] is not None
+                and start <= row["ts"] <= stop] if valid_window else None)
+    if history_status != "readable":
+        session = None
+    scores = [row["score"] for row in session] if session is not None else None
+    target = _int_value(state.get("target_matches"))
+    target = target if target is not None and 1 <= target <= 100 else None
+    deadline = _parse_timestamp(state.get("ends_at"))
+    if deadline is not None and (start is None or deadline < start):
+        deadline = None
+    status = state.get("status")
+    # Only a generation bound to this corner proves the active record is
+    # current. Same game in a later runtime, old/manual state, or missing
+    # canonical data remain unverified. Reading this file changes nothing.
+    ownership = "unverified"
+    try:
+        canonical, _ = _bounded_state(root / "game_switch.json")
+        active = canonical.get("active") or {}
+        if (canonical.get("phase") in {"ready", "draining"}
+                and isinstance(active, dict) and active.get("game") == state.get("game")
+                and isinstance(state.get("rotation_runtime_id"), str)
+                and state.get("rotation_runtime_id")
+                and active.get("runtime_id") == state.get("rotation_runtime_id")):
+            ownership = "matched"
+    except (OSError, ValueError, TypeError):
+        pass
+    if (status in {"preparing", "starting"}
+            or (ownership != "matched" and completed is None)):
+        # Start-time filtering alone cannot bind rows from a later visit of
+        # the same game to a stale corner. Do not publish them as this run.
+        session = None
+        scores = None
+    # A plan describes the recorded lifecycle, not a command or recovery action.
+    if status in {"preparing", "starting"}:
+        next_step = "switch-wait"
+    elif status == "restoring":
+        next_step = "restore-wait"
+    elif status == "recovery_required":
+        next_step = "recovery-wait"
+    elif ownership != "matched" or not valid_window or canonical.get("phase") != "ready":
+        next_step = "unverified"
+    elif target is not None and scores is not None and len(scores) >= target:
+        next_step = "target-recorded"
+    elif deadline is not None and now >= deadline:
+        next_step = "deadline-passed"
+    else:
+        next_step = "collect-results"
+    # Fixed categories only; do not publish exception text, paths or arbitrary
+    # fields from corner state. Unknown reasons stay unknown.
+    reasons = {"game_over", "screen_stalled", "manual_saved_stop", "manual_forced_stop",
+               "switch-terminal-before-corner-active"}
+    errors = {"recovery_required", "quiesce_failed", "readiness_timeout", "deadline_exceeded"}
+    reason = state.get("end_reason")
+    error = state.get("last_error_code")
+    return {"history_status": history_status, "session_count": len(scores) if scores is not None else None,
+            "session_mean": sum(scores) / len(scores) if scores else None,
+            "session_best": max(scores) if scores else None,
+            "latest": ({"score": session[-1]["score"], "at": session[-1]["ts"],
+                        "age": int(now-session[-1]["ts"])} if session else None),
+            "target": target, "remaining": max(0, target-len(scores))
+            if target is not None and scores is not None else None,
+            "remaining_seconds": max(0, int(deadline-now)) if deadline is not None else None,
+            "ownership": ownership, "next": next_step,
+            "reason": reason if isinstance(reason, str) and reason in reasons else
+                      error if isinstance(error, str) and error in errors else None}
+
+
 def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
-                       soren_root: str | os.PathLike[str] | None = None) -> dict[str, object] | None:
+                       soren_root: str | os.PathLike[str] | None = None,
+                       now: float | None = None) -> dict[str, object] | None:
     """Return one active corner snapshot, or ``None`` for ordinary Soren mode.
 
     Multiple active corner states are represented as a conflict snapshot so
@@ -629,10 +716,17 @@ def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
     kind = str(entry["kind"])
     if kind == "retro":
         snapshot["game"] = _safe_game(state.get("game")) or "unknown"
-        snapshot["scores"] = _score_history(root, state)
+        snapshot["scores"], history_status = _score_history(root, state)
         snapshot["session_matches"] = _session_count(snapshot["scores"], state)
         snapshot["target_matches"] = _int_value(state.get("target_matches"))
         snapshot["strategy_ranking"] = _strategy_ranking(root, snapshot["game"])
+        if snapshot["game"] in CONSOLE_GAMES:
+            observed_now = time.time() if now is None else now
+            snapshot["scores"] = [row for row in snapshot["scores"]
+                                  if row["ts"] is None or row["ts"] <= observed_now]
+            snapshot["console"] = _console_progress(root, state, snapshot["scores"], history_status,
+                                                     observed_now)
+            snapshot["session_matches"] = snapshot["console"]["session_count"]
         if snapshot["game"] == "hanjuku-hero":
             snapshot["hanjuku"] = _hanjuku_snapshot(root, state)
     elif kind == "paper":

@@ -1158,3 +1158,36 @@ test('Soren telemetry panels preserve chart values and switch away cleanly', asy
   assert.equal(ui.feedG.querySelector('.soren-monitor'), null);
   assert.equal(ui.documentElement.dataset.sorenMonitor, '');
 });
+
+test('console record lines reach the actual dashboard, including empty and interrupted sessions', async () => {
+  const makeText = (next, count) => {
+    const script = `
+import sys, json
+sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
+import status_dashboard as sd
+value={'history_status':'readable', 'session_count':${count}, 'session_mean':20 if ${count} else None,
+       'session_best':30 if ${count} else None, 'latest':{'score':30,'at':160,'age':40} if ${count} else None,
+       'next':${JSON.stringify(next)}, 'remaining':1, 'remaining_seconds':300, 'reason':None}
+corner={'kind':'retro','label':'RETRO','game':'nsnake','status':'active','target_matches':3,
+        'session_matches':${count},'scores':[{'score':10},{'score':30}] if ${count} else [],'console':value}
+print('\\n'.join(sd.render_docich_corner_stats(corner)))`;
+    const out = spawnSync('python3', ['-c', script], { encoding:'utf8' });
+    assert.equal(out.status, 0, out.stderr); return out.stdout;
+  };
+  const ui = await runBroadcastOverlayScript({feeds:{showStatusG:{text:makeText('collect-results',2)}}});
+  let dashboard = ui.feedG.querySelector('.game-dashboard');
+  const rows = dashboard.querySelector('.game-records').children.map(r=>r.textContent).join('\n');
+  assert.match(rows,/Session: n=2 \/ best=30 \/ mean=20/);
+  assert.match(rows,/Result: 30 .*40s ago/);
+  assert.match(rows,/1 matches left \/ limit 5:00/);
+  assert.match(rows,/live score unobserved/);
+  for (const [next, count] of [['restore-wait',2],['unverified',0]]) {
+    ui.setState({feeds:{showStatusG:{text:makeText(next,count)}}}); await ui.tick(1);
+    dashboard=ui.feedG.querySelector('.game-dashboard');
+    const text=dashboard.querySelector('.game-records').children.map(r=>r.textContent).join('\n');
+    assert.match(text,next==='restore-wait'?/restoration pending/:/runtime unverified/);
+    assert.doesNotMatch(text,/matches left/);
+  }
+  ui.setState(hanjukuFixture()); await ui.tick(2);
+  assert.equal(ui.feedG.querySelector('.game-records'),null,'console records disappear on a game switch');
+});
