@@ -84,12 +84,7 @@ def load(path: str | Path) -> dict:
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("invalid_source")
     if route["status"] == "ready":
-        if route["reason"] == "local_notification":
-            trusted_system_users = {"wizebot", "nightbot", "streamelements", "streamlabs"}
-            if (route["scope"] != "api_only" or route["confidence"] is not None
-                    or any(row["user"].casefold() not in trusted_system_users for row in rows)):
-                raise ValueError("invalid_local_notification")
-        elif route["reason"] != "jev" or route["confidence"] is None:
+        if route["reason"] != "jev" or route["confidence"] is None:
             raise ValueError("invalid_ready_decision")
         if route["scope"] == "api_only":
             if route["research_status"] != "not_requested" or route["notes"] or route["sources"]:
