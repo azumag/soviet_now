@@ -2,7 +2,7 @@
 # 探索モード (EXPLORE_MODE=1) では Twitch クリップ作成を行わない
 [ "${EXPLORE_MODE:-0}" = "1" ] && exit 0
 # twitch_clip.sh - Twitchクリップ自動作成 + チャット投稿
-# Usage: ./twitch_clip.sh "イベントメッセージ" [イベント種別]
+# Usage: ./twitch_clip.sh "イベントメッセージ" [イベント種別] [内部receiptファイル]
 cd "$(dirname "$0")"
 source lib/outbound_queue.sh 2>/dev/null || true
 
@@ -11,6 +11,11 @@ source lib/outbound_queue.sh 2>/dev/null || true
 
 EVENT_MSG="${1:-}"
 EVENT_KIND="${2:-generic}"
+RECEIPT_FILE="${3:-}"
+_receipt() {
+    [ -n "$RECEIPT_FILE" ] || return 0
+    python3 ./tools/clip_receipt.py "$RECEIPT_FILE" "$@"
+}
 _log() { echo "[twitch_clip $(date '+%H:%M:%S')] $*" >&2; }
 # Create Clip は非同期。作成応答だけでは成功にせず、Get Clips で確認する。
 # rc=75 は未作成と判明した一時障害、78 は設定/認証、1 は結果不明/未確認。
@@ -32,6 +37,15 @@ CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
 if [ -z "$TOKEN" ] || [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
     _log "SKIP: missing env vars"
+    if [ -n "$RECEIPT_FILE" ]; then
+        saved=$(_receipt read) || exit 1
+        phase=$(printf '%s\n' "$saved" | sed -n '1p')
+        case "$phase" in
+            accepted) exit 76 ;; # retain the known ID for GET after auth recovers
+            ready) exit 0 ;;
+        esac
+        _receipt rejected || true
+    fi
     exit 78
 fi
 TOKEN="${TOKEN#oauth:}"
@@ -41,6 +55,22 @@ _json_get() {
     python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d$1 if d$1 else '')" 2>/dev/null
 }
 
+# Resume an accepted request with GET only. Save intent before any POST;
+# response loss/crash must never manufacture another clip for the same event.
+clip_id=""
+if [ -n "$RECEIPT_FILE" ]; then
+    receipt_state=$(_receipt read) || exit 1
+    receipt_phase=$(printf '%s\n' "$receipt_state" | sed -n '1p')
+    clip_id=$(printf '%s\n' "$receipt_state" | sed -n '2p')
+    case "$receipt_phase" in
+        ready) exit 0 ;;
+        accepted) [ -n "$clip_id" ] || exit 1 ;;
+        ''|retryable) _receipt creating || exit 1 ;;
+        *) exit 1 ;;
+    esac
+fi
+
+if [ -z "$clip_id" ]; then
 # --- クリップ作成 ---
 # HTTPステータスも記録する（offline と scope不足/認証失敗の切り分け用）
 clip_http_code=""
@@ -53,8 +83,8 @@ clip_curl_rc=$?
 if [ "$clip_curl_rc" -ne 0 ]; then
     _log "WARN: clip create transport failed (rc=$clip_curl_rc)"
     case "$clip_curl_rc" in
-        5|6|7) exit 75 ;; # proxy/DNS/connect failure: request was not accepted
-        *) exit 1 ;; # timeout/response loss: outcome may be ambiguous
+        5|6|7) _receipt retryable || exit 1; exit 75 ;; # proxy/DNS/connect failure: request was not accepted
+        *) _receipt unknown || true; exit 1 ;; # timeout/response loss: outcome may be ambiguous
     esac
 fi
 clip_http_code=$(printf '%s' "$response" | tail -n 1)
@@ -64,22 +94,26 @@ case "$clip_http_code" in
     *)
         _log "WARN: clip create failed (http=${clip_http_code:-conn-fail}; offline?/scope clips:edit?/token?)"
         case "$clip_http_code" in
-            429|503) exit 75 ;;
-            *) exit 78 ;;
+            429|503) _receipt retryable || exit 1; exit 75 ;;
+            *) _receipt rejected || exit 1; exit 78 ;;
         esac
         ;;
 esac
 if [ -z "$response" ]; then
     _log "WARN: clip create failed (http=${clip_http_code}, empty body)"
+    _receipt unknown || true
     exit 1
 fi
 
 clip_id=$(printf '%s' "$response" | _json_get "['data'][0]['id']")
 if [ -z "$clip_id" ]; then
     _log "WARN: no clip id in response"
+    _receipt unknown || true
     exit 1
 fi
+_receipt accepted "$clip_id" || exit 1
 _log "clip created: id=$clip_id"
+fi
 
 # --- 完了ポーリング（既定で最大60秒） ---
 clip_url=""
@@ -103,8 +137,13 @@ done
 # Get Clips で確認できなかった場合は投稿しない（dead link防止）
 if [ -z "$clip_url" ]; then
     _log "WARN: clip not confirmed after polling, skipping chat post"
+    [ -z "$RECEIPT_FILE" ] || exit 76
     exit 1
 fi
+
+# Preserve public confirmation before chat queue delivery. An interrupted chat
+# append is not grounds to recreate a confirmed clip.
+_receipt ready "$clip_id" "$clip_url" || exit 1
 
 # --- チャット投稿 ---
 chat_msg="${EVENT_MSG:+${EVENT_MSG} | }${clip_url}"
