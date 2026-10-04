@@ -107,7 +107,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: azumag/docich
-          ref: 232f8af4606af779916f3037e2ee7b53b19ff963
+          ref: 2fa4a37047f79777df4f41245047c080553e6931
           path: _test_docich
           persist-credentials: false
       - run: |
