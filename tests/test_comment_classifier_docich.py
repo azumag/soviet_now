@@ -3,6 +3,7 @@
 This repo only calls docich's classifier and must never classify locally:
 no heuristic, no Jev transport, no rubric, no fallback of its own.
 """
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -89,6 +90,80 @@ class DocichClassifierDelegationTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, worker.split("[ -f .env ]", 1)[0])
                 self.assertIn(key, refresh)
+
+    def test_routed_reply_agent_filter_never_returns_cli_or_unknown_agents(self):
+        result = subprocess.run(
+            ["bash", "-c", 'source broadcast/comment.sh; _comment_api_only_agent_list "$1"',
+             "route-filter-test", "codex:one, local:gemma4:12b, opencode:two, local, local:bad;touch"],
+            cwd=ROOT, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "local:gemma4:12b,local")
+
+    def test_routed_reply_envelope_extracts_only_valid_metadata_rows_and_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "route.json"
+            route = {"schema_version": 1,
+                     "rows": [{"index": 1, "user": "viewer", "comment": "current question",
+                               "category": "general_question", "is_english": False}],
+                     "routing": {"status": "ready", "scope": "web", "reason": "jev",
+                                 "confidence": .95, "research_status": "ok",
+                                 "notes": "verified note", "sources": ["https://example.org/ref"]}}
+            path.write_text(json.dumps(route), encoding="utf-8")
+            helper = ROOT / "lib/comment_reply_route.py"
+            rows = subprocess.run(["python3", str(helper), "rows", str(path)], cwd=ROOT,
+                                  capture_output=True, text=True, timeout=5)
+            metadata = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            evidence = subprocess.run(["python3", str(helper), "evidence", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertEqual(rows.returncode, 0, rows.stderr)
+            self.assertEqual(json.loads(rows.stdout), route["rows"])
+            self.assertEqual(metadata.stdout.strip(), "ready\tweb\tok")
+            self.assertIn('"notes": "verified note"', evidence.stdout)
+            self.assertIn('"https://example.org/ref"', evidence.stdout)
+
+            route["routing"]["scope"] = "../tmp/anything"
+            path.write_text(json.dumps(route), encoding="utf-8")
+            rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(rejected.returncode, 0)
+
+            route["routing"].update(scope="web", confidence=None)
+            path.write_text(json.dumps(route), encoding="utf-8")
+            rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(rejected.returncode, 0)
+
+            route["rows"][0]["user"] = "Nightbot"
+            route["routing"].update(scope="api_only", reason="local_notification",
+                                    confidence=None, research_status="not_requested",
+                                    notes="", sources=[])
+            path.write_text(json.dumps(route), encoding="utf-8")
+            accepted = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+            route["rows"][0]["user"] = "viewer"
+            path.write_text(json.dumps(route), encoding="utf-8")
+            rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(rejected.returncode, 0)
+
+    def test_routed_reply_is_opt_in_and_api_failures_cannot_reach_cli_generation(self):
+        source = (ROOT / "broadcast/comment.sh").read_text(encoding="utf-8")
+        routed = source.index('case "${DOCICH_REPLY_ROUTING_ENABLED:-0}" in')
+        hold = source.index('if [ "$comment_route_hold" = "true" ]; then', routed)
+        generate = source.index('ai_generate_list "COMMENT"', hold)
+        api_filter = source.index('_comment_api_only_agent_list "$comment_agent_list"', hold)
+        translation_filter = source.index('_comment_api_only_agent_list "$translation_agents"', hold)
+        preflight_api = source.index('_comment_api_only_agent_list "$route_pre_agents"', routed)
+        route_call = source.index('timeout --kill-after=5s 55s "$route_cli"', routed)
+        self.assertLess(routed, hold)
+        self.assertLess(preflight_api, route_call)
+        self.assertLess(hold, generate)
+        self.assertLess(api_filter, generate)
+        self.assertLess(translation_filter, source.index('_comment_generate_translation', hold))
+        self.assertIn('if [ "$comment_route_enabled" = "true" ]; then\n\t\t\tlog "[COMMENT] 分類結果:', source)
 
 
 if __name__ == "__main__":
