@@ -1561,9 +1561,19 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
     surface.replaceChildren(); surface.style.display = 'none';
+    const frame = SURFACE_REGION === 'game-gap' ? window.frameElement : null;
+    // Transparent empty iframes can still cover WebGL with Chromium's dark
+    // canvas on Xvfb. Remove the whole surface until measured padding exists.
+    if (frame) frame.style.display = 'none';
     if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) return;
     const gap = value.gap;
-    surface.style.left = `${gap.left}px`; surface.style.width = `${gap.width}px`;
+    if (frame) {
+      // Crop the iframe itself; transparent space must not overlap game pixels.
+      frame.style.left = `${gap.left}px`;
+      frame.style.width = `${gap.width}px`;
+      frame.style.display = 'block';
+    }
+    surface.style.left = `${frame ? 0 : gap.left}px`; surface.style.width = `${gap.width}px`;
     surface.style.display = 'block';
     const title = document.createElement('div'); title.className = 'hanjuku-gap-title';
     title.textContent = '最終観測・記録'; surface.appendChild(title);
