@@ -1,0 +1,19 @@
+name: Record clip delivery
+on:
+  pull_request:
+    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', '.github/workflows/record-clips.yml']
+  push:
+    branches: [main]
+    paths: ['twitch_clip.sh', 'workers/chat_worker.sh', 'tools/clip_receipt.py', 'tools/record_clip_queue.py', 'tests/test_twitch_clip_delivery.py', 'tests/test_record_clip_queue.py', '.github/workflows/record-clips.yml']
+permissions:
+  contents: read
+jobs:
+  record-clips:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_twitch_clip_delivery tests.test_record_clip_queue
+      - run: bash -n twitch_clip.sh workers/chat_worker.sh

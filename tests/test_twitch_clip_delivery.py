@@ -44,7 +44,7 @@ class ClipSandbox(unittest.TestCase):
         )
 
 
-class TwitchClipHTTPTests(ClipSandbox):
+class TwitchClipHTTPFixture(ClipSandbox):
     def setUp(self):
         super().setUp()
         shutil.copy(ROOT / "twitch_clip.sh", self.work / "twitch_clip.sh")
@@ -82,6 +82,8 @@ else:
         self.assertNotIn("test-token-do-not-log", result.stdout + result.stderr)
         return result
 
+
+class TwitchClipHTTPTests(TwitchClipHTTPFixture):
     def test_confirmed_clip_is_enqueued_once(self):
         result = self.run_clip()
         self.assertEqual(result.returncode, 0, result.stderr)

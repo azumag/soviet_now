@@ -214,11 +214,15 @@ _consume_outbound_queue() {
 
 # --- Clip queue 消化 ---
 _process_clip_queue() {
+    # Record events have an independent durable receipt, never a numeric Soren
+    # game marker. The adapter reuses twitch_clip.sh and its existing credentials.
+    TWITCH_CLIP_ENABLED="${TWITCH_CLIP_ENABLED:-0}" EXPLORE_MODE="${EXPLORE_MODE:-0}" python3 ./tools/record_clip_queue.py "$CLIP_QUEUE_DIR" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
 	local queue_file
 	local failed_dir="$CLIP_QUEUE_DIR/failed"
 	mkdir -p "$failed_dir" || return 1
 	for queue_file in "$CLIP_QUEUE_DIR"/*.json; do
 		[ -f "$queue_file" ] || continue
+        case "$(basename "$queue_file")" in record_*) continue ;; esac
 
 		# JSON パース
 		local event_msg game_id delay event_kind attempts parsed
