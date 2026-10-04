@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,7 +23,23 @@ function fixture(kind) {
   if(kind==='long-card'||kind==='stress') text=text.replace('カストーラ/スペンソニア','保有将軍'.repeat(10))
     .replace('アルマムーン=ゼウス/ユイートル','駐留将軍'.repeat(15))
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
-  if (kind === 'monitor') {
+  if (kind.startsWith('console')) {
+    const count = kind === 'console-empty' ? 0 : 2;
+    const next = ['console-restore','console-saved-stop','console-forced-stop','console-timeout'].includes(kind) ? 'restore-wait' : kind === 'console-unknown' ? 'unverified' : 'collect-results';
+    const reason = {'console-saved-stop':'manual_saved_stop','console-forced-stop':'manual_forced_stop','console-timeout':'readiness_timeout'}[kind];
+    const script = `
+import sys
+sys.path.insert(0, ${JSON.stringify(root)})
+import status_dashboard as sd
+value={'history_status':'readable','session_count':${count},'session_mean':20 if ${count} else None,
+       'session_best':30 if ${count} else None,'latest':{'score':30,'at':1780000000,'age':${kind === 'console-old' ? 86400 : 40}} if ${count} else None,
+       'next':${JSON.stringify(next)},'remaining':1,'remaining_seconds':300,'reason':${reason ? JSON.stringify(reason) : 'None'}}
+print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','game':'pacman4console',
+      'status':'restoring' if ${JSON.stringify(next)}=='restore-wait' else 'active','session_matches':${count},
+      'target_matches':3,'scores':[{'score':10},{'score':30}] if ${count} else [],'console':value})))`;
+    const out = spawnSync('python3', ['-c',script], {encoding:'utf8'});
+    assert.equal(out.status,0,out.stderr); text=out.stdout;
+  } else if (kind === 'monitor') {
     text = process.env.SOREN_MONITOR_FEED ? JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).text : fs.readFileSync(path.join(root, 'tests/fixtures/soren-monitor.txt'),'utf8');
   } else if (kind === 'soren91') {
     text = 'SOREN/CORNER: SOREN91 / soren91 / ACTIVE\n'
@@ -95,7 +112,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor']) {
+    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -164,13 +181,13 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         }
       }
       if(kind!=='improve') {assert.equal(layout.cardClipped,false,kind);assert.equal(layout.cardWidthClipped,false,kind);}
-      if(!['improve','soren91','jev','monitor'].includes(kind)) {
+      if(!kind.startsWith('console') && !['improve','soren91','jev','monitor'].includes(kind)) {
         assert.equal(layout.gameChrome.headDisplay,'none',`${kind}: redundant Hanjuku panel header hidden`);
       }
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
-      } else if(!['improve','soren91','jev','monitor'].includes(kind)) {
+      } else if(!kind.startsWith('console') && !['improve','soren91','jev','monitor'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
@@ -209,7 +226,23 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.ok(layout.opsAlerts>=1,'stress faults remain visible as attention rows');
         assert.equal(layout.opsOverflow,false,'stress attention fits without clipping');
       }
-      if(kind==='soren91'||kind==='jev') {
+      if(kind.startsWith('console')) {
+        const records=await page.locator('.game-record').allTextContents();
+        assert.equal(records.length,4,`${kind}: all four observation/plan rows visible`);
+        assert.match(records[3],/live score unobserved/);
+        if(['console-saved-stop','console-forced-stop','console-timeout'].includes(kind)) assert.match(records[3],/^Reason: .*\(record\)/);
+        assert.match(records[2],['console-restore','console-saved-stop','console-forced-stop','console-timeout'].includes(kind)?/restoration pending/:kind==='console-unknown'?/runtime unverified/:/matches left/);
+        assert.equal(layout.gameOverflow,false,`${kind}: records fit without shrinking`);
+        const bounds=await page.locator('.game-records').evaluate(el=>({
+          overflow:el.scrollWidth>el.clientWidth+1, bottom:el.getBoundingClientRect().bottom,
+          limit:document.querySelector('.panel-g').getBoundingClientRect().bottom,
+          size:getComputedStyle(el.firstElementChild).fontSize,
+          leftBorder:getComputedStyle(el.firstElementChild).borderLeftWidth}));
+        assert.equal(bounds.overflow,false); assert.ok(bounds.bottom<=bounds.limit+1);
+        assert.equal(bounds.size,'10px'); assert.equal(bounds.leftBorder,'0px');
+        if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}-sidebar.png`),clip:{x:960,y:0,width:320,height:720}});
+      }
+      if(kind==='soren91'||kind==='jev'||kind.startsWith('console')) {
         assert.equal(layout.gameDashboard,true,`${kind}: GAME uses structured score dashboard`);
         assert.deepEqual(layout.gameChrome.border,['0px','0px','0px','0px'],`${kind}: GAME outer panel border removed`);
         assert.equal(layout.gameChrome.headDisplay,'none',`${kind}: redundant GAME panel header hidden`);
@@ -218,7 +251,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.equal(layout.opsOverflow,false,`${kind}: OPS dashboard fits the panel`);
         const values=await page.locator('#feed-g .dash-kpi-value').allTextContents();
         assert.equal(values.length,2,`${kind}: two primary game KPIs`);
-        assert.ok(await page.locator('#feed-g .game-bars').count(),`${kind}: recent result bars are visible`);
+        if(kind!=='console-empty') assert.ok(await page.locator('#feed-g .game-bars').count(),`${kind}: recent result bars are visible`);
       }
     }
     state=fixture('work-two-line');

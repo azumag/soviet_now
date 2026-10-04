@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from game_terminal import is_terminal as is_terminal_game_state
+from game_founding_boundary import founding_boundary_token
 
 
 SCHEMA_VERSION = 1
@@ -134,7 +135,7 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
     runner = _json_object(root / "tmp/state/main_strategy_runner_active.json") or {}
     pid = runner.get("pid")
     runner_alive = False
-    if isinstance(pid, int) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.kill(pid, 0)
             runner_alive = True
@@ -145,13 +146,25 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         game_count = int((root / "game_count.txt").read_text(encoding="utf-8").strip())
     except (FileNotFoundError, OSError, ValueError):
         pass
+    count = state.get("makeSorenCount")
+    valid_count = (type(count) in (int, float) and abs(count) <= 2**53 - 1 and math.isfinite(count))
+    founding_seen = (root / "tmp/markers/.soviet_created").exists()
+    founding_token = founding_boundary_token(root, state)
+    stale_founding_stop = founding_token is not None
     return {
         "state": str(state.get("state", "")),
         "terminal": is_terminal_game_state(
             state,
             state_mtime=state_mtime,
-            founding_seen=(root / "tmp/markers/.soviet_created").exists(),
+            founding_seen=founding_seen,
         ),
+        "stale_founding_stop": stale_founding_stop,
+        "founding_boundary_token": founding_token,
+        "founding_boundary_board": {key: state.get(key) for key in
+                                   ("state", "score", "makeSorenCount", "pieces")}
+        if stale_founding_stop else None,
+        "founding_seen": founding_seen,
+        "make_soren_count": count if valid_count else None,
         "score": state.get("score"),
         "pieces": len(state.get("pieces", [])) if isinstance(state.get("pieces"), list) else None,
         "game_count": game_count,
@@ -634,7 +647,13 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
         snapshot = _read_game_snapshot(store.root)
         # A quiet non-founding STOP is also a boundary.  Fresh STOP remains
         # protected because it can precede the founding counter increment.
-        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
+        founded_boundary = (
+            request.get("game") == "sorengame"
+            and request.get("operation") != "player_change"
+            and snapshot.get("runner_alive")
+            and snapshot.get("stale_founding_stop")
+        )
+        if not founded_boundary and (not snapshot.get("terminal") or snapshot.get("runner_alive")):
             next_ack = _base_ack(
                 request,
                 "waiting",
@@ -665,6 +684,23 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
         else:
             next_ack = ack
         return _emit({"request": request, "ack": next_ack}, RC_OK)
+
+
+def _founding_boundary_still_current(store, request, ack):
+    previous = ack.get("boundary_snapshot") or {}
+    if not previous.get("stale_founding_stop"):
+        return True
+    snapshot = _read_game_snapshot(store.root)
+    if (previous.get("founding_boundary_token")
+            and snapshot.get("runner_alive")
+            and snapshot.get("stale_founding_stop")
+            and snapshot.get("founding_boundary_token") == previous.get("founding_boundary_token")):
+        return True
+    store.save_ack(_base_ack(request, "waiting", reason="founding boundary observation expired", snapshot=snapshot))
+    control = store.control()
+    if control and _record_matches_request(control, request):
+        store.control_path.unlink(missing_ok=True)
+    return False
 
 
 def command_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
@@ -702,6 +738,8 @@ def command_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
                 RC_WAITING,
             )
 
+        if not _founding_boundary_still_current(store, request, ack):
+            return _emit({"request": request, "ack": store.ack()}, RC_WAITING)
         control = store.control()
         if control is not None:
             if not _record_matches_request(control, request):
@@ -748,6 +786,8 @@ def command_claim_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
                 {"request": request, "ack": ack, "status": "waiting", "error": "stop request acknowledgement is required before claim"},
                 RC_WAITING,
             )
+        if not _founding_boundary_still_current(store, request, ack):
+            return _emit({"request": request, "ack": store.ack()}, RC_WAITING)
         # Once the writer-side stop request and matching control are already
         # durable, allow the bridge to cross the irreversible claim fence even
         # if the wall-clock deadline elapsed between subprocess calls.  A
