@@ -144,8 +144,10 @@ esac
                 CHAT_WORKER.read_text(encoding="utf-8"), encoding="utf-8"
             )
             (root / "eloop_lib.sh").write_text(
-                'printf \'backend=%s key=%s\\n\' "${COMMENT_CLASSIFIER_BACKEND:-empty}" '
-                '"${TYPESAFE_API_KEY:+present}" >>"$PWD/tmp/env_seen"\n',
+                'printf \'backend=%s key=%s route=%s research=%s\\n\' '
+                '"${COMMENT_CLASSIFIER_BACKEND:-empty}" "${TYPESAFE_API_KEY:+present}" '
+                '"${DOCICH_REPLY_ROUTING_ENABLED:-empty}" "${DOCICH_REPLY_CODEX_API_KEY:+present}" '
+                '>>"$PWD/tmp/env_seen"\n',
                 encoding="utf-8",
             )
             (root / "tmp" / "stop").touch()
@@ -155,13 +157,17 @@ esac
                 {
                     "COMMENT_CLASSIFIER_BACKEND": "jev",
                     "TYPESAFE_API_KEY": "stale-inherited-value",
+                    "DOCICH_REPLY_ROUTING_ENABLED": "1",
+                    "DOCICH_REPLY_CODEX_API_KEY": "stale-research-value",
                 }
             )
             env.pop("CHAT_WORKER_ENV_REEXEC", None)
 
             (root / ".env").write_text(
                 "COMMENT_CLASSIFIER_BACKEND=jev\n"
-                "TYPESAFE_API_KEY=fresh-test-value\n",
+                "TYPESAFE_API_KEY=fresh-test-value\n"
+                "DOCICH_REPLY_ROUTING_ENABLED=0\n"
+                "DOCICH_REPLY_CODEX_API_KEY=fresh-research-test-value\n",
                 encoding="utf-8",
             )
             result = subprocess.run(
@@ -175,7 +181,7 @@ esac
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
-                ["backend=jev key=present"],
+                ["backend=jev key=present route=0 research=present"],
             )
 
             (root / "tmp" / "env_seen").unlink()
@@ -191,7 +197,7 @@ esac
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
-                ["backend=empty key="],
+                ["backend=empty key= route=empty research="],
             )
 
     def test_chat_respawn_refreshes_managed_classifier_environment(self) -> None:
@@ -199,6 +205,9 @@ esac
         refresh = source.split("_refresh_chat_worker_env() {", 1)[1].split("\n}", 1)[0]
         self.assertIn("COMMENT_CLASSIFIER_BACKEND", refresh)
         self.assertIn("TYPESAFE_API_KEY", refresh)
+        for name in ("DOCICH_REPLY_ROUTING_ENABLED", "DOCICH_REPLY_CODEX_API_KEY",
+                     "DOCICH_REPLY_SOURCE_DIR"):
+            self.assertIn(name, refresh)
         self.assertIn('if [ "$name" = "chat_worker" ]; then', source)
         self.assertIn("_refresh_chat_worker_env", source)
         self.assertIn("exec $cmd", source)

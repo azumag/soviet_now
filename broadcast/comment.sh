@@ -2029,6 +2029,32 @@ _classify_comments() {
 	printf '%s' "$classification"
 }
 
+# Route mode may only use the already-configured direct HTTP local-LLM agent.
+# Do this after peak ordering, and never reinterpret an unknown spec as a CLI.
+_comment_api_only_agent_list() {
+	python3 - "${1:-}" <<'PY'
+import re
+import sys
+
+out = []
+for item in sys.argv[1].split(","):
+    agent = item.strip()
+    if agent == "local":
+        out.append(agent)
+    elif agent.startswith("local:"):
+        model = agent[6:]
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}", model):
+            out.append(agent)
+print(",".join(dict.fromkeys(out)))
+PY
+}
+
+_comment_route_read() {
+	local operation="$1" route_file="$2" helper="${ELOOP_LIB_DIR:-.}/lib/comment_reply_route.py"
+	[ -f "$route_file" ] && [ -f "$helper" ] || return 1
+	python3 "$helper" "$operation" "$route_file"
+}
+
 _comment_classification_english_count() {
 	local classification_json="$1"
 	python3 - "$classification_json" <<'PY'
@@ -3140,8 +3166,75 @@ $advice_text"
 	codex_advice_candidates=$(printf '%s' "${codex_advice_candidates:-}" | _sanitize_comment_prompt_context)
 
 	# コメント分類器を実行
-	local classification_json=""
-	classification_json=$(_classify_comments "$comment_prompt_batch_file")
+	local classification_json="" comment_route_enabled=false comment_route_hold=false
+	local comment_route_file="" comment_evidence_file="" comment_route_status="legacy"
+	local comment_route_scope="unknown" comment_route_research_status="not_requested"
+	case "${DOCICH_REPLY_ROUTING_ENABLED:-0}" in
+	0)
+		classification_json=$(_classify_comments "$comment_prompt_batch_file")
+		;;
+	1)
+		comment_route_enabled=true
+		local route_pre_mode="" route_pre_agents=""
+		route_pre_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+		if [ "$route_pre_mode" = "soren91" ]; then
+			route_pre_agents="${COMMENT_SOREN91_AGENT:-amd:DeepSeek-V4-Flash}"
+			[ -n "${COMMENT_SOREN91_FALLBACK:-}" ] &&
+				route_pre_agents="${route_pre_agents},${COMMENT_SOREN91_FALLBACK}"
+		else
+			route_pre_agents="${COMMENT_AGENTS:-amd:DeepSeek-V4-Flash}"
+		fi
+		if [ -z "$(_comment_api_only_agent_list "$route_pre_agents")" ]; then
+			comment_route_hold=true
+			log "[COMMENT] 直接API候補がないためJEV/調査/返信・ackを保留"
+		else
+			local route_previous_umask="$(umask)"
+			umask 077
+			comment_route_file=$(mktemp /tmp/eloop_comment_reply_route_XXXXXXXX.json 2>/dev/null || true)
+			umask "$route_previous_umask"
+			local route_cli="${DOCICH_COMMENT_REPLY_ROUTER:-/home/ubuntu/docich/bin/docich-comment-reply-route}"
+			if [ -z "$comment_route_file" ] || [ ! -x "$route_cli" ] ||
+				! timeout --kill-after=5s 55s "$route_cli" "$comment_prompt_batch_file" >"$comment_route_file" 2>/dev/null; then
+				comment_route_hold=true
+			else
+				local route_metadata=""
+				route_metadata=$(_comment_route_read metadata "$comment_route_file" 2>/dev/null || true)
+				IFS=$'\t' read -r comment_route_status comment_route_scope comment_route_research_status <<<"$route_metadata"
+				if [ "$comment_route_status" != "ready" ]; then
+					comment_route_hold=true
+				else
+					classification_json=$(_comment_route_read rows "$comment_route_file" 2>/dev/null || true)
+					if [ -z "$classification_json" ]; then
+						comment_route_hold=true
+					elif [ "$comment_route_scope" != "api_only" ]; then
+						comment_evidence_file=$(mktemp /tmp/eloop_comment_reply_evidence_XXXXXXXX.json 2>/dev/null || true)
+						if [ -z "$comment_evidence_file" ] ||
+							! _comment_route_read evidence "$comment_route_file" >"$comment_evidence_file" 2>/dev/null ||
+							[ ! -s "$comment_evidence_file" ]; then
+							comment_route_hold=true
+						fi
+					elif [ "$comment_route_research_status" != "not_requested" ]; then
+						comment_route_hold=true
+					fi
+				fi
+			fi
+		fi
+		if [ "$comment_route_hold" = "true" ]; then
+			comment_route_status="hold"
+			classification_json=""
+			log "[COMMENT] 根拠ルーティングを保留 (分類失敗/低confidence/unknown/runtime/調査未完了)"
+		else
+			log "[COMMENT] 根拠ルーティング確認 (scope=${comment_route_scope}, research=${comment_route_research_status})"
+		fi
+		;;
+	*)
+		comment_route_enabled=true
+		comment_route_hold=true
+		comment_route_status="hold"
+		classification_json=""
+		log "[COMMENT] DOCICH_REPLY_ROUTING_ENABLED が不正のため根拠ルーティングを保留"
+		;;
+	esac
 	if [ -n "$classification_json" ]; then
 		english_comment_count=$(_comment_classification_english_count "$classification_json" 2>/dev/null || printf '0')
 		case "$english_comment_count" in
@@ -3177,7 +3270,11 @@ else:
     else:
         print('mixed')
 " <<<"$classification_json")
-		log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (classification: ${classification_json:0:200})"
+		if [ "$comment_route_enabled" = "true" ]; then
+			log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (根拠ルーティング有効・本文省略)"
+		else
+			log "[COMMENT] 分類結果: ${dominant_category:-取得失敗} (classification: ${classification_json:0:200})"
+		fi
 		local queued_stream_bug_reports=""
 		queued_stream_bug_reports=$(_queue_stream_bug_reports_from_classification "$classification_json" "$viewer_chat_source" "$comment_batch_hash" 2>/dev/null || true)
 		if [ -n "$queued_stream_bug_reports" ]; then
@@ -3192,6 +3289,33 @@ else:
 		if [ -n "$ingested_diag_events" ]; then
 			log "[COMMENT] 不具合報告を診断eventとして記録(生comment本文・user名は含まない, event_id): $(printf '%s' "$ingested_diag_events" | tr '\n' ' ')"
 			_maybe_gc_redacted_diag_spool 2>/dev/null || true
+		fi
+	fi
+	if [ "$comment_route_hold" = "true" ]; then
+		log "[COMMENT] 根拠未確認のため返信生成・ackを行わずpendingを維持"
+		rm -f "$comment_batch_file" "$comment_prompt_batch_file" \
+			"$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+		[ -n "$comment_route_file" ] && rm -f "$comment_route_file"
+		[ -n "$comment_evidence_file" ] && rm -f "$comment_evidence_file"
+		return 0
+	fi
+	if [ "$comment_route_enabled" = "true" ]; then
+		local _route_mode="" _route_agents=""
+		_route_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+		if [ "$_route_mode" = "soren91" ]; then
+			_route_agents="${COMMENT_SOREN91_AGENT:-amd:DeepSeek-V4-Flash}"
+			[ -n "${COMMENT_SOREN91_FALLBACK:-}" ] &&
+				_route_agents="${_route_agents},${COMMENT_SOREN91_FALLBACK}"
+		else
+			_route_agents="${COMMENT_AGENTS:-amd:DeepSeek-V4-Flash}"
+		fi
+		if [ -z "$(_comment_api_only_agent_list "$_route_agents")" ]; then
+			log "[COMMENT] 根拠ルーティング有効時の直接API候補が未設定のため返信・ackを保留"
+			rm -f "$comment_batch_file" "$comment_prompt_batch_file" \
+				"$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
+			[ -n "$comment_route_file" ] && rm -f "$comment_route_file"
+			[ -n "$comment_evidence_file" ] && rm -f "$comment_evidence_file"
+			return 0
 		fi
 	fi
 	if [ -n "$dominant_category" ] && ! _comment_category_allows_advice_append "$dominant_category"; then
@@ -3247,6 +3371,8 @@ else:
 			if [ -n "$comment_prompt_batch_file" ]; then
 				rm -f "$comment_prompt_batch_file" "$(_comment_batch_metadata_path "$comment_prompt_batch_file")"
 			fi
+			[ -n "$comment_route_file" ] && rm -f "$comment_route_file" || true
+			[ -n "$comment_evidence_file" ] && rm -f "$comment_evidence_file" || true
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
@@ -3370,6 +3496,9 @@ PY
 		# Fetch raider facts once, for both dedicated and mixed prompts. API credentials
 		# stay in the environment; the helper outputs public allowlisted fields only.
 		printf '%s' "${classification_json:-[]}" | timeout 22s python3 "$ELOOP_LIB_DIR/lib/raid_research.py" >>"$comment_prompt_file" || true
+		if [ "$comment_route_enabled" = "true" ] && [ -n "$comment_evidence_file" ]; then
+			cat "$comment_evidence_file" >>"$comment_prompt_file"
+		fi
 
 		_append_comment_reply_contract "$comment_prompt_file" || {
 			rm -f "$comment_prompt_file"
@@ -3395,7 +3524,15 @@ PY
 		local comment_agent_list_before="$comment_agent_list"
 		local comment_peak_note=""
 		comment_agent_list=$(_peak_priority_agent_list "$comment_agent_list")
-		if [ "$comment_agent_list" != "$comment_agent_list_before" ]; then
+		local comment_agent_list_peak="$comment_agent_list"
+		if [ "$comment_route_enabled" = "true" ]; then
+			comment_agent_list=$(_comment_api_only_agent_list "$comment_agent_list")
+			if [ -z "$comment_agent_list" ]; then
+				log "[COMMENT] 直接API候補が消えたため返信・ackを保留"
+				exit 0
+			fi
+		fi
+		if [ "$comment_agent_list_peak" != "$comment_agent_list_before" ]; then
 			comment_peak_note=" peak=1"
 		fi
 		local comments_talk="" comment_model_used="" generation_rate_limited=false
@@ -3543,6 +3680,10 @@ RETRYCOMMENT
 				if [ -n "$translation_prompt_file" ] && printf '%s' "$attempt_talk" | _comment_build_translation_prompt "$classification_json" >"$translation_prompt_file" 2>/dev/null; then
 					local translation_agents
 					translation_agents=$(_peak_priority_agent_list "${COMMENT_TRANSLATION_AGENTS:-$comment_agent_list}")
+					if [ "$comment_route_enabled" = "true" ]; then
+						translation_agents=$(_comment_api_only_agent_list "$translation_agents")
+						[ -n "$translation_agents" ] || translation_agents="$comment_agent_list"
+					fi
 					local translation_last_agent_file=""
 					translation_last_agent_file=$(mktemp /tmp/eloop_comment_translation_agent_XXXXXXXX 2>/dev/null || true)
 					translation_text=$(_comment_generate_translation "$translation_prompt_file" "$translation_agents" \
