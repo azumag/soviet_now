@@ -24,9 +24,13 @@ class RecordClipTests(http_fixture.TwitchClipHTTPFixture):
             "record": {"game": "bastet", "metric": "score", "value": 12, "previous": 11},
         }))
 
-    def process_record(self, mode="success"):
+    def process_record(self, mode="success", *, now=None):
         self.env["HTTP_TEST_MODE"] = mode
-        result = self.run_shell("python3 ./tools/record_clip_queue.py tmp/clip_queue")
+        command = "python3 ./tools/record_clip_queue.py tmp/clip_queue"
+        if now is not None:
+            self.env["RECORD_TEST_NOW"] = str(now)
+            command = '''PYTHONPATH=tools python3 -c 'import os; from record_clip_queue import process; process("tmp/clip_queue", now=float(os.environ["RECORD_TEST_NOW"]))' '''
+        result = self.run_shell(command)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("test-token-do-not-log", result.stdout + result.stderr)
         return result
@@ -140,6 +144,59 @@ class RecordClipTests(http_fixture.TwitchClipHTTPFixture):
         self.assertEqual(len(list(self.event_path.parent.glob("record_*.json"))), 1)
         self.process_record()
         self.assertEqual(self.calls().count("POST"), 4)
+
+    def add_event(self, key, *, age=0, accepted=False):
+        row = json.loads(self.event_path.read_text())
+        row.update(event_id=key * 64, created_at=time.time() - age)
+        path = self.event_path.with_name("record_" + row["event_id"] + ".json")
+        path.write_text(json.dumps(row))
+        if accepted:
+            receipt = self.receipt_path.with_name(row["event_id"] + ".json")
+            receipt.parent.mkdir(exist_ok=True)
+            receipt.write_text(json.dumps(dict(
+                schema=1, phase="accepted", clip_id="TestClip", clip_url="",
+                created_at=time.time() - 30, updated_at=time.time() - 10,
+                post_attempts=1)))
+        return path
+
+    def test_unconfirmed_get_backlog_cannot_starve_a_fresh_post(self):
+        # The three dictionary-first accepted entries previously used all slots
+        # on every tick. A later fresh entry never received its first POST.
+        for key in "abc":
+            self.add_event(key, age=30, accepted=True)
+        fresh = self.add_event("f", age=19)
+        self.process_record("unconfirmed", now=time.time())
+        self.assertEqual(self.calls().count("POST"), 1)
+        saved = json.loads(self.receipt_path.with_name("f" * 64 + ".json").read_text())
+        self.assertEqual(saved["phase"], "accepted")
+        self.assertTrue(fresh.exists())
+        self.assertEqual(self.calls()[0], "POST")  # before any backlog GET
+        self.assertLessEqual(self.calls().count("GET"), 3)
+
+    def test_accepted_gets_rotate_across_ticks_with_fresh_posts(self):
+        old_time = time.time() - 10
+        for key in "abcd":
+            self.add_event(key, age=30, accepted=True)
+        self.add_event("e")
+        self.add_event("f")
+        self.process_record("unconfirmed")
+        self.assertEqual(self.calls().count("POST"), 2)
+        self.assertEqual(self.calls().count("GET"), 3)
+        self.process_record("unconfirmed")
+        for key in "abcd":
+            saved = json.loads(self.receipt_path.with_name(key * 64 + ".json").read_text())
+            self.assertGreater(saved["updated_at"], old_time)
+        self.assertEqual(self.calls().count("POST"), 2)
+        self.assertEqual(self.calls().count("GET"), 6)
+
+    def test_fresh_posts_use_creation_deadline_not_dictionary_order(self):
+        self.add_event("b")
+        self.add_event("c")
+        self.add_event("f", age=19)
+        self.process_record(now=time.time())
+        self.assertEqual(self.calls().count("POST"), 3)
+        self.assertTrue((self.event_path.parent / "done" / ("record_" + "f" * 64 + ".json")).exists())
+        self.assertEqual(len(list(self.event_path.parent.glob("record_*.json"))), 1)
 
     def test_accepted_unconfirmed_event_is_preserved_after_bounded_reconciliation(self):
         self.process_record("unconfirmed")

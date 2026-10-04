@@ -32,6 +32,55 @@ def _event(path):
     return row
 
 
+def _eligible(queue, path, now):
+    row = _event(path)
+    receipt = queue / "receipts" / (row["event_id"] + ".json")
+    saved = read(receipt)
+    phase = saved.get("phase")
+    destination = None
+    if phase in {"ready", "expired", "disabled"}:
+        destination = "done"
+    elif phase in {"creating", "unknown", "rejected", "unconfirmed"}:
+        # Crash/response-loss has no safe way to repeat Create.
+        destination = "failed"
+    elif phase == "accepted":
+        # Once accepted, retry only Get Clips, for up to 10 minutes.
+        if now - saved["created_at"] > 600:
+            write(receipt, "unconfirmed")
+            destination = "failed"
+    elif now < row["created_at"] or now - row["created_at"] > 20:
+        # Create Clip publishes the tail of the current live window.
+        # Stale events would capture another game/moment.
+        write(receipt, "expired")
+        destination = "done"
+    if destination:
+        path.replace(queue / destination / path.name)
+        return None
+    if os.environ.get("TWITCH_CLIP_ENABLED", "0") != "1" or os.environ.get("EXPLORE_MODE") == "1":
+        write(receipt, "disabled")
+        path.replace(queue / "done" / path.name)
+        return None
+    if phase == "retryable" and saved.get("post_attempts", 0) >= 3:
+        write(receipt, "rejected")
+        path.replace(queue / "failed" / path.name)
+        return None
+    if phase == "retryable" and now - saved["updated_at"] < 5:
+        return None
+    return row, receipt, saved
+
+
+def _defer(queue, path):
+    print("record clip processing deferred", file=sys.stderr)
+    try:
+        if read(queue / "receipts" / (path.stem.removeprefix("record_") + ".json")).get("phase") == "accepted":
+            return
+    except Exception:
+        pass
+    # Malformed input/receipt cannot occupy a bounded delivery slot forever.
+    if path.exists():
+        path.replace(queue / "failed" / path.name)
+
+
 def process(queue, *, now=None):
     fixed_now = now
     queue = Path(queue)
@@ -43,47 +92,48 @@ def process(queue, *, now=None):
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
-        # At most three sequential attempts per chat tick: a short burst keeps
-        # distinct records without an unbounded parallel API storm.
+        # Reserve one slot for accepted GETs when both classes are pending.
+        # Fresh POSTs run first in deadline order; GETs rotate by last attempt.
+        fresh, accepted = [], []
+        for path in queue.glob("record_*.json"):
+            if Path("tmp/stop").exists():
+                return
+            try:
+                candidate = _eligible(queue, path, time.time() if fixed_now is None else fixed_now)
+                if candidate is None:
+                    continue
+                row, _, saved = candidate
+                if saved.get("phase") == "accepted":
+                    accepted.append((saved["updated_at"], path))
+                else:
+                    fresh.append((row["created_at"], path))
+            except Exception:
+                _defer(queue, path)
+        fresh.sort()
+        accepted.sort()
+        fresh_limit = 2 if accepted else 3
+        # At most three sequential script attempts per tick. Cleanup and a
+        # cooldown do not consume HTTP slots. Expiry is checked again at use.
         processed = 0
-        for path in sorted(queue.glob("record_*.json")):
+        fresh_processed = 0
+        for is_fresh, (_, path) in [(True, item) for item in fresh] + [(False, item) for item in accepted]:
+            if processed >= 3:
+                break
+            if is_fresh and fresh_processed >= fresh_limit:
+                continue
             if (Path("tmp/stop")).exists():
                 return
-            now = time.time() if fixed_now is None else fixed_now
             try:
-                row = _event(path)
-                receipt = queue / "receipts" / (row["event_id"] + ".json")
-                saved = read(receipt)
-                phase = saved.get("phase")
-                if phase in {"ready", "expired", "disabled"}:
-                    path.replace(queue / "done" / path.name)
+                candidate = _eligible(queue, path, time.time() if fixed_now is None else fixed_now)
+                if candidate is None:
                     continue
-                if phase in {"creating", "unknown", "rejected", "unconfirmed"}:
-                    # Crash/response-loss has no safe way to repeat Create.
-                    path.replace(queue / "failed" / path.name)
-                    continue
-                if phase == "accepted":
-                    # Once accepted, retry only Get Clips, for up to 10 minutes.
-                    if now - saved["created_at"] > 600:
-                        write(receipt, "unconfirmed")
-                        path.replace(queue / "failed" / path.name)
-                        continue
-                elif now < row["created_at"] or now - row["created_at"] > 20:
-                    # Create Clip publishes the tail of the current live window.
-                    # Stale events would capture another game/moment.
-                    write(receipt, "expired")
-                    path.replace(queue / "done" / path.name)
-                    continue
-                if os.environ.get("TWITCH_CLIP_ENABLED", "0") != "1" or os.environ.get("EXPLORE_MODE") == "1":
-                    write(receipt, "disabled")
-                    path.replace(queue / "done" / path.name)
-                    continue
-                if phase == "retryable" and saved.get("post_attempts", 0) >= 3:
-                    write(receipt, "rejected")
-                    path.replace(queue / "failed" / path.name)
-                    continue
-                if phase == "retryable" and now - saved["updated_at"] < 5:
-                    continue
+                row, receipt, saved = candidate
+                if saved.get("phase") == "accepted":
+                    # Persist before GET, including failures/auth loss, so a
+                    # restart cannot repeatedly select the same first IDs.
+                    write(receipt, "accepted")
+                processed += 1
+                fresh_processed += int(is_fresh)
                 # Per-event acceptance ID is saved by the script BEFORE polls.
                 # The global POST ambiguity guard is likewise saved BEFORE HTTP.
                 completed = subprocess.run(
@@ -99,17 +149,7 @@ def process(queue, *, now=None):
             except Exception:
                 # Leave an accepted receipt for a GET-only next tick; a stuck
                 # creating receipt fails closed next tick instead of re-POST.
-                print("record clip processing deferred", file=sys.stderr)
-                try:
-                    if read(queue / "receipts" / (path.stem.removeprefix("record_") + ".json")).get("phase") != "accepted":
-                        path.replace(queue / "failed" / path.name)
-                except Exception:
-                    # Malformed input/receipt must not occupy the front of the
-                    # bounded queue forever, and must never cause an HTTP call.
-                    path.replace(queue / "failed" / path.name)
-            processed += 1
-            if processed >= 3:
-                break
+                _defer(queue, path)
 
 
 if __name__ == "__main__":
