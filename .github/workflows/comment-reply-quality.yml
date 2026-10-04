@@ -14,6 +14,11 @@ on:
       - 'lib/comment_*.py'
       - 'lib/ai_generate.sh'
       - 'tests/test_ai_generate_backoff.py'
+      - 'strategy/ai.sh'
+      - 'codex_bug_dispatcher.sh'
+      - 'tests/test_improve_retry_reliability.py'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_codex_agent_env_redaction.sh'
       - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
@@ -46,6 +51,11 @@ on:
       - 'lib/comment_*.py'
       - 'lib/ai_generate.sh'
       - 'tests/test_ai_generate_backoff.py'
+      - 'strategy/ai.sh'
+      - 'codex_bug_dispatcher.sh'
+      - 'tests/test_improve_retry_reliability.py'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_codex_agent_env_redaction.sh'
       - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
@@ -80,7 +90,9 @@ jobs:
       - name: Intent, rendering, output validation, history and translation
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich tests.test_twitch_comment_identity tests.test_youtube_comment_identity
       - name: Legacy provider removal and backoff contracts
-        run: python3 -m unittest -v tests.test_ai_generate_backoff
+        run: python3 -m unittest -v tests.test_ai_generate_backoff tests.test_improve_retry_reliability tests.test_strategy_sandbox_no_host_exec
+      - name: Legacy bug dispatcher cannot revive Codex
+        run: bash tests/test_codex_agent_env_redaction.sh
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer

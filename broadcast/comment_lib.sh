@@ -357,6 +357,13 @@ _play_comment_queue() {
 			else
 				file_hash=$(md5sum "$qf" 2>/dev/null | awk '{print $1}' || true)
 			fi
+            local terminal_batch_key=""
+            if declare -F _comment_audio_terminal_batch_key >/dev/null; then
+                terminal_batch_key=$(_comment_audio_terminal_batch_key "$qf")
+            fi
+            if [ -n "$terminal_batch_key" ]; then
+                file_hash=$(_outbound_chat_hash "terminal-batch:$terminal_batch_key")
+            fi
 			local _comment_context_label_for_dedupe=""
 			_comment_context_label_for_dedupe=$(_comment_playback_context_label "$qf" 2>/dev/null || printf '%s' "comment")
 			local _skip_duplicate_check=0

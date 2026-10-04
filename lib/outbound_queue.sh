@@ -254,8 +254,17 @@ _comment_audio_cleanup_dedup_markers() {
 	done
 }
 
+# Terminal delivery filenames carry trusted platform/batch identity, never on-air.
+_comment_audio_terminal_batch_key() {
+    local name="${1##*/}"
+    if [[ "$name" =~ ^comment_terminal_(twitch|youtube|kick)_([a-f0-9]{32,64})_[0-9]+_[0-9]+\.(txt|playing)$ ]]; then
+        printf '%s:%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    fi
+}
+
 _comment_audio_claim_enqueue_key() {
 	local text="$1"
+    [ -z "${2:-}" ] || text="terminal-batch:${2}"
 	local ttl="${COMMENT_AUDIO_DEDUP_TTL_SEC:-120}"
 	case "$ttl" in
 	''|*[!0-9]*) ttl=120 ;;

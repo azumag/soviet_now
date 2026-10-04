@@ -444,20 +444,31 @@ class TestIsolatedRunnerFailClosed(unittest.TestCase):
 class TestApprovalBypassRemoved(unittest.TestCase):
     """受入条件: 生成agentの権限迂回optionが削除され、環境変数で戻せる形になっていない。"""
 
-    def test_codex_args_do_not_contain_dangerous_bypass_flag(self):
-        source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
-        start = source.index("local -a codex_args=(")
-        end = source.index(")", start)
-        codex_args_block = source[start:end]
-        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", codex_args_block)
+    def test_no_executable_codex_path_remains(self):
+        source = (REPO_ROOT / "strategy/ai.sh").read_text()
+        self.assertNotIn("bounded_command=(codex exec", source)
+        self.assertNotIn('codex "${codex_args[@]}"', source)
+        self.assertIn('RUN_AI_LIST_FAILURE_KIND="provider_removed"; return 1', source)
 
-    def test_no_env_var_reintroduces_bypass(self):
-        source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
-        start = source.index("local -a codex_args=(")
-        end = source.index(")", start)
-        codex_args_block = source[start:end]
-        self.assertNotIn("bypass", codex_args_block.lower())
-        self.assertNotIn("${", codex_args_block)
+    def test_retired_strategy_codex_fails_before_command_or_network(self):
+        for managed in ("0", "1"):
+            with tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary)
+                marker=root/"executed"
+                script=f"""
+                source '{REPO_ROOT}/strategy/ai.sh'
+                log() {{ :; }}
+                codex() {{ touch '{marker}'; }}
+                curl() {{ touch '{marker}'; }}
+                RUN_AI_IMPROVEMENT_MODE={managed}
+                run_cmd codex:synthetic 'prompt'
+                rc=$?
+                test "$rc" -eq 1
+                test "$RUN_AI_LIST_FAILURE_KIND" = provider_removed
+                """
+                result=subprocess.run(["bash","-c",script],capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,0,result.stderr)
+                self.assertFalse(marker.exists())
 
 
 class TestDecideHashUnaffected(unittest.TestCase):

@@ -3759,6 +3759,15 @@ RETRYCOMMENT
 			fi
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+            local terminal_batch_key=""
+            if [ -n "$comment_route_terminal" ]; then
+                queue_file="$COMMENT_QUEUE_DIR/comment_terminal_${viewer_chat_source}_${comment_batch_hash}_$(date +%s)_${RANDOM}.txt"
+                terminal_batch_key=$(_comment_audio_terminal_batch_key "$queue_file" 2>/dev/null || true)
+                if [ -z "$terminal_batch_key" ]; then
+                    log "[COMMENT] 終端batch配送キー不足: ackせずpending維持"
+                    break
+                fi
+            fi
 			local viewer_memory_reply_file=""
 			viewer_memory_reply_file=$(mktemp /tmp/eloop_comment_viewer_memory_reply_XXXXXXXX 2>/dev/null || true)
 			if [ -n "$viewer_memory_reply_file" ]; then
@@ -3815,7 +3824,15 @@ RETRYCOMMENT
 			# 同じ返信を先にキューへ積んだ場合は、現在のバッチだけ消化して
 			# 2本目の音声を作らない。
 			if declare -F _comment_audio_claim_enqueue_key >/dev/null 2>&1 &&
-				! _comment_audio_claim_enqueue_key "$attempt_talk"; then
+				! _comment_audio_claim_enqueue_key "$attempt_talk" "$terminal_batch_key"; then
+                if [ -n "$comment_route_terminal" ]; then
+                    # A claim alone is not delivery confirmation. Keep pending/cache.
+                    _broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+                    _comment_clear_generation_meta "$queue_file"
+                    rm -f "$queue_file"
+                    log "[COMMENT] 同batchの終端配送が進行中: ackせずpending維持"
+                    break
+                fi
 				log "[COMMENT] 同一本文が音声キューへ投入済みのため重複返信を破棄"
 				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
 				_comment_clear_generation_meta "$queue_file"
