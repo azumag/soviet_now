@@ -929,7 +929,26 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 .ops-kpis { grid-template-columns: minmax(0, 1fr); }
-html[data-soren-monitor="1"] .feed-panel.panel-g { flex: 0 0 auto; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-g { height: 100%; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .soren-monitor { height: 100%; min-height: 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-s { position: relative; flex: 0 0 190px; padding-top: 0; border-top: 0; background: #040e17; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-s,
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { position: absolute; inset: 0; height: 100%; transition: opacity 600ms ease-in-out; }
+#monitor-observer { display: none; opacity: 0; padding: 5px 2px 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { display: block; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer .monitor-section { height: 100%; display: flex; flex-direction: column; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer .monitor-section-body { flex: 1; min-height: 0; overflow: hidden; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="observer"] #feed-s { opacity: 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="observer"] #monitor-observer { opacity: 1; }
+.monitor-header { flex-shrink: 0; }
+.monitor-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.monitor-stack { display: flex; flex-direction: column; gap: 6px; }
+.monitor-stack .monitor-section { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-s,
+  html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { transition: none; }
+}
 .feed-panel:has(.soren-monitor) .panel-head { display: none; }
 .feed-panel:has(.soren-monitor) .feed-lines { padding: 0; }
 .soren-monitor { display: flex; flex-direction: column; gap: 6px; padding: 5px 2px 0; color: #b9d9da; font-family: "SFMono-Regular", Consolas, monospace; }
@@ -998,6 +1017,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       <section class="feed-panel panel-s">
         <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">OPS HEALTH</span><span class="panel-state" id="feed-s-state">CHECK</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
         <div class="feed-lines" id="feed-s"></div>
+        <div id="monitor-observer" aria-hidden="true"></div>
       </section>
       <section class="feed-panel panel-i">
         <div class="panel-head"><span class="badge badge-i">AI</span><span class="panel-name">IMPROVE</span><span class="panel-status" id="feed-i-status"></span><span class="panel-meta" id="feed-i-lines">0L</span></div>
@@ -1031,6 +1051,10 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   const toastGrid = document.getElementById('toast-grid');
   let state = null;
   let lastFeedGKey = '';
+  const MONITOR_VIEW_MS = 45000;
+  const monitorMotion = { startedAt: null, lastTick: null, frame: null,
+    upper: { position: 0, direction: 1, waitUntil: 0 },
+    observer: { position: 0, direction: 1, waitUntil: 0 } };
   let lastFeedSKey = '';
   let lastFeedIKey = '';
   let lastSummaryKey = '';
@@ -1313,60 +1337,82 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     root._sourceText = raw;
     return true;
   }
+  function advanceMonitorScroll(viewport, motion, now, elapsed, reduced) {
+    if (!viewport) return;
+    const limit = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    if (motion.reduced !== reduced) {
+      motion.reduced = reduced; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+    }
+    if (!limit) {
+      motion.position = 0; motion.direction = 1; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+    } else if (now >= motion.waitUntil) {
+      // Dense data stays in one viewport. A slow pan replaces whole-page flips;
+      // reduced motion uses infrequent non-animated advances instead.
+      motion.position += motion.direction * (reduced ? Math.max(12, viewport.clientHeight - 12) : elapsed * 4);
+      if (motion.position >= limit || motion.position <= 0) {
+        motion.position = Math.max(0, Math.min(limit, motion.position));
+        motion.direction *= -1; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+      } else if (reduced) motion.waitUntil = now + MONITOR_VIEW_MS;
+    }
+    motion.position = Math.min(limit, motion.position);
+    viewport.scrollTop = motion.position;
+  }
+  function animateSorenMonitor(now = performance.now()) {
+    const root = feedG.querySelector('.soren-monitor');
+    const slot = document.getElementById('monitor-observer');
+    const elapsed = Math.max(0, Math.min(1, (now - (monitorMotion.lastTick ?? now))/1000));
+    monitorMotion.lastTick = now;
+    if (root && root.getBoundingClientRect().width > 0) {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const observer = slot.querySelector('.monitor-section');
+      const view = observer && Math.floor((now-monitorMotion.startedAt)/MONITOR_VIEW_MS)%2 ? 'observer' : 'health';
+      if (document.documentElement.dataset.monitorView !== view) document.documentElement.dataset.monitorView = view;
+      feedS.ariaHidden = String(view === 'observer');
+      slot.ariaHidden = String(view !== 'observer');
+      advanceMonitorScroll(root.querySelector('.monitor-viewport'), monitorMotion.upper, now, elapsed, reduced);
+      if (view === 'observer') advanceMonitorScroll(slot.querySelector('.monitor-section-body'), monitorMotion.observer, now, elapsed, reduced);
+    }
+    monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
+  }
   function adaptSorenMonitor(container) {
     const root = container.querySelector('.soren-monitor');
-    const available = container.parentElement?.parentElement?.clientHeight;
-    if (!root || !Number.isFinite(available) || available <= 0) return;
-    if (root.getBoundingClientRect().width <= 0) return;
-    // Leave room for the existing health dashboard. Overflow pages retain every
-    // source row and rotate without reloading the document or changing payloads.
-    const budget = Math.max(100, available - 160);
-    if (!root._sections) {
-      root._sections = [...root.querySelectorAll('.monitor-section')];
-      root._header = root.querySelector('.monitor-header');
+    const slot = document.getElementById('monitor-observer');
+    if (!root) {
+      if (slot?.children.length) slot.replaceChildren();
+      feedS.ariaHidden = 'false';
+      if (monitorMotion.frame !== null) cancelAnimationFrame(monitorMotion.frame);
+      monitorMotion.frame = null;
+      document.documentElement.dataset.monitorView = 'health';
+      return;
     }
-    if (root._budget !== budget) {
-      root._budget = budget;
-      const pages = []; let cards = [];
-      const measure = () => {
-        root.replaceChildren(root._header.cloneNode(true), ...cards);
-        return root.getBoundingClientRect().height;
-      };
-      for (const original of root._sections) {
-        const card = original.cloneNode(true);
-        cards.push(card);
-        if (measure() <= budget) continue;
-        cards.pop();
-        if (cards.length) { pages.push(cards); cards = []; }
-        cards.push(card);
-        if (measure() <= budget) continue;
-        // A long table can itself span pages; repeat its heading on each page.
-        let body = card.querySelector('.monitor-section-body');
-        const rows = [...body.children]; body.replaceChildren();
-        for (const row of rows) {
-          body.appendChild(row);
-          if (measure() <= budget || body.children.length === 1) continue;
-          row.remove(); pages.push(cards);
-          const next = original.cloneNode(true);
-          const nextBody = next.querySelector('.monitor-section-body'); nextBody.replaceChildren(row);
-          cards = [next];
-          // Subsequent rows belong to the new page's body.
-          body = nextBody;
-        }
-      }
-      if (cards.length) pages.push(cards);
-      root._pages = pages;
+    if (!Number.isFinite(container.parentElement?.parentElement?.clientHeight)) return;
+    if (root.getBoundingClientRect().width <= 0) {
+      feedS.ariaHidden = 'false';
+      slot.ariaHidden = 'true';
+      return;
     }
-    const pages = root._pages;
-    const page = Math.floor(Date.now()/8000) % pages.length;
-    root.replaceChildren(root._header.cloneNode(true), ...pages[page]);
-    root.dataset.pages = String(pages.length); root.dataset.page = String(page+1);
-    if (pages.length > 1) root.querySelector('.monitor-header span').textContent = `TELEMETRY ${page+1}/${pages.length}`;
+    if (!root.querySelector('.monitor-viewport')) {
+      const observer = root.querySelector('[data-kind="observer"]');
+      slot.replaceChildren(...(observer ? [observer] : []));
+      const viewport = dashNode('monitor-viewport');
+      const stack = dashNode('monitor-stack');
+      stack.append(...root.querySelectorAll('.monitor-section'));
+      viewport.appendChild(stack); root.appendChild(viewport);
+    }
     for (const chart of root.querySelectorAll('.monitor-chart')) {
       const style = getComputedStyle(chart.parentElement);
       const width = chart.parentElement.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
       chart.style.transform = `scaleX(${width/chart.scrollWidth})`;
     }
+    // Stable outer slots own opacity transitions. Replacing their inner data
+    // must neither restart the view clock nor recreate the transition targets.
+    root.querySelector('.monitor-viewport').scrollTop = monitorMotion.upper.position;
+    if (slot.querySelector('.monitor-section-body')) slot.querySelector('.monitor-section-body').scrollTop = monitorMotion.observer.position;
+    if (monitorMotion.startedAt === null) {
+      monitorMotion.startedAt = performance.now();
+      monitorMotion.upper.waitUntil = monitorMotion.startedAt + 8000;
+    }
+    if (monitorMotion.frame === null) monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
   }
   function opsTone(value) {
     const text = String(value || '').toUpperCase();
