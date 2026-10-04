@@ -89,3 +89,28 @@ jobs:
           for test in tests/test_comment_advice_routing.sh tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_runtime_policy.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh tests/test_crypto_paper_playback_dedup_exempt.sh tests/test_say_speaking_state.sh; do
             bash "$test"
           done
+
+  routing-queue-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: azumag/docich
+          ref: 232f8af4606af779916f3037e2ee7b53b19ff963
+          path: _test_docich
+          persist-credentials: false
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gettext-base jq
+          python3 -m pip install -r _test_docich/requirements-test.txt
+      - name: Actual stream fetch, routing, queue and ack with fixture AI (no APIs)
+        env:
+          DOCICH_REQUIRE_QUEUE_E2E: "1"
+          DOCICH_SOREN_TEST_ROOT: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/_test_docich/src
+        run: python3 -m pytest -q _test_docich/tests/test_comment_queue_e2e.py
