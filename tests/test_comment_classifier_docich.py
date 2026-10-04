@@ -99,6 +99,34 @@ class DocichClassifierDelegationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "local:gemma4:12b,local")
 
+    def test_routed_local_api_failure_does_not_escalate_to_cli_agents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            prompt = tmp / "prompt.txt"
+            prompt.write_text("synthetic prompt", encoding="utf-8")
+            attempts = tmp / "attempts.txt"
+            script = r'''
+source broadcast/comment.sh
+source lib/ai_generate.sh
+_ai_backoff_dir() { printf '%s' "$TEST_BACKOFF_DIR"; }
+_ai_backoff_check() { return 0; }
+_ai_dispatch() { printf '%s\n' "$2" >>"$TEST_ATTEMPTS"; return 1; }
+_ai_stats_record() { :; }
+_ai_fail_streak_record() { printf '1'; }
+_ai_backoff_set() { :; }
+route_agents=$(_comment_api_only_agent_list "$1")
+ai_generate_list COMMENT "$TEST_PROMPT" "$route_agents" >/dev/null 2>&1 || true
+'''
+            result = subprocess.run(
+                ["bash", "-c", script, "routed-api-failure-test",
+                 "codex:expensive,local:gemma4:12b,opencode:another,local:qwen3"],
+                cwd=ROOT, capture_output=True, text=True, timeout=10,
+                env={**os.environ, "TEST_BACKOFF_DIR": str(tmp / "backoff"),
+                     "TEST_ATTEMPTS": str(attempts), "TEST_PROMPT": str(prompt)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(attempts.read_text(encoding="utf-8").splitlines(),
+                             ["local:gemma4:12b", "local:qwen3"])
+
     def test_routed_reply_envelope_extracts_only_valid_metadata_rows_and_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "route.json"
@@ -128,6 +156,23 @@ class DocichClassifierDelegationTests(unittest.TestCase):
                                       capture_output=True, text=True, timeout=5)
             self.assertNotEqual(rejected.returncode, 0)
 
+    def test_routed_reply_envelope_rejects_more_than_the_fetch_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "route.json"
+            route = {"schema_version": 1,
+                     "rows": [{"index": index, "user": f"viewer{index}", "comment": "こんにちは",
+                               "category": "chitchat", "is_english": False}
+                              for index in range(1, 12)],
+                     "routing": {"status": "ready", "scope": "api_only", "reason": "jev",
+                                 "confidence": .95, "research_status": "not_requested",
+                                 "notes": "", "sources": []}}
+            path.write_text(json.dumps(route), encoding="utf-8")
+            helper = ROOT / "lib/comment_reply_route.py"
+            rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(rejected.returncode, 0)
+            route["rows"] = route["rows"][:1]
+
             route["routing"].update(scope="web", confidence=None)
             path.write_text(json.dumps(route), encoding="utf-8")
             rejected = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
@@ -142,6 +187,9 @@ class DocichClassifierDelegationTests(unittest.TestCase):
             accepted_hold = subprocess.run(["python3", str(helper), "metadata", str(path)], cwd=ROOT,
                                       capture_output=True, text=True, timeout=5)
             self.assertEqual(accepted_hold.returncode, 0, accepted_hold.stderr)
+            rejected_hold_rows = subprocess.run(["python3", str(helper), "rows", str(path)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(rejected_hold_rows.returncode, 0)
 
             route["rows"][0]["user"] = "viewer"
             route["routing"].update(status="ready", scope="api_only")
@@ -154,17 +202,33 @@ class DocichClassifierDelegationTests(unittest.TestCase):
         source = (ROOT / "broadcast/comment.sh").read_text(encoding="utf-8")
         routed = source.index('case "${DOCICH_REPLY_ROUTING_ENABLED:-0}" in')
         hold = source.index('if [ "$comment_route_hold" = "true" ]; then', routed)
+        route_ready = source.index('if [ "$comment_route_status" != "ready" ]; then', routed)
+        rows_read = source.index('classification_json=$(_comment_route_read rows', route_ready)
+        hold_return = source.index('return 0', source.index(
+            'if [ "$comment_route_hold" = "true" ]; then\n\t\tlog "[COMMENT] 根拠未確認', routed))
         generate = source.index('ai_generate_list "COMMENT"', hold)
+        ack_after_generation = source.index('ack-batch "$comment_batch_file"', generate)
         api_filter = source.index('_comment_api_only_agent_list "$comment_agent_list"', hold)
         translation_filter = source.index('_comment_api_only_agent_list "$translation_agents"', hold)
         preflight_api = source.index('_comment_api_only_agent_list "$route_pre_agents"', routed)
         route_call = source.index('timeout --kill-after=5s 55s "$route_cli"', routed)
+        full_batch = source.index('printf \'%s\\n\' "$twitch_comments_original" >"$comment_batch_file"')
         self.assertLess(routed, hold)
         self.assertLess(preflight_api, route_call)
+        self.assertLess(route_ready, rows_read)
+        self.assertLess(full_batch, routed)
+        self.assertLess(hold_return, generate)
+        self.assertLess(hold_return, ack_after_generation)
         self.assertLess(hold, generate)
         self.assertLess(api_filter, generate)
         self.assertLess(translation_filter, source.index('_comment_generate_translation', hold))
         self.assertIn('if [ "$comment_route_enabled" = "true" ]; then\n\t\t\tlog "[COMMENT] 分類結果:', source)
+
+        # Fetch and ack operate on the same bounded source batch. Docich splits
+        # JEV requests internally but returns ready only after every row passed.
+        for filename in ("twitch_chat.sh", "youtube_chat.sh", "kick_chat.sh"):
+            with self.subTest(filename=filename):
+                self.assertIn("--limit 10", (ROOT / filename).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
