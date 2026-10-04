@@ -25,7 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from game_terminal import is_terminal as is_terminal_game_state
+from game_terminal import (\n    is_stale_founding_stop,\n    is_terminal as is_terminal_game_state,\n)
 
 
 SCHEMA_VERSION = 1
@@ -145,13 +145,22 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         game_count = int((root / "game_count.txt").read_text(encoding="utf-8").strip())
     except (FileNotFoundError, OSError, ValueError):
         pass
+    founding_seen = (root / "tmp/markers/.soviet_created").exists()
+    stale_founding_stop = is_stale_founding_stop(
+        state,
+        state_mtime=state_mtime,
+        founding_seen=founding_seen,
+    )
     return {
         "state": str(state.get("state", "")),
         "terminal": is_terminal_game_state(
             state,
             state_mtime=state_mtime,
-            founding_seen=(root / "tmp/markers/.soviet_created").exists(),
+            founding_seen=founding_seen,
         ),
+        "stale_founding_stop": stale_founding_stop,
+        "founding_seen": founding_seen,
+        "make_soren_count": state.get("makeSorenCount"),
         "score": state.get("score"),
         "pieces": len(state.get("pieces", [])) if isinstance(state.get("pieces"), list) else None,
         "game_count": game_count,
@@ -576,7 +585,9 @@ def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) 
         ):
             return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
         snapshot = _read_game_snapshot(store.root)
-        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
+        if not snapshot.get("terminal") or (
+            snapshot.get("runner_alive") and not snapshot.get("stale_founding_stop")
+        ):
             return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
         marker = {
             "schema": SCHEMA_VERSION,
