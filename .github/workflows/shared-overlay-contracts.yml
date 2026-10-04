@@ -13,6 +13,7 @@ on:
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -38,6 +39,7 @@ on:
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
       - 'direct_stream.sh'
@@ -92,7 +94,15 @@ jobs:
         env:
           SOREN_OVERLAY_BROWSER_TESTS: '1'
           SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
-        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_hanjuku_gap_browser.mjs
+        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_hanjuku_gap_browser.mjs tests/test_game_gap_webgl_browser.mjs
+      - name: Check actual Xvfb WebGL input across gap transitions
+        env:
+          SOREN_OVERLAY_XVFB_TESTS: '1'
+          SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg
+          xvfb-run -a -s '-screen 0 1280x720x24' node --test tests/test_game_gap_webgl_browser.mjs
       - name: Save synthetic rendering evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
