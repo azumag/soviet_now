@@ -13,6 +13,9 @@ on:
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
       - 'lib/runtime_audio_fence.py'
+      - 'lib/ai_generate.sh'
+      - 'tests/test_ai_generate_backoff.py'
+      - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
       - 'tests/test_radio_game_context.py'
@@ -47,6 +50,9 @@ on:
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
       - 'lib/runtime_audio_fence.py'
+      - 'lib/ai_generate.sh'
+      - 'tests/test_ai_generate_backoff.py'
+      - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
       - 'tests/test_radio_game_context.py'
@@ -85,6 +91,8 @@ jobs:
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich tests.test_twitch_comment_identity tests.test_youtube_comment_identity tests.test_comment_self_context
       - name: Outbound YouTube UTF-8 split and failure contracts
         run: python3 -m unittest discover -s tests -p test_outbound_queue_youtube_split.py -v
+      - name: Legacy provider removal and backoff contracts
+        run: python3 -m unittest -v tests.test_ai_generate_backoff
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_runtime_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer
