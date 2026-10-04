@@ -358,6 +358,13 @@ _play_comment_queue() {
 			else
 				file_hash=$(md5sum "$qf" 2>/dev/null | awk '{print $1}' || true)
 			fi
+			local terminal_batch_key=""
+			if declare -F _comment_audio_terminal_batch_key >/dev/null; then
+				terminal_batch_key=$(_comment_audio_terminal_batch_key "$qf")
+			fi
+			if [ -n "$terminal_batch_key" ]; then
+				file_hash=$(_outbound_chat_hash "terminal-batch:$terminal_batch_key")
+			fi
 			# Scope-aware dedup: when the producer persisted a dedup identity
 			# (e.g. TRPG narration with a dedup_scope), use it instead of the raw
 			# content hash. This keeps same-text retry suppression within one

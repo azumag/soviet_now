@@ -302,6 +302,11 @@ _run_cmd_record_winner() {
 }
 
 run_cmd() {
+    # Retired Codex and legacy normalization fail before health checks/queue/files.
+    case "${1:-}" in
+        opencode:*|opencode-go:*|openrouter:*|opencode/*|opencode-go/*|opencode|opencode-go|openrouter) ;;
+        *) RUN_AI_LIST_FAILURE_KIND="provider_removed"; return 1 ;;
+    esac
 	case "${1:-}" in minimax*|codex:*minimax*|opencode:minimax*|opencode-go:minimax*|opencode/minimax*|opencode-go/minimax*) return 1 ;; esac
     local _budget_rc managed_improve=0
     _improve_budget_check; _budget_rc=$?
@@ -502,8 +507,7 @@ run_cmd() {
                 bounded_command=(env "OPENCODE_PERMISSION=$RUN_CMD_OPENCODE_PERMISSION" "${bounded_command[@]}")
             fi
         else
-            codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
-            bounded_command=(codex exec --skip-git-repo-check -m "$codex_model" -o "$codex_out_file" -)
+            return 1  # unreachable retired provider boundary
         fi
         if [ -n "$cmd_log_file" ]; then
             python3 "$_IMPROVE_COMMAND_GUARD" "${guard_args[@]}" -- "${bounded_command[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
@@ -552,29 +556,7 @@ run_cmd() {
 			fi
 		fi
 	else
-		# codex exec で最終メッセージを出力ファイルへ書き、stdout/stderr はログへ。
-		# 2026-09-04 (#34): 生成agentの権限迂回(--dangerously-bypass-approvals-and-sandbox)
-		# を撤去した。codex CLIの既定サンドボックス/承認ポリシーで実行する
-		# (lib/ai_generate.sh・tools/podcast_build.py の既存codex呼び出しと同じ方針)。
-		# 環境変数での再有効化経路は意図的に提供しない。
-		codex_out_file=$(mktemp /tmp/eloop_codex_out_XXXXXXXX)
-		local -a codex_args=(
-			exec --skip-git-repo-check -m "$codex_model"
-			-o "$codex_out_file" -
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
-			else
-				codex "${codex_args[@]}" <"$prompt_file" >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" codex "${codex_args[@]}" <"$prompt_file" &
-			else
-				codex "${codex_args[@]}" <"$prompt_file" &
-			fi
-		fi
+        return 1  # No executable Codex fallback remains.
 	fi
 	# 出力ファイルを後処理でログへ追記するため一時ファイルパスを保存。
 	RUN_CMD_CODEX_OUT_FILE="$codex_out_file"

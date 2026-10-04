@@ -77,6 +77,22 @@ check '[ "$(grep -c "再生開始" tmp/.say_queue/debug.log 2>/dev/null)" -eq 2 
 check '[ -z "$(find "$COMMENT_QUEUE_DIR" -maxdepth 1 -name "*crypto_paper*" 2>/dev/null)" ]' \
 	'crypto_paper のqueueファイルが両方消費される(取りこぼしなし)'
 
+# --- fixed terminal deliveries: same body, distinct batch; same batch once ---
+source "$ROOT/lib/outbound_queue.sh"
+: >tmp/.say_queue/debug.log
+first=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+second=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+terminal='資料を確認できませんでした。詳しい内容はまだ断定できません。'
+check '_comment_audio_claim_enqueue_key "$terminal" "twitch:$first"' '最初のterminal batchは投入可能'
+check '_comment_audio_claim_enqueue_key "$terminal" "twitch:$second"' '異なるbatchの同本文は投入可能'
+check '! _comment_audio_claim_enqueue_key "$terminal" "twitch:$first"' '同batchの並行投入は拒否'
+for item in "${first}_1_1" "${second}_2_2" "${first}_3_3"; do
+    printf '%s\n' "$terminal" >"$COMMENT_QUEUE_DIR/comment_terminal_twitch_${item}.txt"
+    _play_comment_queue
+done
+check '[ "$(grep -c "再生開始" tmp/.say_queue/debug.log)" -eq 2 ]' '異なるterminal2batchは再生、同batch再配達は再生しない'
+check '[ "$(grep -c "重複スキップ" tmp/.say_queue/debug.log)" -eq 1 ]' 'terminal再生dedupはbatch単位'
+
 # --- control: ordinary (non-exempt) comment playback still dedupes ---
 : >tmp/.say_queue/debug.log
 printf '%s\n' "同じ内容のコメント返信テストです。" >"$COMMENT_QUEUE_DIR/comment_ordinary_1.txt"
