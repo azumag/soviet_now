@@ -946,6 +946,10 @@ html[data-soren-monitor="1"] .feed-panel.panel-g { flex: 0 0 auto; }
 .monitor-section[data-kind="observer"] .monitor-section-body,
 .monitor-section[data-kind="events"] .monitor-section-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; line-height: 12px; }
 .monitor-section[data-kind="events"] .monitor-section-head { color: #edca7f; }
+.monitor-chart { width: max-content; transform-origin: left top; }
+.monitor-section[data-kind="observer"] .monitor-section-body > div + div { margin-top: 4px; }
+.monitor-section[data-kind="observer"] .monitor-section-body { white-space: normal; }
+.monitor-section[data-kind="events"] .monitor-section-body > div + div { margin-top: 3px; }
 .feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
 
 /* Dedicated surface behind the native game window. It draws only measured padding. */
@@ -1265,6 +1269,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const tag = document.createElement('span'); tag.textContent = 'TELEMETRY';
     header.appendChild(tag); root.appendChild(header);
     let section = null;
+    let kind = '';
     const lines = String(view.text || '').split('\n');
     const addSection = (kind, title, meta = '') => {
       const card = dashNode('monitor-section'); card.dataset.kind = kind;
@@ -1279,19 +1284,89 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       if (title) {
         const names = {'Score Timeline':['timeline','SCORE TRACE'], 'Score Distribution':['distribution','DISTRIBUTION'],
           'Strategy Comparison':['strategy','STRATEGY MATRIX'], 'Observer Status':['observer','OBSERVER']};
-        const [kind, label] = names[title[1]];
+        const [nextKind, label] = names[title[1]];
+        kind = nextKind;
         section = addSection(kind, label, title[2].trim());
+        if (kind === 'timeline') {
+          const chart = dashNode('monitor-chart');
+          section.appendChild(chart); section = chart;
+        }
       } else if (line.trim()) {
-        if (!section) section = addSection('events', 'EVENT LOG');
+        if (!section) { kind = 'events'; section = addSection(kind, 'EVENT LOG'); }
+        // The producer's terminal box is chrome, not event data. Keep chart axes.
+        if (kind === 'events' && /^[\s┌┐└┘─━│┏┓┗┛┃]+$/.test(line)) return;
         const row = dashNode('');
         const chartText = text => String(text).replace(/[█▓▒░]/g, '=');
-        const segments = view.segments?.[index]?.map(segment => ({...segment, t: chartText(segment.t)}));
-        appendFeedLineContent(row, monitorText(chartText(line)), segments);
+        const start = kind === 'events' ? (line.match(/^\s*[│┃]?\s*/)?.[0].length || 0)
+          : kind === 'observer' ? (line.match(/^\s*/)?.[0].length || 0) : 0;
+        const end = kind === 'events' ? line.length - (line.match(/\s*[│┃]\s*$/)?.[0].length || 0) : line.length;
+        let offset = 0;
+        const segments = view.segments?.[index]?.map(segment => {
+          const from = offset; offset += String(segment.t).length;
+          return {...segment, t: monitorText(chartText(String(segment.t).slice(Math.max(0, start-from), Math.max(0, Math.min(offset,end)-from))))};
+        }).filter(segment => segment.t);
+        appendFeedLineContent(row, monitorText(chartText(line.slice(start,end))), segments);
         section.appendChild(row);
       }
     });
     container.replaceChildren(root);
+    root._sourceText = raw;
     return true;
+  }
+  function adaptSorenMonitor(container) {
+    const root = container.querySelector('.soren-monitor');
+    const available = container.parentElement?.parentElement?.clientHeight;
+    if (!root || !Number.isFinite(available) || available <= 0) return;
+    if (root.getBoundingClientRect().width <= 0) return;
+    // Leave room for the existing health dashboard. Overflow pages retain every
+    // source row and rotate without reloading the document or changing payloads.
+    const budget = Math.max(100, available - 160);
+    if (!root._sections) {
+      root._sections = [...root.querySelectorAll('.monitor-section')];
+      root._header = root.querySelector('.monitor-header');
+    }
+    if (root._budget !== budget) {
+      root._budget = budget;
+      const pages = []; let cards = [];
+      const measure = () => {
+        root.replaceChildren(root._header.cloneNode(true), ...cards);
+        return root.getBoundingClientRect().height;
+      };
+      for (const original of root._sections) {
+        const card = original.cloneNode(true);
+        cards.push(card);
+        if (measure() <= budget) continue;
+        cards.pop();
+        if (cards.length) { pages.push(cards); cards = []; }
+        cards.push(card);
+        if (measure() <= budget) continue;
+        // A long table can itself span pages; repeat its heading on each page.
+        let body = card.querySelector('.monitor-section-body');
+        const rows = [...body.children]; body.replaceChildren();
+        for (const row of rows) {
+          body.appendChild(row);
+          if (measure() <= budget || body.children.length === 1) continue;
+          row.remove(); pages.push(cards);
+          const next = original.cloneNode(true);
+          const nextBody = next.querySelector('.monitor-section-body'); nextBody.replaceChildren(row);
+          cards = [next];
+          // Subsequent rows belong to the new page's body.
+          body = nextBody;
+        }
+      }
+      if (cards.length) pages.push(cards);
+      root._pages = pages;
+    }
+    const pages = root._pages;
+    const page = Math.floor(Date.now()/8000) % pages.length;
+    root.replaceChildren(root._header.cloneNode(true), ...pages[page]);
+    root.dataset.pages = String(pages.length); root.dataset.page = String(page+1);
+    if (pages.length > 1) root.querySelector('.monitor-header span').textContent = `TELEMETRY ${page+1}/${pages.length}`;
+    for (const chart of root.querySelectorAll('.monitor-chart')) {
+      const style = getComputedStyle(chart.parentElement);
+      const width = chart.parentElement.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      chart.style.transform = `scaleX(${width/chart.scrollWidth})`;
+    }
   }
   function opsTone(value) {
     const text = String(value || '').toUpperCase();
@@ -1695,6 +1770,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       improveActive ? (i?.logUpdatedAt || 0) : (i?.updatedAt || 0),
     ));
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
+    adaptSorenMonitor(feedG);
     adaptOpsDashboard(feedS);
     // Raw feeds retain every source row. New panel chrome must not push the last
     // rows below the frame; fit leading/type to the actual remaining height.

@@ -1149,7 +1149,8 @@ test('Soren telemetry panels preserve chart values and switch away cleanly', asy
   assert.equal(monitor.children.filter(e => e.className === 'monitor-section').length, 5);
   assert.equal(ui.documentElement.dataset.sorenMonitor, '1');
   const sections = monitor.children.filter(e => e.className === 'monitor-section');
-  const rows = sections.flatMap(e => e.querySelector('.monitor-section-body').children.map(r => r.textContent));
+  const rows = sections.flatMap(e => e.querySelector('.monitor-section-body').children.flatMap(r =>
+    r.className === 'monitor-chart' ? r.children.map(line => line.textContent) : [r.textContent]));
   assert.ok(rows.some(t => t.includes('5691')));
   assert.ok(rows.some(t => t.includes('3722 4145 2822')));
   assert.ok(rows.some(t => t.includes('LastStep +240')));

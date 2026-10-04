@@ -12,6 +12,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
       - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
@@ -38,6 +39,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
       - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
@@ -94,7 +96,7 @@ jobs:
         env:
           SOREN_OVERLAY_BROWSER_TESTS: '1'
           SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
-        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_hanjuku_gap_browser.mjs tests/test_game_gap_webgl_browser.mjs
+        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_soren_monitor_browser.mjs tests/test_hanjuku_gap_browser.mjs tests/test_game_gap_webgl_browser.mjs
       - name: Check actual Xvfb WebGL input across gap transitions
         env:
           SOREN_OVERLAY_XVFB_TESTS: '1'
