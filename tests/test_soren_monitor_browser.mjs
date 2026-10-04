@@ -29,9 +29,15 @@ function fixture(kind) {
 test('Soren monitor fills trace width, removes event box and preserves dense observers across updates', {skip:!enabled},async()=>{
   const {chromium}=await import('playwright');
   let state=fixture('short');
+  let updates=0;
   const html=fs.readFileSync(path.join(root,'overlays/direct_broadcast_overlay.html'),'utf8');
   const server=http.createServer((req,res)=>{
-    if(req.url==='/__soren_overlay/broadcast/state'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(state));return;}
+    if(req.url==='/__soren_overlay/broadcast/state'){
+      const payload=structuredClone(state);
+      // Each poll changes the renderer cache key while pages are being observed.
+      payload.feeds.showStatusG.updatedAt+=++updates/100;
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(payload));return;
+    }
     res.setHeader('Content-Type','text/html; charset=utf-8');
     res.end(req.url==='/crop'?'<body style="margin:0"><iframe data-soren-overlay-region="sidebar" src="/overlay" style="border:0;width:320px;height:720px"></iframe></body>':html);
   });
@@ -51,7 +57,7 @@ test('Soren monitor fills trace width, removes event box and preserves dense obs
       await page.clock.runFor(1100);
       await frame.waitForFunction(text=>{
         const monitor=document.querySelector('.soren-monitor');
-        return monitor?._sourceText===text&&monitor._budget===Math.max(100,document.getElementById('feed').clientHeight-120);
+        return monitor?._sourceText===text&&monitor._budget===Math.max(100,document.getElementById('feed').clientHeight-160);
       },state.feeds.showStatusG.text);
       const seen=new Set();
       const pages=Number(await frame.locator('.soren-monitor').getAttribute('data-pages'))||1;
@@ -74,14 +80,16 @@ test('Soren monitor fills trace width, removes event box and preserves dense obs
             eventColor:sections.find(s=>s.dataset.kind==='events')?.querySelector('.monitor-section-body > div:last-child span')?.style.color,
             overflow:sections.some(s=>s.scrollWidth>s.clientWidth+1||s.scrollHeight>s.clientHeight+1),
             observer:sections.filter(s=>s.dataset.kind==='observer').map(s=>({rect:rect(s),rows:[...s.querySelector('.monitor-section-body').children].map(rect)})),
+            opsOverflow:document.querySelector('.ops-dashboard').scrollHeight>document.getElementById('feed-s').clientHeight+1,
             documentIdentity:window.monitorDocumentIdentity,health:window.__sorenBroadcastOverlayHealth};
         });
         evidence.push({kind,page:p,...layout});
         layout.rows.forEach(t=>seen.add(t));
         if(layout.traceRatio!==null&&layout.traceRatio<.95) issues.push(`${kind}: trace fills only ${layout.traceRatio}`);
         if(/[┌┐└┘─│]/.test(layout.eventText||'')) issues.push(`${kind}: event decoration remains`);
-        if(layout.eventText)assert.equal(layout.eventColor,'rgb(231, 191, 117)','event data color survives frame removal');
+        if(layout.eventText){assert.equal(layout.eventColor,'rgb(231, 191, 117)','event data color survives frame removal');assert.ok(!layout.eventText.includes('FFMPEG'));}
         if(layout.overflow||layout.rect.bottom>layout.limit.bottom+1) issues.push(`${kind}: monitor exceeds available height`);
+        if(layout.opsOverflow)issues.push(`${kind}: health dashboard exceeds available height`);
         for(const o of layout.observer)for(const r of o.rows)if(r.x<o.rect.x||r.right>o.rect.right+1||r.bottom>o.rect.bottom+1)issues.push(`${kind}: observer clipped`);
         assert.equal(layout.documentIdentity,'retained','updates must not reload document');
         assert.deepEqual(layout.health.layout.game,[0,90,960,540]);

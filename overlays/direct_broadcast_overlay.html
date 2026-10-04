@@ -1303,7 +1303,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         let offset = 0;
         const segments = view.segments?.[index]?.map(segment => {
           const from = offset; offset += String(segment.t).length;
-          return {...segment, t: chartText(String(segment.t).slice(Math.max(0, start-from), Math.max(0, Math.min(offset,end)-from)))};
+          return {...segment, t: monitorText(chartText(String(segment.t).slice(Math.max(0, start-from), Math.max(0, Math.min(offset,end)-from))))};
         }).filter(segment => segment.t);
         appendFeedLineContent(row, monitorText(chartText(line.slice(start,end))), segments);
         section.appendChild(row);
@@ -1320,7 +1320,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (root.getBoundingClientRect().width <= 0) return;
     // Leave room for the existing health dashboard. Overflow pages retain every
     // source row and rotate without reloading the document or changing payloads.
-    const budget = Math.max(100, available - 120);
+    const budget = Math.max(100, available - 160);
     if (!root._sections) {
       root._sections = [...root.querySelectorAll('.monitor-section')];
       root._header = root.querySelector('.monitor-header');
