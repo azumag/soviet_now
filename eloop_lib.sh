@@ -14,6 +14,11 @@ source "$ELOOP_LIB_DIR/core/config.sh"
 source "$ELOOP_LIB_DIR/core/radio_timeout_guard.sh"
 source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"
 source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
+# A resident chat shell predating record clips already sources this shim each
+# tick. Replace only its clip handler; other workers never load this module.
+if [ "${WORKER_NAME:-}" = "chat_worker" ]; then
+	source "$ELOOP_LIB_DIR/lib/chat_clip_queue.sh"
+fi
 # Layer 1: コアヘルパー
 source "$ELOOP_LIB_DIR/core/helpers.sh"
 source "$ELOOP_LIB_DIR/core/game_state.sh"

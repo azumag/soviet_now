@@ -85,7 +85,7 @@ def process(queue, *, now=None):
     fixed_now = now
     queue = Path(queue)
     queue.mkdir(parents=True, exist_ok=True)
-    for name in ("done", "failed", "receipts"):
+    for name in ("done", "failed", "receipts", "record_pending"):
         (queue / name).mkdir(exist_ok=True)
     with (queue / ".record-lock").open("a") as stream:
         try:
@@ -95,7 +95,11 @@ def process(queue, *, now=None):
         # Reserve one slot for accepted GETs when both classes are pending.
         # Fresh POSTs run first in deadline order; GETs rotate by last attempt.
         fresh, accepted = [], []
-        for path in queue.glob("record_*.json"):
+        # The protected namespace is invisible to pre-record legacy shells,
+        # which glob only top-level *.json. Retain old-path receipt recovery.
+        paths = list((queue / "record_pending").glob("record_*.json"))
+        paths.extend(queue.glob("record_*.json"))
+        for path in paths:
             if Path("tmp/stop").exists():
                 return
             try:

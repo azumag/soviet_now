@@ -73,7 +73,7 @@ class SovietContinuationTest(unittest.TestCase):
         game_state = (REPO_ROOT / "core/game_state.sh").read_text(encoding="utf-8")
         clip_script = (REPO_ROOT / "twitch_clip.sh").read_text(encoding="utf-8")
         clip_queue = (REPO_ROOT / "core/version.sh").read_text(encoding="utf-8")
-        clip_worker = (REPO_ROOT / "workers/chat_worker.sh").read_text(encoding="utf-8")
+        clip_worker = (REPO_ROOT / "lib/chat_clip_queue.sh").read_text(encoding="utf-8")
         strategy_runner = (REPO_ROOT / "strategy_runner.py").read_text(encoding="utf-8")
         success_block = loop[loop.index('if [ "$LAST_SOVIET" = "true" ]'):]
         success_block = success_block[: success_block.index('elif [ "$LAST_RUSSIA"')]

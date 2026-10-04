@@ -121,7 +121,7 @@ class TwitchClipHTTPTests(TwitchClipHTTPFixture):
 class ClipQueueTests(ClipSandbox):
     def setUp(self):
         super().setUp()
-        worker = (ROOT / "workers/chat_worker.sh").read_text()
+        worker = (ROOT / "lib/chat_clip_queue.sh").read_text()
         process = re.search(r"(?ms)^_process_clip_queue\(\) \{.*?^\}", worker).group()
         (self.work / "queue_function.sh").write_text(process)
         self.executable("twitch_clip.sh", """#!/usr/bin/env python3

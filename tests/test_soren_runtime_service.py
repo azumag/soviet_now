@@ -143,6 +143,10 @@ esac
             (root / "workers" / "chat_worker.sh").write_text(
                 CHAT_WORKER.read_text(encoding="utf-8"), encoding="utf-8"
             )
+            (root / "lib").mkdir()
+            (root / "lib" / "chat_clip_queue.sh").write_text(
+                (REPO_ROOT / "lib" / "chat_clip_queue.sh").read_text(), encoding="utf-8"
+            )
             (root / "eloop_lib.sh").write_text(
                 'printf \'backend=%s key=%s\\n\' "${COMMENT_CLASSIFIER_BACKEND:-empty}" '
                 '"${TYPESAFE_API_KEY:+present}" >>"$PWD/tmp/env_seen"\n',

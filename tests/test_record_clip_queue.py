@@ -1,6 +1,7 @@
 """Real local queue/script/receipt paths with a synthetic HTTP executable."""
 import json
 from pathlib import Path
+import re
 import shutil
 import time
 
@@ -41,6 +42,97 @@ class RecordClipTests(http_fixture.TwitchClipHTTPFixture):
 
     def receipt(self):
         return json.loads(self.receipt_path.read_text())
+
+    def protect_event(self):
+        target = self.event_path.parent / "record_pending" / self.event_path.name
+        target.parent.mkdir(exist_ok=True)
+        self.event_path.rename(target)
+        self.event_path = target
+
+    def test_old_resident_cannot_consume_protected_event_then_hot_reload_uses_receipt(self):
+        self.protect_event()
+        shutil.copy(ROOT / "tests/fixtures/record-clips/legacy_chat_clip_queue.sh",
+                    self.work / "legacy_clip_queue.sh")
+        shutil.copy(ROOT / "lib/chat_clip_queue.sh", self.work / "lib/chat_clip_queue.sh")
+        # Execute the exact chat-only loader from the real per-tick shim. Other
+        # modules/services are omitted; all HTTP goes through the fixture stub.
+        loader = re.search(r'(?ms)^if \[ "\$\{WORKER_NAME:-\}" = "chat_worker" \]; then\n.*?^fi',
+                           (ROOT / "eloop_lib.sh").read_text()).group()
+        (self.work / "hot_loader.sh").write_text(loader)
+        (self.work / "tmp/state").mkdir()
+        (self.work / "tmp/state/chat_worker.paused").touch()
+        result = self.run_shell('''
+CLIP_QUEUE_DIR=tmp/clip_queue
+CLIP_QUEUE_DONE_DIR=tmp/clip_queue/done
+TMP_MARKERS_DIR=tmp/markers
+TMP_DEBUG_DIR=tmp/debug
+ELOOP_LIB_DIR="$PWD"
+_log() { :; }
+source ./legacy_clip_queue.sh
+before_pid=$$
+_process_clip_queue
+test ! -e http_calls.txt || exit 10
+test -f tmp/clip_queue/record_pending/record_*.json || exit 11
+# Loading in another worker must preserve its functions and all queue state.
+WORKER_NAME=radio_worker
+source ./hot_loader.sh
+_process_clip_queue
+test ! -e http_calls.txt || exit 12
+WORKER_NAME=chat_worker
+source ./hot_loader.sh
+test "$$" = "$before_pid" || exit 13
+test -f tmp/state/chat_worker.paused || exit 14
+# Reload itself neither drains the queue nor changes a user's pause marker.
+test ! -e http_calls.txt || exit 15
+# Model an operator-authorized unpause only inside this disposable sandbox.
+rm tmp/state/chat_worker.paused
+_process_clip_queue
+_process_clip_queue
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("test-token-do-not-log", result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["POST", "GET"])
+        self.assertEqual(self.receipt()["phase"], "ready")
+        self.assertEqual(self.receipt()["clip_id"], "TestClip")
+        self.assertTrue((self.work / "tmp/clip_queue/done" / self.event_path.name).exists())
+
+    def test_protected_backlog_expires_at_original_capture_time_without_http(self):
+        self.protect_event()
+        row = json.loads(self.event_path.read_text())
+        row["created_at"] = 100
+        self.event_path.write_text(json.dumps(row))
+        self.process_record(now=121)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.receipt()["phase"], "expired")
+        self.assertTrue((self.work / "tmp/clip_queue/done" / self.event_path.name).exists())
+
+    def test_same_id_across_old_and_protected_paths_posts_once_and_recovers_get_only(self):
+        old_path = self.event_path
+        self.protect_event()
+        shutil.copy(self.event_path, old_path)
+        self.process_record("unconfirmed")
+        self.assertEqual(self.calls().count("POST"), 1)
+        self.assertEqual(self.receipt()["phase"], "accepted")
+        self.process_record()
+        self.assertEqual(self.calls().count("POST"), 1)
+        self.assertEqual(self.receipt()["phase"], "ready")
+        self.assertFalse(old_path.exists())
+        self.assertFalse(self.event_path.exists())
+
+    def test_protected_queue_obeys_stop_and_single_flight_lock(self):
+        import fcntl
+        self.protect_event()
+        stop = self.work / "tmp/stop"
+        stop.touch()
+        self.process_record()
+        self.assertEqual(self.calls(), [])
+        self.assertTrue(self.event_path.exists())
+        stop.unlink()
+        with (self.work / "tmp/clip_queue/.record-lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.process_record()
+        self.assertEqual(self.calls(), [])
+        self.assertTrue(self.event_path.exists())
 
     def test_record_clip_keeps_public_id_url_separate_from_record_confirmation(self):
         self.process_record()
