@@ -32,7 +32,7 @@ render_once() {
 	mkdir -p "$(dirname "$out_file")"
 	local show_raw=""
 	local raw=""
-	show_raw=$(SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
+	show_raw=$(SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --raw-once 2>/dev/null || true)
 	raw="$show_raw"
 	SHOW_STATUS_OVERLAY_RAW="$raw" SHOW_STATUS_RAW="$show_raw" HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=1 python3 - "$out_file" "$width" "$height" <<'PY'
 import html
