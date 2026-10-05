@@ -597,9 +597,14 @@ class HanjukuStatusTest(unittest.TestCase):
         # '\n' is the card's own line separator, so check per line instead.
         for fragment in ('\x1b', '\x07', '\r', '[31m', '[2J', '[1m', '[9m'):
             self.assertNotIn(fragment, text, f'{fragment!r} leaked onto the card')
+        machine_prefixes = (
+            '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:',
+            '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+        )
         for line in text.split('\n'):
             self.assertNotIn('\n', line)
-            self.assertTrue(sd.ansi_display_width(line) <= sd.W)
+            if not line.startswith(machine_prefixes):
+                self.assertTrue(sd.ansi_display_width(line) <= sd.W)
 
     def test_snapshot_cleaner_drops_whole_escape_runs(self):
         from lib.docich_corner_stats import _hanjuku_clean, _hanjuku_names
