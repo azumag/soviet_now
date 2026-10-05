@@ -303,7 +303,7 @@ test('real drop function does not click if geometry changes during mouse aiming'
 });
 test('real drop arms the post-drop observation boundary only after the click is sent', async () => {
   const events = [];
-  const fn = vm.runInNewContext(`(${extract('executeDrop', '/**\\n * ラウンド終了処理')})`, {
+  const fn = vm.runInNewContext(`(${extract('executeDrop', '/**\n * ラウンド終了処理')})`, {
     loadModule: async () => ({ dropXToPixel: () => 400 }),
     inputCanvasBox: async () => G,
     process: { env: {} },
