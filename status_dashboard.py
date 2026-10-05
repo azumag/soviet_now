@@ -3592,7 +3592,8 @@ def render_docich_corner_stats(corner):
         lines += [
             f"SOREN/CORNER: {label} / PAPER / {status}",
             "  ASSET / PAPER ONLY",
-            f"Funds: capital={capital} deployed={deployed} free={free}",
+            "Funds: " + _corner_short(f"capital={capital} free={free}", limit=49),
+            "  Deployed: " + _corner_short(deployed, "?", 43),
             f"Positions: {len(positions)} / markets={_corner_int(paper.get('market_count'))}",
         ]
         for symbol, amount in list(sorted(positions.items()))[:3]:
