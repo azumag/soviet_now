@@ -301,6 +301,24 @@ test('real drop function does not click if geometry changes during mouse aiming'
     { width: 800, height: 450 }), /geometry-changed/);
   assert.equal(clicks, 0);
 });
+test('real drop arms the post-drop observation boundary only after the click is sent', async () => {
+  const events = [];
+  const fn = vm.runInNewContext(`(${extract('executeDrop', '/**\n * ラウンド終了処理')})`, {
+    loadModule: async () => ({ dropXToPixel: () => 400 }),
+    inputCanvasBox: async () => G,
+    process: { env: {} },
+    sleep: async () => {},
+    markObservationDropSent: () => { events.push('mark'); },
+  });
+  await fn({
+    mouse: {
+      move: async () => { events.push('move'); },
+      click: async () => { events.push('click'); },
+    },
+  }, 0, calibration, { width: 800, height: 450 });
+  assert.deepEqual(events, ['move', 'click', 'mark']);
+});
+
 test('input freshness uses adaptive capture budget unless an operator overrides it', async () => {
   const source = extract('inputCanvasBox', 'async function setNormalGameLifecycle');
   let options = null;

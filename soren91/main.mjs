@@ -19,6 +19,7 @@ import {
   captureErrorLimit,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
+import { markDropSent as markObservationDropSent } from './observation_guard.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { waitForInlineRails } from './presentation_ready.mjs';
 import { chromium } from 'playwright';
@@ -1998,6 +1999,9 @@ async function executeDrop(page, gameX, calibration, frame = null) {
   if (frame) await inputCanvasBox(page, calibration, frame);
   // クリックでドロップ実行
   await page.mouse.click(clickX, clickY);
+  // Arm exactly one post-drop observation boundary. The guard only uses this
+  // after an actual sent click; failed validation/aiming can never create it.
+  markObservationDropSent(calibration);
 }
 
 /**

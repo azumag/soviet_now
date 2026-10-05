@@ -2,8 +2,10 @@
 import { isUsableCalibration } from './calibration_contract.mjs';
 
 const observations = new WeakMap();
+const pendingDrops = new WeakMap();
 
 export const DEFAULT_MAX_STALE_MS = 15_000;
+export const DEFAULT_POSTDROP_BOARD_ADVANCE_MS = 3_000;
 // Remote (Mac renderer) captures cost ~2.2-2.4s each, so consecutive
 // observations sit just BELOW the old 2500ms guard: the slow-cadence fast
 // path almost never fired and every turn fell back to the strict two-frame
@@ -44,6 +46,37 @@ export function slowCadenceFastPathEnabled(env = process.env) {
   if (['0', 'false', 'no', 'off'].includes(explicit)) return false;
   if (['1', 'true', 'yes', 'on'].includes(explicit)) return true;
   return !!String(env?.SOREN91_REMOTE_CDP_URL || '').trim();
+}
+
+// A successfully sent drop creates one narrow turn-boundary opportunity. On
+// remote capture, the first post-click frame can arrive several seconds later;
+// comparing that frame to the PRE-drop board otherwise mislabels the expected
+// new stack/current as board-moving/preview-changed and forces another costly
+// screenshot. The boundary is one-shot and remote-only by default.
+export function postDropSingleFrameEnabled(env = process.env) {
+  const explicit = String(env?.SOREN91_POSTDROP_SINGLE_FRAME || '').trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(explicit)) return false;
+  if (['1', 'true', 'yes', 'on'].includes(explicit)) return true;
+  return !!String(env?.SOREN91_REMOTE_CDP_URL || '').trim();
+}
+
+export function postDropBoardAdvanceMs(env = process.env) {
+  const raw = Number(env?.SOREN91_POSTDROP_BOARD_ADVANCE_MS);
+  return Number.isFinite(raw) && raw >= DEFAULT_SINGLE_FRAME_ADVANCE_MS
+    ? raw
+    : DEFAULT_POSTDROP_BOARD_ADVANCE_MS;
+}
+
+export function markDropSent(calibration, now = Date.now()) {
+  if (!calibration || typeof calibration !== 'object') return false;
+  const previous = observations.get(calibration);
+  if (!previous || previous.stableFrames < 2
+      || !Number.isFinite(now) || now < previous.at) {
+    pendingDrops.delete(calibration);
+    return false;
+  }
+  pendingDrops.set(calibration, { at: now, previousAt: previous.at });
+  return true;
 }
 
 export function usableCalibration(cal, width, height) {
@@ -186,6 +219,7 @@ export function gateObservation(state, calibration, now = Date.now()) {
   const previous = observations.get(calibration);
   if (state.state !== 'MOVE') {
     observations.delete(calibration);
+    pendingDrops.delete(calibration);
     return { ...state, holdKnownEmpty: false,
       perception: { ready: false, reason: state.perception?.reason || 'non-move', stableFrames: 0 } };
   }
@@ -199,6 +233,13 @@ export function gateObservation(state, calibration, now = Date.now()) {
   const gapMs = previous ? now - previous.at : null;
   const temporalNextUsed = queue.slice(1).some(piece =>
     piece?.temporalSource === 'shifted' || piece?.temporalSource === 'same-turn');
+
+  const pendingDrop = pendingDrops.get(calibration);
+  const postDropBoundary = !!pendingDrop && !!previous
+    && pendingDrop.previousAt === previous.at
+    && now >= pendingDrop.at;
+  const postDropElapsedMs = postDropBoundary ? now - pendingDrop.at : null;
+  if (pendingDrop && !postDropBoundary) pendingDrops.delete(calibration);
 
   const current = {
     ...state,
@@ -214,28 +255,55 @@ export function gateObservation(state, calibration, now = Date.now()) {
 
   let reason = null;
   let slowAdvanceUsed = false;
+  let postDropAdvanceUsed = false;
   if (!next || next.fallback || !(next.confidence >= 0.58)) reason = 'unknown-current';
   else if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
   else if (!previous || !previous.usable || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
-  else if (gapMs > maxStaleMs()) reason = 'confirm-frame';
-  else if (previewType(previous.next) === previewType(next)
-      && Number.isFinite(previous.next?.y) && Number.isFinite(next.y)
-      && Math.abs(previous.next.y - next.y) > 0.12) reason = 'board-moving';
   else {
-    const advance = queueAdvanceEvidence(previous?.detectedQueue, detectedQueue);
-    slowAdvanceUsed = (transition === 'advanced'
-        || (singleEvidenceAdvanceEnabled() && advance.evidence >= 1 && advance.conflict === 0))
-      && slowCadenceFastPathEnabled()
-      && gapMs >= singleFrameAdvanceMs();
-    if (slowAdvanceUsed) {
+    const sameTypeVerticalMotion = previewType(previous.next) === previewType(next)
+      && Number.isFinite(previous.next?.y) && Number.isFinite(next.y)
+      && Math.abs(previous.next.y - next.y) > 0.12;
+    const boardStable = stableBoard(previous, state);
+    const currentChanged = previewType(previous.next) != null
+      && previewType(next) != null
+      && previewType(previous.next) !== previewType(next);
+
+    // Do not mistake the expected PRE-drop -> POST-drop board delta for ongoing
+    // motion. This is only available after a click was actually sent, only for
+    // the first following observation, and only after enough wall time for the
+    // game-side drop/settle window. A same-type current visibly moving through
+    // the spawn band remains blocked exactly as before.
+    postDropAdvanceUsed = postDropBoundary
+      && postDropSingleFrameEnabled()
+      && !sameTypeVerticalMotion
+      && !boardStable
+      && (
+        (currentChanged && postDropElapsedMs >= singleFrameAdvanceMs())
+        || postDropElapsedMs >= postDropBoardAdvanceMs()
+      );
+
+    if (postDropAdvanceUsed) {
       current.stableFrames = 2;
-    } else if (previewType(previous.next) !== previewType(next)) {
-      reason = 'preview-changed';
-    } else if (!stableBoard(previous, state) || !stableGarbage(previous, state)) {
+    } else if (gapMs > maxStaleMs()) {
+      reason = 'confirm-frame';
+    } else if (sameTypeVerticalMotion) {
       reason = 'board-moving';
     } else {
-      current.stableFrames = Math.min(3, previous.stableFrames + 1);
+      const advance = queueAdvanceEvidence(previous?.detectedQueue, detectedQueue);
+      slowAdvanceUsed = (transition === 'advanced'
+          || (singleEvidenceAdvanceEnabled() && advance.evidence >= 1 && advance.conflict === 0))
+        && slowCadenceFastPathEnabled()
+        && gapMs >= singleFrameAdvanceMs();
+      if (slowAdvanceUsed) {
+        current.stableFrames = 2;
+      } else if (previewType(previous.next) !== previewType(next)) {
+        reason = 'preview-changed';
+      } else if (!boardStable || !stableGarbage(previous, state)) {
+        reason = 'board-moving';
+      } else {
+        current.stableFrames = Math.min(3, previous.stableFrames + 1);
+      }
     }
   }
 
@@ -257,11 +325,13 @@ export function gateObservation(state, calibration, now = Date.now()) {
     && !previous.hold.fallback;
   const holdKnownEmpty = !holdEverSeen && emptyHoldFrames >= 2;
 
-  let stableReason = slowAdvanceUsed ? 'stable-slow-advance' : 'stable';
+  let stableReason = (slowAdvanceUsed || postDropAdvanceUsed) ? 'stable-slow-advance' : 'stable';
+  if (postDropAdvanceUsed) stableReason += '-postdrop';
   if (temporalNextUsed) stableReason += '-temporal-next';
   if (holdKnownEmpty) stableReason += '-hold-empty';
 
   observations.set(calibration, current);
+  if (postDropBoundary) pendingDrops.delete(calibration);
   return {
     ...state,
     next,
