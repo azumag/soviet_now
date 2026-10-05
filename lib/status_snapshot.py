@@ -32,6 +32,8 @@ def build_snapshot(
     rejected_meta_path: Path | None = None,
     stagnation_path: Path | None = None,
     rejected_ttl_sec: int = 21600,
+    improve_state_path: Path | None = None,
+    improve_monitor_path: Path | None = None,
     *,
     now: int | None = None,
 ):
@@ -50,6 +52,15 @@ def build_snapshot(
         "regression_streak": 0,
         "stagnation_event": "none",
         "stagnation_age": "n/a",
+        "imp_status": "idle",
+        "imp_pid": 0,
+        "imp_hash": "",
+        "imp_phase": "",
+        "imp_progress": 0,
+        "imp_updated_at": 0,
+        "imp_monitor_status": "",
+        "imp_monitor_action": "",
+        "imp_monitor_stale_sec": 0,
     }
 
     game = _load_json(game_state_path)
@@ -143,6 +154,35 @@ def build_snapshot(
             else:
                 result["stagnation_age"] = f"{diff // 3600}h"
 
+    if improve_state_path is not None:
+        improve = _load_json(improve_state_path)
+        if improve:
+            result["imp_status"] = str(improve.get("status", "idle") or "idle")
+            try:
+                result["imp_pid"] = int(improve.get("pid", 0) or 0)
+            except (TypeError, ValueError):
+                result["imp_pid"] = 0
+            result["imp_hash"] = str(improve.get("strategy_hash_before", "") or "")
+            result["imp_phase"] = str(improve.get("phase", "") or "")
+            try:
+                result["imp_progress"] = int(improve.get("progress", 0) or 0)
+            except (TypeError, ValueError):
+                result["imp_progress"] = 0
+            try:
+                result["imp_updated_at"] = int(improve.get("updated_at", 0) or 0)
+            except (TypeError, ValueError):
+                result["imp_updated_at"] = 0
+
+    if improve_monitor_path is not None:
+        monitor = _load_json(improve_monitor_path)
+        if monitor:
+            result["imp_monitor_status"] = str(monitor.get("status", "") or "")
+            result["imp_monitor_action"] = str(monitor.get("action", "") or "")
+            try:
+                result["imp_monitor_stale_sec"] = int(monitor.get("stale_sec", 0) or 0)
+            except (TypeError, ValueError):
+                result["imp_monitor_stale_sec"] = 0
+
     return result
 
 
@@ -162,13 +202,22 @@ def render_shell(snapshot):
         "regression_streak",
         "stagnation_event",
         "stagnation_age",
+        "imp_status",
+        "imp_pid",
+        "imp_hash",
+        "imp_phase",
+        "imp_progress",
+        "imp_updated_at",
+        "imp_monitor_status",
+        "imp_monitor_action",
+        "imp_monitor_stale_sec",
     )
     return "\n".join(f"{key}={shlex.quote(str(snapshot[key]))}" for key in order)
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    if len(argv) not in (3, 7):
+    if len(argv) not in (3, 7, 9):
         return 64
     if len(argv) == 3:
         snapshot = build_snapshot(Path(argv[0]), Path(argv[1]), Path(argv[2]))
@@ -185,6 +234,8 @@ def main(argv=None):
             Path(argv[4]),
             Path(argv[5]),
             ttl,
+            Path(argv[7]) if len(argv) == 9 else None,
+            Path(argv[8]) if len(argv) == 9 else None,
         )
     print(render_shell(snapshot))
     return 0
