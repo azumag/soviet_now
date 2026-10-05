@@ -74,7 +74,16 @@ render_once() {
 	# Render STATS in-process with the HTML builder. This preserves the exact
 	# status_dashboard.py code path while removing one Python interpreter startup
 	# from every overlay refresh.
-	HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 SOREN_OPS_RAW="$ops_raw" python3 - "$out_file" "$width" "$height" <<'PY'
+	EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
+	EVENT_OVERLAY_COMMENT_GEN_STATE="${COMMENT_GEN_STATE_FILE:-tmp/state/.comment_gen_state}" \
+	EVENT_OVERLAY_RADIO_STATE="${RADIO_STATE_FILE:-tmp/state/.radio_state}" \
+	HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 \
+	SOREN_OPS_RAW="$ops_raw" \
+	python3 - \
+		"$out_file" "$width" "$height" \
+		"$EVENT_OVERLAY_EVENTS_FILE" "$EVENT_OVERLAY_HTML_FILE" \
+		"$EVENT_OVERLAY_KEEP_EVENTS" "$EVENT_OVERLAY_VISIBLE_SEC" \
+		"$CODEX_WORK_OVERLAY_STATE_FILE" <<'PY'
 import html
 import os
 import re
@@ -87,6 +96,7 @@ from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard, re
 from status_dashboard import render_dashboard_text
 
 out_file, width, height = sys.argv[1:4]
+event_events_file, event_html_file, event_keep, event_visible_sec, event_work_state_file = sys.argv[4:9]
 ops_raw = normalize_overlay_text(os.environ.get("SOREN_OPS_RAW", ""))
 try:
     stats_raw = normalize_overlay_text(render_dashboard_text())
@@ -382,19 +392,21 @@ html, body {{ margin:0; width:560px; height:820px; overflow:hidden; background:r
 except Exception as e:
     # legacy更新失敗は致命ではない、soren本体は成功しているので握りつぶす
     pass
+
+# eventOverlay is rendered in this same interpreter. Preserve the previous
+# fail-open contract: event overlay failure must never break the main overlay.
+try:
+    from generate_event_overlay import render_event_overlay
+    render_event_overlay(
+        event_events_file,
+        event_html_file,
+        int(event_keep),
+        int(event_visible_sec),
+        event_work_state_file or None,
+    )
+except Exception:
+    pass
 PY
-	# eventOverlay 指標も更新 (旧 generate_show_status_overlay と同挙動)
-	if [ -f "$ELOOP_LIB_DIR/generate_event_overlay.py" ]; then
-		EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
-		EVENT_OVERLAY_COMMENT_GEN_STATE="${COMMENT_GEN_STATE_FILE:-tmp/state/.comment_gen_state}" \
-		EVENT_OVERLAY_RADIO_STATE="${RADIO_STATE_FILE:-tmp/state/.radio_state}" \
-		python3 "$ELOOP_LIB_DIR/generate_event_overlay.py" \
-			"$EVENT_OVERLAY_EVENTS_FILE" \
-			"$EVENT_OVERLAY_HTML_FILE" \
-			"$EVENT_OVERLAY_KEEP_EVENTS" \
-			"$EVENT_OVERLAY_VISIBLE_SEC" \
-			"$CODEX_WORK_OVERLAY_STATE_FILE" >/dev/null 2>&1 || true
-	fi
 	printf 'generated:%s\n' "$out_file"
 }
 
