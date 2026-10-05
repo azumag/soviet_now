@@ -53,27 +53,19 @@ _ensure_overlay_dirs() {
 	_OVERLAY_DIRS_READY=1
 }
 
-_refresh_viewer_chat_monitor_if_changed() {
-	local source_file="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}"
-	local monitor_file="${VIEWER_CHAT_MONITOR_FILE:-tmp/state/viewer_chat_monitor.json}"
-	[ -f "$source_file" ] || return 0
-	if [ ! -f "$monitor_file" ] || [ "$source_file" -nt "$monitor_file" ]; then
-		./viewer_chat_monitor.sh json >/dev/null 2>&1 || true
-	fi
-}
-
 render_once() {
 	_ensure_overlay_dirs
 	local ops_raw=""
-	# Unified overlay owns ChatObs on the STATS side. Refresh its producer only
-	# when the chat history actually changed, then keep show_status from doing
-	# the same Python scan again for an OPS line that is filtered out below.
-	_refresh_viewer_chat_monitor_if_changed
+	# Unified overlay owns ChatObs on the STATS side. Its existing HTML Python
+	# process checks the producer's input watermark before rendering STATS.
 	ops_raw=$(SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
 
 	# Render STATS in-process with the HTML builder. This preserves the exact
 	# status_dashboard.py code path while removing one Python interpreter startup
 	# from every overlay refresh.
+	VIEWER_CHAT_MONITOR_SOURCE="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}" \
+	VIEWER_CHAT_MONITOR_FILE="${VIEWER_CHAT_MONITOR_FILE:-tmp/state/viewer_chat_monitor.json}" \
+	VIEWER_CHAT_MONITOR_LOOKBACK="${VIEWER_CHAT_MONITOR_LOOKBACK:-200}" \
 	HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 SOREN_OPS_RAW="$ops_raw" python3 - "$out_file" "$width" "$height" <<'PY'
 import html
 import os
@@ -84,11 +76,17 @@ import time
 
 from lib.overlay_text import normalize_overlay_text
 from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard, render_ops_dashboard
-from status_dashboard import render_dashboard_text
+from lib.viewer_chat_cache import refresh_viewer_chat_monitor_if_changed
 
 out_file, width, height = sys.argv[1:4]
 ops_raw = normalize_overlay_text(os.environ.get("SOREN_OPS_RAW", ""))
+refresh_viewer_chat_monitor_if_changed(
+    os.environ.get("VIEWER_CHAT_MONITOR_SOURCE", "tmp/.viewer_chat/comment_context_history.log"),
+    os.environ.get("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json"),
+    os.environ.get("VIEWER_CHAT_MONITOR_LOOKBACK", "200"),
+)
 try:
+    from status_dashboard import render_dashboard_text
     stats_raw = normalize_overlay_text(render_dashboard_text())
 except Exception:
     # Preserve the old subprocess contract: a dashboard failure must not stop
