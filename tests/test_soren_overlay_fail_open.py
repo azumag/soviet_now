@@ -77,7 +77,7 @@ class SorenOverlayFailOpenTests(unittest.TestCase):
         show_status = self.root / "show_status.sh"
         show_status.write_text(
             "#!/bin/bash\nset -euo pipefail\n"
-            '[ "$1" = "--once" ]\n'
+            '[ "$1" = "--raw-once" ]\n'
             '[ "${SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH:-}" = "1" ]\n'
             '[ "${SHOW_STATUS_NO_FLICKER:-}" = "1" ]\n'
             "cat <<'OPS_FIXTURE'\n" + OPS + "\nOPS_FIXTURE\n",
