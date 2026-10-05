@@ -643,6 +643,16 @@ def _hanjuku_name(value, each=10):
     return names[0] if names else None
 
 
+def _hanjuku_text(value, limit=80):
+    """Bounded printable status text from cached policy memory."""
+    if not isinstance(value, str):
+        return None
+    text = _hanjuku_clean(value)
+    if not text:
+        return None
+    return text[:max(1, int(limit))]
+
+
 def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
     """castle -> generals actually read from a castle panel, bounded."""
     raw = policy.get("garrison")
@@ -717,17 +727,50 @@ def _hanjuku_gap(runtime, policy, now):
     battle = policy.get('battle')
     battle = battle if isinstance(battle, dict) else {}
     hp = None
-    if recent(battle.get('hp_observed_at'), 10) and not battle.get('egg_battle'):
+    battle_detail = None
+    stamp = battle.get('hp_observed_at')
+    if recent(stamp, 10):
+        until = float(stamp) + 10
+        egg_battle = battle.get('egg_battle') is True
         values = [battle.get('enemy_hp'), battle.get('ally_hp')]
-        if all(type(n) is int and 0 <= n <= 1000000 for n in values):
-            hp = {'until': battle['hp_observed_at']+10, 'enemy': _hanjuku_name(battle.get('enemy'), each=24),
+        if not egg_battle and all(type(n) is int and 0 <= n <= 1000000 for n in values):
+            hp = {'until': until, 'enemy': _hanjuku_name(battle.get('enemy'), each=24),
                   'ally': _hanjuku_name(battle.get('ally'), each=24),
                   'enemy_hp': values[0], 'ally_hp': values[1]}
+        counts = [battle.get('enemy_soldiers'), battle.get('ally_soldiers')]
+        soldiers_current = (battle.get('card_soldiers_current') is True and not egg_battle
+                            and all(type(n) is int and 0 <= n <= 1000000 for n in counts))
+        flow = battle.get('card_flow')
+        flow = flow if isinstance(flow, dict) else {}
+        guard = battle.get('okunote_egg_preempt')
+        guard = guard if isinstance(guard, dict) else {}
+        guard_stage = guard.get('stage')
+        if guard_stage not in {'opening', 'menu', 'selected', 'completed'}:
+            guard_stage = None
+        side = battle.get('side') if battle.get('side') in {'attack', 'defense'} else None
+        battle_detail = {
+            'until': until,
+            'side': side,
+            'castle': _hanjuku_name(battle.get('castle'), each=24),
+            'step': _hanjuku_text(battle.get('step'), 24),
+            'variant': _hanjuku_text(battle.get('strategy_variant'), 24),
+            'deviation': _hanjuku_text(battle.get('deviation_reason'), 96),
+            'planned_cards': _hanjuku_names(battle.get('planned_cards'), limit=4, each=16),
+            'used_cards': _hanjuku_names(battle.get('cards_used'), limit=4, each=16),
+            'selected_cards': _hanjuku_names(battle.get('cards_selected'), limit=4, each=16),
+            'card': _hanjuku_name(flow.get('card'), each=16),
+            'card_stage': _hanjuku_text(flow.get('stage'), 16),
+            'egg_battle': egg_battle,
+            'egg_guard_stage': guard_stage,
+            'egg_guard_exhausted': guard.get('exhausted') is True,
+            'enemy_soldiers': counts[0] if soldiers_current else None,
+            'ally_soldiers': counts[1] if soldiers_current else None,
+        }
     gap_left = w if align == 'left' else 0
     return {'width': 960-w, 'left': gap_left, 'side': 'right' if align == 'left' else 'left',
             'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
-            'hp': hp}
+            'hp': hp, 'battle': battle_detail}
 
 
 def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
