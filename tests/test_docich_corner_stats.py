@@ -412,7 +412,7 @@ class HanjukuStatusTest(unittest.TestCase):
     def test_measured_gap_is_fenced_and_observation_deadlines_are_preserved(self):
         import time
         now=time.time()
-        projection=dict(align='left',viewport=[0,90,960,540],content=[0,0,721,540])
+        projection=dict(align='right',viewport=[0,90,960,540],content=[239,0,721,540])
         _write_json(self.runtime / 'presentation.json', dict(status='ready', projection=projection))
         bot=json.loads((self.runtime / 'hanjuku_bot.json').read_text())
         names=['長い城の名前'+str(i) for i in range(10)]
@@ -422,7 +422,7 @@ class HanjukuStatusTest(unittest.TestCase):
             battle=dict(enemy='シェーブル',ally='どうし',enemy_hp=55,ally_hp=70,hp_observed_at=now-3))
         _write_json(self.runtime / 'hanjuku_bot.json',bot)
         value=self.snapshot()['hanjuku']; gap=value['gap']
-        self.assertEqual((gap['left'],gap['width']),(721,239))
+        self.assertEqual((gap['left'],gap['width'],gap['side']),(0,239,'left'))
         self.assertEqual(gap['captured_names'],names)
         self.assertEqual([g['castle'] for g in gap['garrison']],['アルマムーン'])
         self.assertAlmostEqual(gap['garrison'][0]['until'],now+25)
@@ -435,7 +435,7 @@ class HanjukuStatusTest(unittest.TestCase):
         for changed in [dict(status='presentation_failed',projection=projection),
                         dict(status='ready',projection=dict(projection,content=[0,0,900,540])),
                         dict(status='ready',projection=dict(projection,viewport=[0,0,960,540])),
-                        dict(status='ready',projection=dict(projection,content=[120,0,721,540]))]:
+                        dict(status='ready',projection=dict(projection,content=[0,0,721,540]))]:
             _write_json(self.runtime / 'presentation.json',changed)
             self.assertIsNone(self.snapshot()['hanjuku']['gap'])
 
@@ -443,7 +443,7 @@ class HanjukuStatusTest(unittest.TestCase):
         import time
         now=time.time()
         _write_json(self.runtime / 'presentation.json',dict(status='ready',projection=
-            dict(align='left',viewport=[0,90,960,540],content=[0,0,721,540])))
+            dict(align='right',viewport=[0,90,960,540],content=[239,0,721,540])))
         for stamp in [None, True, now+2, now-31]:
             bot=json.loads((self.runtime / 'hanjuku_bot.json').read_text())
             bot['policy'].update(garrison={'城':['将軍']},garrison_observed_at={'城':stamp},
