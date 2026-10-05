@@ -1571,13 +1571,17 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const pending = pick(/^保留計画: ([a-z_]+|不明)$/);
     // The card lines carry extra observed fields after these prefixes; anchor on
     // the leading group only so an added field cannot drop a parsed value.
-    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前/);
+    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前(?:（(\d+|不明)回）)?$/);
     const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗/);
+    const battleFlow = pick(/^戦闘: 開始 (\d+|不明) \/ 終了 (\d+|不明) \/ 切り札確定 (\d+|不明)$/);
     const duel = pick(/^交戦HP: 敵 (\d+)（([^）]*)） \/ 我 (\d+)（([^）]*)）$/);
     const troops = pick(/^兵力: (\d+|不明)名 \/ 停滞 (\d+|不明)秒$/);
-    const holds = pick(/^保有: (.{1,40})$/);
-    const garrison = pick(/^駐留: (.{1,60})$/);
-    const marching = pick(/^行軍中: (.{1,60})$/);
+    const holds = pick(/^保有: (.{1,80})$/);
+    const lost = pick(/^失った城: (.{1,120})$/);
+    const castleLosses = pick(/^城失陥: (\d+)件/);
+    const garrison = pick(/^駐留: (.{1,120})$/);
+    const marching = pick(/^行軍中: (.{1,120})$/);
+    const eggs = pick(/^卵: (.{1,160})$/);
     const orders = pick(/^出撃: 成立 (\d+) \/ 失敗 (\d+)$/);
     const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
     const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
@@ -1590,12 +1594,17 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       monster_menu:'召喚獣の戦闘', world_map:'戦況を確認中', map:'行軍・探索', map_target:'行先を選択',
       castle_menu:'城の管理', general_list:'将軍を選択', month_menu:'月初の処理',
       sortie_confirm:'出撃を確認中', unknown:'画面を確認中'};
-    const geometry = pick(/^投影余白: x=(\d+) w=(\d+) until=(\d+(?:\.\d+)?)$/);
-    const gapLeft = number(geometry?.[1]), gapWidth = number(geometry?.[2]);
+    const geometry = pick(/^投影余白: (?:side=(left|right) )?x=(\d+) w=(\d+) until=(\d+(?:\.\d+)?)$/);
+    const gapLeft = number(geometry?.[2]), gapWidth = number(geometry?.[3]);
+    const gapSide = geometry?.[1] || (gapLeft > 0 ? 'right' : 'left');
+    const gapUntil = Number(geometry?.[4]);
+    const gapGeometryOk = gapSide === 'left'
+      ? gapLeft === 0 && gapWidth >= 180 && gapWidth < 960
+      : gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960;
     const timedRows = prefix => lines.filter(s=>s.startsWith(prefix)).map(s=>s.slice(prefix.length).match(/^until=(\d+(?:\.\d+)?) (.{1,500})$/))
       .filter(m=>m && now <= Number(m[1]) && Number(m[1])-now <= 30).map(m=>m[2]);
-    const gap = fresh && gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960 && now <= Number(geometry?.[3]) && Number(geometry?.[3])-now <= 30
-      ? {left:gapLeft, width:gapWidth,
+    const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
+      ? {left:gapLeft, width:gapWidth, side:gapSide,
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
@@ -1606,17 +1615,27 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
       captured:fresh ? number(castles?.[1]) : null,
       actions:fresh ? number(inputs?.[1]) : null,
+      observationAge:fresh ? number(inputs?.[2]) : null,
+      observations:fresh ? number(inputs?.[3]) : null,
       soldiers:fresh ? number(troops?.[1]) : null,
       stalled:fresh ? number(troops?.[2]) : null,
       holds:fresh ? (holds?.[1] || null) : null,
+      lost:fresh ? (lost?.[1] || null) : null,
+      castleLosses:fresh ? number(castleLosses?.[1]) : null,
       garrison:fresh ? (garrison?.[1] || null) : null,
       marching:fresh ? (marching?.[1] || null) : null,
+      eggs:fresh ? (eggs?.[1] || null) : null,
+      battlesStarted:fresh ? number(battleFlow?.[1]) : null,
+      battlesFinished:fresh ? number(battleFlow?.[2]) : null,
+      cardsConfirmed:fresh ? number(battleFlow?.[3]) : null,
       launched:fresh ? number(orders?.[1]) : null, failed:fresh ? number(orders?.[2]) : null,
       enemyHp:fresh ? number(duel?.[1]) : null, enemy:fresh ? (duel?.[2] || null) : null,
       allyHp:fresh ? number(duel?.[3]) : null, ally:fresh ? (duel?.[4] || null) : null,
       plan:fresh && plan?.[1] !== '不明' ? plan?.[1] : null,
       pending:fresh ? ({monthly:'月次処理', recall:'帰還', repair:'卵修理', sortie:'出撃'}[pending?.[1]] || null) : null,
       wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
+      screen:fresh ? (screen?.[1] || null) : null,
+      phase:fresh ? (screen?.[2] || null) : null,
       status:fresh ? (labels[screen?.[1]] || '進行状況を確認中') : '最新情報を確認中'};
   }
   function renderHanjuku(container, value) {
@@ -1705,6 +1724,21 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const body = document.createElement('div'); body.textContent = text;
       card.append(head, body); items.push(card);
     };
+    const shown = v => v === null || v === undefined ? '—' : String(v);
+    add('現在状況',
+      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名`);
+    add('戦績・戦闘',
+      `${shown(value.wins)}勝 ${shown(value.losses)}敗 / 開始 ${shown(value.battlesStarted)} / 終了 ${shown(value.battlesFinished)} / 切り札 ${shown(value.cardsConfirmed)} / 城失陥 ${shown(value.castleLosses)}`);
+    if (value.launched !== null || value.failed !== null || value.plan || value.pending) {
+      add('出撃・計画',
+        `成立 ${shown(value.launched)} / 失敗 ${shown(value.failed)} / 計画 ${value.plan || '—'} / 保留 ${value.pending || '—'}`);
+    }
+    if (value.eggs) add('卵残回数', value.eggs.replace(/\s*[／/]\s*/g, ' ・ '));
+    if (value.lost) add('失った城', value.lost.replace(/\s*[／/]\s*/g, ' ・ '));
+    if (value.actions !== null || value.observations !== null || value.observationAge !== null) {
+      add('入力・観測',
+        `実入力 ${shown(value.actions)}回 / 観測 ${shown(value.observations)}回 / 最新 ${shown(value.observationAge)}秒前`);
+    }
     if (gap.hp) add('交戦HP（10秒以内の観測）', gap.hp);
     for (const row of gap.garrison) {
       const [castle, generals] = row.split('=');
