@@ -440,6 +440,27 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
         carried = raw_coverage.get("carried_symbols")
         coverage["carried_count"] = len(carried) if isinstance(carried, list) else 0
 
+    performance: dict[str, object] = {}
+    raw_performance = value.get("performance_summary")
+    if isinstance(raw_performance, Mapping):
+        performance_as_of = _parse_timestamp(raw_performance.get("as_of"))
+        performance["as_of"] = performance_as_of
+        performance["age"] = _paper_age(moment, performance_as_of)
+        if type(raw_performance.get("complete")) is bool:
+            performance["complete"] = raw_performance["complete"]
+        for key in ("position_count", "priced_positions", "valued_positions"):
+            number = _int_value(raw_performance.get(key))
+            if number is not None and number >= 0:
+                performance[key] = number
+        for key in (
+            "realized_total_jpy",
+            "today_realized_pnl_jpy",
+            "unrealized_pnl_jpy",
+            "cumulative_pnl_jpy",
+            "equity_jpy",
+        ):
+            performance[key] = _paper_decimal_text(raw_performance.get(key))
+
     snapshot_at = _parse_timestamp(value.get("snapshot_generated_at"))
     heartbeat_at = _parse_timestamp(value.get("heartbeat_at"))
     return {
@@ -458,6 +479,7 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
         "worker": worker,
         "freshness": {"counts": freshness_counts, "issues": freshness_issues},
         "coverage": coverage,
+        "performance": performance,
     }
 
 
