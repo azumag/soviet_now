@@ -128,6 +128,12 @@ class DocichCornerStatsTest(unittest.TestCase):
                     "last_success_at": 189,
                     "next_cycle_at": 205,
                     "frame_error_count": 1,
+                    "arbitrage_candidate_count": 2,
+                    "new_fill_count": 1,
+                    "new_settlement_count": 3,
+                    "experiment_status": "active",
+                    "experiment_reason_code": "shadow",
+                    "experiment_entries_allowed": False,
                     "error_codes": ["frame_fetch_error"],
                     "detail": "DO_NOT_SHOW",
                 },
@@ -177,6 +183,8 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertIn("Worker: running cycle=42", rendered)
         self.assertIn("Age: data=10s hb=2s next=5s", rendered)
         self.assertIn("Markets: fresh=1/2 frame_err=1", rendered)
+        self.assertIn("Cycle: arb=2 fills=1 settlements=3", rendered)
+        self.assertIn("Experiment: status=active entries=off reason=shadow", rendered)
         self.assertIn("Market issue: eth_jpy:stale_data", rendered)
         self.assertIn("Errors: frame_fetch_error", rendered)
         self.assertIn("btc_jpy SELL 3100", rendered)

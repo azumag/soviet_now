@@ -3722,6 +3722,29 @@ def render_docich_corner_stats(corner):
             + " frame_err="
             + _paper_count(worker_summary, "frame_error_count")
         )
+        cycle_activity = []
+        for key, name in (
+            ("arbitrage_candidate_count", "arb"),
+            ("new_fill_count", "fills"),
+            ("new_settlement_count", "settlements"),
+        ):
+            if key in worker_summary:
+                cycle_activity.append(f"{name}={_paper_count(worker_summary, key)}")
+        if cycle_activity:
+            lines.append("  Cycle: " + _corner_short(" ".join(cycle_activity), limit=43))
+
+        experiment_parts = []
+        experiment_status = worker_summary.get("experiment_status")
+        if experiment_status:
+            experiment_parts.append("status=" + _corner_short(experiment_status, limit=16))
+        entries_allowed = worker_summary.get("experiment_entries_allowed")
+        if type(entries_allowed) is bool:
+            experiment_parts.append("entries=" + ("on" if entries_allowed else "off"))
+        experiment_reason = worker_summary.get("experiment_reason_code")
+        if experiment_reason:
+            experiment_parts.append("reason=" + _corner_short(experiment_reason, limit=18))
+        if experiment_parts:
+            lines.append("  Experiment: " + _corner_short(" ".join(experiment_parts), limit=40))
         attempted = _corner_int(coverage.get("attempted"))
         total = _corner_int(coverage.get("total"))
         if attempted != "--" or total != "--" or coverage.get("budget_exceeded"):
