@@ -73,9 +73,10 @@ render_once() {
 	SOREN_OPS_RAW="$ops_raw" \
 	python3 - \
 		"$out_file" "$width" "$height" \
-		"$EVENT_OVERLAY_EVENTS_FILE" "$EVENT_OVERLAY_HTML_FILE" \
-		"$EVENT_OVERLAY_KEEP_EVENTS" "$EVENT_OVERLAY_VISIBLE_SEC" \
-		"$CODEX_WORK_OVERLAY_STATE_FILE" <<'PY'
+		"${EVENT_OVERLAY_EVENTS_FILE:-$ELOOP_LIB_DIR/tmp/state/overlay_events.jsonl}" \
+		"${EVENT_OVERLAY_HTML_FILE:-$ELOOP_LIB_DIR/tmp/state/event_overlay.html}" \
+		"${EVENT_OVERLAY_KEEP_EVENTS:-180}" "${EVENT_OVERLAY_VISIBLE_SEC:-18}" \
+		"${CODEX_WORK_OVERLAY_STATE_FILE:-$ELOOP_LIB_DIR/tmp/state/codex_work_indicator.json}" <<'PY'
 import html
 import os
 import re
