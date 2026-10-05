@@ -1035,95 +1035,26 @@ END { printf "%s", block }
 		loop_pid=$(_activity_label "logs/soren_loop.log" "log")
 	fi
 
-	# --- ゲーム状態 + 蓄積ゲーム ---
-	# These values used to start five Python interpreters per refresh
-	# (game_state, strategy hash, and three accumulated-game reads). Batch the
-	# same read-only snapshot into one process while preserving shell variables.
+	# --- ゲーム状態 + 蓄積ゲーム + 軽量観測値 ---
+	# Keep the frequent read-only state in one Python process. More complex
+	# conditional diagnostics below remain isolated and fail-open.
 	local game_state="" game_score=0 game_pieces=0
 	local current_hash_for_acc=""
 	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
-	eval "$(python3 lib/status_snapshot.py \
-		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" 2>/dev/null || true)"
-
-	# --- リジェクト履歴 ---
 	local rejected_count=0
-	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(python3 - <<PY 2>/dev/null
-import json
-import time
-from pathlib import Path
-
-rejected_path = Path("$TMP_HISTORY_DIR/rejected_hashes.txt")
-meta_path = Path("$TMP_STATE_DIR/rejected_hash_metrics.json")
-ttl_sec = int(${REJECTED_REEVALUATE_TTL_SEC})
-
-try:
-    hashes = [line.strip() for line in rejected_path.read_text().splitlines() if line.strip()]
-except Exception:
-    print(0)
-    raise SystemExit
-
-try:
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    if not isinstance(meta, dict):
-        meta = {}
-except Exception:
-    meta = {}
-
-now = int(time.time())
-active = 0
-for hash_ in hashes:
-    entry = meta.get(hash_)
-    if not isinstance(entry, dict):
-        continue
-    updated_at = int(entry.get("updated_at", 0) or 0)
-    if updated_at <= 0:
-        continue
-    if ttl_sec > 0 and now - updated_at >= ttl_sec:
-        continue
-    active += 1
-
-print(active)
-PY
-)
+	local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a"
+	local stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
+	eval "$(python3 lib/status_snapshot.py \
+		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" \
+		"$TMP_HISTORY_DIR/rejected_hashes.txt" "$TMP_STATE_DIR/rejected_hash_metrics.json" \
+		"$TMP_STATE_DIR/stagnation_counter.json" "$REJECTED_REEVALUATE_TTL_SEC" \
+		2>/dev/null || true)"
 
 	# --- リバートバックアップ ---
 	local revert_available=false
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
-	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
-		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
-import json
-import shlex
-import sys
-import time
-
-path = sys.argv[1]
-try:
-    data = json.load(open(path, encoding="utf-8")) or {}
-except Exception:
-    data = {}
-count = int(data.get("consecutive_no_improve", 0) or 0)
-regression_streak = int(data.get("regression_streak", 0) or 0)
-event = str(data.get("last_event", "unknown") or "unknown")
-updated = int(data.get("updated_at", 0) or 0)
-age = "n/a"
-if updated > 0:
-    diff = max(0, int(time.time()) - updated)
-    if diff < 60:
-        age = f"{diff}s"
-    elif diff < 3600:
-        age = f"{diff // 60}m"
-    else:
-        age = f"{diff // 3600}h"
-print(f"stagnation_count={count}")
-print(f"regression_streak={regression_streak}")
-print("stagnation_event=" + shlex.quote(event))
-print("stagnation_age=" + shlex.quote(age))
-PY
-)
-		fi
 		if [[ -f "$TMP_STATE_DIR/accumulated_games.json" || -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
 			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/accumulated_games.json" "$TMP_STATE_DIR/current_strategy_run.json" "$current_hash_for_acc" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" "${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" <<'PY' 2>/dev/null
 import json
