@@ -13,6 +13,7 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'workers/radio_worker.sh'
       - 'tests/test_radio_worker_runtime_refresh.sh'
+      - 'tests/test_radio_manual_trigger_idle.sh'
       - 'tests/test_radio_timeout_guard.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_ai_prepass_backoff_scope.sh'
@@ -39,6 +40,7 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'workers/radio_worker.sh'
       - 'tests/test_radio_worker_runtime_refresh.sh'
+      - 'tests/test_radio_manual_trigger_idle.sh'
       - 'tests/test_radio_timeout_guard.sh'
       - 'tests/test_ai_dispatch_diagnostics.sh'
       - 'tests/test_ai_prepass_backoff_scope.sh'
@@ -73,5 +75,6 @@ jobs:
       - run: bash tests/test_ai_radio_budget_observability.sh
       - run: bash tests/test_ai_queue_observability.sh
       - run: bash tests/test_radio_worker_runtime_refresh.sh
+      - run: bash tests/test_radio_manual_trigger_idle.sh
       - run: bash tests/test_radio_timeout_guard.sh
-      - run: bash -n lib/ai_generate.sh lib/ai_generate_policy.sh lib/ai_prepass_budget.sh lib/ai_queue_observability.sh eloop_lib.sh core/radio_timeout_guard.sh probe_free_slot.sh broadcast/radio_corners.sh workers/radio_worker.sh tests/test_ai_prepass_total_budget.sh tests/test_ai_radio_budget_observability.sh tests/test_ai_queue_observability.sh tests/test_radio_worker_runtime_refresh.sh tests/test_radio_timeout_guard.sh tests/test_ai_timeout_not_rate_limit.sh
+      - run: bash -n lib/ai_generate.sh lib/ai_generate_policy.sh lib/ai_prepass_budget.sh lib/ai_queue_observability.sh eloop_lib.sh core/radio_timeout_guard.sh probe_free_slot.sh broadcast/radio_corners.sh workers/radio_worker.sh tests/test_ai_prepass_total_budget.sh tests/test_ai_radio_budget_observability.sh tests/test_ai_queue_observability.sh tests/test_radio_worker_runtime_refresh.sh tests/test_radio_manual_trigger_idle.sh tests/test_radio_timeout_guard.sh tests/test_ai_timeout_not_rate_limit.sh
