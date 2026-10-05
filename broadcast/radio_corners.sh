@@ -19,7 +19,7 @@ start_radio_corner_theme() {
 	log "[RADIO:${corner_name}] テーマ選定: ${theme}"
 
 	local past_topics
-	past_topics=$(_radio_past_topics_block)
+	past_topics=$(_radio_past_topics_block "$theme")
 
 	local grounding_raw
 	grounding_raw=$(_radio_fetch_theme_grounding_context "$corner_name" "$theme")
@@ -40,7 +40,7 @@ start_radio_corner_theme() {
 	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time theme grounding_context category_guidance past_topics game_num score
 	envsubst <"$ELOOP_LIB_DIR/prompts/radio_theme.md" >"$prompt_file"
-	unset persona_block output_rules _rc_time theme grounding_context category_guidance past_topics
+	unset persona_block output_rules _rc_time grounding_context category_guidance past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name" --topic "$theme"
 }
