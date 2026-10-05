@@ -163,6 +163,15 @@ test('stale observations, changed geometry, and calibration mismatch cannot reac
   const changed = mockPage({ geometries: [{ ...G, x: 50 }] });
   await assert.rejects(createCanvasIO({ now: () => now }).validateInput(changed, frame, calibration), /geometry-changed/);
 });
+test('slow captures receive an adaptive freshness budget before input', async () => {
+  let now = 5000;
+  const frame = { geometry: G, width: 800, height: 450, capturedAt: 0, captureMs: 4600 };
+  const io = createCanvasIO({ now: () => now });
+  await assert.doesNotReject(io.validateInput(mockPage(), frame, calibration));
+  await assert.rejects(io.validateInput(mockPage(), frame, calibration, { maxAgeMs: 4000 }),
+    /stale-observation/);
+});
+
 test('freshness includes time spent validating input', async () => {
   let now = 0;
   const page = mockPage(); const io = createCanvasIO({ now: () => now });
