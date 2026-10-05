@@ -3638,7 +3638,7 @@ def render_docich_corner_stats(corner):
             lines.append(
                 "  Equity: "
                 + _corner_short(
-                    _paper_signed_amount(performance.get("equity_jpy"))
+                    _paper_amount(performance.get("equity_jpy"), fallback="--")
                     + f" / valued={valuation} / age={_paper_age(performance.get('age'))}",
                     limit=45,
                 )
