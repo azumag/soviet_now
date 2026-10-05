@@ -139,6 +139,19 @@ class DocichCornerStatsTest(unittest.TestCase):
                     "budget_exceeded": False,
                     "carried_symbols": [],
                 },
+                "performance_summary": {
+                    "as_of": 199,
+                    "complete": True,
+                    "position_count": 1,
+                    "priced_positions": 1,
+                    "valued_positions": 1,
+                    "realized_total_jpy": "120.5",
+                    "today_realized_pnl_jpy": "20",
+                    "unrealized_pnl_jpy": "-5.5",
+                    "cumulative_pnl_jpy": "115",
+                    "equity_jpy": "10115",
+                    "positions": [{"avg_cost": "DO_NOT_SHOW"}],
+                },
                 "unknown_private_field": "DO_NOT_SHOW",
             },
         )
@@ -148,6 +161,9 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertIn("SOREN/CORNER: PAPER / PAPER /", rendered)
         self.assertIn("Funds: capital=10000 free=7000", rendered)
         self.assertIn("Deployed: 3000", rendered)
+        self.assertIn("P/L: cum=+115 unreal=-5.5", rendered)
+        self.assertIn("Realized: today=+20 all=+120.5", rendered)
+        self.assertIn("Equity: +10115 / valued=1/1 / age=1s", rendered)
         self.assertIn("Signals: candidate=3 selected=1 rejected=2", rendered)
         self.assertIn("Strategy: momentum-v1 / relative-value-v1", rendered)
         self.assertIn("Rejected: eth_jpy:capital_limit", rendered)
