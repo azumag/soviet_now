@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import shlex
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,17 @@ def _load_json(path: Path):
     return value if isinstance(value, dict) else {}
 
 
-def build_snapshot(game_state_path: Path, strategy_path: Path, accumulated_path: Path):
+def build_snapshot(
+    game_state_path: Path,
+    strategy_path: Path,
+    accumulated_path: Path,
+    rejected_path: Path | None = None,
+    rejected_meta_path: Path | None = None,
+    stagnation_path: Path | None = None,
+    rejected_ttl_sec: int = 21600,
+    *,
+    now: int | None = None,
+):
     result = {
         "game_state": "",
         "game_score": 0,
@@ -34,6 +45,11 @@ def build_snapshot(game_state_path: Path, strategy_path: Path, accumulated_path:
         "acc_russia_count": 0,
         "acc_soviet": "false",
         "acc_max_type": 0,
+        "rejected_count": 0,
+        "stagnation_count": 0,
+        "regression_streak": 0,
+        "stagnation_event": "none",
+        "stagnation_age": "n/a",
     }
 
     game = _load_json(game_state_path)
@@ -69,6 +85,64 @@ def build_snapshot(game_state_path: Path, strategy_path: Path, accumulated_path:
         except (TypeError, ValueError):
             result["acc_max_type"] = 0
 
+    now = int(time.time()) if now is None else int(now)
+
+    if rejected_path is not None and rejected_meta_path is not None:
+        try:
+            hashes = [
+                line.strip()
+                for line in rejected_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except (OSError, UnicodeError):
+            hashes = []
+        meta = _load_json(rejected_meta_path)
+        active = 0
+        for hash_ in hashes:
+            entry = meta.get(hash_)
+            if not isinstance(entry, dict):
+                continue
+            try:
+                updated_at = int(entry.get("updated_at", 0) or 0)
+            except (TypeError, ValueError):
+                updated_at = 0
+            if updated_at <= 0:
+                continue
+            if rejected_ttl_sec > 0 and now - updated_at >= rejected_ttl_sec:
+                continue
+            active += 1
+        result["rejected_count"] = active
+
+    if stagnation_path is not None:
+        stagnation = _load_json(stagnation_path)
+        try:
+            result["stagnation_count"] = int(
+                stagnation.get("consecutive_no_improve", 0) or 0
+            )
+        except (TypeError, ValueError):
+            result["stagnation_count"] = 0
+        try:
+            result["regression_streak"] = int(
+                stagnation.get("regression_streak", 0) or 0
+            )
+        except (TypeError, ValueError):
+            result["regression_streak"] = 0
+        result["stagnation_event"] = str(
+            stagnation.get("last_event", "unknown") or "unknown"
+        )
+        try:
+            updated = int(stagnation.get("updated_at", 0) or 0)
+        except (TypeError, ValueError):
+            updated = 0
+        if updated > 0:
+            diff = max(0, now - updated)
+            if diff < 60:
+                result["stagnation_age"] = f"{diff}s"
+            elif diff < 3600:
+                result["stagnation_age"] = f"{diff // 60}m"
+            else:
+                result["stagnation_age"] = f"{diff // 3600}h"
+
     return result
 
 
@@ -83,15 +157,35 @@ def render_shell(snapshot):
         "acc_russia_count",
         "acc_soviet",
         "acc_max_type",
+        "rejected_count",
+        "stagnation_count",
+        "regression_streak",
+        "stagnation_event",
+        "stagnation_age",
     )
     return "\n".join(f"{key}={shlex.quote(str(snapshot[key]))}" for key in order)
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    if len(argv) != 3:
+    if len(argv) not in (3, 7):
         return 64
-    snapshot = build_snapshot(Path(argv[0]), Path(argv[1]), Path(argv[2]))
+    if len(argv) == 3:
+        snapshot = build_snapshot(Path(argv[0]), Path(argv[1]), Path(argv[2]))
+    else:
+        try:
+            ttl = int(argv[6])
+        except (TypeError, ValueError):
+            ttl = 21600
+        snapshot = build_snapshot(
+            Path(argv[0]),
+            Path(argv[1]),
+            Path(argv[2]),
+            Path(argv[3]),
+            Path(argv[4]),
+            Path(argv[5]),
+            ttl,
+        )
     print(render_shell(snapshot))
     return 0
 
