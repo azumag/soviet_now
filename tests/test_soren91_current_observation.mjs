@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateObservation, queueAdvanceEvidence } from '../soren91/observation_guard.mjs';
+import { gateObservation, markDropSent, queueAdvanceEvidence } from '../soren91/observation_guard.mjs';
 
 const calibration = () => ({
   coordinateSchema: 2,
@@ -83,6 +83,71 @@ test('repeated identical previews cannot bypass motion, then a still board becom
   const settled = gateObservation(observation([1, 1, 1], 1), cal, 7000);
   assert.equal(settled.state, 'MOVE');
   assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('a sent drop can use a settled first post-drop board delta instead of a second remote capture', () => withRemoteCadence(() => {
+  const cal = calibration();
+  assertBlocked(gateObservation(observation([1, 1, 1], 0), cal, 1000), 'confirm-frame');
+  assert.equal(markDropSent(cal, 1500), true);
+  const advanced = gateObservation(observation([1, 1, 1], 1), cal, 5000);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+}));
+
+test('post-drop board delta still waits when the first frame arrives before the conservative settle floor', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 1, 1], 0), cal, 1000);
+  assert.equal(markDropSent(cal, 1500), true);
+  assertBlocked(gateObservation(observation([1, 1, 1], 1), cal, 3500), 'board-moving');
+  const settled = gateObservation(observation([1, 1, 1], 1), cal, 5000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('a sent drop can accept a changed current after the normal time floor even when noisy future slots conflict', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0), cal, 1000);
+  assert.equal(markDropSent(cal, 1500), true);
+  const advanced = gateObservation(observation([4, 9, 8], 1), cal, 3000);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+  assert.notEqual(advanced.perception.queueTransition, 'advanced');
+}));
+
+test('a changed current without a physical board delta is still treated as unconfirmed', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0), cal, 1000);
+  assert.equal(markDropSent(cal, 1500), true);
+  assertBlocked(gateObservation(observation([4, 9, 8], 0), cal, 5000), 'preview-changed');
+}));
+
+test('post-drop fast path is one-shot and never bypasses same-type vertical motion', () => withRemoteCadence(() => {
+  const cal = calibration();
+  const positioned = (types, y, x = 0) => {
+    const state = observation(types, x);
+    state.next.y = y;
+    return state;
+  };
+  gateObservation(positioned([1, 1, 2], 4.32), cal, 1000);
+  assert.equal(markDropSent(cal, 1500), true);
+  assertBlocked(gateObservation(positioned([1, 2, 3], 4.02, 1), cal, 5000), 'board-moving');
+  const settled = gateObservation(positioned([1, 2, 3], 4.02, 1), cal, 8000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('post-drop single-frame optimization has an explicit kill switch', () => withRemoteCadence(() => {
+  const saved = process.env.SOREN91_POSTDROP_SINGLE_FRAME;
+  process.env.SOREN91_POSTDROP_SINGLE_FRAME = '0';
+  try {
+    const cal = calibration();
+    gateObservation(observation([1, 1, 1], 0), cal, 1000);
+    assert.equal(markDropSent(cal, 1500), true);
+    assertBlocked(gateObservation(observation([1, 1, 1], 1), cal, 5000), 'board-moving');
+  } finally {
+    if (saved === undefined) delete process.env.SOREN91_POSTDROP_SINGLE_FRAME;
+    else process.env.SOREN91_POSTDROP_SINGLE_FRAME = saved;
+  }
 }));
 
 test('fresh future-slot changes can prove an advance even when the current type repeats', () => withRemoteCadence(() => {
