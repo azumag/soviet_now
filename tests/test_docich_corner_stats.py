@@ -427,6 +427,10 @@ class HanjukuStatusTest(unittest.TestCase):
         bot['policy'].update(captured=names, tick=100,
             garrison={'アルマムーン':['長い将軍の名前です','ゼウス'], '古い城':['どうし']},
             garrison_observed_at={'アルマムーン':now-5,'古い城':now-31},
+            active='J3',
+            orders={'J3':'launched'},
+            launched_orders={'J3': {'step':'J3','general':'どうし','source':'アルマムーン',
+                                     'target':'ナキューメラ','purpose':'attack'}},
             battle=dict(
                 enemy='シェーブル', ally='どうし', enemy_hp=55, ally_hp=70,
                 hp_observed_at=now-3, enemy_soldiers=4, ally_soldiers=7,
@@ -453,6 +457,10 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual(battle['used_cards'],['ゼンマイン'])
         self.assertEqual((battle['card'],battle['card_stage']),('クースカン','menu'))
         self.assertEqual(battle['egg_guard_stage'],'selected')
+        self.assertEqual(gap['active_order'], {
+            'step':'J3','general':'どうし','source':'アルマムーン',
+            'target':'ナキューメラ','purpose':'attack','status':'launched'})
+        self.assertEqual(value['active_order'], gap['active_order'])
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
@@ -463,6 +471,8 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIn('現在 クースカン(menu)',text)
         self.assertIn('敵の卵使用を避けるため、致死確認できる切り札を優先',text)
         self.assertIn('奥の手選択済み',text)
+        self.assertIn('余白出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3',text)
+        self.assertIn('出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3',text)
         # Projection failure, mismatched geometry, narrow gap and old generations
         # must never reserve an area over a different or unmeasured game plane.
         for changed in [dict(status='presentation_failed',projection=projection),
@@ -674,6 +684,18 @@ class HanjukuStatusTest(unittest.TestCase):
         self._policy(tick=5000, sorties={'J4': {'general': 'ヴィーナス', 'status': 'en_route', 'tick': 4999}})
         text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
         self.assertIn('行軍中: ヴィーナス→未確定', text)
+
+    def test_inactive_launched_order_is_not_shown_as_current_intent(self):
+        self._policy(
+            active='J3',
+            orders={'J3': 'failed'},
+            launched_orders={'J3': {'step': 'J3', 'general': 'どうし',
+                                     'source': 'アルマムーン', 'target': 'ナキューメラ',
+                                     'purpose': 'attack'}},
+        )
+        result = self.snapshot()['hanjuku']
+        self.assertIsNone(result['active_order'])
+        self.assertNotIn('出撃意図:', '\n'.join(sd.render_hanjuku_status(result)))
 
     def test_garrison_and_eggs_are_bounded_observations(self):
         self._policy(garrison={'アルマムーン': ['ゼウス', 'ユイートル'], '空': []},

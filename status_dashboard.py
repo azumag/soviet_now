@@ -159,8 +159,9 @@ def fit_dashboard_lines(lines, width=W):
     # Bounded, sanitized projection records are machine-readable data for the
     # dedicated large-type cards, not terminal rows. Never truncate their names.
     prefixes = (
-        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:',
+        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+        '  出撃意図:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
@@ -3396,6 +3397,28 @@ def render_hanjuku_status(value):
             lines.append(f"  余白駐留: until={g['until']:.3f} " + g['castle'] + "=" + "/".join(g['generals']))
         for m in gap.get('marching') or []:
             lines.append("  余白行軍: " + m['general'] + "→" + (m['target'] or '未確認'))
+        active_order = gap.get('active_order')
+        if isinstance(active_order, dict):
+            purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
+            parts = []
+            general = text(active_order.get('general'), '', 24)
+            source = text(active_order.get('source'), '', 24)
+            target = text(active_order.get('target'), '', 24)
+            purpose = text(active_order.get('purpose'), '', 16)
+            status = text(active_order.get('status'), '', 20)
+            step = text(active_order.get('step'), '', 24)
+            if general:
+                parts.append(general)
+            if source or target:
+                parts.append((source or '未確認') + '→' + (target or '未確認'))
+            if purpose:
+                parts.append(purpose_labels.get(purpose, purpose))
+            if status:
+                parts.append('状態 ' + status)
+            if step:
+                parts.append('段階 ' + step)
+            if parts:
+                lines.append("  余白出撃意図: " + " / ".join(parts))
         hp = gap.get('hp')
         if hp and hp.get('enemy') and hp.get('ally'):
             lines.append(f"  余白交戦HP: until={hp['until']:.3f} {hp['enemy']} {hp['enemy_hp']} / {hp['ally']} {hp['ally_hp']}")
@@ -3514,6 +3537,28 @@ def render_hanjuku_status(value):
         lines.append("  行軍中: " + " / ".join(
             f"{text(s.get('general'), '?')}→{text(s.get('target'), '未確定')}"
             for s in marching))
+    active_order = value.get("active_order")
+    if isinstance(active_order, dict):
+        purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
+        intent = []
+        general = text(active_order.get('general'), '', 24)
+        source = text(active_order.get('source'), '', 24)
+        target = text(active_order.get('target'), '', 24)
+        purpose = text(active_order.get('purpose'), '', 16)
+        status = text(active_order.get('status'), '', 20)
+        step = text(active_order.get('step'), '', 24)
+        if general:
+            intent.append(general)
+        if source or target:
+            intent.append((source or '未確認') + '→' + (target or '未確認'))
+        if purpose:
+            intent.append(purpose_labels.get(purpose, purpose))
+        if status:
+            intent.append('状態 ' + status)
+        if step:
+            intent.append('段階 ' + step)
+        if intent:
+            lines.append("  出撃意図: " + " / ".join(intent))
     eggs = [e for e in row("eggs") if isinstance(e, dict) and type(e.get("uses")) is int]
     if eggs:
         lines.append("  卵: " + " / ".join(

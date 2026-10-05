@@ -669,6 +669,39 @@ def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
     return rows
 
 
+def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None:
+    """Bounded current sortie intent from an already-recorded launched order.
+
+    This is not a prediction of the next move.  It only exposes the active
+    order after the policy has persisted that exact order in launched_orders.
+    """
+    step = policy.get("active")
+    launched = policy.get("launched_orders")
+    if not isinstance(step, str) or not step or not isinstance(launched, Mapping):
+        return None
+    order = launched.get(step)
+    if not isinstance(order, Mapping):
+        return None
+    general = _hanjuku_name(order.get("general"), each=24)
+    source = _hanjuku_name(order.get("source"), each=24)
+    target = _hanjuku_name(order.get("target"), each=24)
+    purpose = _hanjuku_text(order.get("purpose"), 16)
+    statuses = policy.get("orders")
+    status = _hanjuku_text(statuses.get(step), 20) if isinstance(statuses, Mapping) else None
+    if status not in {"pending", "launched", "launched_unconfirmed"}:
+        return None
+    if not any((general, source, target, purpose)):
+        return None
+    return {
+        "step": _hanjuku_text(step, 24) or "",
+        "general": general or "",
+        "source": source or "",
+        "target": target or "",
+        "purpose": purpose or "",
+        "status": status or "",
+    }
+
+
 def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
     """Sorties still counted as marching by the policy's own busy window."""
     raw = policy.get("sorties")
@@ -770,6 +803,7 @@ def _hanjuku_gap(runtime, policy, now):
     return {'width': 960-w, 'left': gap_left, 'side': 'right' if align == 'left' else 'left',
             'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
+            'active_order': _hanjuku_active_order(policy),
             'hp': hp, 'battle': battle_detail}
 
 
@@ -845,6 +879,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "home_lost": policy.get("home_lost") is True,
                   "garrison": _hanjuku_garrison(policy),
                   "marching": _hanjuku_marching(policy, tick),
+                  "active_order": _hanjuku_active_order(policy),
                   "soldiers": number(policy.get("soldiers_seen")),
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),

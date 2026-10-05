@@ -1581,6 +1581,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const castleLosses = pick(/^城失陥: (\d+)件/);
     const garrison = pick(/^駐留: (.{1,120})$/);
     const marching = pick(/^行軍中: (.{1,120})$/);
+    const intent = pick(/^出撃意図: (.{1,220})$/);
     const eggs = pick(/^卵: (.{1,160})$/);
     const orders = pick(/^出撃: 成立 (\d+) \/ 失敗 (\d+)$/);
     const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
@@ -1608,6 +1609,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
+         intent:pick(/^余白出撃意図: (.{1,220})$/)?.[1] || null,
          hp:timedRows('余白交戦HP: ')[0] || null,
          soldiers:timedRows('余白交戦兵数: ')[0] || null,
          tactics:timedRows('余白戦闘計画: ')[0] || null,
@@ -1629,6 +1631,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       castleLosses:fresh ? number(castleLosses?.[1]) : null,
       garrison:fresh ? (garrison?.[1] || null) : null,
       marching:fresh ? (marching?.[1] || null) : null,
+      intent:fresh ? (intent?.[1] || null) : null,
       eggs:fresh ? (eggs?.[1] || null) : null,
       battlesStarted:fresh ? number(battleFlow?.[1]) : null,
       battlesFinished:fresh ? number(battleFlow?.[2]) : null,
@@ -1694,6 +1697,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     if (!value.gap && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
     if (!value.gap && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    if (!value.gap && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
     const records = node('hanjuku-records');
     records.appendChild(node('hanjuku-castles', `占領記録 ${shown(value.captured)}城（累計）`));
@@ -1747,6 +1751,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (gap.hp || gap.soldiers) {
       add('交戦詳細（10秒以内の観測）', [gap.hp, gap.soldiers].filter(Boolean).join(' / '));
     }
+    if (gap.intent) add('現在の出撃意図', gap.intent);
     if (gap.tactics) add('AI戦闘計画（10秒以内）', gap.tactics);
     if (gap.cards) add('切り札状況（10秒以内）', gap.cards);
     if (gap.egg) add('卵・奥の手（10秒以内）', gap.egg);
