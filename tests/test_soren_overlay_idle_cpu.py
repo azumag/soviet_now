@@ -38,6 +38,14 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertIn("except Exception:", gen)
         self.assertIn('stats_raw = ""', gen)
 
+    def test_unified_overlay_renders_event_overlay_in_existing_python_process(self):
+        gen = GEN.read_text(encoding="utf-8")
+        self.assertNotIn('python3 "$ELOOP_LIB_DIR/generate_event_overlay.py"', gen)
+        self.assertIn("from generate_event_overlay import render_event_overlay", gen)
+        self.assertIn("render_event_overlay(", gen)
+        self.assertIn('EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR"', gen)
+        self.assertIn("except Exception:", gen)
+
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
         status = STATUS.read_text(encoding="utf-8")
