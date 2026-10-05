@@ -508,9 +508,13 @@ class TopPanelModeTest(unittest.TestCase):
         オーバーレイ生成が ai_backoff を opt-in するとヘッダーごと消え、
         配信画面から A/B が消える (2026-09-10 の指摘)。
         """
-        for name in ("generate_status_overlay.sh", "generate_soren_overlay.sh"):
-            script = (REPO_ROOT / name).read_text()
-            self.assertIn("python3 status_dashboard.py", script)
+        legacy = (REPO_ROOT / "generate_status_overlay.sh").read_text()
+        unified = (REPO_ROOT / "generate_soren_overlay.sh").read_text()
+        self.assertIn("python3 status_dashboard.py", legacy)
+        self.assertIn("from status_dashboard import render_dashboard_text", unified)
+        self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", unified)
+        self.assertNotIn("python3 status_dashboard.py", unified)
+        for script in (legacy, unified):
             self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff", script)
 
     def test_header_does_not_duplicate_the_ai_backoff_rows(self):
@@ -523,11 +527,14 @@ class TopPanelModeTest(unittest.TestCase):
     def test_main_always_emits_the_ai_backoff_panel(self):
         """モードに関係なく AI backoff の枠は出る (分離の要)。"""
         source = (REPO_ROOT / "status_dashboard.py").read_text()
-        main_start = source.index("def main():")
-        main_body = source[main_start:]
-        panel = main_body.index("output += render_ai_backoff_header()")
-        branch = main_body.index('if top_panel_mode() != "ai_backoff":')
+        render_start = source.index("def render_dashboard_text():")
+        render_end = source.index("\ndef main():", render_start)
+        render_body = source[render_start:render_end]
+        panel = render_body.index("output += render_ai_backoff_header()")
+        branch = render_body.index('if top_panel_mode() != "ai_backoff":')
         self.assertLess(panel, branch, "AI backoff の枠は分岐より前で無条件に出すこと")
+        main_body = source[render_end:]
+        self.assertIn("print(render_dashboard_text())", main_body)
 
 
 class AbRemainingGamesTest(unittest.TestCase):
