@@ -251,8 +251,22 @@ print(f"WRONG routed={routed[:8]} running={len(running)} sink_empty")
 PY
 }
 
+# game-only lifecycle が意図的にブリッジを止めている間 (停止済み/停止中) は、
+# desync/phantom/audio/消失のどの検知でも再起動してはならない。watchdog と
+# start_all は同じ述語で抑止済みだが、eloop 側の自己復旧が見ていなかったため、
+# 試合中に停止されるとコーナー中に停止済みブリッジが復活した (soviet_now#599)。
+_br_lifecycle_parked() {
+	command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked
+}
+
 _br_relaunch() {
 	local pids p
+	# 意図した停止を障害として復旧しない。rc=3 は呼び出し側で「失敗」扱い
+	# (成功扱いにすると「bridge 再起動 成功」と誤記録され、試合が成立したように見える)。
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park) → bridge relaunch を保留"
+		return 3
+	fi
 	# Fix0: 共有 lease を取得してから kill/relaunch。他の復旧アクター
 	# (guardian/soviet_watchdog) が処理中なら今回は譲り次周期再試行。
 	if ! rr_lease_acquire "ensure_bridge_alive"; then
@@ -260,6 +274,11 @@ _br_relaunch() {
 		return 2
 	fi
 	trap 'rr_lease_release' RETURN
+	# lease 待ちの間に停止要求が来る競合を閉じる (kill 前に再判定)。
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park, lease取得後) → bridge relaunch を保留"
+		return 3
+	fi
 	pids=$(_br_target_pids)
 	for p in $pids; do
 		_br_log "kill -9 PID=$p CMD=[$(_br_cmd_of "$p")]"
@@ -366,6 +385,12 @@ _ensure_bridge_alive() {
 	# 防御: 明示停止中は監視しない (pause 述語の主ガードは呼び出し位置で担保済 codex#5)
 	[ -f tmp/stop ] && return 0
 	[ -f tmp/state/manual_improve_mode ] && return 0
+	# 停止済みブリッジを監視しない。0 を返すと呼び出し側が試合を始めるので、
+	# 復旧未完了(1)として試合開始を次周回へ延期させる。
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park) → ブリッジ監視/復旧を保留"
+		return 1
+	fi
 
 	local crash="" audio_crash="" wrong_sink="" m n
 	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
