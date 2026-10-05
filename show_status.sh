@@ -3,7 +3,8 @@
 #
 # Usage: ./show_status.sh        # 10秒間隔で常時表示
 #        ./show_status.sh 3      # 3秒間隔で常時表示
-#        ./show_status.sh --once # 1回だけ表示して終了（確認・自動監視用）
+#        ./show_status.sh --once # 1回だけ端末描画して終了（確認用）
+#        ./show_status.sh --raw-once # 生ステータスを1回だけ出力（overlay用）
 #        ./show_status.sh --latest-drop-summary # 直前手の要約だけ表示
 #        ./show_status.sh --html-once
 #        ./show_status.sh --html-watch [sec]
@@ -90,10 +91,15 @@ case "${1:-}" in
 esac
 
 SHOW_STATUS_ONCE=0
+SHOW_STATUS_RAW_ONCE=0
 SHOW_STATUS_LATEST_DROP_ONLY=0
 case "${1:-}" in
 --once|once)
 	SHOW_STATUS_ONCE=1
+	WATCH_INTERVAL=10
+	;;
+--raw-once)
+	SHOW_STATUS_RAW_ONCE=1
 	WATCH_INTERVAL=10
 	;;
 --latest-drop-summary)
@@ -3202,6 +3208,12 @@ _wait_for_status_update() {
 #=== 実行 ===
 if [[ "$SHOW_STATUS_LATEST_DROP_ONLY" == "1" ]]; then
 	_latest_drop_summary
+	exit 0
+fi
+# Overlay consumers need the status text, not terminal cursor control, clipping,
+# or the show_status|render pipeline. Keep normal --once unchanged for humans.
+if [[ "$SHOW_STATUS_RAW_ONCE" == "1" ]]; then
+	show_status
 	exit 0
 fi
 printf '\033[?25l'          # カーソル非表示
