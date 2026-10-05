@@ -3385,7 +3385,7 @@ def render_hanjuku_status(value):
     ]
     gap = value.get('gap')
     if isinstance(gap, dict):
-        lines.append(f"  投影余白: x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
+        lines.append(f"  投影余白: side={gap.get('side', 'right')} x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
         names = gap.get('captured_names') or []
         if names:
             lines.append("  余白占領記録: " + " / ".join(names))
