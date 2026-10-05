@@ -93,12 +93,12 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertIn("Strategy: #1", rendered)
         self.assertNotIn("999999", rendered)
 
-    def test_paper_corner_exposes_fill_history_not_game_score(self):
+    def test_paper_corner_exposes_rich_allowlisted_status_not_game_score(self):
         self._state("paper_corner.json")
         _write_json(
             self.root / "trading/status.json",
             {
-                "worker_state": "running",
+                "worker_state": "paper_worker_running",
                 "capital_reference": "10000",
                 "deployed_reference": "3000",
                 "open_positions": {"btc_jpy": "0.001"},
@@ -106,14 +106,78 @@ class DocichCornerStatsTest(unittest.TestCase):
                     {"symbol": "btc_jpy", "side": "buy", "quote_notional": "3000"},
                     {"symbol": "btc_jpy", "side": "sell", "quote_notional": "3100"},
                 ],
+                "snapshot_generated_at": 190,
+                "heartbeat_at": 198,
+                "market_count": 2,
+                "signal_summary": {
+                    "candidate_count": 3,
+                    "selected_count": 1,
+                    "rejected_count": 2,
+                    "strategy_ids": ["momentum-v1", "relative-value-v1"],
+                    "candidate_reason_codes": ["momentum_breakout"],
+                    "private_secret": "DO_NOT_SHOW",
+                },
+                "skipped_decisions": [
+                    {"symbol": "eth_jpy", "side": "buy", "reason_code": "capital_limit"}
+                ],
+                "worker_summary": {
+                    "cycle_index": 42,
+                    "last_success_at": 189,
+                    "next_cycle_at": 205,
+                    "frame_error_count": 1,
+                    "error_codes": ["frame_fetch_error"],
+                    "detail": "DO_NOT_SHOW",
+                },
+                "market_freshness": {
+                    "btc_jpy": {"quality": "fresh", "reason_code": "ok"},
+                    "eth_jpy": {"quality": "stale", "reason_code": "stale_data",
+                                "raw": "DO_NOT_SHOW"},
+                },
+                "coverage": {
+                    "attempted": 2,
+                    "total": 2,
+                    "budget_exceeded": False,
+                    "carried_symbols": [],
+                },
+                "unknown_private_field": "DO_NOT_SHOW",
             },
         )
-        corner = load_active_corner(self.root)
-        rendered = "\n".join(sd.render_docich_corner_stats(corner))
-        self.assertIn("Funds: capital=10000 deployed=3000", rendered)
+        corner = load_active_corner(self.root, now=200)
+        lines = sd.render_docich_corner_stats(corner)
+        rendered = "\n".join(lines)
+        self.assertIn("SOREN/CORNER: PAPER / PAPER /", rendered)
+        self.assertIn("Funds: capital=10000 deployed=3000 free=7000", rendered)
+        self.assertIn("Signals: candidate=3 selected=1 rejected=2", rendered)
+        self.assertIn("Strategy: momentum-v1 / relative-value-v1", rendered)
+        self.assertIn("Rejected: eth_jpy:capital_limit", rendered)
+        self.assertIn("Worker: running cycle=42", rendered)
+        self.assertIn("Age: data=10s hb=2s next=5s", rendered)
+        self.assertIn("Markets: fresh=1/2 frame_err=1", rendered)
+        self.assertIn("Market issue: eth_jpy:stale_data", rendered)
+        self.assertIn("Errors: frame_fetch_error", rendered)
         self.assertIn("btc_jpy SELL 3100", rendered)
         self.assertIn("btc_jpy BUY 3000", rendered)
         self.assertNotIn("Score Timeline", rendered)
+        self.assertNotIn("DO_NOT_SHOW", rendered)
+        for line in lines:
+            self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+
+    def test_paper_corner_keeps_legacy_minimal_status_compatible(self):
+        self._state("paper_corner.json")
+        _write_json(
+            self.root / "trading/status.json",
+            {
+                "worker_state": "running",
+                "capital_reference": "10000",
+                "deployed_reference": "3000",
+                "open_positions": {},
+                "recent_fills": [],
+            },
+        )
+        rendered = "\n".join(sd.render_docich_corner_stats(load_active_corner(self.root, now=200)))
+        self.assertIn("Funds: capital=10000 deployed=3000 free=7000", rendered)
+        self.assertIn("Signals: candidate=-- selected=-- rejected=--", rendered)
+        self.assertIn("(no fills yet)", rendered)
 
     def test_nethack_corner_uses_run_history(self):
         self._state(
