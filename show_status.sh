@@ -924,36 +924,24 @@ _maybe_run_fullscreen_random() {
 
 #=== メイン表示 ===
 show_status() {
-	# --- 改善プロセス状態 ---
+	# --- 共通snapshot: improve + game/accumulated + lightweight observer ---
+	# Keep all frequent read-only JSON reads in one interpreter per render.
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0 imp_updated_at=0
 	local imp_monitor_status="" imp_monitor_action="" imp_monitor_stale_sec=0
+	local game_state="" game_score=0 game_pieces=0
+	local current_hash_for_acc=""
+	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
+	local rejected_count=0
+	local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a"
+	eval "$(python3 lib/status_snapshot.py \
+		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" \
+		"$TMP_HISTORY_DIR/rejected_hashes.txt" "$TMP_STATE_DIR/rejected_hash_metrics.json" \
+		"$TMP_STATE_DIR/stagnation_counter.json" "$REJECTED_REEVALUATE_TTL_SEC" \
+		"$TMP_STATE_DIR/improve_state.json" "$TMP_STATE_DIR/improve_monitor_status.json" \
+		2>/dev/null || true)"
+
 	local ai_backoff_lines=""
 	ai_backoff_lines=$(_ai_backoff_status_lines)
-	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/improve_state.json'))
-print('imp_status=' + shlex.quote(str(d.get('status', 'idle'))))
-print(f'imp_pid={d.get(\"pid\",0)}')
-print('imp_hash=' + shlex.quote(str(d.get('strategy_hash_before', ''))))
-print('imp_phase=' + shlex.quote(str(d.get('phase', ''))))
-print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
-print(f'imp_updated_at={int(d.get(\"updated_at\",0) or 0)}')
-" 2>/dev/null)
-	fi
-	if [[ -f "$TMP_STATE_DIR/improve_monitor_status.json" ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/improve_monitor_status.json'))
-print('imp_monitor_status=' + shlex.quote(str(d.get('status', ''))))
-print('imp_monitor_action=' + shlex.quote(str(d.get('action', ''))))
-try:
-    stale = int(d.get('stale_sec', 0) or 0)
-except Exception:
-    stale = 0
-print(f'imp_monitor_stale_sec={stale}')
-" 2>/dev/null)
-	fi
 
 	local imp_alive=false imp_elapsed=""
 	if _pid_alive_as "$imp_pid" "eloop_improve"; then
@@ -1036,19 +1024,8 @@ END { printf "%s", block }
 	fi
 
 	# --- ゲーム状態 + 蓄積ゲーム + 軽量観測値 ---
-	# Keep the frequent read-only state in one Python process. More complex
-	# conditional diagnostics below remain isolated and fail-open.
-	local game_state="" game_score=0 game_pieces=0
-	local current_hash_for_acc=""
-	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
-	local rejected_count=0
-	local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a"
+	# Values were captured by the common snapshot at function entry.
 	local stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
-	eval "$(python3 lib/status_snapshot.py \
-		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" \
-		"$TMP_HISTORY_DIR/rejected_hashes.txt" "$TMP_STATE_DIR/rejected_hash_metrics.json" \
-		"$TMP_STATE_DIR/stagnation_counter.json" "$REJECTED_REEVALUATE_TTL_SEC" \
-		2>/dev/null || true)"
 
 	# --- リバートバックアップ ---
 	local revert_available=false
