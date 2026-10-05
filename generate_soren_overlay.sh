@@ -33,10 +33,37 @@ pid_file="tmp/state/soren_overlay_watch.pid"
 log_file="tmp/debug/soren_overlay.log"
 tmux_session="soren_soren_overlay"
 
+# Parent directories are stable for the lifetime of the watcher. Creating them
+# on every 2-second render used to spawn dirname+mkdir repeatedly.
+_overlay_paths=(
+	"$out_file"
+	"${SHOW_STATUS_OVERLAY_HTML_FILE:-tmp/state/show_status_overlay.html}"
+	"${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}"
+)
+_overlay_dirs=()
+for _overlay_path in "${_overlay_paths[@]}"; do
+	_overlay_dir="${_overlay_path%/*}"
+	[ "$_overlay_dir" = "$_overlay_path" ] && _overlay_dir="."
+	_overlay_dirs+=("$_overlay_dir")
+done
+mkdir -p "${_overlay_dirs[@]}"
+
+_refresh_viewer_chat_monitor_if_changed() {
+	local source_file="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}"
+	local monitor_file="${VIEWER_CHAT_MONITOR_FILE:-tmp/state/viewer_chat_monitor.json}"
+	[ -f "$source_file" ] || return 0
+	if [ ! -f "$monitor_file" ] || [ "$source_file" -nt "$monitor_file" ]; then
+		./viewer_chat_monitor.sh json >/dev/null 2>&1 || true
+	fi
+}
+
 render_once() {
-	mkdir -p "$(dirname "$out_file")"
 	local ops_raw="" stats_raw=""
-	ops_raw=$(SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
+	# Unified overlay owns ChatObs on the STATS side. Refresh its producer only
+	# when the chat history actually changed, then keep show_status from doing
+	# the same Python scan again for an OPS line that is filtered out below.
+	_refresh_viewer_chat_monitor_if_changed
+	ops_raw=$(SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
 	stats_raw=$(HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 python3 status_dashboard.py 2>/dev/null || true)
 
 	SOREN_OPS_RAW="$ops_raw" SOREN_STATS_RAW="$stats_raw" python3 - "$out_file" "$width" "$height" <<'PY'
@@ -255,6 +282,10 @@ fd, tmp = tempfile.mkstemp(prefix=".soren_overlay.", suffix=".html", dir=os.path
 with os.fdopen(fd, "w", encoding="utf-8") as f:
     f.write(doc)
 os.replace(tmp, out_file)
+try:
+    os.chmod(out_file, 0o644)
+except OSError:
+    pass
 
 # ── 旧2ファイルもフィルタ済みで更新して broadcast 経由の配信にも反映する ──
 # show_status_overlay.html (OPS) はフィルタ済みOPS、status_overlay.html (STATS) はフィルタ済みSTATS
@@ -294,6 +325,10 @@ html, body {{ margin:0; width:520px; height:680px; overflow:hidden; background:r
     with os.fdopen(fd2, "w", encoding="utf-8") as f:
         f.write(ops_doc)
     os.replace(tmp2, ops_legacy_file)
+    try:
+        os.chmod(ops_legacy_file, 0o644)
+    except OSError:
+        pass
 
     stats_body = ansi_to_html(filtered_stats.rstrip() or "status_dashboard.py returned no output")
     legacy_game_visible = game_cards or f'<pre class="fallback-pre">{stats_body}</pre>'
@@ -326,13 +361,14 @@ html, body {{ margin:0; width:560px; height:820px; overflow:hidden; background:r
     with os.fdopen(fd3, "w", encoding="utf-8") as f:
         f.write(stats_doc)
     os.replace(tmp3, stats_legacy_file)
+    try:
+        os.chmod(stats_legacy_file, 0o644)
+    except OSError:
+        pass
 except Exception as e:
     # legacy更新失敗は致命ではない、soren本体は成功しているので握りつぶす
     pass
 PY
-	chmod 644 "$out_file" 2>/dev/null || true
-	chmod 644 "${SHOW_STATUS_OVERLAY_HTML_FILE:-tmp/state/show_status_overlay.html}" 2>/dev/null || true
-	chmod 644 "${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}" 2>/dev/null || true
 	# eventOverlay 指標も更新 (旧 generate_show_status_overlay と同挙動)
 	if [ -f "$ELOOP_LIB_DIR/generate_event_overlay.py" ]; then
 		EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
