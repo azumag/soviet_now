@@ -1608,7 +1608,12 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
-         hp:timedRows('余白交戦HP: ')[0] || null} : null;
+         hp:timedRows('余白交戦HP: ')[0] || null,
+         soldiers:timedRows('余白交戦兵数: ')[0] || null,
+         tactics:timedRows('余白戦闘計画: ')[0] || null,
+         cards:timedRows('余白切り札: ')[0] || null,
+         decision:timedRows('余白戦闘判断: ')[0] || null,
+         egg:timedRows('余白卵対策: ')[0] || null} : null;
     return {gap, fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
       gold:fresh ? number(values?.[2]) : null,
       year:fresh && number(calendar?.[1]) >= 1 && number(calendar?.[1]) <= 9999 ? number(calendar[1]) : null,
@@ -1739,7 +1744,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       add('入力・観測',
         `実入力 ${shown(value.actions)}回 / 観測 ${shown(value.observations)}回 / 最新 ${shown(value.observationAge)}秒前`);
     }
-    if (gap.hp) add('交戦HP（10秒以内の観測）', gap.hp);
+    if (gap.hp || gap.soldiers) {
+      add('交戦詳細（10秒以内の観測）', [gap.hp, gap.soldiers].filter(Boolean).join(' / '));
+    }
+    if (gap.tactics) add('AI戦闘計画（10秒以内）', gap.tactics);
+    if (gap.cards) add('切り札状況（10秒以内）', gap.cards);
+    if (gap.egg) add('卵・奥の手（10秒以内）', gap.egg);
+    if (gap.decision) add('判断理由（10秒以内）', gap.decision);
     for (const row of gap.garrison) {
       const [castle, generals] = row.split('=');
       const names = (generals || '').split('/').filter(Boolean);

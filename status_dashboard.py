@@ -158,7 +158,10 @@ def truncate_ansi_display(text, max_width):
 def fit_dashboard_lines(lines, width=W):
     # Bounded, sanitized projection records are machine-readable data for the
     # dedicated large-type cards, not terminal rows. Never truncate their names.
-    prefixes = ('  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:')
+    prefixes = (
+        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:',
+        '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+    )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
 
@@ -3396,6 +3399,82 @@ def render_hanjuku_status(value):
         hp = gap.get('hp')
         if hp and hp.get('enemy') and hp.get('ally'):
             lines.append(f"  余白交戦HP: until={hp['until']:.3f} {hp['enemy']} {hp['enemy_hp']} / {hp['ally']} {hp['ally_hp']}")
+        detail = gap.get('battle')
+        if isinstance(detail, dict):
+            deadline = detail.get('until')
+            valid_deadline = (type(deadline) in (int, float) and not isinstance(deadline, bool)
+                              and math.isfinite(deadline))
+            if valid_deadline:
+                enemy_soldiers, ally_soldiers = detail.get('enemy_soldiers'), detail.get('ally_soldiers')
+                if (type(enemy_soldiers) is int and type(ally_soldiers) is int
+                        and 0 <= enemy_soldiers <= 1000000 and 0 <= ally_soldiers <= 1000000):
+                    lines.append(
+                        f"  余白交戦兵数: until={deadline:.3f} 敵 {enemy_soldiers} / 我 {ally_soldiers}"
+                    )
+
+                plan_parts = []
+                side = detail.get('side')
+                castle = text(detail.get('castle'), '', 24)
+                if side in {'attack', 'defense'}:
+                    side_label = '攻撃' if side == 'attack' else '防衛'
+                    plan_parts.append(side_label + (f" {castle}" if castle else ''))
+                elif castle:
+                    plan_parts.append(f"城 {castle}")
+                step = text(detail.get('step'), '', 24)
+                variant = text(detail.get('variant'), '', 24)
+                if step:
+                    plan_parts.append(f"段階 {step}")
+                if variant:
+                    plan_parts.append(f"方針 {variant}")
+                if plan_parts:
+                    lines.append(
+                        f"  余白戦闘計画: until={deadline:.3f} " + " / ".join(plan_parts)
+                    )
+
+                planned = [text(card, '', 16) for card in detail.get('planned_cards') or []]
+                used = [text(card, '', 16) for card in detail.get('used_cards') or []]
+                selected = [text(card, '', 16) for card in detail.get('selected_cards') or []]
+                planned = [card for card in planned if card]
+                used = [card for card in used if card]
+                selected = [card for card in selected if card]
+                card = text(detail.get('card'), '', 16)
+                stage = text(detail.get('card_stage'), '', 16)
+                card_parts = []
+                if planned:
+                    card_parts.append("予定 " + "・".join(planned))
+                if used:
+                    card_parts.append("使用 " + "・".join(used))
+                if selected:
+                    card_parts.append("選択 " + "・".join(selected))
+                if card:
+                    card_parts.append("現在 " + card + (f"({stage})" if stage else ""))
+                if card_parts:
+                    lines.append(
+                        f"  余白切り札: until={deadline:.3f} " + " / ".join(card_parts)
+                    )
+
+                deviation = text(detail.get('deviation'), '', 96)
+                if deviation:
+                    lines.append(f"  余白戦闘判断: until={deadline:.3f} {deviation}")
+
+                egg_parts = []
+                if detail.get('egg_battle') is True:
+                    egg_parts.append("敵召喚を確認")
+                guard_stage = detail.get('egg_guard_stage')
+                guard_labels = {
+                    'opening': '奥の手を開く',
+                    'menu': '奥の手メニュー',
+                    'selected': '奥の手選択済み',
+                    'completed': '奥の手処理完了',
+                }
+                if guard_stage in guard_labels:
+                    egg_parts.append(guard_labels[guard_stage])
+                if detail.get('egg_guard_exhausted') is True:
+                    egg_parts.append("奥の手確認上限")
+                if egg_parts:
+                    lines.append(
+                        f"  余白卵対策: until={deadline:.3f} " + " / ".join(egg_parts)
+                    )
     if value.get("home_lost") is True:
         lines.append("  本拠: 失陥（記録）")
     lost = row("lost_names")
