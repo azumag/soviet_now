@@ -11,11 +11,11 @@ test('measured gap keeps large complete cards, expires observations and clears o
   const {chromium}=await import('playwright');
   const now=Math.floor(Date.now()/1000);
   const names=['アルマムーン','ナキューメラ','カストーラ','スペンソニア','ハドリバーグ','ロックフォール'];
-  let extra=`投影余白: x=721 w=239 until=${now+30}\n余白占領記録: ${names.join(' / ')}\n`
+  let extra=`投影余白: side=left x=0 w=239 until=${now+30}\n余白占領記録: ${names.join(' / ')}\n`
     +`余白駐留: until=${now+30} アルマムーン=長い名前の将軍です/ユイートル/ゼウス\n`
     +`余白駐留: until=${now-1} 古い城=非表示将軍\n余白行軍: どうし→ナキューメラ\n`
     +`余白交戦HP: until=${now+10} ロックフォール 51 / どうし 90`;
-  let text='SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第2話 / 所持金 123G\n'+extra;
+  let text='SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n兵力: 9名 / 停滞 3秒\n戦闘結果: 4勝 / 1敗 / 未分類 0\n戦闘: 開始 6 / 終了 5 / 切り札確定 2\n城失陥: 1件（全体マップで旗が敵色になった実測）\n失った城: ジョンリギ\n卵: ゼウス 2回 / どうし 1回\n出撃: 成立 3 / 失敗 1\n画面: battle_menu / battle\n計画段階: J3（完了未確認）\n保留計画: sortie\n実入力: 41回 / 観測 2秒前（530回）\n'+extra;
   let feedAt=now;
   const state=()=>({gameGapEnabled:true,updatedAt:feedAt,feeds:{showStatusG:{text,updatedAt:feedAt,lineCount:20}},notifications:{events:[],generators:[],work:{active:false}}});
   const html=fs.readFileSync(path.join(root,'overlays/direct_broadcast_overlay.html'),'utf8');
@@ -24,7 +24,7 @@ test('measured gap keeps large complete cards, expires observations and clears o
     res.setHeader('Content-Type','text/html; charset=utf-8');
     if(req.url==='/game-gap'){res.end('<iframe data-soren-overlay-region="game-gap" src="/overlay" style="position:fixed;left:0;top:90px;width:960px;height:540px;border:0"></iframe>');return;}
     // Synthesize the game plane behind the full overlay for the review image.
-    res.end(html.replace('<body>','<body><div style="position:absolute;left:0;top:90px;width:721px;height:540px;background:#13223a;border:4px solid #f5df64;box-sizing:border-box"></div>'));
+    res.end(html.replace('<body>','<body><div style="position:absolute;left:239px;top:90px;width:721px;height:540px;background:#13223a;border:4px solid #f5df64;box-sizing:border-box"></div>'));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin=`http://127.0.0.1:${server.address().port}`;
@@ -47,19 +47,22 @@ test('measured gap keeps large complete cards, expires observations and clears o
     // page indices while refreshing the same public observations' deadlines.
     for(let i=0;i<6;i++){
       const clock=now+i*10; feedAt=clock;
-      text='SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第2話 / 所持金 123G\n'
+      text='SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n兵力: 9名 / 停滞 3秒\n戦闘結果: 4勝 / 1敗 / 未分類 0\n戦闘: 開始 6 / 終了 5 / 切り札確定 2\n城失陥: 1件（全体マップで旗が敵色になった実測）\n失った城: ジョンリギ\n卵: ゼウス 2回 / どうし 1回\n出撃: 成立 3 / 失敗 1\n画面: battle_menu / battle\n計画段階: J3（完了未確認）\n保留計画: sortie\n実入力: 41回 / 観測 2秒前（530回）\n'
         +extra.replaceAll(`until=${now+30}`,`until=${clock+30}`).replaceAll(`until=${now+10}`,`until=${clock+10}`);
       await page.evaluate(stamp=>window.gapClock=stamp,clock);
       // Feed age must stay fresh, independently of source deadlines.
       await page.evaluate(payload=>window.__sorenBroadcastState=payload,{...state(),feeds:{showStatusG:{text,updatedAt:clock,lineCount:20}}});
       await page.waitForTimeout(1100);
       const result=await read();
-      assert.deepEqual(result.box,[721,90,239,540]);assert.equal(result.overflow,false);
+      assert.deepEqual(result.box,[0,90,239,540]);assert.equal(result.overflow,false);
       assert.ok(result.size.every(s=>s==='18px'));assert.ok(!result.text.includes('非表示将軍'));
       assert.ok(!result.sidebar.includes('長い名前の将軍です'));
       for(const card of result.cards)observed.add(card);
     }
     assert.ok([...observed].some(s=>s.includes('長い名前の将軍です')));
+    assert.ok([...observed].some(s=>s.includes('卵残回数') && s.includes('ゼウス 2回')));
+    assert.ok([...observed].some(s=>s.includes('戦績・戦闘') && s.includes('城失陥 1')));
+    assert.ok([...observed].some(s=>s.includes('入力・観測') && s.includes('530回')));
     for(const name of names)assert.ok([...observed].some(s=>s.includes(name)),name);
     if(process.env.SOREN_OVERLAY_ARTIFACT_DIR){fs.mkdirSync(process.env.SOREN_OVERLAY_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SOREN_OVERLAY_ARTIFACT_DIR,'hanjuku-gap.png')});}
     // Exact deadline, even if status-feed mtime has not changed.
