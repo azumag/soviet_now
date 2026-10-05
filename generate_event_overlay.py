@@ -292,14 +292,23 @@ def read_gen_indicators(now: int) -> list[dict[str, Any]]:
     return indicators
 
 
-def main() -> None:
-    events_path = Path(sys.argv[1])
-    out_path = Path(sys.argv[2])
-    keep = int(sys.argv[3]) if len(sys.argv) > 3 else 180
-    visible_sec = int(sys.argv[4]) if len(sys.argv) > 4 else 18
-    work_state_path = Path(sys.argv[5]) if len(sys.argv) > 5 else None
+def render_event_overlay(
+    events_path: Path | str,
+    out_path: Path | str,
+    keep: int = 180,
+    visible_sec: int = 18,
+    work_state_path: Path | str | None = None,
+    *,
+    now: int | None = None,
+) -> None:
+    """Render event overlay HTML without requiring a separate interpreter."""
+    events_path = Path(events_path)
+    out_path = Path(out_path)
+    keep = int(keep)
+    visible_sec = int(visible_sec)
+    work_state_path = Path(work_state_path) if work_state_path else None
     events = read_events(events_path, keep)
-    now = int(time.time())
+    now = int(time.time()) if now is None else int(now)
     work = read_work_indicator(work_state_path, now=now) if work_state_path else None
     recent = [e for e in events if now - int(e.get("ts", 0) or 0) <= max(visible_sec * 4, 60)]
     gen_indicators = read_gen_indicators(now)
@@ -629,6 +638,15 @@ for (const ev of EVENTS.slice().reverse()) {{
         out_path.chmod(0o644)
     except OSError:
         pass
+
+
+def main() -> None:
+    events_path = Path(sys.argv[1])
+    out_path = Path(sys.argv[2])
+    keep = int(sys.argv[3]) if len(sys.argv) > 3 else 180
+    visible_sec = int(sys.argv[4]) if len(sys.argv) > 4 else 18
+    work_state_path = Path(sys.argv[5]) if len(sys.argv) > 5 else None
+    render_event_overlay(events_path, out_path, keep, visible_sec, work_state_path)
 
 
 if __name__ == "__main__":
