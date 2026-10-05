@@ -685,6 +685,18 @@ class HanjukuStatusTest(unittest.TestCase):
         text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
         self.assertIn('行軍中: ヴィーナス→未確定', text)
 
+    def test_inactive_launched_order_is_not_shown_as_current_intent(self):
+        self._policy(
+            active='J3',
+            orders={'J3': 'failed'},
+            launched_orders={'J3': {'step': 'J3', 'general': 'どうし',
+                                     'source': 'アルマムーン', 'target': 'ナキューメラ',
+                                     'purpose': 'attack'}},
+        )
+        result = self.snapshot()['hanjuku']
+        self.assertIsNone(result['active_order'])
+        self.assertNotIn('出撃意図:', '\n'.join(sd.render_hanjuku_status(result)))
+
     def test_garrison_and_eggs_are_bounded_observations(self):
         self._policy(garrison={'アルマムーン': ['ゼウス', 'ユイートル'], '空': []},
                      egg_uses={'ゼウス': 1, '不正': 'x', '範囲外': 9})
