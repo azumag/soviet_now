@@ -292,6 +292,24 @@ test('real drop function does not click if geometry changes during mouse aiming'
     { width: 800, height: 450 }), /geometry-changed/);
   assert.equal(clicks, 0);
 });
+test('input freshness uses adaptive capture budget unless an operator overrides it', async () => {
+  const source = extract('inputCanvasBox', 'async function setNormalGameLifecycle');
+  let options = null;
+  const adaptive = vm.runInNewContext(`(${source})`, {
+    canvasIO: { validateInput: async (_page, _frame, _calibration, value) => { options = value; return G; } },
+    process: { env: {} }, boundedMs,
+  });
+  await adaptive({}, calibration, { captureMs: 4600 });
+  assert.equal(Object.hasOwn(options, 'maxAgeMs'), false);
+
+  const explicit = vm.runInNewContext(`(${source})`, {
+    canvasIO: { validateInput: async (_page, _frame, _calibration, value) => value },
+    process: { env: { SOREN91_INPUT_MAX_FRAME_AGE_MS: '7000' } }, boundedMs,
+  });
+  const configured = await explicit({}, calibration, { captureMs: 4600 });
+  assert.equal(configured.maxAgeMs, 7000);
+});
+
 test('runtime wiring retains guards, bounds both ranking bursts, and avoids per-turn ESM churn', () => {
   assert.match(mainSource, /if \(!postDropProbeEnabled\(\)\)/);
   assert.equal((mainSource.match(/i < frames && budget\.remaining\(\) > 0/g) || []).length, 2);
