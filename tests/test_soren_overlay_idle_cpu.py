@@ -46,6 +46,24 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertIn('EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR"', gen)
         self.assertIn("except Exception:", gen)
 
+    def test_overlay_status_snapshot_skips_terminal_render_pipeline(self):
+        gen = GEN.read_text(encoding="utf-8")
+        status = STATUS.read_text(encoding="utf-8")
+        self.assertIn("./show_status.sh --raw-once", gen)
+        self.assertNotIn(
+            "SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once",
+            gen,
+        )
+        raw_branch = status.split('if [[ "$SHOW_STATUS_RAW_ONCE" == "1" ]]; then', 1)[1]
+        raw_branch = raw_branch.split("fi", 1)[0]
+        self.assertIn("show_status", raw_branch)
+        self.assertIn("exit 0", raw_branch)
+        self.assertNotIn("_render_status_once", raw_branch)
+        self.assertLess(
+            status.index('if [[ "$SHOW_STATUS_RAW_ONCE" == "1" ]]; then'),
+            status.index("printf '\\033[?25l'"),
+        )
+
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
         status = STATUS.read_text(encoding="utf-8")
