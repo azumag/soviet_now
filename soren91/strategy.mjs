@@ -427,12 +427,14 @@ const SUPPORT_GAP = TYPE_RADII[1] + 0.015;
 const IMPOSSIBLE_HIGH_OVERLAP_MARGIN = 0.04;
 
 /**
- * Ignore a detached high cluster only when the observation itself contains
+ * Ignore a low-certainty member of a detached high pair only when it contains
  * positive evidence that it cannot be a settled board state. In particular,
  * a same-type pair that penetrates substantially while one member is below
  * the normal certainty threshold is consistent with a duplicated cursor/
  * transient detector observation. Mere lack of an observed support chain is
- * not enough: a single isolated high piece stays risk-bearing.
+ * not enough: a single isolated high piece stays risk-bearing. Impossible
+ * overlap proves that the pair is inconsistent, not that both pieces are
+ * ghosts, so the certain member must remain in geometry and risk evaluation.
  */
 function filterUnsupportedHighObservations(pieces, columns = []) {
   const supported = new Set();
@@ -491,8 +493,7 @@ function filterUnsupportedHighObservations(pieces, columns = []) {
       const lowConfidence = Math.min(certainty(p), certainty(q));
       const highConfidence = Math.max(certainty(p), certainty(q));
       if (!(lowConfidence < 0.6 && highConfidence >= 0.6)) continue;
-      ignored.add(i);
-      ignored.add(j);
+      ignored.add(certainty(p) < 0.6 ? i : j);
     }
   }
   if (ignored.size === 0) return pieces;

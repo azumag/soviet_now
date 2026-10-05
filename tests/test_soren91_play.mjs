@@ -59,7 +59,8 @@ test('v221 fatal sign regression: choose low lane instead of a near-deadline mer
 test('retained replay: unsupported high cursor observations do not fabricate deadline risk', () => {
   // Distilled from retained game 8 turn 7. The screenshot shows the settled
   // board on the garbage surface while two cursor-like detections float near
-  // the deadline. They must not turn a reachable type-4 merge into risk=1.
+  // the deadline. Only the uncertain duplicate may be removed; the retained
+  // certain observation is below the warning threshold in this fixture.
   const columns = [{ left: -3.5, right: 3.5, top: -2.512 }];
   const ps = [
     piece(7, 2.37, -1.86, { confidence: 0.79 }),
@@ -83,7 +84,7 @@ test('retained replay: unsupported high cursor observations do not fabricate dea
     canHold: true,
     garbage: { ratio: 0.265, height: -2.512, gauge: 0, columns },
   }));
-  assert.equal(d.diagnostics.ignoredUnsupportedHigh, 2, JSON.stringify(d));
+  assert.equal(d.diagnostics.ignoredUnsupportedHigh, 1, JSON.stringify(d));
   assert.equal(d.diagnostics.risk, 0, JSON.stringify(d));
   assert.ok(d.diagnostics.merges >= 1, JSON.stringify(d));
 });
