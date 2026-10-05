@@ -80,7 +80,8 @@ _RUNTIME_SOURCE_LAST_CHECK_SECONDS="$SECONDS"
 _STOP_POLL_SLICE_SEC="${RADIO_WORKER_STOP_POLL_SEC:-5}"
 
 _read_first_line_into() {
-	local _target="$1" _path="$2" _fallback="${3:-}" _value="$_fallback"
+	local _target="$1" _path="$2" _fallback="${3:-}" _value=""
+	_value="$_fallback"
 	if [ -r "$_path" ]; then
 		IFS= read -r _value <"$_path" || true
 		[ -n "$_value" ] || _value="$_fallback"
@@ -218,6 +219,7 @@ _reload_runtime() {
 	if source ./eloop_lib.sh 2>/dev/null; then
 		_RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 		_RUNTIME_SOURCE_SIGNATURE="$(_runtime_source_signature)"
+		_RUNTIME_SOURCE_LAST_CHECK_SECONDS="$SECONDS"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
 		_RUNTIME_SOURCE_CHECK_INTERVAL="${RADIO_WORKER_RUNTIME_SOURCE_CHECK_INTERVAL:-60}"
