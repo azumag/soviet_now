@@ -156,13 +156,10 @@ def build_snapshot(
 
     if improve_state_path is not None:
         improve = _load_json(improve_state_path)
-        result["imp_status"] = str(improve.get("status", "idle") or "idle")
-        try:
-            result["imp_pid"] = int(improve.get("pid", 0) or 0)
-        except (TypeError, ValueError):
-            result["imp_pid"] = 0
-        result["imp_hash"] = str(improve.get("strategy_hash_before", "") or "")
-        result["imp_phase"] = str(improve.get("phase", "") or "")
+        result["imp_status"] = str(improve.get("status", "idle"))
+        result["imp_pid"] = improve.get("pid", 0)
+        result["imp_hash"] = str(improve.get("strategy_hash_before", ""))
+        result["imp_phase"] = str(improve.get("phase", ""))
         try:
             result["imp_progress"] = int(improve.get("progress", 0) or 0)
         except (TypeError, ValueError):
@@ -174,8 +171,8 @@ def build_snapshot(
 
     if improve_monitor_path is not None:
         monitor = _load_json(improve_monitor_path)
-        result["imp_monitor_status"] = str(monitor.get("status", "") or "")
-        result["imp_monitor_action"] = str(monitor.get("action", "") or "")
+        result["imp_monitor_status"] = str(monitor.get("status", ""))
+        result["imp_monitor_action"] = str(monitor.get("action", ""))
         try:
             result["imp_monitor_stale_sec"] = int(
                 monitor.get("stale_sec", 0) or 0
