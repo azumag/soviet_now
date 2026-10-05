@@ -70,7 +70,8 @@ export function postDropBoardAdvanceMs(env = process.env) {
 export function markDropSent(calibration, now = Date.now()) {
   if (!calibration || typeof calibration !== 'object') return false;
   const previous = observations.get(calibration);
-  if (!previous || !Number.isFinite(now) || now < previous.at) {
+  if (!previous || previous.stableFrames < 2
+      || !Number.isFinite(now) || now < previous.at) {
     pendingDrops.delete(calibration);
     return false;
   }
