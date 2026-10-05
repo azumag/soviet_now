@@ -1,10 +1,10 @@
 name: Supervisor improve gate
 on:
   pull_request:
-    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', 'tests/test_supervisor_lookup_forks.py', '.github/workflows/supervisor-improve-gate.yml']
+    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', 'tests/test_supervisor_lookup_forks.py', 'tests/test_supervisor_liveness_forks.py', '.github/workflows/supervisor-improve-gate.yml']
   push:
     branches: [main]
-    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', 'tests/test_supervisor_lookup_forks.py', '.github/workflows/supervisor-improve-gate.yml']
+    paths: ['start_all.sh', 'lib/supervisor_improve_gate.sh', 'tests/test_supervisor_improve_gate.py', 'tests/test_supervisor_lookup_forks.py', 'tests/test_supervisor_liveness_forks.py', '.github/workflows/supervisor-improve-gate.yml']
 permissions:
   contents: read
 jobs:
@@ -14,6 +14,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: python3 -m unittest tests.test_supervisor_improve_gate tests.test_supervisor_lookup_forks
+      - run: python3 -m unittest tests.test_supervisor_improve_gate tests.test_supervisor_lookup_forks tests.test_supervisor_liveness_forks
       - run: bash -n start_all.sh
       - run: bash -n lib/supervisor_improve_gate.sh
