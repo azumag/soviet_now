@@ -688,7 +688,9 @@ def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None
     purpose = _hanjuku_text(order.get("purpose"), 16)
     statuses = policy.get("orders")
     status = _hanjuku_text(statuses.get(step), 20) if isinstance(statuses, Mapping) else None
-    if not any((general, source, target, purpose, status)):
+    if status not in {"pending", "launched", "launched_unconfirmed"}:
+        return None
+    if not any((general, source, target, purpose)):
         return None
     return {
         "step": _hanjuku_text(step, 24) or "",
