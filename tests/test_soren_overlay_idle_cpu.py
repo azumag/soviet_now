@@ -29,6 +29,13 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertIn("_ensure_overlay_dirs", render)
         self.assertNotIn('mkdir -p "', render)
 
+    def test_unified_overlay_renders_stats_in_existing_python_process(self):
+        gen = GEN.read_text(encoding="utf-8")
+        self.assertNotIn("stats_raw=$(HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 python3 status_dashboard.py", gen)
+        self.assertNotIn("SOREN_STATS_RAW=", gen)
+        self.assertIn("from status_dashboard import render_dashboard_text", gen)
+        self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", gen)
+
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
         status = STATUS.read_text(encoding="utf-8")
