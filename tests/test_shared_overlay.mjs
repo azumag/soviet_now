@@ -589,6 +589,36 @@ test('required frame readiness follows the visible direct-overlay buffer after f
 });
 
 
+test('required frame readiness accepts a measured game-gap shape and rejects invalid ones', async () => {
+  const page = new FakeInstallerPage();
+  const config = loadSharedOverlayConfig({}, 'linux');
+  await installDirectOverlay(page, config.direct);
+  await new Promise((resolve) => setImmediate(resolve));
+  const gapId = config.direct.surfaces.find((item) => item.key === 'broadcastGameGap').elementId;
+  const gap = page.document.getElementById(`${gapId}-buffer`);
+  const original = { ...gap.style };
+  const ready = async (style) => {
+    gap.style = { ...original, ...style };
+    try {
+      await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // 実機で起動失敗を起こした右側の測定余白 (x=721 w=239) と、左側余白。
+  assert.equal(await ready({ left: '721px', top: '90px', width: '239px', height: '540px' }), true, 'right gap');
+  assert.equal(await ready({ left: '0px', top: '90px', width: '300px', height: '540px' }), true, 'left gap');
+  assert.equal(await ready({ left: original.left, top: original.top, width: original.width, height: original.height }), true, 'full region');
+  // 端に接しない/狭すぎる/縦位置違いは従来どおり拒否する。
+  assert.equal(await ready({ left: '300px', top: '90px', width: '239px', height: '540px' }), false, 'floating gap');
+  assert.equal(await ready({ left: '780px', top: '90px', width: '180px', height: '540px' }), true, 'minimum width gap');
+  assert.equal(await ready({ left: '800px', top: '90px', width: '160px', height: '540px' }), false, 'too narrow');
+  assert.equal(await ready({ left: '721px', top: '0px', width: '239px', height: '540px' }), false, 'wrong top');
+  assert.equal(await ready({ left: '721px', top: '90px', width: '239px', height: '400px' }), false, 'wrong height');
+});
+
+
 test('required frame readiness rejects missing HTML and failed route loads', async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-frame-failure-'));
   const context = path.join(temp, 'game_switch.json');
