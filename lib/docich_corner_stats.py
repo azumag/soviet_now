@@ -262,24 +262,224 @@ def _strategy_ranking(root: Path, game: str) -> list[dict[str, object]]:
     )[:5]
 
 
-def _paper_snapshot(root: Path) -> dict[str, object]:
+_PAPER_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/+\\-]{0,79}$")
+
+
+def _paper_token(value: object, *, limit: int = 80) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > limit or not _PAPER_TOKEN_RE.fullmatch(text):
+        return None
+    return text
+
+
+def _paper_decimal_text(value: object) -> str | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    text = str(value).strip()
+    return text[:40] if text else None
+
+
+def _paper_tokens(value: object, *, limit: int = 6) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value[:limit]:
+        token = _paper_token(item)
+        if token is not None and token not in result:
+            result.append(token)
+    return result
+
+
+def _paper_age(now: float, timestamp: float | None) -> int | None:
+    if timestamp is None:
+        return None
+    age = float(now) - timestamp
+    if not math.isfinite(age) or age < 0:
+        return None
+    return int(age)
+
+
+def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object]:
     value, _error = _read_json(root / "trading" / "status.json")
     if value is None:
         return {"status": "unavailable", "fills": [], "positions": {}}
+
+    moment = time.time() if now is None else float(now)
     raw_fills = value.get("recent_fills")
-    fills = [dict(fill) for fill in raw_fills if isinstance(fill, Mapping)] if isinstance(raw_fills, list) else []
-    fills.sort(key=lambda item: _parse_timestamp(item.get("filled_at")) or 0)
-    positions = value.get("open_positions")
-    if not isinstance(positions, Mapping):
-        positions = {}
+    fills: list[dict[str, object]] = []
+    if isinstance(raw_fills, list):
+        for fill in raw_fills:
+            if not isinstance(fill, Mapping):
+                continue
+            symbol = _paper_token(fill.get("symbol"), limit=32)
+            if symbol is None:
+                continue
+            side = str(fill.get("side") or "").lower()
+            if side not in {"buy", "sell"}:
+                side = "unknown"
+            fills.append(
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quote_notional": _paper_decimal_text(fill.get("quote_notional")),
+                    "price": _paper_decimal_text(fill.get("price")),
+                    "filled_at": _parse_timestamp(fill.get("filled_at")),
+                }
+            )
+    fills.sort(key=lambda item: item.get("filled_at") or 0)
+
+    raw_positions = value.get("open_positions")
+    positions: dict[str, str] = {}
+    if isinstance(raw_positions, Mapping):
+        for raw_symbol, raw_amount in sorted(raw_positions.items()):
+            symbol = _paper_token(raw_symbol, limit=32)
+            amount = _paper_decimal_text(raw_amount)
+            if symbol is not None and amount is not None:
+                positions[symbol] = amount
+
+    signal: dict[str, object] = {}
+    raw_signal = value.get("signal_summary")
+    if isinstance(raw_signal, Mapping):
+        for key in ("candidate_count", "selected_count", "rejected_count"):
+            number = _int_value(raw_signal.get(key))
+            if number is not None and number >= 0:
+                signal[key] = number
+        signal["strategy_ids"] = _paper_tokens(raw_signal.get("strategy_ids"), limit=4)
+        signal["candidate_reason_codes"] = _paper_tokens(
+            raw_signal.get("candidate_reason_codes"), limit=4
+        )
+
+    skipped: list[dict[str, str]] = []
+    raw_skipped = value.get("skipped_decisions")
+    if isinstance(raw_skipped, list):
+        for item in raw_skipped[:5]:
+            if not isinstance(item, Mapping):
+                continue
+            reason = _paper_token(item.get("reason_code"))
+            if reason is None:
+                continue
+            symbol = _paper_token(item.get("symbol"), limit=32)
+            side = str(item.get("side") or "").lower()
+            if side not in {"buy", "sell"}:
+                side = "unknown"
+            skipped.append({"symbol": symbol or "", "side": side, "reason_code": reason})
+    if not skipped:
+        skipped = [
+            {"symbol": "", "side": "unknown", "reason_code": reason}
+            for reason in _paper_tokens(value.get("skipped_reason_codes"), limit=5)
+        ]
+
+    worker: dict[str, object] = {}
+    raw_worker = value.get("worker_summary")
+    if isinstance(raw_worker, Mapping):
+        for key in (
+            "cycle_index",
+            "frame_error_count",
+            "arbitrage_candidate_count",
+            "new_fill_count",
+            "new_settlement_count",
+        ):
+            number = _int_value(raw_worker.get(key))
+            if number is not None and number >= 0:
+                worker[key] = number
+        last_success_at = _parse_timestamp(raw_worker.get("last_success_at"))
+        next_cycle_at = _parse_timestamp(raw_worker.get("next_cycle_at"))
+        worker["last_success_at"] = last_success_at
+        worker["last_success_age"] = _paper_age(moment, last_success_at)
+        worker["next_cycle_at"] = next_cycle_at
+        worker["next_cycle_in"] = (
+            None
+            if next_cycle_at is None
+            else max(0, int(next_cycle_at - moment))
+        )
+        worker["error_codes"] = _paper_tokens(raw_worker.get("error_codes"), limit=5)
+        experiment_status = _paper_token(raw_worker.get("experiment_status"), limit=32)
+        experiment_reason = _paper_token(raw_worker.get("experiment_reason_code"), limit=64)
+        if experiment_status is not None:
+            worker["experiment_status"] = experiment_status
+        if experiment_reason is not None:
+            worker["experiment_reason_code"] = experiment_reason
+        if type(raw_worker.get("experiment_entries_allowed")) is bool:
+            worker["experiment_entries_allowed"] = raw_worker["experiment_entries_allowed"]
+
+    freshness_counts = {"fresh": 0, "stale": 0, "missing": 0, "invalid": 0, "unknown": 0}
+    freshness_issues: list[dict[str, str]] = []
+    raw_freshness = value.get("market_freshness")
+    if isinstance(raw_freshness, Mapping):
+        for raw_symbol, raw_entry in sorted(raw_freshness.items()):
+            symbol = _paper_token(raw_symbol, limit=32)
+            if symbol is None or not isinstance(raw_entry, Mapping):
+                continue
+            quality = _paper_token(raw_entry.get("quality"), limit=16) or "unknown"
+            if quality not in freshness_counts:
+                quality = "unknown"
+            freshness_counts[quality] += 1
+            if quality != "fresh" and len(freshness_issues) < 4:
+                reason = _paper_token(raw_entry.get("reason_code"), limit=64) or "unknown"
+                freshness_issues.append(
+                    {"symbol": symbol, "quality": quality, "reason_code": reason}
+                )
+
+    coverage: dict[str, object] = {}
+    raw_coverage = value.get("coverage")
+    if isinstance(raw_coverage, Mapping):
+        for key in ("attempted", "total"):
+            number = _int_value(raw_coverage.get(key))
+            if number is not None and number >= 0:
+                coverage[key] = number
+        if type(raw_coverage.get("budget_exceeded")) is bool:
+            coverage["budget_exceeded"] = raw_coverage["budget_exceeded"]
+        carried = raw_coverage.get("carried_symbols")
+        coverage["carried_count"] = len(carried) if isinstance(carried, list) else 0
+
+    performance: dict[str, object] = {}
+    raw_performance = value.get("performance_summary")
+    if isinstance(raw_performance, Mapping):
+        performance_as_of = _parse_timestamp(raw_performance.get("as_of"))
+        performance["as_of"] = performance_as_of
+        performance["age"] = _paper_age(moment, performance_as_of)
+        if type(raw_performance.get("complete")) is bool:
+            performance["complete"] = raw_performance["complete"]
+        for key in ("position_count", "priced_positions", "valued_positions"):
+            number = _int_value(raw_performance.get(key))
+            if number is not None and number >= 0:
+                performance[key] = number
+        for key in (
+            "realized_total_jpy",
+            "today_realized_pnl_jpy",
+            "unrealized_pnl_jpy",
+            "cumulative_pnl_jpy",
+            "equity_jpy",
+        ):
+            performance[key] = _paper_decimal_text(raw_performance.get(key))
+
+    snapshot_at = _parse_timestamp(value.get("snapshot_generated_at"))
+    heartbeat_at = _parse_timestamp(value.get("heartbeat_at"))
     return {
-        "status": str(value.get("worker_state") or "unknown"),
-        "capital": value.get("capital_reference"),
-        "deployed": value.get("deployed_reference"),
+        "status": _paper_token(value.get("worker_state"), limit=40) or "unknown",
+        "capital": _paper_decimal_text(value.get("capital_reference")),
+        "deployed": _paper_decimal_text(value.get("deployed_reference")),
         "fills": fills[-20:],
-        "positions": dict(positions),
-        "snapshot_at": _parse_timestamp(value.get("snapshot_generated_at")),
+        "positions": positions,
+        "snapshot_at": snapshot_at,
+        "snapshot_age": _paper_age(moment, snapshot_at),
+        "heartbeat_at": heartbeat_at,
+        "heartbeat_age": _paper_age(moment, heartbeat_at),
         "market_count": _int_value(value.get("market_count")),
+        "signal": signal,
+        "skipped": skipped,
+        "worker": worker,
+        "freshness": {"counts": freshness_counts, "issues": freshness_issues},
+        "coverage": coverage,
+        "performance": performance,
     }
 
 
@@ -737,7 +937,8 @@ def load_active_corner(state_dir: str | os.PathLike[str] | None = None, *,
         if snapshot["game"] == "hanjuku-hero":
             snapshot["hanjuku"] = _hanjuku_snapshot(root, state)
     elif kind == "paper":
-        snapshot["paper"] = _paper_snapshot(root)
+        observed_now = time.time() if now is None else float(now)
+        snapshot["paper"] = _paper_snapshot(root, now=observed_now)
     elif kind == "nethack":
         snapshot.update(_nethack_snapshot(root, state))
     elif kind == "soren91":

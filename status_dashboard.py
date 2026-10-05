@@ -3172,6 +3172,63 @@ def _corner_number(value):
     return f"{value:.1f}".removesuffix(".0") if abs(value) < 1_000_000 else f"{value:.3g}"
 
 
+def _paper_number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _paper_amount(value, fallback="?"):
+    number = _paper_number(value)
+    if number is None:
+        return fallback
+    if abs(number) >= 1_000_000:
+        return f"{number:.3g}"
+    if float(number).is_integer():
+        return str(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _paper_signed_amount(value, fallback="--"):
+    number = _paper_number(value)
+    if number is None:
+        return fallback
+    rendered = _paper_amount(number, fallback=fallback)
+    return f"+{rendered}" if number > 0 else rendered
+
+
+def _paper_age(value):
+    try:
+        seconds = max(0, int(value))
+    except (TypeError, ValueError):
+        return "--"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def _paper_worker_label(value):
+    return {
+        "paper_worker_running": "running",
+        "paper_worker_degraded": "degraded",
+        "paper_worker_idle": "idle",
+    }.get(str(value or ""), _corner_short(value, "unknown", 14))
+
+
+def _paper_count(mapping, key):
+    if not isinstance(mapping, dict):
+        return "--"
+    return _corner_int(mapping.get(key))
+
+
 def render_corner_distribution(scores, *, rank=False):
     """Integer bins covering this game's actual range, including negatives."""
     title = "Rank Distribution" if rank else "Score Distribution"
@@ -3519,16 +3576,158 @@ def render_docich_corner_stats(corner):
         paper = corner.get("paper") if isinstance(corner.get("paper"), dict) else {}
         fills = paper.get("fills") if isinstance(paper.get("fills"), list) else []
         positions = paper.get("positions") if isinstance(paper.get("positions"), dict) else {}
-        fill_lines = [_corner_fill_line(fill) for fill in reversed(fills[-5:])]
+        signal = paper.get("signal") if isinstance(paper.get("signal"), dict) else {}
+        skipped = paper.get("skipped") if isinstance(paper.get("skipped"), list) else []
+        worker_summary = paper.get("worker") if isinstance(paper.get("worker"), dict) else {}
+        freshness = paper.get("freshness") if isinstance(paper.get("freshness"), dict) else {}
+        fresh_counts = freshness.get("counts") if isinstance(freshness.get("counts"), dict) else {}
+        fresh_issues = freshness.get("issues") if isinstance(freshness.get("issues"), list) else []
+        coverage = paper.get("coverage") if isinstance(paper.get("coverage"), dict) else {}
+        performance = paper.get("performance") if isinstance(paper.get("performance"), dict) else {}
+
+        fill_lines = [_corner_fill_line(fill) for fill in reversed(fills[-4:])]
         fill_lines = [line for line in fill_lines if line]
-        worker = _corner_short(paper.get("status"), "unknown", 14)
+        worker = _paper_worker_label(paper.get("status"))
         capital = _corner_short(paper.get("capital"), "?", 14)
         deployed = _corner_short(paper.get("deployed"), "?", 14)
+        capital_number = _paper_number(paper.get("capital"))
+        deployed_number = _paper_number(paper.get("deployed"))
+        free = (
+            _paper_amount(max(0.0, capital_number - deployed_number))
+            if capital_number is not None and deployed_number is not None
+            else "?"
+        )
+
         lines += [
-            f"SOREN/CORNER: {label} / dashboard / {status}",
-            f"Live: worker={worker} positions={len(positions)}",
-            f"Funds: capital={capital} deployed={deployed}",
-            f"Recent30: fills={len(fills)} positions={len(positions)}",
+            f"SOREN/CORNER: {label} / PAPER / {status}",
+            "  ASSET / PAPER ONLY",
+            "Funds: " + _corner_short(f"capital={capital} free={free}", limit=49),
+            "  Deployed: " + _corner_short(deployed, "?", 43),
+            f"Positions: {len(positions)} / markets={_corner_int(paper.get('market_count'))}",
+        ]
+        for symbol, amount in list(sorted(positions.items()))[:3]:
+            lines.append("  Pos: " + _corner_short(f"{symbol} {amount}", limit=48))
+        if len(positions) > 3:
+            lines.append(f"  Pos: +{len(positions) - 3} more")
+        if performance:
+            lines.append(
+                "P/L: "
+                + _corner_short(
+                    "cum="
+                    + _paper_signed_amount(performance.get("cumulative_pnl_jpy"))
+                    + " unreal="
+                    + _paper_signed_amount(performance.get("unrealized_pnl_jpy")),
+                    limit=49,
+                )
+            )
+            lines.append(
+                "  Realized: "
+                + _corner_short(
+                    "today="
+                    + _paper_signed_amount(performance.get("today_realized_pnl_jpy"))
+                    + " all="
+                    + _paper_signed_amount(performance.get("realized_total_jpy")),
+                    limit=43,
+                )
+            )
+            valuation = (
+                _corner_int(performance.get("valued_positions"))
+                + "/"
+                + _corner_int(performance.get("position_count"))
+            )
+            lines.append(
+                "  Equity: "
+                + _corner_short(
+                    _paper_amount(performance.get("equity_jpy"), fallback="--")
+                    + f" / valued={valuation} / age={_paper_age(performance.get('age'))}",
+                    limit=45,
+                )
+            )
+            if performance.get("complete") is False:
+                lines.append("  Valuation: incomplete / P/L may be partial")
+
+        lines += [
+            "  BOT DECISION",
+            (
+                "Signals: candidate="
+                + _paper_count(signal, "candidate_count")
+                + " selected="
+                + _paper_count(signal, "selected_count")
+                + " rejected="
+                + _paper_count(signal, "rejected_count")
+            ),
+        ]
+        strategies = signal.get("strategy_ids") if isinstance(signal.get("strategy_ids"), list) else []
+        if strategies:
+            lines.append("  Strategy: " + _corner_short(" / ".join(strategies), limit=43))
+        reasons = (
+            signal.get("candidate_reason_codes")
+            if isinstance(signal.get("candidate_reason_codes"), list)
+            else []
+        )
+        if reasons:
+            lines.append("  Candidate: " + _corner_short(" / ".join(reasons), limit=42))
+        if skipped:
+            skip_parts = []
+            for item in skipped[:2]:
+                if not isinstance(item, dict):
+                    continue
+                symbol = _corner_short(item.get("symbol"), "", 12)
+                reason = _corner_short(item.get("reason_code"), "unknown", 24)
+                skip_parts.append(f"{symbol}:{reason}" if symbol else reason)
+            if skip_parts:
+                lines.append("  Rejected: " + _corner_short(" / ".join(skip_parts), limit=43))
+
+        lines += [
+            "  OPS / DATA",
+            f"Worker: {worker} cycle={_paper_count(worker_summary, 'cycle_index')}",
+            (
+                f"Age: data={_paper_age(paper.get('snapshot_age'))} "
+                f"hb={_paper_age(paper.get('heartbeat_age'))} "
+                f"next={_paper_age(worker_summary.get('next_cycle_in'))}"
+            ),
+        ]
+        freshness_total = sum(
+            int(fresh_counts.get(key) or 0)
+            for key in ("fresh", "stale", "missing", "invalid", "unknown")
+            if not isinstance(fresh_counts.get(key), bool)
+        )
+        market_total = freshness_total or _corner_int(paper.get("market_count"))
+        lines.append(
+            "Markets: fresh="
+            + _corner_int(fresh_counts.get("fresh"))
+            + "/"
+            + str(market_total)
+            + " frame_err="
+            + _paper_count(worker_summary, "frame_error_count")
+        )
+        attempted = _corner_int(coverage.get("attempted"))
+        total = _corner_int(coverage.get("total"))
+        if attempted != "--" or total != "--" or coverage.get("budget_exceeded"):
+            lines.append(
+                f"  Coverage: {attempted}/{total}"
+                + (" / budget exceeded" if coverage.get("budget_exceeded") else "")
+            )
+        if fresh_issues:
+            issue_parts = []
+            for item in fresh_issues[:2]:
+                if not isinstance(item, dict):
+                    continue
+                symbol = _corner_short(item.get("symbol"), "?", 12)
+                reason = _corner_short(item.get("reason_code"), "unknown", 22)
+                issue_parts.append(f"{symbol}:{reason}")
+            if issue_parts:
+                lines.append("  Market issue: " + _corner_short(" / ".join(issue_parts), limit=38))
+        errors = (
+            worker_summary.get("error_codes")
+            if isinstance(worker_summary.get("error_codes"), list)
+            else []
+        )
+        if errors:
+            lines.append("  Errors: " + _corner_short(" / ".join(errors), limit=45))
+
+        lines += [
+            f"Recent: fills={len(fills)} positions={len(positions)}",
             "  PAPER FILL HISTORY (newest)",
         ]
         lines += [f"  {line}" for line in fill_lines] or ["  (no fills yet)"]
