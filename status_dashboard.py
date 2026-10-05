@@ -3193,6 +3193,14 @@ def _paper_amount(value, fallback="?"):
     return f"{number:.6f}".rstrip("0").rstrip(".")
 
 
+def _paper_signed_amount(value, fallback="--"):
+    number = _paper_number(value)
+    if number is None:
+        return fallback
+    rendered = _paper_amount(number, fallback=fallback)
+    return f"+{rendered}" if number > 0 else rendered
+
+
 def _paper_age(value):
     try:
         seconds = max(0, int(value))
@@ -3575,6 +3583,7 @@ def render_docich_corner_stats(corner):
         fresh_counts = freshness.get("counts") if isinstance(freshness.get("counts"), dict) else {}
         fresh_issues = freshness.get("issues") if isinstance(freshness.get("issues"), list) else []
         coverage = paper.get("coverage") if isinstance(paper.get("coverage"), dict) else {}
+        performance = paper.get("performance") if isinstance(paper.get("performance"), dict) else {}
 
         fill_lines = [_corner_fill_line(fill) for fill in reversed(fills[-4:])]
         fill_lines = [line for line in fill_lines if line]
@@ -3600,6 +3609,42 @@ def render_docich_corner_stats(corner):
             lines.append("  Pos: " + _corner_short(f"{symbol} {amount}", limit=48))
         if len(positions) > 3:
             lines.append(f"  Pos: +{len(positions) - 3} more")
+        if performance:
+            lines.append(
+                "P/L: "
+                + _corner_short(
+                    "cum="
+                    + _paper_signed_amount(performance.get("cumulative_pnl_jpy"))
+                    + " unreal="
+                    + _paper_signed_amount(performance.get("unrealized_pnl_jpy")),
+                    limit=49,
+                )
+            )
+            lines.append(
+                "  Realized: "
+                + _corner_short(
+                    "today="
+                    + _paper_signed_amount(performance.get("today_realized_pnl_jpy"))
+                    + " all="
+                    + _paper_signed_amount(performance.get("realized_total_jpy")),
+                    limit=43,
+                )
+            )
+            valuation = (
+                _corner_int(performance.get("valued_positions"))
+                + "/"
+                + _corner_int(performance.get("position_count"))
+            )
+            lines.append(
+                "  Equity: "
+                + _corner_short(
+                    _paper_signed_amount(performance.get("equity_jpy"))
+                    + f" / valued={valuation} / age={_paper_age(performance.get('age'))}",
+                    limit=45,
+                )
+            )
+            if performance.get("complete") is False:
+                lines.append("  Valuation: incomplete / P/L may be partial")
 
         lines += [
             "  BOT DECISION",
