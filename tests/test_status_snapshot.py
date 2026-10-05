@@ -77,6 +77,14 @@ class StatusSnapshotTests(unittest.TestCase):
             self.assertEqual(value["acc_soviet"], "false")
             self.assertEqual(value["acc_max_type"], 0)
 
+    def test_show_status_uses_single_snapshot_process(self):
+        source = (ROOT / "show_status.sh").read_text(encoding="utf-8")
+        self.assertIn("python3 lib/status_snapshot.py", source)
+        self.assertNotIn("python3 extract_decide_hash.py strategy.py", source)
+        self.assertNotIn("acc_count=$(python3 -c", source)
+        self.assertNotIn("acc_scores=$(python3 -c", source)
+        self.assertNotIn("d=json.load(open('game_state.json'))", source)
+
     def test_shell_output_quotes_values(self):
         text = MODULE.render_shell({
             "game_state": "a b",
