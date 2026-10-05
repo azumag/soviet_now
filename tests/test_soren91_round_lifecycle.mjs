@@ -19,9 +19,9 @@ const waiting = (ranking = null) => ({ state: 'WAITING', ranking });
 const repeat = (count, frame) => Array.from({ length: count }, () => ({ ...frame }));
 
 async function replay(frames) {
-  let now = 0, shots = 0, drops = 0, reentries = 0;
+  let now = 0, shots = 0, drops = 0, holds = 0, reentries = 0;
   let current;
-  const ended = [], history = [], logs = [];
+  const ended = [], history = [], logs = [], decisions = [];
   const context = {
     join, dirname, fileURLToPath,
     HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens',
@@ -51,7 +51,11 @@ async function replay(frames) {
       detectRankingScreen: async () => current.ranking,
       detectConnectionErrorScreen: async () => false,
     }),
-    loadStrategy: async () => ({ decide: () => ({ x: 0, reason: 'test', hold: false }) }),
+    loadStrategy: async () => ({ decide: state => {
+      decisions.push({ shot: shots, canHold: state.canHold });
+      return { x: 0, reason: 'test', hold: Boolean(current.requestHold && state.canHold) };
+    } }),
+    executeHold: async () => { holds++; now += 300; },
     executeDrop: async () => { drops++; now += 200; },
     handleGameOver: async (_page, game, turns, state, historyFile) => {
       ended.push({ game, turns, rank: state.rank, historyFile });
@@ -65,7 +69,7 @@ async function replay(frames) {
   };
   const loop = vm.runInNewContext(`(${loopSource})`, context);
   await loop({}, {}, 1);
-  return { drops, ended, history, reentries, logs };
+  return { drops, holds, ended, history, reentries, logs, decisions };
 }
 
 test('a confirmed short-round ranking archives that round and the next MOVE can play', async () => {
@@ -94,6 +98,34 @@ test('ranking or matchmaking screens before any drop do not create a completed r
   assert.equal(result.ended.length, 0);
   assert.equal(result.drops, 1);
   assert.equal(result.history[0].turn, 0);
+});
+
+test('HOLD without a subsequent drop does not consume the next round\'s first HOLD', async () => {
+  const result = await replay([
+    move(), { ...move(), requestHold: true },
+    ...repeat(6, waiting(8)),
+    { ...move(), requestHold: true }, move(),
+  ]);
+  assert.deepEqual(result.ended, [{ game: 1, turns: 1, rank: 8, historyFile: 'history/latest_0001.jsonl' }]);
+  assert.equal(result.decisions.find(({ shot }) => shot === 9).canHold, true);
+  assert.equal(result.holds, 2);
+  assert.equal(result.drops, 2);
+  assert.deepEqual(result.history.map(({ path, turn }) => [path, turn]), [
+    ['history/latest_0001.jsonl', 0],
+    ['history/latest_0002.jsonl', 0],
+  ]);
+});
+
+test('HOLD remains unavailable within the same turn until a drop is sent', async () => {
+  const result = await replay([
+    { ...move(), requestHold: true },
+    { ...move(), requestHold: true },
+    { ...move(), requestHold: true }, move(),
+  ]);
+  assert.deepEqual(result.decisions.map(({ canHold }) => canHold), [true, false, true, false]);
+  assert.equal(result.holds, 2);
+  assert.equal(result.drops, 2);
+  assert.equal(result.ended.length, 0);
 });
 
 test('a ranking seen before the first drop cannot confirm the following short round', async () => {
