@@ -163,6 +163,15 @@ test('stale observations, changed geometry, and calibration mismatch cannot reac
   const changed = mockPage({ geometries: [{ ...G, x: 50 }] });
   await assert.rejects(createCanvasIO({ now: () => now }).validateInput(changed, frame, calibration), /geometry-changed/);
 });
+test('slow captures receive an adaptive freshness budget before input', async () => {
+  let now = 5000;
+  const frame = { geometry: G, width: 800, height: 450, capturedAt: 0, captureMs: 4600 };
+  const io = createCanvasIO({ now: () => now });
+  await assert.doesNotReject(io.validateInput(mockPage(), frame, calibration));
+  await assert.rejects(io.validateInput(mockPage(), frame, calibration, { maxAgeMs: 4000 }),
+    /stale-observation/);
+});
+
 test('freshness includes time spent validating input', async () => {
   let now = 0;
   const page = mockPage(); const io = createCanvasIO({ now: () => now });
@@ -292,6 +301,24 @@ test('real drop function does not click if geometry changes during mouse aiming'
     { width: 800, height: 450 }), /geometry-changed/);
   assert.equal(clicks, 0);
 });
+test('input freshness uses adaptive capture budget unless an operator overrides it', async () => {
+  const source = extract('inputCanvasBox', 'async function setNormalGameLifecycle');
+  let options = null;
+  const adaptive = vm.runInNewContext(`(${source})`, {
+    canvasIO: { validateInput: async (_page, _frame, _calibration, value) => { options = value; return G; } },
+    process: { env: {} }, boundedMs,
+  });
+  await adaptive({}, calibration, { captureMs: 4600 });
+  assert.equal(Object.hasOwn(options, 'maxAgeMs'), false);
+
+  const explicit = vm.runInNewContext(`(${source})`, {
+    canvasIO: { validateInput: async (_page, _frame, _calibration, value) => value },
+    process: { env: { SOREN91_INPUT_MAX_FRAME_AGE_MS: '7000' } }, boundedMs,
+  });
+  const configured = await explicit({}, calibration, { captureMs: 4600 });
+  assert.equal(configured.maxAgeMs, 7000);
+});
+
 test('runtime wiring retains guards, bounds both ranking bursts, and avoids per-turn ESM churn', () => {
   assert.match(mainSource, /if \(!postDropProbeEnabled\(\)\)/);
   assert.equal((mainSource.match(/i < frames && budget\.remaining\(\) > 0/g) || []).length, 2);
