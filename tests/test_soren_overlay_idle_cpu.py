@@ -19,11 +19,15 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
 
     def test_parent_directories_are_created_once_before_render_loop(self):
         text = GEN.read_text(encoding="utf-8")
-        setup_pos = text.index("_overlay_paths=(")
+        setup_pos = text.index("_ensure_overlay_dirs() {")
         render_pos = text.index("render_once() {")
         self.assertLess(setup_pos, render_pos)
-        pre_render = text[setup_pos:render_pos]
-        self.assertIn('mkdir -p "${_overlay_dirs[@]}"', pre_render)
+        setup = text[setup_pos:render_pos]
+        self.assertIn('mkdir -p "${_overlay_dirs[@]}"', setup)
+        self.assertIn('_OVERLAY_DIRS_READY=1', setup)
+        render = text[render_pos:text.index("render_event_overlay_indicators")]
+        self.assertIn("_ensure_overlay_dirs", render)
+        self.assertNotIn('mkdir -p "', render)
 
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
