@@ -21,6 +21,9 @@ mkdir -p "$ROOT/signature/core" "$ROOT/signature/lib"
 (
 	cd "$ROOT/signature"
 	printf 'root\n' >eloop_lib.sh
+	find() { printf 'find should not run\n' >&2; return 97; }
+	sort() { printf 'sort should not run\n' >&2; return 98; }
+	awk() { printf 'awk should not run\n' >&2; return 99; }
 	for ((i=0; i<96; i++)); do printf 'old\n' >"core/module $i.sh"; done
 	cksum() {
 		printf 'call\n' >>"$ROOT/signature-calls"
@@ -55,6 +58,8 @@ EOF
 cat >"$ROOT/.env" <<'EOF'
 RADIO_WORKER_INTERVAL=1
 RADIO_WORKER_SCHEDULER_INTERVAL=1
+RADIO_WORKER_RUNTIME_SOURCE_CHECK_INTERVAL=1
+RADIO_WORKER_STOP_POLL_SEC=1
 WORKER_PID_HEARTBEAT_INTERVAL=1
 EOF
 printf '0\n' >"$ROOT/game_count.txt"

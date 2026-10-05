@@ -43,20 +43,27 @@ POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 # deploy 後も古い timeout/provider policy を使い続ける。eloop_lib.sh が読み込む
 # runtime shell 群の内容 signature も監視し、projection-only 更新を検知する。
 _runtime_source_signature() {
-	local dir file LC_ALL=C
+	local dir file digest LC_ALL=C
 	local -a files=(eloop_lib.sh)
+	# Bash pathname expansion is already locale-sorted. Avoid spawning
+	# find+sort for every directory on each refresh scan; symlinks stay excluded
+	# to preserve the existing content-signature contract.
 	for dir in core lib broadcast strategy; do
 		[ -d "$dir" ] || continue
-		while IFS= read -r file; do
+		for file in "$dir"/*.sh; do
+			[ -f "$file" ] && [ ! -L "$file" ] || continue
 			files+=("$file")
-		done < <(find "$dir" -maxdepth 1 -type f -name '*.sh' -print 2>/dev/null | LC_ALL=C sort)
+		done
 	done
-	{
+	digest="$({
 		# Keep paths in the signature even if a file disappears during the scan.
 		# Batch all content checks into one process instead of forking per file.
 		printf '%s\0' "${files[@]}"
 		cksum "${files[@]}" 2>/dev/null || printf '%s\n' 'missing'
-	} | cksum | awk '{print $1 ":" $2}'
+	} | cksum)"
+	# Avoid a trailing awk process; cksum output is two numeric fields plus '-'.
+	set -- $digest
+	printf '%s:%s\n' "${1:-0}" "${2:-0}"
 }
 
 _STOPPED=0
@@ -68,6 +75,29 @@ _LAST_SCHEDULER_RUN_FILE="tmp/state/.last_scheduler_run"
 _SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}" # 5分ごとに時刻ベース実行
 _RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 _RUNTIME_SOURCE_SIGNATURE="$(_runtime_source_signature)"
+_RUNTIME_SOURCE_CHECK_INTERVAL="${RADIO_WORKER_RUNTIME_SOURCE_CHECK_INTERVAL:-60}"
+_RUNTIME_SOURCE_LAST_CHECK_SECONDS="$SECONDS"
+_STOP_POLL_SLICE_SEC="${RADIO_WORKER_STOP_POLL_SEC:-5}"
+
+_read_first_line_into() {
+	local _target="$1" _path="$2" _fallback="${3:-}" _value=""
+	_value="$_fallback"
+	if [ -r "$_path" ]; then
+		IFS= read -r _value <"$_path" || true
+		[ -n "$_value" ] || _value="$_fallback"
+	fi
+	printf -v "$_target" '%s' "$_value"
+}
+
+_epoch_now_into() {
+	local _target="$1" _value=""
+	if [ "${BASH_VERSINFO[0]:-0}" -ge 4 ]; then
+		printf -v _value '%(%s)T' -1
+	else
+		_value="$(date +%s)"
+	fi
+	printf -v "$_target" '%s' "$_value"
+}
 
 _log() {
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*"
@@ -189,8 +219,11 @@ _reload_runtime() {
 	if source ./eloop_lib.sh 2>/dev/null; then
 		_RUNTIME_SOURCE_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 		_RUNTIME_SOURCE_SIGNATURE="$(_runtime_source_signature)"
+		_RUNTIME_SOURCE_LAST_CHECK_SECONDS="$SECONDS"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
+		_RUNTIME_SOURCE_CHECK_INTERVAL="${RADIO_WORKER_RUNTIME_SOURCE_CHECK_INTERVAL:-60}"
+		_STOP_POLL_SLICE_SEC="${RADIO_WORKER_STOP_POLL_SEC:-5}"
 		_log "reload complete (interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
 	else
 		_log "WARNING: reload failed; keeping previous runtime"
@@ -198,7 +231,14 @@ _reload_runtime() {
 }
 
 _refresh_runtime_if_checkout_changed() {
-	local current_head="" current_signature=""
+	local current_head="" current_signature="" _elapsed=0
+	case "$_RUNTIME_SOURCE_CHECK_INTERVAL" in
+	'' | *[!0-9]*) _RUNTIME_SOURCE_CHECK_INTERVAL=60 ;;
+	esac
+	[ "$_RUNTIME_SOURCE_CHECK_INTERVAL" -lt 1 ] && _RUNTIME_SOURCE_CHECK_INTERVAL=1
+	_elapsed=$((SECONDS - _RUNTIME_SOURCE_LAST_CHECK_SECONDS))
+	[ "$_elapsed" -ge "$_RUNTIME_SOURCE_CHECK_INTERVAL" ] || return 0
+	_RUNTIME_SOURCE_LAST_CHECK_SECONDS="$SECONDS"
 	current_head="$(git rev-parse HEAD 2>/dev/null || true)"
 	current_signature="$(_runtime_source_signature)"
 	[ -n "$current_signature" ] || return 0
@@ -214,6 +254,8 @@ _refresh_runtime_if_checkout_changed() {
 		_RUNTIME_SOURCE_SIGNATURE="$current_signature"
 		POLL_INTERVAL="${RADIO_WORKER_INTERVAL:-10}"
 		_SCHEDULER_INTERVAL_SEC="${RADIO_WORKER_SCHEDULER_INTERVAL:-300}"
+		_RUNTIME_SOURCE_CHECK_INTERVAL="${RADIO_WORKER_RUNTIME_SOURCE_CHECK_INTERVAL:-60}"
+		_STOP_POLL_SLICE_SEC="${RADIO_WORKER_STOP_POLL_SEC:-5}"
 		_log "runtime refresh complete (head=${current_head:0:12}, interval=${POLL_INTERVAL}s, scheduler_interval=${_SCHEDULER_INTERVAL_SEC}s)"
 	else
 		_log "WARNING: runtime refresh failed for checkout ${current_head:0:12}; keeping previous runtime"
@@ -263,7 +305,7 @@ echo $$ >"$PID_FILE"
 _start_pid_heartbeat
 
 # 初期 game_num
-_LAST_GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+_read_first_line_into _LAST_GAME_NUM "$GAME_COUNT_FILE" 0
 
 # === ワーカーループ ===
 # soren_loop や他の worker の状態は一切参照しない。
@@ -275,7 +317,7 @@ _run_iteration() {
 	_refresh_runtime_if_checkout_changed
 
 	local current_game_num score
-	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	_read_first_line_into current_game_num "$GAME_COUNT_FILE" 0
 
 	local _scheduler_ran_this_tick=0
 	if [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
@@ -288,26 +330,32 @@ _run_iteration() {
 
 	# 時刻ベース定期実行 (5 分ごと) — 同一 tick で新試合から既に実行済みならスキップ
 	local _now_ts _last_run=0
-	_now_ts=$(date +%s)
-	[ -f "$_LAST_SCHEDULER_RUN_FILE" ] && _last_run=$(cat "$_LAST_SCHEDULER_RUN_FILE" 2>/dev/null || echo 0)
+	_epoch_now_into _now_ts
+	_read_first_line_into _last_run "$_LAST_SCHEDULER_RUN_FILE" 0
 	if [ "$_scheduler_ran_this_tick" -eq 0 ] && [ $((_now_ts - _last_run)) -ge $_SCHEDULER_INTERVAL_SEC ]; then
 		_log "時刻ベースラジオ実行 ($((_now_ts - _last_run))s経過)"
 		echo "$_now_ts" >"$_LAST_SCHEDULER_RUN_FILE"
-		current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+		_read_first_line_into current_game_num "$GAME_COUNT_FILE" 0
 		score=$(_last_score 2>/dev/null || echo 0)
 		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>>"${AI_STDERR_LOG:-logs/ai_stderr.log}" || true
 	fi
 
-	# 手動トリガー消化
-	score=$(_last_score 2>/dev/null || echo 0)
-	process_external_audio_triggers "$current_game_num" "$score" 2>/dev/null || true
+	# 手動トリガーは空キューが通常。score は実際に .cmd がある時だけ
+	# process_external_audio_triggers 側で取得し、idle tick の tail fork を避ける。
+	process_external_audio_triggers "$current_game_num" "" 2>/dev/null || true
 
-	# sleep を 1 秒単位で分割 (tmp/stop を素早く拾うため)
-	local _sleep_remaining="$POLL_INTERVAL"
+	# tmp/stop の応答性は保ちつつ、sleep 1 を毎秒spawnしない。既定10秒pollなら
+	# 5秒×2回なので、待機用sleepは約60/min→12/minへ減る。
+	local _sleep_remaining="$POLL_INTERVAL" _sleep_slice="$_STOP_POLL_SLICE_SEC"
+	case "$_sleep_slice" in
+	'' | *[!0-9]*) _sleep_slice=5 ;;
+	esac
+	[ "$_sleep_slice" -lt 1 ] && _sleep_slice=1
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && return 0
-		sleep 1 || true
-		_sleep_remaining=$((_sleep_remaining - 1))
+		[ "$_sleep_remaining" -lt "$_sleep_slice" ] && _sleep_slice="$_sleep_remaining"
+		sleep "$_sleep_slice" || true
+		_sleep_remaining=$((_sleep_remaining - _sleep_slice))
 	done
 	return 0
 }
