@@ -41,8 +41,11 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
         status = STATUS.read_text(encoding="utf-8")
-        self.assertIn("_refresh_viewer_chat_monitor_if_changed", gen)
-        self.assertIn('"$source_file" -nt "$monitor_file"', gen)
+        self.assertIn("refresh_viewer_chat_monitor_if_changed", gen)
+        self.assertNotIn('"$source_file" -nt "$monitor_file"', gen)
+        render = gen.split("<<'PY'", 1)[1]
+        self.assertLess(render.index("refresh_viewer_chat_monitor_if_changed("),
+                        render.index("from status_dashboard import render_dashboard_text"))
         self.assertIn("SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1", gen)
         self.assertIn('"${SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH:-0}" != "1"', status)
         # OPS ChatObs is intentionally filtered from the unified output, so
