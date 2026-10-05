@@ -114,6 +114,68 @@ class StatusSnapshotTests(unittest.TestCase):
             self.assertEqual(value["stagnation_event"], "rollback wait")
             self.assertEqual(value["stagnation_age"], "1m")
 
+    def test_improve_state_and_monitor_are_batched(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            game = root / "game.json"
+            strategy = root / "strategy.py"
+            accumulated = root / "acc.json"
+            improve = root / "improve.json"
+            monitor = root / "monitor.json"
+            strategy.write_text(STRATEGY, encoding="utf-8")
+            improve.write_text(json.dumps({
+                "status": "running",
+                "pid": 123,
+                "strategy_hash_before": "abc def",
+                "phase": "review now",
+                "progress": 42,
+                "updated_at": 999,
+            }), encoding="utf-8")
+            monitor.write_text(json.dumps({
+                "status": "running",
+                "action": "state_activity_fresh",
+                "stale_sec": 7,
+            }), encoding="utf-8")
+            value = MODULE.build_snapshot(
+                game,
+                strategy,
+                accumulated,
+                improve_state_path=improve,
+                improve_monitor_path=monitor,
+                now=1000,
+            )
+            self.assertEqual(value["imp_status"], "running")
+            self.assertEqual(value["imp_pid"], 123)
+            self.assertEqual(value["imp_hash"], "abc def")
+            self.assertEqual(value["imp_phase"], "review now")
+            self.assertEqual(value["imp_progress"], 42)
+            self.assertEqual(value["imp_updated_at"], 999)
+            self.assertEqual(value["imp_monitor_status"], "running")
+            self.assertEqual(value["imp_monitor_action"], "state_activity_fresh")
+            self.assertEqual(value["imp_monitor_stale_sec"], 7)
+
+    def test_invalid_improve_state_fails_to_existing_defaults(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            strategy = root / "strategy.py"
+            improve = root / "improve.json"
+            monitor = root / "monitor.json"
+            strategy.write_text(STRATEGY, encoding="utf-8")
+            improve.write_text("{broken", encoding="utf-8")
+            monitor.write_text(json.dumps({"stale_sec": "bad"}), encoding="utf-8")
+            value = MODULE.build_snapshot(
+                root / "game.json",
+                strategy,
+                root / "acc.json",
+                improve_state_path=improve,
+                improve_monitor_path=monitor,
+            )
+            self.assertEqual(value["imp_status"], "idle")
+            self.assertEqual(value["imp_pid"], 0)
+            self.assertEqual(value["imp_progress"], 0)
+            self.assertEqual(value["imp_monitor_status"], "")
+            self.assertEqual(value["imp_monitor_stale_sec"], 0)
+
     def test_show_status_uses_single_snapshot_process(self):
         source = (ROOT / "show_status.sh").read_text(encoding="utf-8")
         self.assertIn("python3 lib/status_snapshot.py", source)
@@ -123,6 +185,9 @@ class StatusSnapshotTests(unittest.TestCase):
         self.assertNotIn("d=json.load(open('game_state.json'))", source)
         self.assertNotIn("rejected_count=$(python3", source)
         self.assertNotIn('python3 - "$TMP_STATE_DIR/stagnation_counter.json"', source)
+        self.assertNotIn("d=json.load(open('$TMP_STATE_DIR/improve_state.json'))", source)
+        self.assertNotIn("d=json.load(open('$TMP_STATE_DIR/improve_monitor_status.json'))", source)
+        self.assertIn('"$TMP_STATE_DIR/improve_state.json" "$TMP_STATE_DIR/improve_monitor_status.json"', source)
 
     def test_shell_output_quotes_values(self):
         text = MODULE.render_shell({
@@ -140,10 +205,22 @@ class StatusSnapshotTests(unittest.TestCase):
             "regression_streak": 8,
             "stagnation_event": "a b",
             "stagnation_age": "9m",
+            "imp_status": "running",
+            "imp_pid": 10,
+            "imp_hash": "h h",
+            "imp_phase": "phase x",
+            "imp_progress": 11,
+            "imp_updated_at": 12,
+            "imp_monitor_status": "watch",
+            "imp_monitor_action": "a b",
+            "imp_monitor_stale_sec": 13,
         })
         self.assertIn("game_state='a b'", text)
         self.assertIn("acc_scores='1 2'", text)
         self.assertIn("stagnation_event='a b'", text)
+        self.assertIn("imp_hash='h h'", text)
+        self.assertIn("imp_phase='phase x'", text)
+        self.assertIn("imp_monitor_action='a b'", text)
 
 
 if __name__ == "__main__":
