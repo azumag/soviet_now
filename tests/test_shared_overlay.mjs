@@ -164,6 +164,9 @@ class FakeOverlayFrame {
 
   getBoundingClientRect() {
     const number = (value) => Number.parseFloat(String(value || '0')) || 0;
+    if (String(this.style.display || '').toLowerCase() === 'none') {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    }
     return {
       left: number(this.style.left),
       top: number(this.style.top),
@@ -586,6 +589,31 @@ test('required frame readiness follows the visible direct-overlay buffer after f
     assert.equal(buffer.style.opacity, '1');
     assert.ok(buffer.contentDocument.getElementById('broadcast-overlay'));
   }
+});
+
+
+test('required frame readiness accepts only hidden or measured edge-cropped game-gap frames', async () => {
+  const page = new FakeInstallerPage();
+  const config = loadSharedOverlayConfig({}, 'linux');
+  await installDirectOverlay(page, config.direct);
+  await new Promise((resolve) => setImmediate(resolve));
+  const elementId = config.direct.surfaces.find((item) => item.key === 'broadcastGameGap').elementId;
+  const gap = page.document.getElementById(`${elementId}-buffer`);
+
+  assert.equal(gap.style.display, 'none');
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { display: 'block', left: '0px', top: '90px', width: '239px', height: '540px' });
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { left: '721px', width: '239px' });
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { left: '300px', width: '239px' });
+  await assert.rejects(waitForSharedOverlayFrames(page, config, { timeoutMs: 25 }));
+
+  Object.assign(gap.style, { left: '0px', width: '960px' });
+  await assert.rejects(waitForSharedOverlayFrames(page, config, { timeoutMs: 25 }));
 });
 
 
