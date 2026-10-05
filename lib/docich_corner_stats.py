@@ -687,7 +687,7 @@ def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
 
 
 def _hanjuku_gap(runtime, policy, now):
-    """Only a measured left projection of this fenced runtime may expose cards."""
+    """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
         state, _ = _bounded_state(runtime / 'presentation.json')
     except (OSError, ValueError, TypeError):
@@ -696,12 +696,14 @@ def _hanjuku_gap(runtime, policy, now):
     if state.get('status') != 'ready' or not isinstance(projection, dict):
         return None
     content = projection.get('content')
-    if (projection.get('align') != 'left' or projection.get('viewport') != [0, 90, 960, 540]
+    align = projection.get('align')
+    if (align not in ('left', 'right') or projection.get('viewport') != [0, 90, 960, 540]
             or not isinstance(content, list) or len(content) != 4
             or any(type(n) is not int for n in content)):
         return None
     x, y, w, h = content
-    if x != 0 or not (0 < w <= 960 and 0 < h <= 540) or y != (540-h)//2:
+    expected_x = 0 if align == 'left' else 960-w
+    if x != expected_x or not (0 < w <= 960 and 0 < h <= 540) or y != (540-h)//2:
         return None
     # A narrow gap cannot maintain 18px text with readable Japanese rows.
     if 960-w < 180:
@@ -721,7 +723,8 @@ def _hanjuku_gap(runtime, policy, now):
             hp = {'until': battle['hp_observed_at']+10, 'enemy': _hanjuku_name(battle.get('enemy'), each=24),
                   'ally': _hanjuku_name(battle.get('ally'), each=24),
                   'enemy_hp': values[0], 'ally_hp': values[1]}
-    return {'width': 960-w, 'left': w,
+    gap_left = w if align == 'left' else 0
+    return {'width': 960-w, 'left': gap_left, 'side': 'right' if align == 'left' else 'left',
             'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
             'hp': hp}
