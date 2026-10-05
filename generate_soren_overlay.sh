@@ -58,7 +58,7 @@ render_once() {
 	local ops_raw=""
 	# Unified overlay owns ChatObs on the STATS side. Its existing HTML Python
 	# process checks the producer's input watermark before rendering STATS.
-	ops_raw=$(SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
+	ops_raw=$(SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --raw-once 2>/dev/null || true)
 
 	# Render STATS in-process with the HTML builder. This preserves the exact
 	# status_dashboard.py code path while removing one Python interpreter startup
@@ -213,7 +213,7 @@ filtered_stats = filter_stats_for_unified(stats_raw)
 
 # fallback messages
 if not filtered_ops.strip():
-    filtered_ops = "ops: no output (show_status.sh --once returned empty)"
+    filtered_ops = "ops: no output (show_status.sh --raw-once returned empty)"
 if not filtered_stats.strip():
     filtered_stats = "stats: no output (status_dashboard.py returned empty)"
 
