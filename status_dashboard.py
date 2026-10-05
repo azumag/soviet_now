@@ -159,8 +159,9 @@ def fit_dashboard_lines(lines, width=W):
     # Bounded, sanitized projection records are machine-readable data for the
     # dedicated large-type cards, not terminal rows. Never truncate their names.
     prefixes = (
-        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白交戦HP:',
+        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+        '  出撃意図:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
