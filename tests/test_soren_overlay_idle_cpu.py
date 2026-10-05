@@ -35,6 +35,8 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertNotIn("SOREN_STATS_RAW=", gen)
         self.assertIn("from status_dashboard import render_dashboard_text", gen)
         self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", gen)
+        self.assertIn("except Exception:", gen)
+        self.assertIn('stats_raw = ""', gen)
 
     def test_unified_overlay_owns_viewer_chat_refresh(self):
         gen = GEN.read_text(encoding="utf-8")
