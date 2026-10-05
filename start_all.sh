@@ -177,6 +177,11 @@ _pid_alive() {
 	case "$pid" in
 	''|*[!0-9]*) return 1 ;;
 	esac
+	# Most poll probes succeed. Keep that builtin-only path in this shell;
+	# capture diagnostics only after failure to retain the EPERM fallback.
+	if kill -0 "$pid" >/dev/null 2>&1; then
+		return 0
+	fi
 	err=$( { kill -0 "$pid" >/dev/null; } 2>&1 ) && return 0
 	case "$err" in
 	*"operation not permitted"*|*"Operation not permitted"*)
