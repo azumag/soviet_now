@@ -1035,39 +1035,15 @@ END { printf "%s", block }
 		loop_pid=$(_activity_label "logs/soren_loop.log" "log")
 	fi
 
-	# --- ゲーム状態 ---
+	# --- ゲーム状態 + 蓄積ゲーム ---
+	# These values used to start five Python interpreters per refresh
+	# (game_state, strategy hash, and three accumulated-game reads). Batch the
+	# same read-only snapshot into one process while preserving shell variables.
 	local game_state="" game_score=0 game_pieces=0
-	if [[ -f game_state.json ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('game_state.json'))
-print('game_state=' + shlex.quote(str(d.get('state', '?'))))
-print(f'game_score={d.get(\"score\",0)}')
-print(f'game_pieces={len(d.get(\"pieces\",[]))}')
-" 2>/dev/null)
-	fi
-
-	# --- 蓄積ゲーム ---
+	local current_hash_for_acc=""
 	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
-	if [[ -f $TMP_STATE_DIR/accumulated_games.json ]]; then
-		local current_hash_for_acc=""
-		current_hash_for_acc=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "")
-		acc_count=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('count',0) if (h and h == '$current_hash_for_acc') else 0)" 2>/dev/null)
-		acc_scores=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('scores','') if (h and h == '$current_hash_for_acc') else '')" 2>/dev/null)
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/accumulated_games.json'))
-h=d.get('hash','')
-if h and h == '$current_hash_for_acc':
-    print('acc_russia_count=' + shlex.quote(str(int(d.get('russia_count', 0) or 0))))
-    print('acc_soviet=' + shlex.quote('true' if d.get('soviet', False) else 'false'))
-    print('acc_max_type=' + shlex.quote(str(int(d.get('best_max_type', 0) or 0))))
-else:
-    print('acc_russia_count=0')
-    print('acc_soviet=false')
-    print('acc_max_type=0')
-" 2>/dev/null)
-	fi
+	eval "$(python3 lib/status_snapshot.py \
+		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" 2>/dev/null || true)"
 
 	# --- リジェクト履歴 ---
 	local rejected_count=0
