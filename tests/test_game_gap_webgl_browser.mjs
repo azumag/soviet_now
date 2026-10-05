@@ -98,14 +98,15 @@ async function contract(headed) {
         fs.writeFileSync(path.join(artifactDir, `${headed ? 'xvfb' : 'headless'}-${label}.json`),
           JSON.stringify(await geometry(), null, 2));
       }
-      for (const point of [[50, 100], [350, 350], [700, 600]]) {
+      const gamePoints = gap ? [[350, 100], [700, 350], [900, 600]] : [[50, 100], [350, 350], [700, 600]];
+      for (const point of gamePoints) {
         const actual = at(...point);
         assert.ok(actual.every((v, i) => Math.abs(v - expectedGame[i]) <= 2), `${label}: game ${point}: ${actual}`);
       }
       assert.deepEqual(at(400, 40), [32, 160, 64], `${label}: top rail`);
       assert.deepEqual(at(1100, 300), [208, 96, 32], `${label}: sidebar`);
-      if (gap) assert.notDeepEqual(at(850, 500), expectedGame, `${label}: card must render in padding`);
-      else assert.deepEqual(at(850, 500), expectedGame, `${label}: cleared padding`);
+      if (gap) assert.notDeepEqual(at(100, 500), expectedGame, `${label}: card must render in padding`);
+      else assert.deepEqual(at(100, 500), expectedGame, `${label}: cleared padding`);
     }
     const waitHidden = () => page.waitForFunction(({id, marker}) => [id, `${id}-buffer`].some(id =>
       document.getElementById(id)?.contentWindow?.__sorenBroadcastOverlayHealth?.showStatusGLineCount === marker)
@@ -118,10 +119,10 @@ async function contract(headed) {
         && e.contentWindow?.__sorenBroadcastOverlayHealth?.showStatusGLineCount === marker
         && e.contentDocument?.getElementById('hanjuku-gap')?.innerText.includes('観測');
     }), {id, marker});
-    const setGap = (left = 721) => {
+    const setGap = (width = 239) => {
       marker++;
       text = `SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第2話 / 所持金 123G\n`
-        + `投影余白: x=${left} w=${960-left} until=${now+30}\n余白占領記録: アルマムーン / ナキューメラ\n`
+        + `投影余白: side=left x=0 w=${width} until=${now+30}\n余白占領記録: アルマムーン / ナキューメラ\n`
         + `余白駐留: until=${now+30} アルマムーン=将軍その一/将軍その二/将軍その三`;
     };
     await installDirectOverlay(page, config);
@@ -132,7 +133,7 @@ async function contract(headed) {
     const startFrame = await page.evaluate(() => window.fixtureFrame);
     setGap(); await waitCard();
     let visible = (await frames()).filter(f => f.visible);
-    assert.equal(visible.length, 1); assert.deepEqual(visible[0].box, [721, 90, 239, 540]);
+    assert.equal(visible.length, 1); assert.deepEqual(visible[0].box, [0, 90, 239, 540]);
     assert.match(visible[0].text, /将軍その一/); await pixels('card', true);
     const oldActive = visible[0].id;
     version++;
@@ -141,23 +142,23 @@ async function contract(headed) {
         && getComputedStyle(e).display !== 'none';
     }), {id, oldActive});
     visible = (await frames()).filter(f => f.visible);
-    assert.equal(visible.length, 1); assert.deepEqual(visible[0].box, [721, 90, 239, 540]);
+    assert.equal(visible.length, 1); assert.deepEqual(visible[0].box, [0, 90, 239, 540]);
     await pixels('buffer-swap', true);
     await page.evaluate(stamp => window.fixtureNow = stamp, now + 31);
     await waitHidden(); await pixels('expired');
     await page.evaluate(stamp => window.fixtureNow = stamp, now);
     text = 'SOREN/CORNER: RETRO / another-game / 進行中'; marker++; version++;
     await waitHidden(); await pixels('other-game');
-    setGap(720); await waitCard();
+    setGap(240); await waitCard();
     visible = (await frames()).filter(f => f.visible);
-    assert.deepEqual(visible[0].box, [720, 90, 240, 540]); await pixels('reshown', true);
+    assert.deepEqual(visible[0].box, [0, 90, 240, 540]); await pixels('reshown', true);
     text = 'SOREN/CORNER: SOREN / sorengame / 進行中'; marker++; await waitHidden(); await pixels('restored');
     // The single inline frame has the same hide/crop/reshow contract.
     await page.evaluate(id => {document.getElementById(id)?.remove();document.getElementById(`${id}-buffer`)?.remove();}, id);
     await installInlineDirectBroadcastOverlay(page, config, {watch: false});
     await waitHidden(); await pixels('inline-empty');
     setGap(); await waitCard();
-    assert.deepEqual((await frames())[0].box, [721, 90, 239, 540]); await pixels('inline-card', true);
+    assert.deepEqual((await frames())[0].box, [0, 90, 239, 540]); await pixels('inline-card', true);
     text = 'SOREN/CORNER: SOREN / sorengame / 進行中'; marker++; await waitHidden(); await pixels('inline-restored');
     assert.ok(await page.evaluate(start => window.fixtureFrame > start, startFrame));
     assert.equal(await page.evaluate(() => window.fixtureSession), gameSession);
