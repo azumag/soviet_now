@@ -427,7 +427,17 @@ class HanjukuStatusTest(unittest.TestCase):
         bot['policy'].update(captured=names, tick=100,
             garrison={'アルマムーン':['長い将軍の名前です','ゼウス'], '古い城':['どうし']},
             garrison_observed_at={'アルマムーン':now-5,'古い城':now-31},
-            battle=dict(enemy='シェーブル',ally='どうし',enemy_hp=55,ally_hp=70,hp_observed_at=now-3))
+            battle=dict(
+                enemy='シェーブル', ally='どうし', enemy_hp=55, ally_hp=70,
+                hp_observed_at=now-3, enemy_soldiers=4, ally_soldiers=7,
+                card_soldiers_current=True, side='attack', castle='ナキューメラ',
+                step='J3', strategy_variant='retry_with_opening_cards',
+                deviation_reason='敵の卵使用を避けるため、致死確認できる切り札を優先',
+                planned_cards=['ゼンマイン','クースカン'],
+                cards_used=['ゼンマイン'], cards_selected=['クースカン'],
+                card_flow={'card':'クースカン','stage':'menu'},
+                okunote_egg_preempt={'stage':'selected','exhausted':False},
+                egg_battle=False))
         _write_json(self.runtime / 'hanjuku_bot.json',bot)
         value=self.snapshot()['hanjuku']; gap=value['gap']
         self.assertEqual((gap['left'],gap['width'],gap['side']),(0,239,'left'))
@@ -435,9 +445,24 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual([g['castle'] for g in gap['garrison']],['アルマムーン'])
         self.assertAlmostEqual(gap['garrison'][0]['until'],now+25)
         self.assertAlmostEqual(gap['hp']['until'],now+7)
+        battle=gap['battle']
+        self.assertEqual((battle['enemy_soldiers'],battle['ally_soldiers']),(4,7))
+        self.assertEqual((battle['side'],battle['castle'],battle['step']),
+                         ('attack','ナキューメラ','J3'))
+        self.assertEqual(battle['planned_cards'],['ゼンマイン','クースカン'])
+        self.assertEqual(battle['used_cards'],['ゼンマイン'])
+        self.assertEqual((battle['card'],battle['card_stage']),('クースカン','menu'))
+        self.assertEqual(battle['egg_guard_stage'],'selected')
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
+        self.assertIn('余白交戦兵数:',text)
+        self.assertIn('敵 4 / 我 7',text)
+        self.assertIn('攻撃 ナキューメラ / 段階 J3 / 方針 retry_with_opening_cards',text)
+        self.assertIn('予定 ゼンマイン・クースカン / 使用 ゼンマイン',text)
+        self.assertIn('現在 クースカン(menu)',text)
+        self.assertIn('敵の卵使用を避けるため、致死確認できる切り札を優先',text)
+        self.assertIn('奥の手選択済み',text)
         # Projection failure, mismatched geometry, narrow gap and old generations
         # must never reserve an area over a different or unmeasured game plane.
         for changed in [dict(status='presentation_failed',projection=projection),
@@ -458,7 +483,9 @@ class HanjukuStatusTest(unittest.TestCase):
                 battle=dict(enemy='敵',ally='我',enemy_hp=10,ally_hp=20,hp_observed_at=stamp))
             _write_json(self.runtime / 'hanjuku_bot.json',bot)
             gap=self.snapshot()['hanjuku']['gap']
-            self.assertEqual(gap['garrison'],[]); self.assertIsNone(gap['hp'])
+            self.assertEqual(gap['garrison'],[])
+            self.assertIsNone(gap['hp'])
+            self.assertIsNone(gap['battle'])
 
     def test_cached_observations_render_without_score_inference(self):
         corner = self.snapshot()
@@ -555,7 +582,17 @@ class HanjukuStatusTest(unittest.TestCase):
             garrison=[{'castle': esc + 'X', 'generals': ['\x07bell', esc + 'OK']}],
             marching=[{'general': esc + 'A', 'target': esc + '[2JB'}],
             eggs=[{'general': esc + 'E', 'uses': 2}],
-            enemy=esc + 'EN', ally=esc + 'AL', enemy_hp=5, ally_hp=6)
+            enemy=esc + 'EN', ally=esc + 'AL', enemy_hp=5, ally_hp=6,
+            gap={'left':0,'width':239,'side':'left','until':9999999999.0,
+                 'captured_names':[],'garrison':[],'marching':[],'hp':None,
+                 'battle':{'until':9999999999.0,'side':'attack','castle':esc+'CASTLE',
+                           'step':esc+'STEP','variant':esc+'VAR',
+                           'deviation':esc+'DECISION\n'*10,
+                           'planned_cards':[esc+'CARD'],'used_cards':[],'selected_cards':[],
+                           'card':esc+'NOW','card_stage':esc+'menu',
+                           'egg_battle':True,'egg_guard_stage':'selected',
+                           'egg_guard_exhausted':False,
+                           'enemy_soldiers':4,'ally_soldiers':7}})
         text = '\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value)))
         # '\n' is the card's own line separator, so check per line instead.
         for fragment in ('\x1b', '\x07', '\r', '[31m', '[2J', '[1m', '[9m'):
