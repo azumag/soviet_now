@@ -163,7 +163,7 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertIn("Deployed: 3000", rendered)
         self.assertIn("P/L: cum=+115 unreal=-5.5", rendered)
         self.assertIn("Realized: today=+20 all=+120.5", rendered)
-        self.assertIn("Equity: +10115 / valued=1/1 / age=1s", rendered)
+        self.assertIn("Equity: 10115 / valued=1/1 / age=1s", rendered)
         self.assertIn("Signals: candidate=3 selected=1 rejected=2", rendered)
         self.assertIn("Strategy: momentum-v1 / relative-value-v1", rendered)
         self.assertIn("Rejected: eth_jpy:capital_limit", rendered)
