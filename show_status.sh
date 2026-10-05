@@ -1822,7 +1822,10 @@ PY
 
 		# --- 視聴者チャット観測 ---
 		local viewer_chat_label="none"
-		if [[ -x ./viewer_chat_monitor.sh ]]; then
+		# Unified overlay refreshes viewer_chat_monitor.json only when the source
+		# history changes, and owns ChatObs on the STATS side. Avoid rescanning
+		# the same history here for an OPS line that will be filtered out.
+		if [[ "${SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH:-0}" != "1" && -x ./viewer_chat_monitor.sh ]]; then
 			viewer_chat_label=$(./viewer_chat_monitor.sh line 2>/dev/null || echo "none")
 			viewer_chat_label=$(_truncate_display_width_keep_tail "$viewer_chat_label" 48)
 		fi

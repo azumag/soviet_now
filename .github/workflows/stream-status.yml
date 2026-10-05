@@ -16,6 +16,8 @@ on:
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'tests/test_soren_overlay_viewer_refresh.sh'
+      - 'tests/test_soren_overlay_idle_cpu.py'
       - 'generate_show_status_overlay.sh'
       - 'lib/overlay_dashboard_cards.py'
       - 'tests/test_overlay_dashboard_cards.py'
@@ -73,6 +75,7 @@ jobs:
           tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
           tests.test_country_stage_names tests.test_score_timeline
           tests.test_docich_corner_stats tests.test_overlay_dashboard_cards
+          tests.test_soren_overlay_idle_cpu
       - run: python3 -m unittest tests.test_cpu_idle_paths
       - run: perl -c lib/status_ai_output_filter.pl
       - run: python3 -m py_compile status_dashboard.py
@@ -83,4 +86,6 @@ jobs:
       - run: bash -n direct_stream_soak.sh
       - run: bash -n generate_status_overlay.sh
       - run: bash -n generate_show_status_overlay.sh
+      - run: bash tests/test_soren_overlay_viewer_refresh.sh
       - run: bash -n generate_soren_overlay.sh
+      - run: bash -n tests/test_soren_overlay_viewer_refresh.sh
