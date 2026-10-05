@@ -122,6 +122,17 @@ CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 
+# Read a single-line state file without spawning zsh command substitutions or
+# external cat processes. Callers read the result from REPLY.
+_read_first_line() {
+	local path="$1" fallback="${2:-}"
+	REPLY="$fallback"
+	if [[ -r "$path" ]]; then
+		IFS= read -r REPLY < "$path" || true
+		[[ -n "$REPLY" ]] || REPLY="$fallback"
+	fi
+}
+
 _config_int_default() {
 	local name="$1" fallback="$2" value=""
 	value=$(sed -nE "s/^${name}=\\\"?([0-9]+)\\\"?.*/\\1/p" core/config.sh 2>/dev/null | tail -n 1)
@@ -892,7 +903,7 @@ _maybe_run_fullscreen_random() {
 	now=$(date +%s)
 	if [[ -f "$FULLSCREEN_LAST_FILE" ]]; then
 		local last
-		last=$(cat "$FULLSCREEN_LAST_FILE" 2>/dev/null)
+		_read_first_line "$FULLSCREEN_LAST_FILE"; last="$REPLY"
 		case "$last" in
 		''|*[!0-9]*) ;;
 		*)
@@ -1008,7 +1019,7 @@ END { printf "%s", block }
 	# --- soren_loop 状態 ---
 	local loop_running=false loop_pid=""
 	if [[ -f tmp/.soren_loop.lock/pid ]]; then
-		loop_pid=$(cat tmp/.soren_loop.lock/pid 2>/dev/null)
+		_read_first_line tmp/.soren_loop.lock/pid; loop_pid="$REPLY"
 		if [[ -n "$loop_pid" ]] && _pid_exists "$loop_pid"; then
 			loop_running=true
 		fi
@@ -2071,7 +2082,7 @@ PY
 	# --- say (TTS) 状態 ---
 	local say_running=false say_pid=""
 	if [[ -f tmp/.say_queue/pid ]]; then
-		say_pid=$(cat tmp/.say_queue/pid 2>/dev/null)
+		_read_first_line tmp/.say_queue/pid; say_pid="$REPLY"
 		if [[ -n "$say_pid" ]] && _pid_exists "$say_pid"; then
 			say_running=true
 		fi
@@ -2091,7 +2102,7 @@ PY
 		say_lock_present=true
 		local say_lock_owner_raw="" say_lock_hb="" say_lock_age_sec=0
 		local say_lock_stale_sec=180
-		say_lock_owner_raw=$(cat tmp/.say_queue/.lock/owner_pid 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/.lock/owner_pid; say_lock_owner_raw="$REPLY"
 		say_lock_owner_pid="${say_lock_owner_raw%%:*}"
 		case "$say_lock_owner_pid" in
 		''|*[!0-9]*) say_lock_owner_pid="" ;;
@@ -2099,7 +2110,7 @@ PY
 		if [[ -n "$say_lock_owner_pid" ]] && _pid_exists "$say_lock_owner_pid"; then
 			say_lock_owner_alive=true
 		fi
-		say_lock_hb=$(cat tmp/.say_queue/.lock/heartbeat 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/.lock/heartbeat; say_lock_hb="$REPLY"
 		case "$say_lock_hb" in
 		''|*[!0-9]*)
 			say_lock_hb=$(stat -f %m tmp/.say_queue/.lock 2>/dev/null) \
@@ -2126,7 +2137,7 @@ PY
 	local say_source_is_radio=false say_source_is_comment=false
 	if [[ -f tmp/.say_queue/current_source ]]; then
 		local cs_line="" cs_owner="" cs_ts=""
-		cs_line=$(cat tmp/.say_queue/current_source 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/current_source; cs_line="$REPLY"
 		IFS='|' read -r cs_owner say_phase say_source cs_ts say_label _ <<<"$cs_line"
 		case "$cs_ts" in
 		''|*[!0-9]*) ;;
@@ -2194,7 +2205,7 @@ PY
 	local radio_status="idle" radio_corner="" radio_elapsed=""
 	if [[ -f $TMP_STATE_DIR/.radio_state ]]; then
 		local radio_line radio_mode radio_ts radio_owner_pid
-		radio_line=$(cat $TMP_STATE_DIR/.radio_state 2>/dev/null)
+		_read_first_line "$TMP_STATE_DIR/.radio_state"; radio_line="$REPLY"
 		IFS=':' read -r radio_mode radio_corner radio_ts radio_owner_pid _ <<<"$radio_line"
 		if [[ -n "$radio_ts" ]]; then
 			local age=$(( $(date +%s) - radio_ts ))
@@ -2265,14 +2276,14 @@ PY
 	# コメント生成プロセス (PIDファイル + 状態ファイル)
 	local comment_gen_running=false comment_gen_pid="" comment_gen_phase=""
 	if [[ -f tmp/.twitch_chat/comment_gen.pid ]]; then
-		comment_gen_pid=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null)
+		_read_first_line tmp/.twitch_chat/comment_gen.pid; comment_gen_pid="$REPLY"
 		comment_gen_pid=${comment_gen_pid%%|*}
 		if [[ -n "$comment_gen_pid" ]] && _pid_exists "$comment_gen_pid"; then
 			comment_gen_running=true
 		fi
 	fi
 	if [[ -f $TMP_STATE_DIR/.comment_gen_state ]]; then
-		local cg_line=$(cat $TMP_STATE_DIR/.comment_gen_state 2>/dev/null)
+		local cg_line=""; _read_first_line "$TMP_STATE_DIR/.comment_gen_state"; cg_line="$REPLY"
 		comment_gen_phase="${cg_line%%:*}"
 		local cg_ts=${cg_line##*:}
 		if ! $comment_gen_running && [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
@@ -2289,7 +2300,7 @@ PY
 	# --- Worker プロセス状態 ---
 	local chat_worker_running=false chat_worker_pid=""
 	if [[ -f tmp/state/chat_worker.pid ]]; then
-		chat_worker_pid=$(cat tmp/state/chat_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/chat_worker.pid; chat_worker_pid="$REPLY"
 		if [[ -n "$chat_worker_pid" ]] && _pid_exists "$chat_worker_pid"; then
 			chat_worker_running=true
 		fi
@@ -2309,7 +2320,7 @@ PY
 	1 | true | TRUE | yes | YES) youtube_worker_enabled=true ;;
 	esac
 	if [[ -f tmp/state/youtube_worker.pid ]]; then
-		youtube_worker_pid=$(cat tmp/state/youtube_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/youtube_worker.pid; youtube_worker_pid="$REPLY"
 		if [[ -n "$youtube_worker_pid" ]] && _pid_exists "$youtube_worker_pid"; then
 			youtube_worker_running=true
 		fi
@@ -2329,7 +2340,7 @@ PY
 	1 | true | TRUE | yes | YES) kick_worker_enabled=true ;;
 	esac
 	if [[ -f tmp/state/kick_worker.pid ]]; then
-		kick_worker_pid=$(cat tmp/state/kick_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/kick_worker.pid; kick_worker_pid="$REPLY"
 		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
 			kick_worker_running=true
 		fi
@@ -2346,7 +2357,7 @@ PY
 	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
-		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/audio_worker.pid; audio_worker_pid="$REPLY"
 		if [[ -n "$audio_worker_pid" ]] && _pid_exists "$audio_worker_pid"; then
 			audio_worker_running=true
 		fi
@@ -2363,7 +2374,7 @@ PY
 	fi
 	local radio_worker_running=false radio_worker_pid=""
 	if [[ -f tmp/state/radio_worker.pid ]]; then
-		radio_worker_pid=$(cat tmp/state/radio_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/radio_worker.pid; radio_worker_pid="$REPLY"
 		if [[ -n "$radio_worker_pid" ]] && _pid_exists "$radio_worker_pid"; then
 			radio_worker_running=true
 		fi
@@ -2390,7 +2401,7 @@ PY
 		prediction_worker_paused=true
 	fi
 	if [[ -f tmp/state/prediction_worker.pid ]]; then
-		prediction_worker_pid=$(cat tmp/state/prediction_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/prediction_worker.pid; prediction_worker_pid="$REPLY"
 		if [[ -n "$prediction_worker_pid" ]] && _pid_exists "$prediction_worker_pid"; then
 			prediction_worker_running=true
 		fi
@@ -2406,7 +2417,7 @@ PY
 		poll_worker_paused=true
 	fi
 	if [[ -f tmp/state/poll_worker.pid ]]; then
-		poll_worker_pid=$(cat tmp/state/poll_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/poll_worker.pid; poll_worker_pid="$REPLY"
 		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
 			poll_worker_running=true
 		fi
@@ -2419,7 +2430,7 @@ PY
 	fi
 	local improve_daemon_running=false improve_daemon_pid=""
 	if [[ -f tmp/state/improve_daemon.pid ]]; then
-		improve_daemon_pid=$(cat tmp/state/improve_daemon.pid 2>/dev/null)
+		_read_first_line tmp/state/improve_daemon.pid; improve_daemon_pid="$REPLY"
 		if [[ -n "$improve_daemon_pid" ]] && _pid_exists "$improve_daemon_pid"; then
 			improve_daemon_running=true
 		fi
@@ -2485,7 +2496,7 @@ PY
 		twitch_running=true
 		twitch_pid="$chat_worker_pid"
 	elif [[ -f tmp/.twitch_chat/daemon.pid ]]; then
-		twitch_pid=$(cat tmp/.twitch_chat/daemon.pid 2>/dev/null)
+		_read_first_line tmp/.twitch_chat/daemon.pid; twitch_pid="$REPLY"
 		if [[ -n "$twitch_pid" ]] && _pid_exists "$twitch_pid"; then
 			twitch_running=true
 		fi
