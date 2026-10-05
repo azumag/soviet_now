@@ -34,19 +34,24 @@ log_file="tmp/debug/soren_overlay.log"
 tmux_session="soren_soren_overlay"
 
 # Parent directories are stable for the lifetime of the watcher. Creating them
-# on every 2-second render used to spawn dirname+mkdir repeatedly.
-_overlay_paths=(
-	"$out_file"
-	"${SHOW_STATUS_OVERLAY_HTML_FILE:-tmp/state/show_status_overlay.html}"
-	"${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}"
-)
-_overlay_dirs=()
-for _overlay_path in "${_overlay_paths[@]}"; do
-	_overlay_dir="${_overlay_path%/*}"
-	[ "$_overlay_dir" = "$_overlay_path" ] && _overlay_dir="."
-	_overlay_dirs+=("$_overlay_dir")
-done
-mkdir -p "${_overlay_dirs[@]}"
+# on every 2-second render used to spawn dirname+mkdir repeatedly. Keep this
+# lazy so "stop" remains side-effect free.
+_OVERLAY_DIRS_READY=0
+_ensure_overlay_dirs() {
+	[ "$_OVERLAY_DIRS_READY" -eq 1 ] && return 0
+	local _overlay_path _overlay_dir
+	local -a _overlay_dirs=()
+	for _overlay_path in \
+		"$out_file" \
+		"${SHOW_STATUS_OVERLAY_HTML_FILE:-tmp/state/show_status_overlay.html}" \
+		"${STATUS_OVERLAY_HTML_FILE:-tmp/state/status_overlay.html}"; do
+		_overlay_dir="${_overlay_path%/*}"
+		[ "$_overlay_dir" = "$_overlay_path" ] && _overlay_dir="."
+		_overlay_dirs+=("$_overlay_dir")
+	done
+	mkdir -p "${_overlay_dirs[@]}"
+	_OVERLAY_DIRS_READY=1
+}
 
 _refresh_viewer_chat_monitor_if_changed() {
 	local source_file="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}"
@@ -58,6 +63,7 @@ _refresh_viewer_chat_monitor_if_changed() {
 }
 
 render_once() {
+	_ensure_overlay_dirs
 	local ops_raw="" stats_raw=""
 	# Unified overlay owns ChatObs on the STATS side. Refresh its producer only
 	# when the chat history actually changed, then keep show_status from doing
