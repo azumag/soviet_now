@@ -313,6 +313,7 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
         return {"status": "unavailable", "fills": [], "positions": {}}
 
     moment = time.time() if now is None else float(now)
+    eligible_symbols = _paper_tokens(value.get("eligible_symbols"), limit=32)
     raw_fills = value.get("recent_fills")
     fills: list[dict[str, object]] = []
     if isinstance(raw_fills, list):
@@ -356,6 +357,12 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
         signal["candidate_reason_codes"] = _paper_tokens(
             raw_signal.get("candidate_reason_codes"), limit=4
         )
+        signal["candidate_symbols"] = _paper_tokens(
+            raw_signal.get("candidate_symbols"), limit=32
+        )
+        signal["selected_symbols"] = _paper_tokens(
+            raw_signal.get("selected_symbols"), limit=32
+        )
 
     skipped: list[dict[str, str]] = []
     raw_skipped = value.get("skipped_decisions")
@@ -376,6 +383,29 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
             {"symbol": "", "side": "unknown", "reason_code": reason}
             for reason in _paper_tokens(value.get("skipped_reason_codes"), limit=5)
         ]
+
+    candidate_symbols = set(signal.get("candidate_symbols") or [])
+    selected_symbols = set(signal.get("selected_symbols") or [])
+    rejected_by_symbol = {
+        item["symbol"]: item["reason_code"]
+        for item in skipped
+        if item.get("symbol") and item.get("reason_code")
+    }
+    symbol_states: list[dict[str, str]] = []
+    for symbol in sorted(set(eligible_symbols)):
+        if symbol in rejected_by_symbol:
+            state = "rejected_after_signal"
+            reason = rejected_by_symbol[symbol]
+        elif symbol in selected_symbols:
+            state = "selected"
+            reason = ""
+        elif symbol in candidate_symbols:
+            state = "candidate"
+            reason = ""
+        else:
+            state = "no_signal"
+            reason = ""
+        symbol_states.append({"symbol": symbol, "state": state, "reason_code": reason})
 
     worker: dict[str, object] = {}
     raw_worker = value.get("worker_summary")
@@ -475,6 +505,7 @@ def _paper_snapshot(root: Path, *, now: float | None = None) -> dict[str, object
         "heartbeat_age": _paper_age(moment, heartbeat_at),
         "market_count": _int_value(value.get("market_count")),
         "signal": signal,
+        "symbol_states": symbol_states,
         "skipped": skipped,
         "worker": worker,
         "freshness": {"counts": freshness_counts, "issues": freshness_issues},

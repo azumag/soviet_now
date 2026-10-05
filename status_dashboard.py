@@ -3577,6 +3577,9 @@ def render_docich_corner_stats(corner):
         fills = paper.get("fills") if isinstance(paper.get("fills"), list) else []
         positions = paper.get("positions") if isinstance(paper.get("positions"), dict) else {}
         signal = paper.get("signal") if isinstance(paper.get("signal"), dict) else {}
+        symbol_states = (
+            paper.get("symbol_states") if isinstance(paper.get("symbol_states"), list) else []
+        )
         skipped = paper.get("skipped") if isinstance(paper.get("skipped"), list) else []
         worker_summary = paper.get("worker") if isinstance(paper.get("worker"), dict) else {}
         freshness = paper.get("freshness") if isinstance(paper.get("freshness"), dict) else {}
@@ -3657,6 +3660,24 @@ def render_docich_corner_stats(corner):
                 + _paper_count(signal, "rejected_count")
             ),
         ]
+        state_labels = {
+            "no_signal": "no signal",
+            "candidate": "candidate",
+            "selected": "SELECTED",
+            "rejected_after_signal": "REJECTED",
+        }
+        for item in symbol_states[:4]:
+            if not isinstance(item, dict):
+                continue
+            symbol = _corner_short(item.get("symbol"), "?", 12)
+            state_key = str(item.get("state") or "unknown")
+            state_text = state_labels.get(state_key, _corner_short(state_key, "unknown", 12))
+            reason = _corner_short(item.get("reason_code"), "", 20)
+            detail = f"{state_text}:{reason}" if reason else state_text
+            lines.append("  " + _corner_short(f"{symbol} -> {detail}", limit=49))
+        if len(symbol_states) > 4:
+            lines.append(f"  +{len(symbol_states) - 4} markets")
+
         strategies = signal.get("strategy_ids") if isinstance(signal.get("strategy_ids"), list) else []
         if strategies:
             lines.append("  Strategy: " + _corner_short(" / ".join(strategies), limit=43))

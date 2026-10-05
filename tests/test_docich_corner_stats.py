@@ -108,13 +108,16 @@ class DocichCornerStatsTest(unittest.TestCase):
                 ],
                 "snapshot_generated_at": 190,
                 "heartbeat_at": 198,
-                "market_count": 2,
+                "market_count": 4,
+                "eligible_symbols": ["btc_jpy", "eth_jpy", "sol_jpy", "xrp_jpy"],
                 "signal_summary": {
                     "candidate_count": 3,
                     "selected_count": 1,
                     "rejected_count": 2,
                     "strategy_ids": ["momentum-v1", "relative-value-v1"],
                     "candidate_reason_codes": ["momentum_breakout"],
+                    "candidate_symbols": ["btc_jpy", "eth_jpy", "sol_jpy"],
+                    "selected_symbols": ["btc_jpy"],
                     "private_secret": "DO_NOT_SHOW",
                 },
                 "skipped_decisions": [
@@ -165,6 +168,10 @@ class DocichCornerStatsTest(unittest.TestCase):
         self.assertIn("Realized: today=+20 all=+120.5", rendered)
         self.assertIn("Equity: 10115 / valued=1/1 / age=1s", rendered)
         self.assertIn("Signals: candidate=3 selected=1 rejected=2", rendered)
+        self.assertIn("btc_jpy -> SELECTED", rendered)
+        self.assertIn("eth_jpy -> REJECTED:capital_limit", rendered)
+        self.assertIn("sol_jpy -> candidate", rendered)
+        self.assertIn("xrp_jpy -> no signal", rendered)
         self.assertIn("Strategy: momentum-v1 / relative-value-v1", rendered)
         self.assertIn("Rejected: eth_jpy:capital_limit", rendered)
         self.assertIn("Worker: running cycle=42", rendered)
