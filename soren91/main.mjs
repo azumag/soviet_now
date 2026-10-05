@@ -166,9 +166,16 @@ async function captureGameScreenshot(page, path, options = {}) {
 
 async function inputCanvasBox(page, calibration, frame) {
   if (frame) {
-    return canvasIO.validateInput(page, frame, calibration, {
-      maxAgeMs: boundedMs(process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS, 4000, 500, 10000),
-    });
+    // Leave maxAgeMs unset by default so realtime_io can scale the freshness
+    // budget from this frame's measured remote-capture cost. A fixed 4s budget
+    // made captures slower than ~4s fail immediately before input, which then
+    // triggered the exponential error backoff and stretched drop cadence into
+    // tens of seconds. Operators can still force a bounded override explicitly.
+    const configuredMaxAgeMs = process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS;
+    const options = configuredMaxAgeMs != null && String(configuredMaxAgeMs).trim() !== ''
+      ? { maxAgeMs: boundedMs(configuredMaxAgeMs, 4000, 500, 10000) }
+      : {};
+    return canvasIO.validateInput(page, frame, calibration, options);
   }
   const canvas = await page.$('canvas');
   if (!canvas) throw new Error('Canvas not found');
