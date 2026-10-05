@@ -88,7 +88,12 @@ from status_dashboard import render_dashboard_text
 
 out_file, width, height = sys.argv[1:4]
 ops_raw = normalize_overlay_text(os.environ.get("SOREN_OPS_RAW", ""))
-stats_raw = normalize_overlay_text(render_dashboard_text())
+try:
+    stats_raw = normalize_overlay_text(render_dashboard_text())
+except Exception:
+    # Preserve the old subprocess contract: a dashboard failure must not stop
+    # OPS/overlay HTML generation; the existing fallback card renders instead.
+    stats_raw = ""
 
 csi_re = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 ansi_strip_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
