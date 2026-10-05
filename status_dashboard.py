@@ -440,7 +440,7 @@ def displayed_ab_arm(ab):
     """Return the already-resolved A/B arm when the caller has cached it.
 
     ``status_dashboard.py`` renders several panels in one pass.  The live arm
-    is resolved from the game snapshot once in ``main`` and shared with those
+    is resolved from the game snapshot once in ``render_dashboard_text`` and shared with those
     panels so a slow or failing hash subprocess cannot make the panels disagree.
     Direct callers (including tests) still resolve it through ``played_ab_arm``.
     """
