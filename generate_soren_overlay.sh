@@ -64,15 +64,17 @@ _refresh_viewer_chat_monitor_if_changed() {
 
 render_once() {
 	_ensure_overlay_dirs
-	local ops_raw="" stats_raw=""
+	local ops_raw=""
 	# Unified overlay owns ChatObs on the STATS side. Refresh its producer only
 	# when the chat history actually changed, then keep show_status from doing
 	# the same Python scan again for an OPS line that is filtered out below.
 	_refresh_viewer_chat_monitor_if_changed
 	ops_raw=$(SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH=1 SHOW_STATUS_NO_FLICKER=1 ./show_status.sh --once 2>/dev/null || true)
-	stats_raw=$(HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 python3 status_dashboard.py 2>/dev/null || true)
 
-	SOREN_OPS_RAW="$ops_raw" SOREN_STATS_RAW="$stats_raw" python3 - "$out_file" "$width" "$height" <<'PY'
+	# Render STATS in-process with the HTML builder. This preserves the exact
+	# status_dashboard.py code path while removing one Python interpreter startup
+	# from every overlay refresh.
+	HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 SOREN_OPS_RAW="$ops_raw" python3 - "$out_file" "$width" "$height" <<'PY'
 import html
 import os
 import re
@@ -82,10 +84,11 @@ import time
 
 from lib.overlay_text import normalize_overlay_text
 from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard, render_ops_dashboard
+from status_dashboard import render_dashboard_text
 
 out_file, width, height = sys.argv[1:4]
 ops_raw = normalize_overlay_text(os.environ.get("SOREN_OPS_RAW", ""))
-stats_raw = normalize_overlay_text(os.environ.get("SOREN_STATS_RAW", ""))
+stats_raw = normalize_overlay_text(render_dashboard_text())
 
 csi_re = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 ansi_strip_re = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
