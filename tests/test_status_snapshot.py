@@ -77,6 +77,43 @@ class StatusSnapshotTests(unittest.TestCase):
             self.assertEqual(value["acc_soviet"], "false")
             self.assertEqual(value["acc_max_type"], 0)
 
+    def test_rejected_ttl_and_stagnation_are_batched(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            game = root / "game.json"
+            strategy = root / "strategy.py"
+            accumulated = root / "acc.json"
+            rejected = root / "rejected.txt"
+            rejected_meta = root / "rejected-meta.json"
+            stagnation = root / "stagnation.json"
+            strategy.write_text(STRATEGY, encoding="utf-8")
+            rejected.write_text("fresh\nstale\nmissing\n", encoding="utf-8")
+            rejected_meta.write_text(json.dumps({
+                "fresh": {"updated_at": 990},
+                "stale": {"updated_at": 900},
+            }), encoding="utf-8")
+            stagnation.write_text(json.dumps({
+                "consecutive_no_improve": 3,
+                "regression_streak": 2,
+                "last_event": "rollback wait",
+                "updated_at": 939,
+            }), encoding="utf-8")
+            value = MODULE.build_snapshot(
+                game,
+                strategy,
+                accumulated,
+                rejected,
+                rejected_meta,
+                stagnation,
+                60,
+                now=1000,
+            )
+            self.assertEqual(value["rejected_count"], 1)
+            self.assertEqual(value["stagnation_count"], 3)
+            self.assertEqual(value["regression_streak"], 2)
+            self.assertEqual(value["stagnation_event"], "rollback wait")
+            self.assertEqual(value["stagnation_age"], "1m")
+
     def test_show_status_uses_single_snapshot_process(self):
         source = (ROOT / "show_status.sh").read_text(encoding="utf-8")
         self.assertIn("python3 lib/status_snapshot.py", source)
@@ -84,6 +121,8 @@ class StatusSnapshotTests(unittest.TestCase):
         self.assertNotIn("acc_count=$(python3 -c", source)
         self.assertNotIn("acc_scores=$(python3 -c", source)
         self.assertNotIn("d=json.load(open('game_state.json'))", source)
+        self.assertNotIn("rejected_count=$(python3", source)
+        self.assertNotIn('python3 - "$TMP_STATE_DIR/stagnation_counter.json"', source)
 
     def test_shell_output_quotes_values(self):
         text = MODULE.render_shell({
@@ -96,9 +135,15 @@ class StatusSnapshotTests(unittest.TestCase):
             "acc_russia_count": 4,
             "acc_soviet": "true",
             "acc_max_type": 5,
+            "rejected_count": 6,
+            "stagnation_count": 7,
+            "regression_streak": 8,
+            "stagnation_event": "a b",
+            "stagnation_age": "9m",
         })
         self.assertIn("game_state='a b'", text)
         self.assertIn("acc_scores='1 2'", text)
+        self.assertIn("stagnation_event='a b'", text)
 
 
 if __name__ == "__main__":
