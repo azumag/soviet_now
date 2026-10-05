@@ -16,6 +16,8 @@ on:
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'tests/test_event_overlay_renderer.py'
+      - 'generate_event_overlay.py'
       - 'viewer_chat_monitor.sh'
       - 'lib/viewer_chat_cache.py'
       - 'tests/test_soren_overlay_cache.py'
@@ -48,6 +50,8 @@ on:
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'tests/test_event_overlay_renderer.py'
+      - 'generate_event_overlay.py'
       - 'viewer_chat_monitor.sh'
       - 'lib/viewer_chat_cache.py'
       - 'tests/test_soren_overlay_cache.py'
@@ -87,9 +91,10 @@ jobs:
           tests.test_docich_corner_stats tests.test_overlay_dashboard_cards
           tests.test_soren_overlay_idle_cpu
           tests.test_soren_overlay_cache tests.test_soren_overlay_fail_open
+          tests.test_event_overlay_renderer
       - run: python3 -m unittest tests.test_cpu_idle_paths
       - run: perl -c lib/status_ai_output_filter.pl
-      - run: python3 -m py_compile status_dashboard.py lib/viewer_chat_cache.py
+      - run: python3 -m py_compile status_dashboard.py generate_event_overlay.py lib/viewer_chat_cache.py
       # zsh -n / bash -n は第2引数以降を $1.. として扱い構文検査しないので、
       # 1 ファイル 1 ステップにする。
       - run: zsh -n show_status.sh
