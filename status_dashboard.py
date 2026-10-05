@@ -440,7 +440,7 @@ def displayed_ab_arm(ab):
     """Return the already-resolved A/B arm when the caller has cached it.
 
     ``status_dashboard.py`` renders several panels in one pass.  The live arm
-    is resolved from the game snapshot once in ``main`` and shared with those
+    is resolved from the game snapshot once in ``render_dashboard_text`` and shared with those
     panels so a slow or failing hash subprocess cannot make the panels disagree.
     Direct callers (including tests) still resolve it through ``played_ab_arm``.
     """
@@ -3562,8 +3562,10 @@ def render_docich_corner_stats(corner):
     ]
 
 
-# ── Main ──────────────────────────────────────────────────────
-def main():
+# ── Main / reusable renderer ──────────────────────────────────
+def render_dashboard_text():
+    """Render the same dashboard text as the CLI without a second Python process."""
+
     os.chdir(os.path.dirname(os.path.abspath(__file__)) or ".")
 
     corner = load_active_corner()
@@ -3571,8 +3573,7 @@ def main():
         output = render_ai_backoff_header()
         output.append("")
         output += render_docich_corner_stats(corner)
-        print("\n".join(fit_dashboard_lines(output)))
-        return
+        return "\n".join(fit_dashboard_lines(output))
 
     scores = load_scores()
     rolling = load_rolling()
@@ -3638,7 +3639,13 @@ def main():
         output += _archive
     if _wc or _archive:
         output.append("")
-    print("\n".join(fit_dashboard_lines(output)))
+    return "\n".join(fit_dashboard_lines(output))
+
+
+
+
+def main():
+    print(render_dashboard_text())
 
 
 if __name__ == "__main__":
