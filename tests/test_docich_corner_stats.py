@@ -146,7 +146,8 @@ class DocichCornerStatsTest(unittest.TestCase):
         lines = sd.render_docich_corner_stats(corner)
         rendered = "\n".join(lines)
         self.assertIn("SOREN/CORNER: PAPER / PAPER /", rendered)
-        self.assertIn("Funds: capital=10000 deployed=3000 free=7000", rendered)
+        self.assertIn("Funds: capital=10000 free=7000", rendered)
+        self.assertIn("Deployed: 3000", rendered)
         self.assertIn("Signals: candidate=3 selected=1 rejected=2", rendered)
         self.assertIn("Strategy: momentum-v1 / relative-value-v1", rendered)
         self.assertIn("Rejected: eth_jpy:capital_limit", rendered)
@@ -175,7 +176,8 @@ class DocichCornerStatsTest(unittest.TestCase):
             },
         )
         rendered = "\n".join(sd.render_docich_corner_stats(load_active_corner(self.root, now=200)))
-        self.assertIn("Funds: capital=10000 deployed=3000 free=7000", rendered)
+        self.assertIn("Funds: capital=10000 free=7000", rendered)
+        self.assertIn("Deployed: 3000", rendered)
         self.assertIn("Signals: candidate=-- selected=-- rejected=--", rendered)
         self.assertIn("(no fills yet)", rendered)
 
