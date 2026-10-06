@@ -19,6 +19,7 @@ on:
       - 'tests/test_weather_audio_consumer.py'
       - 'docs/weather-audio-consumer.md'
       - 'lib/outbound_queue.sh'
+      - 'tests/test_outbound_queue_youtube_split.py'
       - 'say_enqueue.sh'
       - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
@@ -49,6 +50,7 @@ on:
       - 'tests/test_weather_audio_consumer.py'
       - 'docs/weather-audio-consumer.md'
       - 'lib/outbound_queue.sh'
+      - 'tests/test_outbound_queue_youtube_split.py'
       - 'say_enqueue.sh'
       - 'tests/test_hanjuku_audio_fence.py'
       - 'tests/test_comment*'
@@ -75,6 +77,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Intent, rendering, output validation, history and translation
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich tests.test_twitch_comment_identity tests.test_youtube_comment_identity
+      - name: Outbound YouTube UTF-8 split and failure contracts
+        run: python3 -m unittest discover -s tests -p test_outbound_queue_youtube_split.py -v
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer
