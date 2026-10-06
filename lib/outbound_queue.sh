@@ -161,6 +161,47 @@ _outbound_chat_source_is_youtube_mirror_excluded() {
 	return 1
 }
 
+
+# Split a mirror message before youtube_chat.sh so the sink never silently
+# truncates a multibyte result. The Twitch copy keeps its own, larger budget.
+_outbound_chat_split_utf8() {
+	local message="\${1:-}"
+	local limit="\${2:-200}"
+	[ -n "$message" ] || return 0
+	case "$limit" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$limit" -gt 0 ] || return 1
+	python3 - "$message" "$limit" <<'PY'
+import sys
+
+message = sys.argv[1].replace("\r", " ").replace("\n", " ")
+limit = int(sys.argv[2])
+remaining = message
+while remaining:
+    data = remaining.encode("utf-8")
+    if len(data) <= limit:
+        print(remaining)
+        break
+    piece = data[:limit].decode("utf-8", "ignore")
+    if not piece:
+        raise SystemExit(1)
+
+    # Prefer a complete sentence, then a clause/space, but do not make a tiny
+    # fragment merely because an early punctuation mark exists.
+    cut = 0
+    for marks in ("。！？!?", "、，, \t"):
+        candidate = max((piece.rfind(mark) for mark in marks), default=-1) + 1
+        if candidate > 0 and len(piece[:candidate].encode("utf-8")) >= limit // 2:
+            cut = candidate
+            break
+    if cut:
+        piece = piece[:cut]
+    print(piece)
+    remaining = remaining[len(piece):]
+PY
+}
+
 _outbound_chat_send_youtube_mirror() {
 	local message="$1"
 	local basename="$2"
@@ -173,14 +214,24 @@ _outbound_chat_send_youtube_mirror() {
 	source=$(_outbound_chat_source_from_basename "$basename")
 	_outbound_chat_source_is_youtube_mirror_excluded "$source" && return 0
 
-	local err_file
-	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_${RANDOM}")
-	if ./youtube_chat.sh send "$message" >/dev/null 2>"$err_file"; then
-		rm -f "$err_file"
+	local err_file parts_file part
+	err_file=$(mktemp "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_\${RANDOM}")
+	parts_file=$(mktemp "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts.XXXXXXXX" 2>/dev/null || echo "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts_\${RANDOM}")
+	if ! _outbound_chat_split_utf8 "$message" "\${OUTBOUND_CHAT_YOUTUBE_MAX_BYTES:-200}" >"$parts_file"; then
+		printf '%s\n' 'youtube mirror split failed' >"$err_file"
+		_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
+		rm -f "$err_file" "$parts_file"
 		return 0
 	fi
-	_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
-	rm -f "$err_file"
+	while IFS= read -r part || [ -n "$part" ]; do
+		[ -n "$part" ] || continue
+		if ! ./youtube_chat.sh send "$part" >/dev/null 2>"$err_file"; then
+			_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
+			rm -f "$err_file" "$parts_file"
+			return 0
+		fi
+	done <"$parts_file"
+	rm -f "$err_file" "$parts_file"
 	return 0
 }
 
@@ -337,7 +388,7 @@ enqueue_chat_message() {
 #   pending/ から最も古い1件を取得して送信し、sent/ に移動する。
 #   Twitch 送信には ./twitch_chat.sh send を使用。
 #   YOUTUBE_CHAT_SEND_ENABLED=1 か OUTBOUND_CHAT_YOUTUBE_MIRROR_ENABLED=1 の場合、
-#   Twitch 送信成功後に ./youtube_chat.sh send にも同じ本文を送る。
+#   Twitch 送信成功後に YouTube の安全な送信予算へ意味単位で分割して mirror する。
 #   戻り値: 0=送信成功, 1=キューが空 or 送信失敗
 outbound_queue_consume_once() {
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
