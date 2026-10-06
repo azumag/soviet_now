@@ -5,7 +5,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-export const MAX_REJECTED_FRAMES_PER_GAME = 3;
+export const MAX_REJECTED_FRAMES_PER_SESSION = 3;
 export const MAX_REJECTED_FRAME_BYTES = 8 * 1024 * 1024;
 const ELIGIBLE_REASONS = new Set(['non-move', 'unknown-current', 'confirm-frame']);
 const UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -115,7 +115,7 @@ export function saveRejectedFrame({
   if (!entries) return { saved: false, reason: 'unsafe-entry' };
 
   const frames = entries.filter(entry => FRAME_NAME_RE.test(entry.name));
-  if (frames.length >= MAX_REJECTED_FRAMES_PER_GAME) return { saved: false, reason: 'limit' };
+  if (frames.length >= MAX_REJECTED_FRAMES_PER_SESSION) return { saved: false, reason: 'limit' };
   const metadataEntries = entries.filter(entry => /^frame_\d{2}\.json$/.test(entry.name));
   if (entries.some(entry => !FRAME_NAME_RE.test(entry.name) && !/^frame_\d{2}\.json$/.test(entry.name))) {
     return { saved: false, reason: 'unsafe-entry' };

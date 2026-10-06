@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  MAX_REJECTED_FRAMES_PER_GAME,
+  MAX_REJECTED_FRAMES_PER_SESSION,
   rejectedFrameReason,
   saveRejectedFrame,
 } from '../soren91/rejected_frame_diagnostics.mjs';
@@ -68,7 +68,7 @@ test('saves the already captured bytes once per eligible reason with private fix
       sessionId: 'b09027a0-2d46-4c88-90fb-3c145db9c935',
       turn: 13,
     }), { saved: true, image: 'frame_00.png', metadata: 'frame_00.json' });
-    assert.equal(readdirSync(output).filter(name => name.endsWith('.png')).length, MAX_REJECTED_FRAMES_PER_GAME);
+    assert.equal(readdirSync(output).filter(name => name.endsWith('.png')).length, MAX_REJECTED_FRAMES_PER_SESSION);
     assert.deepEqual(readFileSync(join(output, 'frame_00.png')), PNG);
     const metadataText = readFileSync(join(output, 'frame_00.json'), 'utf8');
     const metadata = JSON.parse(metadataText);
