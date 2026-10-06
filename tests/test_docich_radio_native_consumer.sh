@@ -106,7 +106,7 @@ FIXTURE_MODE=partial
 export FIXTURE_MODE
 meta=$(_radio_native_generate_script "公開トピック" "$BODY" "$SUMMARY") || fail "partial bridge result should be accepted"
 [ "$meta" = "partial:web" ] || fail "unexpected partial metadata: $meta"
-grep -q "部分取得" "$BODY" || fail "partial body was not written"
+grep -q "一部だけ得られた" "$BODY" || fail "partial body was not written"
 unset FIXTURE_MODE
 
 rm -f "$BODY" "$SUMMARY"
