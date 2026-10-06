@@ -1538,6 +1538,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         dash.className = dash.className.replace(/\s+compact\b/g, '') + ' micro';
       }
     }
+    if (dash.scrollHeight > available + 1 && dash.className.includes('has-alerts')) {
+      dash.className = dash.className.replace(/\s+(?:compact|micro)\b/g, '') + ' micro';
+    }
   }
 
   function renderOpsDashboard(container, feed, metrics) {
