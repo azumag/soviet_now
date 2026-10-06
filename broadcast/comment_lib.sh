@@ -357,6 +357,13 @@ _play_comment_queue() {
 			else
 				file_hash=$(md5sum "$qf" 2>/dev/null | awk '{print $1}' || true)
 			fi
+            local terminal_batch_key=""
+            if declare -F _comment_audio_terminal_batch_key >/dev/null; then
+                terminal_batch_key=$(_comment_audio_terminal_batch_key "$qf")
+            fi
+            if [ -n "$terminal_batch_key" ]; then
+                file_hash=$(_outbound_chat_hash "terminal-batch:$terminal_batch_key")
+            fi
 			local _comment_context_label_for_dedupe=""
 			_comment_context_label_for_dedupe=$(_comment_playback_context_label "$qf" 2>/dev/null || printf '%s' "comment")
 			local _skip_duplicate_check=0
@@ -419,8 +426,8 @@ _play_comment_queue() {
 						[ "${#_ov_spoken}" -gt 90 ] && _ov_spoken="${_ov_spoken:0:90}…"
 						./overlay_notify.sh chat "$_ov_title" "$(basename "$playing_file")${_comment_meta_summary:+ | ${_comment_meta_summary}}${_ov_spoken:+ | 内容:${_ov_spoken}}" "info" >/dev/null 2>&1 || true
 					fi
-				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
-				if [ "$_skip_duplicate_check" -eq 0 ]; then
+				# 通常コメントは再生前に記録。terminalはconsumer成功後に記録。
+				if [ "$_skip_duplicate_check" -eq 0 ] && [ -z "$terminal_batch_key" ]; then
 					echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
 					# ハッシュファイルを最新50件に制限
 					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
@@ -436,7 +443,7 @@ _play_comment_queue() {
 				fi
 				local _cw_context_label=""
 				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
-				local _cw_playback_ok=0
+				local _cw_playback_ok=0 _cw_terminal_attempted=0
 				if ! _comment_runtime_fence_valid "$playing_file"; then
 					: # switched/terminated after claim; clean up without speaking
 					if _comment_weather_audio_managed "$playing_file"; then
@@ -449,8 +456,23 @@ _play_comment_queue() {
 					fi
 				elif _comment_declares_bilingual_speech "$playing_file"; then
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 英日メタデータ不正 → 通常VOICEVOX経路を抑止: $playing_file" >>tmp/.say_queue/debug.log
-				elif SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-					_cw_playback_ok=1
+				else
+					_cw_terminal_attempted=1
+					if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+						_cw_playback_ok=1
+					fi
+				fi
+				if [ -n "$terminal_batch_key" ] && [ "$_cw_terminal_attempted" -eq 1 ] && [ "$_cw_playback_ok" -ne 1 ]; then
+					# A failed say consumer is not a completed delivery. Restore
+					# this same batch/file and sidecars for the next worker tick.
+					mv "$playing_file" "$qf" 2>/dev/null || true
+					echo "[_play_comment_queue] terminal配送失敗: queue保持・次tick再試行" >>tmp/.say_queue/debug.log
+					continue
+				fi
+				if [ -n "$terminal_batch_key" ] && [ "$_cw_playback_ok" -eq 1 ]; then
+					echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
+					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null &&
+						mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
 				fi
 				local _weather_receipt_pending=0
 				if _comment_weather_audio_managed "$playing_file"; then

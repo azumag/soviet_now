@@ -97,29 +97,21 @@ rem=0
 diff=$(( rem - expected_bench ))
 check '[ "$diff" -ge -10 ] && [ "$diff" -le 10 ]' '明示的429 の bench は設定されたレート制限 bench 値になる'
 
-# --- 3. codex backend も同じ契約 ---
+# --- 3. retired Codex never executes, even if a fake binary would return 429 ---
 cat >"$FAKE_BIN/codex" <<'EOF'
 #!/usr/bin/env bash
-printf 'stream error: 429 rate limit exceeded\n' >&2
-sleep 30
+touch "$CODEX_TEST_MARKER"
+printf '429 rate limit exceeded\n' >&2
+exit 79
 EOF
 chmod +x "$FAKE_BIN/codex"
-export CODEX_BIN="$FAKE_BIN/codex"
-
-_ai_call_codex_unqueued "TEST:codex_timeout" "codex:x-timeout-model" "$prompt_file" 1 >/dev/null 2>&1
-rc=$?
-check '[ "$rc" -ne "$AI_RATE_LIMIT_RC" ]' 'codex: timeout(rc=124)+stderr429 はレート制限として返さない'
-check '[ "$rc" -ne 0 ]' 'codex: timeout は通常失敗(rc!=0)として返す'
-
-cat >"$FAKE_BIN/codex" <<'EOF'
-#!/usr/bin/env bash
-printf 'stream error: 429 rate limit exceeded\n' >&2
-exit 1
-EOF
-chmod +x "$FAKE_BIN/codex"
-_ai_call_codex_unqueued "TEST:codex_real429" "codex:x-real429-model" "$prompt_file" 30 >/dev/null 2>&1
-rc=$?
-check '[ "$rc" -eq "$AI_RATE_LIMIT_RC" ]' 'codex: rc!=0 + 明示的429 は AI_RATE_LIMIT_RC を返す'
+export CODEX_BIN="$FAKE_BIN/codex" CODEX_TEST_MARKER="$TMP/codex-executed"
+for label in COMMENT RADIO RADIO_RESEARCH; do
+    _ai_call_codex_unqueued "$label" "codex:x-retired" "$prompt_file" 1 >/dev/null 2>&1
+    rc=$?
+    check '[ "$rc" -eq 1 ]' "codex: $label retired adapter fails closed"
+    check '[ ! -e "$CODEX_TEST_MARKER" ]' "codex: $label never executes binary"
+done
 
 # --- 4. claude backend も同じ契約 (timeout は bench しない) ---
 cat >"$FAKE_BIN/claude" <<'EOF'

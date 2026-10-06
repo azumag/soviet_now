@@ -12,6 +12,13 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
+      - 'lib/ai_generate.sh'
+      - 'tests/test_ai_generate_backoff.py'
+      - 'strategy/ai.sh'
+      - 'codex_bug_dispatcher.sh'
+      - 'tests/test_improve_retry_reliability.py'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_codex_agent_env_redaction.sh'
       - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
@@ -42,6 +49,13 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
+      - 'lib/ai_generate.sh'
+      - 'tests/test_ai_generate_backoff.py'
+      - 'strategy/ai.sh'
+      - 'codex_bug_dispatcher.sh'
+      - 'tests/test_improve_retry_reliability.py'
+      - 'tests/test_strategy_sandbox_no_host_exec.py'
+      - 'tests/test_codex_agent_env_redaction.sh'
       - 'lib/hanjuku_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
@@ -75,6 +89,10 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y gettext-base zsh
       - name: Intent, rendering, output validation, history and translation
         run: python3 -m unittest -v tests.test_comment_reply_quality tests.test_comment_template_envsubst tests.test_comment_viewer_memory tests.test_comment_bilingual tests.test_comment_classifier_docich tests.test_twitch_comment_identity tests.test_youtube_comment_identity
+      - name: Legacy provider removal and backoff contracts
+        run: python3 -m unittest -v tests.test_ai_generate_backoff tests.test_improve_retry_reliability tests.test_strategy_sandbox_no_host_exec
+      - name: Legacy bug dispatcher cannot revive Codex
+        run: bash tests/test_codex_agent_env_redaction.sh
       - name: Hanjuku runtime-bound narration
         run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer
@@ -89,3 +107,28 @@ jobs:
           for test in tests/test_comment_advice_routing.sh tests/test_comment_body_dedup.sh tests/test_comment_celebration_history.sh tests/test_comment_duplicate_guard.sh tests/test_comment_ops_context.sh tests/test_comment_persona_mode.sh tests/test_comment_punctuation_quality.sh tests/test_comment_question_restraint.sh tests/test_comment_runtime_policy.sh tests/test_comment_sing_json.sh tests/test_comment_soren91_game_state.sh tests/test_comment_think_leak_guard.sh tests/test_comment_viewer_memory_playback_gate.sh tests/test_comment_viewer_memory_prompt.sh tests/test_crypto_paper_playback_dedup_exempt.sh tests/test_say_speaking_state.sh; do
             bash "$test"
           done
+
+  routing-queue-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: azumag/docich
+          ref: f4c39ec609f8e4eeadde08af0aab9c6bf8e84a89
+          path: _test_docich
+          persist-credentials: false
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gettext-base jq
+          python3 -m pip install -r _test_docich/requirements-test.txt
+      - name: Actual stream fetch, routing, queue and ack with fixture AI (no APIs)
+        env:
+          DOCICH_REQUIRE_QUEUE_E2E: "1"
+          DOCICH_SOREN_TEST_ROOT: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}/_test_docich/src
+        run: python3 -m pytest -q _test_docich/tests/test_comment_queue_e2e.py

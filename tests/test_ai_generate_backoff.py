@@ -350,81 +350,27 @@ class AiGenerateBackoffTests(unittest.TestCase):
         self.assertIn("RESULT=failure", result.stdout)
         self.assertIn("CALLS=0", result.stdout)
 
-    def test_codex_backend_returns_rate_limit_code_only_for_explicit_signal(self) -> None:
+    def test_retired_codex_backend_never_starts_a_process(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             root = Path(temp_dir)
             prompt = root / "prompt.txt"
-            prompt.write_text("test prompt\n", encoding="utf-8")
+            prompt.write_text("synthetic prompt\n")
+            marker = root / "executed"
             fake_codex = root / "codex"
-            fake_codex.write_text(
-                "#!/bin/sh\n"
-                "out=''\n"
-                "while [ $# -gt 0 ]; do\n"
-                "  if [ \"$1\" = '-o' ]; then out=\"$2\"; shift 2; else shift; fi\n"
-                "done\n"
-                "printf '%s\\n' '429 Too Many Requests' >&2\n"
-                "exit 1\n",
-                encoding="utf-8",
-            )
+            fake_codex.write_text(f"#!/bin/sh\ntouch {marker}\nexit 79\n")
             fake_codex.chmod(0o755)
-            script = textwrap.dedent(
-                f"""
-                set -u
-                ELOOP_LIB_DIR={root!s}
-                source {REPO_ROOT / 'core/helpers.sh'!s}
-                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
-                CODEX_BIN={fake_codex!s}
-                _ai_call_codex_unqueued RADIO codex:fixture-fallback {prompt!s} 3
+            for label in ("COMMENT", "RADIO", "RADIO_RESEARCH"):
+                script = f"""
+                ELOOP_LIB_DIR={root}
+                source {REPO_ROOT / 'core/helpers.sh'}
+                source {REPO_ROOT / 'lib/ai_generate.sh'}
+                CODEX_BIN={fake_codex}
+                _ai_call_codex_unqueued {label} codex:fixture {prompt} 3
                 """
-            )
-            result = subprocess.run(
-                ["bash", "-c", script],
-                cwd=REPO_ROOT,
-                env=os.environ.copy(),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 79, result.stderr)
-
-    def test_codex_model_text_does_not_turn_a_regular_failure_into_rate_limit(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
-            root = Path(temp_dir)
-            prompt = root / "prompt.txt"
-            prompt.write_text("test prompt\n", encoding="utf-8")
-            fake_codex = root / "codex"
-            fake_codex.write_text(
-                "#!/bin/sh\n"
-                "out=''\n"
-                "while [ $# -gt 0 ]; do\n"
-                "  if [ \"$1\" = '-o' ]; then out=\"$2\"; shift 2; else shift; fi\n"
-                "done\n"
-                "printf '%s\\n' 'The rate limit exceeded in stdout narrative'\n"
-                "printf '%s\\n' 'The rate limit exceeded in this narrative' > \"$out\"\n"
-                "printf '%s\\n' 'ordinary provider failure' >&2\n"
-                "exit 1\n",
-                encoding="utf-8",
-            )
-            fake_codex.chmod(0o755)
-            script = textwrap.dedent(
-                f"""
-                set -u
-                ELOOP_LIB_DIR={root!s}
-                source {REPO_ROOT / 'core/helpers.sh'!s}
-                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
-                CODEX_BIN={fake_codex!s}
-                _ai_call_codex_unqueued RADIO codex:fixture-fallback {prompt!s} 3
-                """
-            )
-            result = subprocess.run(
-                ["bash", "-c", script],
-                cwd=REPO_ROOT,
-                env=os.environ.copy(),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-        self.assertEqual(result.returncode, 1, result.stderr)
+                result = subprocess.run(["bash", "-c", script], cwd=REPO_ROOT,
+                    capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertFalse(marker.exists())
 
     def test_per_model_backoff_seconds_resolve_from_items(self) -> None:
         script = textwrap.dedent(

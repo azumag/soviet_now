@@ -592,7 +592,8 @@ set +e
 run_cmd codex:deepseek-v4-flash 'paid prompt'
 codex_rc=$?
 set -e
-[ "$codex_rc" -eq 79 ]
+[ "$codex_rc" -eq 1 ]
+[ ! -e "$test_root/codex.stdin" ]
 grep -qx 'run --model opencode-go/muse-spark-1.2-contributor' "$test_root/opencode.calls"
 grep -qx 'run --model opencode-go/deepseek-v4-flash' "$test_root/opencode.calls"
 grep -qx 'run --model opencode/deepseek-v4-flash-free' "$test_root/opencode.calls"
@@ -630,9 +631,9 @@ PY
         source = (REPO_ROOT / "strategy/ai.sh").read_text(encoding="utf-8")
         run_cmd = source[source.index("run_cmd()") : source.index("#=== AIステップ ===")]
         self.assertIn('local -a opencode_args=(run --model "$resolved_model")', run_cmd)
-        self.assertIn('-o "$codex_out_file" -', run_cmd)
+        self.assertNotIn('bounded_command=(codex exec', run_cmd)
         self.assertIn('"${opencode_args[@]}" <"$prompt_file"', run_cmd)
-        self.assertIn('codex "${codex_args[@]}" <"$prompt_file"', run_cmd)
+        self.assertNotIn('codex "${codex_args[@]}"', run_cmd)
         self.assertNotIn('"${opencode_args[@]}" >>', run_cmd)
         self.assertNotIn('"$prompt_body")', run_cmd)
 
