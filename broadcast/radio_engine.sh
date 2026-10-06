@@ -1402,6 +1402,103 @@ _radio_build_overlay_detail() {
 	printf '%s' "$parts"
 }
 
+
+_radio_native_consumer_enabled_for() {
+	local corner_name="$1" topic="$2"
+	[ "${DOCICH_RADIO_NATIVE_CONSUMER_ENABLED:-0}" = "1" ] || return 1
+	[ -n "$topic" ] || return 1
+	local allowed="${DOCICH_RADIO_NATIVE_CORNERS:-}"
+	[ -n "$allowed" ] || return 1
+	allowed="${allowed//[[:space:]]/}"
+	case ",$allowed," in
+	*",$corner_name,"*) return 0 ;;
+	esac
+	return 1
+}
+
+_radio_native_generate_script() {
+	local topic="$1" body_file="$2" summary_file="$3"
+	local root="${DOCICH_RADIO_NATIVE_ROOT:-}"
+	local agents="${DOCICH_RADIO_NATIVE_AGENTS:-}"
+	local request_file result_file bridge_rc parse_meta parse_rc
+
+	case "$root" in
+	/*) ;;
+	*)
+		printf '%s' "invalid_root"
+		return 2
+		;;
+	esac
+	[ -f "$root/src/docich/radio/consumer.py" ] || {
+		printf '%s' "missing_bridge"
+		return 2
+	}
+	[ -n "$agents" ] || {
+		printf '%s' "missing_agents"
+		return 2
+	}
+
+	request_file=$(mktemp /tmp/eloop_radio_native_request_XXXXXXXX)
+	result_file=$(mktemp /tmp/eloop_radio_native_result_XXXXXXXX)
+	if ! printf '%s\0%s\0' "$topic" "$agents" | python3 -c '
+import json, sys
+parts = sys.stdin.buffer.read().split(b"\0")
+if len(parts) < 3:
+    raise SystemExit(2)
+topic = parts[0].decode("utf-8")
+agents = parts[1].decode("utf-8")
+json.dump({"topic": topic, "queries": [topic], "agents": agents}, sys.stdout, ensure_ascii=False)
+' >"$request_file"; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "request_encode_failed"
+		return 1
+	fi
+
+	PYTHONPATH="$root/src" python3 -P -m docich.radio.consumer <"$request_file" >"$result_file"
+	bridge_rc=$?
+
+	parse_meta=$(python3 - "$result_file" "$body_file" "$summary_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    print("invalid_response")
+    raise SystemExit(1)
+
+status = data.get("status")
+scope = data.get("scope")
+if not isinstance(status, str) or not re.fullmatch(r"[a-z_]{1,40}", status):
+    print("invalid_status")
+    raise SystemExit(1)
+if not isinstance(scope, str) or not re.fullmatch(r"[a-z_]{1,40}", scope):
+    print("invalid_scope")
+    raise SystemExit(1)
+print(f"{status}:{scope}")
+if status not in {"ok", "partial"}:
+    raise SystemExit(1)
+
+body = data.get("body")
+summary = data.get("summary")
+if not isinstance(body, str) or not body or not isinstance(summary, str) or not summary:
+    raise SystemExit(1)
+Path(sys.argv[2]).write_text(body, encoding="utf-8")
+Path(sys.argv[3]).write_text(summary, encoding="utf-8")
+PY
+	)
+	parse_rc=$?
+	rm -f "$request_file" "$result_file"
+
+	if [ "$bridge_rc" -ne 0 ] || [ "$parse_rc" -ne 0 ]; then
+		printf '%s' "${parse_meta:-bridge_failed}"
+		return 1
+	fi
+	printf '%s' "$parse_meta"
+}
+
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
@@ -1505,6 +1602,71 @@ _radio_generate_and_play() {
 	else
 		radio_repair_agents="$radio_agents_list"
 	fi
+	if _radio_native_consumer_enabled_for "$corner_name" "$topic"; then
+		local _native_body_file _native_summary_file _native_meta _native_body _native_summary
+		local _native_talk_file _native_deferred_file _native_history_line
+		_native_body_file=$(mktemp /tmp/eloop_radio_native_body_XXXXXXXX)
+		_native_summary_file=$(mktemp /tmp/eloop_radio_native_summary_XXXXXXXX)
+		if ! _native_meta=$(_radio_native_generate_script "$topic" "$_native_body_file" "$_native_summary_file"); then
+			log "[RADIO:${corner_name}] docich native hold/failure (${_native_meta:-bridge_failed})"
+			_write_radio_corner_status "native_generation_failed" "$corner_name" "$game_num" "$score" "$topic" "${_native_meta:-bridge_failed}" "$selected_news"
+			_radio_clear_state "$corner_name" "native_generation_failed"
+			rm -f "$_native_body_file" "$_native_summary_file" "$prompt_file" 2>/dev/null || true
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+
+		_native_body=$(cat "$_native_body_file" 2>/dev/null)
+		_native_summary=$(cat "$_native_summary_file" 2>/dev/null)
+		rm -f "$_native_body_file" "$_native_summary_file" "$prompt_file" 2>/dev/null || true
+		_native_body=$(_ensure_corner_announce "$_native_body" "$corner_name")
+		_native_body=$(printf '%s' "$_native_body" | _normalize_radio_tone)
+		local _native_quality
+		_native_quality=$(_radio_quality_check "$_native_body" "$corner_name" "")
+		if [ "$_native_quality" != "OK" ]; then
+			log "[RADIO:${corner_name}] docich native quality failed (${_native_quality})"
+			_write_radio_corner_status "native_quality_failed" "$corner_name" "$game_num" "$score" "$topic" "$_native_quality" "$selected_news"
+			_radio_clear_state "$corner_name" "native_quality_failed"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+		if ! _is_valid_radio_talk "$_native_body"; then
+			log "[RADIO:${corner_name}] docich native body invalid after presentation normalization"
+			_write_radio_corner_status "native_body_invalid" "$corner_name" "$game_num" "$score" "$topic" "native_body_invalid" "$selected_news"
+			_radio_clear_state "$corner_name" "native_body_invalid"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+
+		_native_talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
+		printf '%s\n' "$_native_body" >"$_native_talk_file"
+		_radio_store_generation_meta "$_native_talk_file" "$corner_name" "$host_mode_generated" "docich-native" "$game_num" "$score" "1" "$topic" "$selected_news" "docich-native" "" ""
+		_native_history_line="[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${_native_summary}"
+		_native_deferred_file=$(_enqueue_deferred_radio_talk "$_native_talk_file" "$game_num" "$corner_name" "$host_mode_generated" "$_native_history_line" || true)
+		if [ -n "$_native_deferred_file" ]; then
+			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+				printf '%s\n' "$selected_news" >"${_native_deferred_file%.txt}.news_title"
+				local _native_cc_text=""
+				_native_cc_text=$(_build_cc_attribution_text "$selected_news")
+				[ -n "$_native_cc_text" ] && printf '%s' "$_native_cc_text" >"${_native_deferred_file%.txt}.cc_text"
+			fi
+			_radio_mark_done "$done_marker"
+			_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "docich-native")"
+			_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$_native_deferred_file")\", \"generator\": \"docich-native\"}"
+			log "[RADIO:${corner_name}] docich native -> deferred queue: $(basename "$_native_deferred_file")"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 0
+		fi
+
+		log "[RADIO:${corner_name}] docich native deferred enqueue failed"
+		_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "docich_native_deferred_enqueue_failed" "$selected_news"
+		_radio_clear_state "$corner_name" "deferred_enqueue_failed"
+		_radio_clear_generation_meta "$_native_talk_file" 2>/dev/null || true
+		rm -f "$_native_talk_file" 2>/dev/null || true
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
+
 	# The main host also speaks over other games. Discard legacy Soren score
 	# context before prepass, generation and repair snapshots are constructed.
 	local active_game_context
