@@ -1442,7 +1442,7 @@ _radio_native_generate_script() {
 	result_file=$(mktemp /tmp/eloop_radio_native_result_XXXXXXXX)
 	if ! printf '%s\0%s\0' "$topic" "$agents" | python3 -c '
 import json, sys
-parts = sys.stdin.buffer.read().split(b"\\0")
+parts = sys.stdin.buffer.read().split(b"\0")
 if len(parts) < 3:
     raise SystemExit(2)
 topic = parts[0].decode("utf-8")
