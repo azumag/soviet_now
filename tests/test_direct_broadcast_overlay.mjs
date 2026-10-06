@@ -102,6 +102,42 @@ const VISIBLE_SEC = 18;
 });
 
 
+test('broadcast state publishes only bounded finite direct-stream system metrics', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-broadcast-system-metrics-'));
+  const status = path.join(temp, 'status.json');
+  fs.writeFileSync(status, JSON.stringify({ system_metrics: {
+    sampled_at: 1780000000,
+    cpu_percent: 44.4,
+    memory_percent: 65,
+    memory_used_bytes: 6500,
+    memory_total_bytes: 10000,
+    history: Array.from({ length: 50 }, (_, index) => ({
+      ts: 1780000000 - index,
+      cpu_percent: index === 49 ? Number.NaN : index,
+      memory_percent: index === 48 ? 120 : 60,
+    })),
+    private_path: temp,
+  } }));
+  const state = buildDirectBroadcastOverlayState({
+    sources: { directStreamStatusFile: status },
+  }, 1780000000123);
+  assert.deepEqual(state.feeds.systemMetrics, {
+    sampledAt: 1780000000,
+    cpuPercent: 44.4,
+    memoryPercent: 65,
+    memoryUsedBytes: 6500,
+    memoryTotalBytes: 10000,
+    history: Array.from({ length: 36 }, (_, index) => ({
+      ts: 1780000000 - (index + 14),
+      cpuPercent: index === 35 ? null : index + 14,
+      memoryPercent: index === 34 ? null : 60,
+    })),
+  });
+  assert.doesNotMatch(JSON.stringify(state.feeds.systemMetrics), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
 test('broadcast overlay owns the 720p data regions and never reloads or nests legacy frames', () => {
   const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
   assert.match(html, /id="broadcast-sidebar"/);
@@ -124,6 +160,12 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /GAME \+ OPS/);
   assert.match(html, /GAME STATS/);
   assert.match(html, /OPS HEALTH/);
+  assert.match(html, /ops-system-metrics/);
+  assert.match(html, /updateOpsSystemMetrics\(feedS, state\?\.feeds\?\.systemMetrics\)/);
+  assert.match(html, /status\.textContent = valid \? \(trend\.range \|\|/);
+  assert.match(html, /timestamp - first/);
+  assert.match(html, /Any missing or untimed sample keeps its time bucket as a gap/);
+  assert.match(html, /STALE/);
   assert.match(html, /data-broadcast-overlay-version="4"/);
   assert.match(html, /id="feed-g-state"/);
   assert.match(html, /id="feed-s-state"/);
