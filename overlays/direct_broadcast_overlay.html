@@ -1504,6 +1504,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (span <= 0) return { spark: '—', range: '' };
 
     const slots = Array(slotCount).fill(null);
+    const slotHasGap = Array(slotCount).fill(false);
     raw.forEach(point => {
       if (point.timestamp !== null
           && (point.timestamp < cutoff || point.timestamp > now + 1)) return;
@@ -1511,9 +1512,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         ? point.index / Math.max(1, raw.length - 1)
         : (point.timestamp - first) / span;
       const slot = Math.max(0, Math.min(slots.length - 1, Math.round(position * (slots.length - 1))));
-      // Keep null samples as gaps; omitting them would shift the graph and
-      // imply continuity across an unavailable or reset measurement.
-      slots[slot] = point.value;
+      // Any missing or untimed sample keeps its time bucket as a gap. Dropping
+      // one would shift the graph or imply continuity across an unknown value.
+      if (!Number.isFinite(point.value)) {
+        slotHasGap[slot] = true;
+        slots[slot] = null;
+      } else if (!slotHasGap[slot]) {
+        slots[slot] = point.value;
+      }
     });
     const values = slots.filter(Number.isFinite);
     const low = values.length ? Math.min(...values) : 0;
