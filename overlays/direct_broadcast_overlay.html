@@ -691,6 +691,48 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   letter-spacing: .09em;
 }
 .ops-kpis .dash-kpi-value { font-size: 19px; }
+.ops-system-metrics {
+  display: grid;
+  gap: 3px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: #071720;
+}
+.ops-metric-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(48px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 17px;
+}
+.ops-metric-label,
+.ops-metric-state {
+  color: #8ba5b4;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .07em;
+}
+.ops-metric-value {
+  color: #e5f4fa;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.ops-metric-value.warn { color: #f4d486; }
+.ops-metric-value.unknown { color: #aec0c9; }
+.ops-metric-spark {
+  min-width: 0;
+  overflow: hidden;
+  color: #79bdc7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: .04em;
+  line-height: 12px;
+  white-space: nowrap;
+}
+.ops-metric-state { text-align: right; }
 .game-live,
 .game-trend-line {
   padding: 6px 8px;
@@ -1438,6 +1480,45 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     return '';
   }
+  function metricSparkline(history, key) {
+    const points = (Array.isArray(history) ? history : [])
+      .map(point => point?.[key])
+      .filter(value => Number.isFinite(value) && value >= 0 && value <= 100)
+      .slice(-36);
+    if (points.length < 2) return '—';
+    const low = Math.min(...points), high = Math.max(...points);
+    const chars = '▁▂▃▄▅▆▇█';
+    return points.map(value => chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
+  }
+  function updateOpsSystemMetrics(container, metrics) {
+    const panel = container?.querySelector?.('.ops-system-metrics');
+    if (!panel) return;
+    const sampledAt = Number(metrics?.sampledAt);
+    const hasSample = Number.isFinite(sampledAt) && sampledAt > 0;
+    const age = hasSample ? Date.now() / 1000 - sampledAt : null;
+    const stale = hasSample && (age < 0 || age > 15);
+    const update = (kind, label, value, detail, valueKey, threshold) => {
+      const row = panel.querySelector(`[data-metric="${kind}"]`);
+      if (!row) return;
+      const valueNode = row.querySelector('.ops-metric-value');
+      const spark = row.querySelector('.ops-metric-spark');
+      const status = row.querySelector('.ops-metric-state');
+      if (!valueNode || !spark || !status) return;
+      const valid = !stale && Number.isFinite(value) && value >= 0 && value <= 100;
+      valueNode.textContent = valid ? `${Math.round(value)}%${detail || ''}` : '—';
+      valueNode.className = `ops-metric-value${valid && value >= threshold ? ' warn' : ''}${valid ? '' : ' unknown'}`;
+      spark.textContent = metricSparkline(metrics?.history, valueKey);
+      spark.setAttribute('aria-label', `${label} history`);
+      status.textContent = valid ? 'LAST 3 MIN' : (stale ? 'STALE' : 'UNKNOWN');
+    };
+    const used = metrics?.memoryUsedBytes;
+    const total = metrics?.memoryTotalBytes;
+    const memoryDetail = Number.isSafeInteger(used) && Number.isSafeInteger(total) && total > 0
+      ? ` ${Math.round(used / 1073741824 * 10) / 10}/${Math.round(total / 1073741824 * 10) / 10}G`
+      : '';
+    update('cpu', 'CPU', metrics?.cpuPercent, '', 'cpuPercent', 80);
+    update('memory', 'RAM', metrics?.memoryPercent, memoryDetail, 'memoryPercent', 85);
+  }
   function adaptOpsDashboard(container) {
     const dash = container?.querySelector?.('.ops-dashboard');
     const panel = container?.parentElement;
@@ -1459,7 +1540,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
   }
 
-  function renderOpsDashboard(container, feed) {
+  function renderOpsDashboard(container, feed, metrics) {
     const text = String(feed?.text || '');
     const workers = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
     const backendLine = text.split('\n').map(line => line.trim()).find(line => /Backend\s+/.test(line));
@@ -1487,6 +1568,19 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const backendState = /\bLIVE\b|\bOK\b/.test(backend) ? 'LIVE'
       : /\bDOWN\b|\bFAILED\b/.test(backend) ? 'DOWN' : '';
     root.appendChild(kpis);
+
+    const systemMetrics = dashNode('ops-system-metrics');
+    for (const [kind, label] of [['cpu', 'CPU'], ['memory', 'RAM']]) {
+      const row = dashNode('ops-metric-row');
+      row.dataset.metric = kind;
+      row.appendChild(dashNode('ops-metric-label', label));
+      row.appendChild(dashNode('ops-metric-value unknown', '—'));
+      row.appendChild(dashNode('ops-metric-spark', '—'));
+      row.appendChild(dashNode('ops-metric-state', 'UNKNOWN'));
+      systemMetrics.appendChild(row);
+    }
+    root.appendChild(systemMetrics);
+    updateOpsSystemMetrics(root, metrics);
 
     const servicesHead = dashNode('ops-services-head');
     servicesHead.appendChild(dashNode('', 'SERVICES'));
@@ -1837,10 +1931,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       lastFeedGKey = gKey;
     }
     if (sKey !== lastFeedSKey) {
-      if (!renderOpsDashboard(feedS, s)) renderFeedLines(feedS, s?.text);
+      if (!renderOpsDashboard(feedS, s, state?.feeds?.systemMetrics)) renderFeedLines(feedS, s?.text);
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
     }
+    updateOpsSystemMetrics(feedS, state?.feeds?.systemMetrics);
     if (improveActive) {
       const iKey = `${i?.updatedAt || 0}:${(i?.logLines || []).join('\n')}`;
       if (iKey !== lastFeedIKey) {

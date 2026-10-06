@@ -44,6 +44,7 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
   assert.match(enabled.broadcast.sources.eventHtmlFile, /event_overlay[.]html$/);
   assert.match(enabled.broadcast.sources.statsHtmlFile, /status_overlay[.]html$/);
   assert.match(enabled.broadcast.sources.opsHtmlFile, /show_status_overlay[.]html$/);
+  assert.match(enabled.broadcast.sources.directStreamStatusFile, /direct_stream\/status[.]json$/);
   assert.match(enabled.broadcast.sources.improveStateFile, /improve_state[.]json$/);
   assert.match(enabled.broadcast.sources.improveLogFile, /improve_ai[.]log$/);
   assert.match(enabled.broadcast.sources.wildcardStateFile, /wildcard_parallel_status[.]json$/);

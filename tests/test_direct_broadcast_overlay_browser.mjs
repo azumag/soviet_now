@@ -12,6 +12,16 @@ const artifacts = process.env.SOREN_OVERLAY_ARTIFACT_DIR;
 
 function fixture(kind) {
   const now = Math.floor(Date.now() / 1000);
+  const metricsKind = kind === 'metrics-initial' ? 'initial'
+    : kind === 'metrics-high' ? 'high'
+    : kind === 'metrics-low' ? 'low'
+      : kind === 'metrics-unknown' ? 'unknown'
+        : kind === 'metrics-stale' ? 'stale' : 'normal';
+  const metrics = metricsKind === 'high' ? { cpu: 92, memory: 91 }
+    : metricsKind === 'low' ? { cpu: 12, memory: 31 }
+      : ['unknown','initial'].includes(metricsKind) ? { cpu: null, memory: null }
+        : metricsKind === 'stale' ? { cpu: 38, memory: 52, age: 30 }
+          : { cpu: 42, memory: 56 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
     + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n'
     + '兵力: 9名 / 停滞 3秒\n占領記録 5城（現在の城数ではない）\n'
@@ -83,6 +93,9 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
   return {version:1, updatedAt:now, feeds:{
     showStatusG:{text, segments:kind==='monitor'&&process.env.SOREN_MONITOR_FEED?JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).segments:undefined, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
+    systemMetrics:{sampledAt:metricsKind==='initial'?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
+      memoryUsedBytes:metrics.memory===null?null:9*1073741824,memoryTotalBytes:16*1073741824,
+      history:Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
   }, notifications:{visibleSec:18, events:[], generators:kind==='generator'?[{key:'comment',label:'コメント生成中',ts:now-60}]:[],
@@ -112,7 +125,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
+    for(const kind of ['normal','metrics-initial','metrics-high','metrics-low','metrics-unknown','metrics-stale','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -221,6 +234,20 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(['normal','prediction','stress'].includes(kind)) {
         assert.equal(layout.opsOverflow,false,`${kind}: adaptive OPS dashboard fits the available rail height`);
       }
+      if(kind.startsWith('metrics-')) {
+        const metricsText=await page.locator('.ops-system-metrics').innerText();
+        if(kind==='metrics-high') assert.match(metricsText,/CPU\s+92%/);
+        if(kind==='metrics-low') assert.match(metricsText,/CPU\s+12%/);
+        if(['metrics-initial','metrics-unknown'].includes(kind)) assert.match(metricsText,/UNKNOWN/);
+        if(kind==='metrics-stale') assert.match(metricsText,/STALE/);
+        const metricLayout=await page.locator('.ops-system-metrics').evaluate(el=>({
+          clipped:el.scrollWidth>el.clientWidth+1,
+          outside:[...el.children].some(row=>{const r=row.getBoundingClientRect(),p=el.getBoundingClientRect();return r.left<p.left-1||r.right>p.right+1;}),
+        }));
+        assert.equal(metricLayout.clipped,false,`${kind}: CPU/RAM cards fit sidebar width`);
+        assert.equal(metricLayout.outside,false,`${kind}: CPU/RAM rows stay within their panel`);
+        if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}-sidebar.png`),clip:{x:960,y:0,width:320,height:720}});
+      }
       if(kind==='stress') {
         assert.equal(layout.feedRows,0,'stress raw OPS logs are summarized');
         assert.ok(layout.opsAlerts>=1,'stress faults remain visible as attention rows');
@@ -254,6 +281,14 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         if(kind!=='console-empty') assert.ok(await page.locator('#feed-g .game-bars').count(),`${kind}: recent result bars are visible`);
       }
     }
+    state=fixture('normal');
+    await page.goto(origin+'/overlay');
+    await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
+    await page.evaluate(()=>{window.__savedOpsRoot=document.querySelector('.ops-dashboard');});
+    state=fixture('metrics-high');
+    await page.waitForFunction(()=>document.querySelector('.ops-system-metrics .ops-metric-value')?.textContent==='92%');
+    assert.equal(await page.evaluate(()=>window.__savedOpsRoot===document.querySelector('.ops-dashboard')),
+      true,'CPU/RAM updates retain the OPS dashboard DOM');
     state=fixture('work-two-line');
     for(const region of ['sidebar','top','bottom']) {
       await page.goto(origin+`/harness/${region}`);
