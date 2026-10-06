@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
   validGeometry, sameGeometry, captureTimeoutMs, captureErrorBackoffMs,
-  captureErrorLimit } from '../soren91/realtime_io.mjs';
+  captureErrorLimit, captureImageFormat, captureJpegQuality } from '../soren91/realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
@@ -19,6 +19,15 @@ function png(width = 800, height = 450) {
   const b = Buffer.alloc(24);
   Buffer.from('89504e470d0a1a0a', 'hex').copy(b);
   b.write('IHDR', 12); b.writeUInt32BE(width, 16); b.writeUInt32BE(height, 20);
+  return b.toString('base64');
+}
+function jpeg(width = 800, height = 450) {
+  const b = Buffer.alloc(21);
+  b[0] = 0xff; b[1] = 0xd8; b[2] = 0xff; b[3] = 0xc0;
+  b.writeUInt16BE(17, 4);
+  b[6] = 8;
+  b.writeUInt16BE(height, 7);
+  b.writeUInt16BE(width, 9);
   return b.toString('base64');
 }
 function mockPage({ geometries = [G], capture = async () => ({ data: png() }),
@@ -47,6 +56,15 @@ test('remote defaults are effective in node after dotenv, and explicit opt-in/ou
   assert.equal(postDropProbeEnabled({}), true);
   assert.equal(postDropProbeEnabled({ SOREN91_REMOTE_CDP_URL: 'x', SOREN91_RANK_POSTDROP_PROBE: '1' }), true);
   assert.equal(postDropProbeEnabled({ SOREN91_RANK_POSTDROP_PROBE: '0' }), false);
+});
+test('remote capture defaults to bounded JPEG while local capture stays PNG', () => {
+  assert.equal(captureImageFormat({ SOREN91_REMOTE_CDP_URL: 'http://remote.invalid' }), 'jpeg');
+  assert.equal(captureImageFormat({}), 'png');
+  assert.equal(captureImageFormat({ SOREN91_REMOTE_CDP_URL: 'x', SOREN91_CAPTURE_FORMAT: 'png' }), 'png');
+  assert.equal(captureImageFormat({ SOREN91_CAPTURE_FORMAT: 'jpg' }), 'jpeg');
+  assert.equal(captureJpegQuality({}), 85);
+  assert.equal(captureJpegQuality({ SOREN91_CAPTURE_JPEG_QUALITY: '50' }), 60);
+  assert.equal(captureJpegQuality({ SOREN91_CAPTURE_JPEG_QUALITY: '99' }), 95);
 });
 test('invalid timeouts are bounded; zero cannot disable a native timeout', () => {
   for (const x of [undefined, '', 'NaN', 'Infinity']) assert.equal(boundedMs(x, 3000), 3000);
@@ -96,6 +114,20 @@ for (const [name, patch] of Object.entries({ resize: { width: 801 }, scroll: { s
     await assert.rejects(createCanvasIO().capture(mockPage({ geometries: [G, { ...G, ...patch }] })), /geometry-changed/);
   });
 }
+test('JPEG capture preserves geometry checks and forwards bounded quality', async () => {
+  const page = mockPage({ capture: async () => ({ data: jpeg() }) });
+  const frame = await createCanvasIO().capture(page, { type: 'jpeg', quality: 85 });
+  assert.equal(frame.format, 'jpeg');
+  assert.equal(frame.width, 800);
+  assert.equal(frame.height, 450);
+  const opts = page.calls.find(c => c.method === 'Page.screenshot').args;
+  assert.equal(opts.type, 'jpeg');
+  assert.equal(opts.quality, 85);
+  await assert.rejects(
+    createCanvasIO().capture(mockPage({ capture: async () => ({ data: 'bm90LWEtanBlZw==' }) }), { type: 'jpeg' }),
+    /invalid-jpeg/,
+  );
+});
 test('CSS and native DPR PNGs are valid; unexpected scaling fails closed', async () => {
   const g = { ...G, dpr: 2 };
   for (const scale of [1, 2]) {
@@ -150,6 +182,13 @@ test('concurrent calls cannot queue duplicate screenshot operations', async () =
   await new Promise(resolve => setImmediate(resolve));
   finish({ data: png() }); await first;
   assert.equal(page.calls.filter(c => c.method === 'Page.screenshot').length, 1);
+});
+test('frameBox reuses only already-verified frame geometry and calibration dimensions', () => {
+  const io = createCanvasIO();
+  const frame = { geometry: G, width: 800, height: 450 };
+  assert.deepEqual(io.frameBox(frame, calibration), G);
+  assert.throws(() => io.frameBox({ ...frame, geometry: { ...G, x: -1 } }, calibration), /geometry-changed/);
+  assert.throws(() => io.frameBox(frame, { screen: { width: 1600, height: 900 } }), /calibration-mismatch/);
 });
 test('stale observations, changed geometry, and calibration mismatch cannot reach input', async () => {
   let now = 0;
@@ -236,7 +275,8 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
   const dropTimes = [], writes = [], comments = [];
   const context = {
-    join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
+    join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
+    DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,
     performance: { now: () => now },
     Date: class extends Date { static now() { return now; } },
@@ -290,21 +330,26 @@ test('unknown-current remains fail-closed; faster polling cannot force a blind d
   assert.equal(s.drops, 0); assert.equal(s.holds, 0);
   assert.ok(s.writes.some(v => v.reasonCounts['unknown-current'] > 1));
 });
-test('real drop function does not click if geometry changes during mouse aiming', async () => {
+test('real drop does one final remote geometry validation and never clicks after a changed aim', async () => {
   let validations = 0, clicks = 0;
+  const frame = { geometry: G, width: 800, height: 450 };
   const fn = vm.runInNewContext(`(${extract('executeDrop', '/**\n * ラウンド終了処理')})`, {
     loadModule: async () => ({ dropXToPixel: () => 400 }),
-    inputCanvasBox: async () => { if (++validations === 2) throw new Error('input-geometry-changed'); return G; },
+    canvasIO: { frameBox: () => G },
+    inputCanvasBox: async () => { validations++; throw new Error('input-geometry-changed'); },
     process: { env: {} }, sleep: async () => {},
+    markObservationDropSent: () => {},
   });
-  await assert.rejects(fn({ mouse: { move: async () => {}, click: async () => { clicks++; } } }, 0, calibration,
-    { width: 800, height: 450 }), /geometry-changed/);
+  await assert.rejects(fn({ mouse: { move: async () => {}, click: async () => { clicks++; } } }, 0, calibration, frame),
+    /geometry-changed/);
+  assert.equal(validations, 1);
   assert.equal(clicks, 0);
 });
 test('real drop arms the post-drop observation boundary only after the click is sent', async () => {
   const events = [];
   const fn = vm.runInNewContext(`(${extract('executeDrop', '/**\n * ラウンド終了処理')})`, {
     loadModule: async () => ({ dropXToPixel: () => 400 }),
+    canvasIO: { frameBox: () => G },
     inputCanvasBox: async () => G,
     process: { env: {} },
     sleep: async () => {},

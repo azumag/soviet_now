@@ -7,6 +7,18 @@ export function postDropProbeEnabled(env = process.env) {
   return !String(env.SOREN91_REMOTE_CDP_URL || '').trim();
 }
 
+export function captureImageFormat(env = process.env) {
+  const explicit = String(env?.SOREN91_CAPTURE_FORMAT || '').trim().toLowerCase();
+  if (explicit === 'jpg' || explicit === 'jpeg') return 'jpeg';
+  if (explicit === 'png') return 'png';
+  return String(env?.SOREN91_REMOTE_CDP_URL || '').trim() ? 'jpeg' : 'png';
+}
+
+export function captureJpegQuality(env = process.env) {
+  const raw = Number(env?.SOREN91_CAPTURE_JPEG_QUALITY);
+  return Number.isFinite(raw) ? Math.max(60, Math.min(95, Math.round(raw))) : 85;
+}
+
 export function boundedMs(value, fallback, min = 200, max = 5000) {
   const n = Number(value);
   return value != null && String(value).trim() !== '' && Number.isFinite(n)
@@ -94,6 +106,35 @@ function pngSize(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
+function jpegSize(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    throw new Error('capture-invalid-jpeg');
+  }
+  let offset = 2;
+  while (offset + 4 <= buffer.length) {
+    if (buffer[offset] !== 0xff) throw new Error('capture-invalid-jpeg');
+    const marker = buffer[offset + 1];
+    if (marker === 0xff) { offset += 1; continue; }
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
+    const length = buffer.readUInt16BE(offset + 2);
+    const isSof = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isSof) {
+      if (offset + 9 > buffer.length) throw new Error('capture-invalid-jpeg');
+      return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+    }
+    if (length < 2 || offset + 2 + length > buffer.length) throw new Error('capture-invalid-jpeg');
+    offset += 2 + length;
+  }
+  throw new Error('capture-invalid-jpeg');
+}
+
+function imageSize(buffer, type) {
+  return type === 'jpeg' ? jpegSize(buffer) : pngSize(buffer);
+}
+
 /** One CDP session and at most one operation per game page. Timed-out sessions retire. */
 export function createCanvasIO({ now = () => performance.now() } = {}) {
   const sessions = new WeakMap();
@@ -164,7 +205,8 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
   }
 
   return {
-    async capture(page, { timeoutMs = 3000 } = {}) {
+    async capture(page, { timeoutMs = 3000, type = 'png', quality = 85 } = {}) {
+      if (!['png', 'jpeg'].includes(type)) throw new Error('capture-invalid-image');
       return run(page, timeoutMs, async (session, check, remaining) => {
         const geometryBeforeStartedAt = now();
         const before = await geometry(session, check);
@@ -174,15 +216,17 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         // Use Playwright's own screenshot session: raw capture on a NEW CDP
         // session can reset DPR emulation belonging to the host's session.
         const screenshotStartedAt = capturedAt;
-        const buffer = await page.screenshot({
-          type: 'png', scale: 'css', timeout: remaining(),
+        const screenshotOptions = {
+          type, scale: 'css', timeout: remaining(),
           clip: { x: before.x, y: before.y, width: before.width, height: before.height },
-        });
+        };
+        if (type === 'jpeg') screenshotOptions.quality = Math.max(60, Math.min(95, Math.round(quality)));
+        const buffer = await page.screenshot(screenshotOptions);
         check();
         const screenshotEndedAt = now();
         const imageValidateStartedAt = screenshotEndedAt;
         if (!Buffer.isBuffer(buffer) || buffer.length > 24 * 1024 * 1024) throw new Error('capture-invalid-image');
-        const size = pngSize(buffer);
+        const size = imageSize(buffer, type);
         // Attached browsers may not expose their native DPR in context options.
         // CSS-pixel and native-DPR PNGs are both valid;
         // input maps from actual PNG dimensions instead of guessing from DPR.
@@ -197,7 +241,7 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         const geometryAfterEndedAt = now();
         if (!sameGeometry(before, after)) throw new Error('capture-geometry-changed');
         return {
-          buffer, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
+          buffer, format: type, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
           captureStageMs: {
             geometryBefore: Math.max(0, geometryBeforeEndedAt - geometryBeforeStartedAt),
             screenshot: Math.max(0, screenshotEndedAt - screenshotStartedAt),
@@ -206,6 +250,13 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
           },
         };
       });
+    },
+    frameBox(frame, calibration) {
+      if (!frame || !validGeometry(frame.geometry)) throw new Error('input-geometry-changed');
+      if (calibration?.screen?.width !== frame.width || calibration?.screen?.height !== frame.height) {
+        throw new Error('input-calibration-mismatch');
+      }
+      return frame.geometry;
     },
     async validateInput(page, frame, calibration, { timeoutMs = 1500, maxAgeMs = null } = {}) {
       // A slow host must not have every drop fail-closed: the budget grows with
