@@ -15,7 +15,8 @@ function fixture(kind) {
   const metricsKind = kind === 'metrics-initial' ? 'initial'
     : kind === 'metrics-missing-time' ? 'missing-time'
       : kind === 'metrics-gaps' ? 'gaps'
-    : kind === 'metrics-high' ? 'high'
+      : kind === 'metrics-bad-timestamps' ? 'bad-timestamps'
+      : kind === 'metrics-high' ? 'high'
     : kind === 'metrics-low' ? 'low'
       : kind === 'metrics-unknown' ? 'unknown'
         : kind === 'metrics-stale' ? 'stale' : 'normal';
@@ -100,6 +101,13 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
     systemMetrics:{sampledAt:['initial','missing-time'].includes(metricsKind)?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
       memoryUsedBytes:metrics.memory===null?null:Math.round(16*1073741824*metrics.memory/100),memoryTotalBytes:16*1073741824,
       history:metricsKind==='gaps'?[{ts:now-10,cpuPercent:10,memoryPercent:20},{ts:now-5,cpuPercent:null,memoryPercent:null},{ts:now,cpuPercent:80,memoryPercent:60}]
+        :metricsKind==='bad-timestamps'?Array.from({length:36},(_,index)=>{
+          const point={ts:now-((35-index)*5),cpuPercent:45,memoryPercent:60};
+          if(index===10){delete point.ts;point.cpuPercent=100;point.memoryPercent=100;}
+          if(index===20){point.ts=null;point.cpuPercent=100;point.memoryPercent=100;}
+          if(index===30){point.ts=-1;point.cpuPercent=100;point.memoryPercent=100;}
+          return point;
+        })
         :Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
@@ -130,7 +138,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
+    for(const kind of ['normal','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','metrics-bad-timestamps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -253,6 +261,11 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         if(kind==='metrics-gaps') {
           assert.match(metricsText,/10S/,'range label follows timestamps');
           assert.match(metricsText,/·/,'null samples remain visible gaps');
+        }
+        if(kind==='metrics-bad-timestamps') {
+          const cpuChart=await page.locator('.ops-metric-row[data-metric="cpu"] .ops-metric-spark').textContent();
+          assert.ok((cpuChart.match(/·/g)||[]).length>=3,'missing, null and negative timestamps remain gaps');
+          assert.doesNotMatch(cpuChart,/█/,'finite values with invalid timestamps never become chart peaks');
         }
         const metricLayout=await page.locator('.ops-system-metrics').evaluate(el=>({
           clipped:el.scrollWidth>el.clientWidth+1,

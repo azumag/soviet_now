@@ -1488,10 +1488,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const raw = (Array.isArray(history) ? history : []).slice(-36).map((point, index) => {
       const timestamp = Number(point?.ts);
       const value = point?.[key];
+      const hasTimestamp = Number.isFinite(timestamp) && timestamp > 0;
       return {
         index,
-        timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null,
-        value: Number.isFinite(value) && value >= 0 && value <= 100 ? value : null,
+        timestamp: hasTimestamp ? timestamp : null,
+        value: hasTimestamp && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null,
       };
     });
     const timed = raw.filter(point => point.timestamp !== null
