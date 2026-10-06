@@ -1,13 +1,23 @@
 import {
-  copyFileSync,
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  unlinkSync,
+  writeFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
 } from 'fs';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 
 const MAX_HISTORY_LINES = 4096;
+const MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_STRATEGY_BYTES = 256 * 1024;
+const TURN_FILE_RE = /^turn_(\d+)(?:[._-][A-Za-z0-9._-]+)?\.(?:png|jpe?g)$/i;
 
 function finiteNumber(value, fallback = null) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -110,8 +120,9 @@ function analyzeHistoryText(text) {
 }
 
 function parsedTurnFile(name) {
-  const match = String(name).match(/^turn_(\d+).*\.(?:png|jpe?g)$/i);
-  return match ? { name: String(name), turn: Number.parseInt(match[1], 10) } : null;
+  const match = typeof name === 'string' ? name.match(TURN_FILE_RE) : null;
+  const turn = match ? Number(match[1]) : NaN;
+  return Number.isSafeInteger(turn) ? { name, turn } : null;
 }
 
 /**
@@ -123,10 +134,13 @@ function parsedTurnFile(name) {
 export function selectCriticalSnapshotNames(fileNames, maxShots = 3, preferredTurns = []) {
   if (!Number.isInteger(maxShots) || maxShots <= 0) return [];
 
-  const files = [...new Set(fileNames)]
-    .map(parsedTurnFile)
-    .filter(Boolean)
-    .sort((a, b) => a.turn - b.turn || a.name.localeCompare(b.name));
+  // The archive has already chosen the freshest safe file per turn. Keep the
+  // name-only API deterministic too: aliases must not consume extra slots.
+  const byTurn = new Map();
+  for (const file of [...new Set(fileNames)].sort().map(parsedTurnFile).filter(Boolean)) {
+    byTurn.set(file.turn, file);
+  }
+  const files = [...byTurn.values()].sort((a, b) => a.turn - b.turn);
   if (files.length <= maxShots) return files.map(file => file.name);
 
   const selected = new Set();
@@ -164,13 +178,64 @@ export function selectCriticalSnapshotNames(fileNames, maxShots = 3, preferredTu
 }
 
 /**
- * Archive bounded visual evidence for one completed game. History parsing is
- * fail-soft for archival only: malformed/missing history falls back to the
- * established early/middle/late sample. A syntactically valid history whose
- * turn lineage resets/skips is different: turn_N no longer names one unique
- * session observation, so pairing screenshots with those turns would create
- * misleading evidence. In that case visual evidence is suppressed fail-closed.
- * This helper never mutates strategy.
+ * snapshotCurrentStrategyForGame() writes this per-game file synchronously
+ * before the first capture, including the first game and every normal round.
+ * Reuse that existing lifecycle boundary instead of adding I/O to the drop
+ * loop. Missing, ambiguous or future boundaries suppress images, never guess.
+ */
+function gameStartBoundary(screenshotDir, outputDir, historyFile, nowMs) {
+  const gameName = basename(outputDir);
+  const match = gameName.match(/^game_(\d+)$/);
+  if (!match) return null;
+  const game = Number(match[1]);
+  if (!Number.isSafeInteger(game) || game <= 0 || String(game).padStart(4, '0') !== match[1]) return null;
+  if (historyFile && ![`latest_${match[1]}.jsonl`, `${gameName}.jsonl`].includes(basename(historyFile))) return null;
+  const markerDir = join(dirname(screenshotDir), 'strategy_snapshots');
+  try {
+    if (!lstatSync(markerDir).isDirectory()) return null;
+    const info = lstatSync(join(markerDir, `${gameName}_strategy.mjs`));
+    if (!info.isFile() || info.size <= 0 || info.size > MAX_STRATEGY_BYTES
+        || !Number.isFinite(info.mtimeMs) || info.mtimeMs < 0 || info.mtimeMs > nowMs) return null;
+    return info.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+function sameFileRevision(a, b) {
+  return ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs'].every(key => a[key] === b[key]);
+}
+
+function readSelectedScreenshot(path, expected) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = fstatSync(fd);
+    if (!before.isFile() || !sameFileRevision(before, expected)) return null;
+    // Bounded read, even if a live writer grows the file after the first stat.
+    const data = Buffer.alloc(before.size + 1);
+    let size = 0;
+    while (size < data.length) {
+      const count = readSync(fd, data, size, data.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    const after = fstatSync(fd);
+    if (size !== before.size || !sameFileRevision(before, after)) return null;
+    return data.subarray(0, size);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * Archive bounded visual evidence for one completed game. Malformed/missing
+ * history keeps early/middle/late sampling, but only inside an established
+ * game boundary. Discontinuous history still suppresses ambiguous evidence.
+ * The shared capture directory is never mutated. Only this game's managed
+ * archive images are replaced; strategy and gameplay gates are untouched.
  */
 export function archiveCriticalTurnScreenshots({
   screenshotDir,
@@ -199,15 +264,50 @@ export function archiveCriticalTurnScreenshots({
     }
   }
 
-  const sourceNames = readdirSync(screenshotDir)
-    .filter(name => /^turn_\d+.*\.(?:png|jpe?g)$/i.test(name));
-  const names = historyStatus === 'discontinuous'
-    ? []
-    : selectCriticalSnapshotNames(sourceNames, maxShots, preferredTurns);
+  if (!lstatSync(screenshotDir).isDirectory()) throw new Error('screenshot directory is not a real directory');
+  // Date.now() has millisecond precision; include the rest of the current ms.
+  const nowMs = Date.now() + 1;
+  const startedAtMs = gameStartBoundary(screenshotDir, outputDir, historyFile, nowMs);
+  const sessionStatus = startedAtMs === null ? 'missing-or-invalid' : 'ok';
+  const byTurn = new Map();
+  if (startedAtMs !== null && historyStatus !== 'discontinuous') {
+    for (const name of readdirSync(screenshotDir)) {
+      const file = parsedTurnFile(name);
+      if (!file) continue;
+      try {
+        const info = lstatSync(join(screenshotDir, name));
+        // Equality at the boundary cannot prove which game wrote the frame.
+        if (!info.isFile() || info.size <= 0 || info.size > MAX_SCREENSHOT_BYTES
+            || info.mtimeMs <= startedAtMs || info.mtimeMs > nowMs) continue;
+        const previous = byTurn.get(file.turn);
+        if (!previous || info.mtimeMs > previous.info.mtimeMs
+            || (info.mtimeMs === previous.info.mtimeMs && name > previous.name)) {
+          byTurn.set(file.turn, { ...file, info });
+        }
+      } catch { /* A disappeared capture is optional evidence. */ }
+    }
+  }
+  const candidates = new Map([...byTurn.values()].map(file => [file.name, file]));
+  const selected = selectCriticalSnapshotNames([...candidates.keys()], maxShots, preferredTurns);
+  const snapshots = [];
+  for (const name of selected) {
+    const data = readSelectedScreenshot(join(screenshotDir, name), candidates.get(name).info);
+    if (data) snapshots.push({ name, data });
+  }
 
   mkdirSync(outputDir, { recursive: true });
-  for (const name of names) {
-    copyFileSync(join(screenshotDir, name), join(outputDir, name));
+  if (!lstatSync(outputDir).isDirectory()) throw new Error('archive directory is not a real directory');
+  // Re-archiving after a format change must not leave old PNG/JPEG aliases for
+  // the exporter. Remove only managed turn files/links, never unrelated files.
+  for (const entry of readdirSync(outputDir, { withFileTypes: true })) {
+    if (parsedTurnFile(entry.name) && (entry.isFile() || entry.isSymbolicLink())) {
+      unlinkSync(join(outputDir, entry.name));
+    }
+  }
+  const names = [];
+  for (const { name, data } of snapshots) {
+    writeFileSync(join(outputDir, name), data, { flag: 'wx', mode: 0o600 });
+    names.push(name);
   }
 
   return {
@@ -215,5 +315,6 @@ export function archiveCriticalTurnScreenshots({
     names,
     preferredTurns,
     historyStatus,
+    sessionStatus,
   };
 }
