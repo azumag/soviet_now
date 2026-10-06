@@ -109,6 +109,7 @@ meta=$(_radio_native_generate_script "公開トピック" "$BODY" "$SUMMARY") ||
 grep -q "部分取得" "$BODY" || fail "partial body was not written"
 unset FIXTURE_MODE
 
+rm -f "$BODY" "$SUMMARY"
 DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC=1
 FIXTURE_MODE=sleep
 export DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC FIXTURE_MODE
@@ -116,6 +117,8 @@ if meta=$(_radio_native_generate_script "公開トピック" "$BODY" "$SUMMARY")
 	fail "hung bridge must hit the outer process deadline"
 fi
 [ "$meta" = "process_timeout" ] || fail "unexpected process-timeout metadata: $meta"
+[ ! -s "$BODY" ] || fail "process timeout must not produce a body"
+[ ! -s "$SUMMARY" ] || fail "process timeout must not produce a summary"
 unset DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC FIXTURE_MODE
 
 DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC=0
@@ -157,7 +160,7 @@ _normalize_radio_tone() {
 _radio_quality_check() { printf '%s' "OK"; }
 _is_valid_radio_talk() { return 0; }
 _radio_store_generation_meta() {
-	printf '%s|%s|%s|%s\n' "$2" "$4" "$9" "$10" >>"$TMP/generation_meta"
+	printf '%s|%s|%s|%s\n' "$2" "$4" "$9" "${10}" >>"$TMP/generation_meta"
 }
 _radio_mark_done() {
 	printf 'done:%s\n' "$(basename "$1")" >>"$TMP/events"
