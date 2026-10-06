@@ -162,7 +162,9 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /OPS HEALTH/);
   assert.match(html, /ops-system-metrics/);
   assert.match(html, /updateOpsSystemMetrics\(feedS, state\?\.feeds\?\.systemMetrics\)/);
-  assert.match(html, /status\.textContent = valid \? '3M'/);
+  assert.match(html, /status\.textContent = valid \? \(trend\.range \|\|/);
+  assert.match(html, /timestamp - first/);
+  assert.match(html, /Keep null samples as gaps/);
   assert.match(html, /STALE/);
   assert.match(html, /data-broadcast-overlay-version="4"/);
   assert.match(html, /id="feed-g-state"/);

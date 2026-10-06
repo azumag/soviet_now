@@ -13,6 +13,8 @@ const artifacts = process.env.SOREN_OVERLAY_ARTIFACT_DIR;
 function fixture(kind) {
   const now = Math.floor(Date.now() / 1000);
   const metricsKind = kind === 'metrics-initial' ? 'initial'
+    : kind === 'metrics-missing-time' ? 'missing-time'
+      : kind === 'metrics-gaps' ? 'gaps'
     : kind === 'metrics-high' ? 'high'
     : kind === 'metrics-low' ? 'low'
       : kind === 'metrics-unknown' ? 'unknown'
@@ -20,6 +22,8 @@ function fixture(kind) {
   const metrics = metricsKind === 'high' ? { cpu: 92, memory: 91 }
     : metricsKind === 'low' ? { cpu: 12, memory: 31 }
       : ['unknown','initial'].includes(metricsKind) ? { cpu: null, memory: null }
+        : metricsKind === 'missing-time' ? { cpu: 50, memory: 50 }
+          : metricsKind === 'gaps' ? { cpu: 80, memory: 60 }
         : metricsKind === 'stale' ? { cpu: 38, memory: 52, age: 30 }
           : { cpu: 42, memory: 56 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
@@ -93,9 +97,10 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
   return {version:1, updatedAt:now, feeds:{
     showStatusG:{text, segments:kind==='monitor'&&process.env.SOREN_MONITOR_FEED?JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).segments:undefined, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
-    systemMetrics:{sampledAt:metricsKind==='initial'?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
+    systemMetrics:{sampledAt:['initial','missing-time'].includes(metricsKind)?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
       memoryUsedBytes:metrics.memory===null?null:9*1073741824,memoryTotalBytes:16*1073741824,
-      history:Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
+      history:metricsKind==='gaps'?[{ts:now-10,cpuPercent:10,memoryPercent:20},{ts:now-5,cpuPercent:null,memoryPercent:null},{ts:now,cpuPercent:80,memoryPercent:60}]
+        :Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
   }, notifications:{visibleSec:18, events:[], generators:kind==='generator'?[{key:'comment',label:'コメント生成中',ts:now-60}]:[],
@@ -125,7 +130,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','metrics-initial','metrics-high','metrics-low','metrics-unknown','metrics-stale','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
+    for(const kind of ['normal','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -240,6 +245,15 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         if(kind==='metrics-low') assert.match(metricsText,/CPU\s+12%/);
         if(['metrics-initial','metrics-unknown'].includes(kind)) assert.match(metricsText,/UNKNOWN/);
         if(kind==='metrics-stale') assert.match(metricsText,/STALE/);
+        if(kind==='metrics-missing-time') {
+          assert.match(metricsText,/CPU\s+—/);
+          assert.match(metricsText,/UNKNOWN/);
+          assert.doesNotMatch(metricsText,/CPU\s+50%/);
+        }
+        if(kind==='metrics-gaps') {
+          assert.match(metricsText,/10S/,'range label follows timestamps');
+          assert.match(metricsText,/·/,'null samples remain visible gaps');
+        }
         const metricLayout=await page.locator('.ops-system-metrics').evaluate(el=>({
           clipped:el.scrollWidth>el.clientWidth+1,
           outside:[...el.children].some(row=>{const r=row.getBoundingClientRect(),p=el.getBoundingClientRect();return r.left<p.left-1||r.right>p.right+1;}),

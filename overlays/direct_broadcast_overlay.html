@@ -1482,17 +1482,46 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     return '';
   }
-  function metricSparkline(history, key) {
-    const points = (Array.isArray(history) ? history : [])
-      .map(point => point?.[key])
-      .filter(value => Number.isFinite(value) && value >= 0 && value <= 100)
-      .slice(-36);
-    if (points.length < 2) return '—';
-    const low = Math.min(...points), high = Math.max(...points);
+  function metricHistory(history, key) {
+    const now = Date.now() / 1000;
+    const cutoff = now - 180;
+    const raw = (Array.isArray(history) ? history : []).slice(-36).map((point, index) => {
+      const timestamp = Number(point?.ts);
+      const value = point?.[key];
+      return {
+        index,
+        timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null,
+        value: Number.isFinite(value) && value >= 0 && value <= 100 ? value : null,
+      };
+    });
+    const timed = raw.filter(point => point.timestamp !== null
+      && point.timestamp >= cutoff && point.timestamp <= now + 1);
+    if (timed.length < 2) return { spark: '—', range: '' };
+    const first = Math.min(...timed.map(point => point.timestamp));
+    const last = Math.max(...timed.map(point => point.timestamp));
+    const span = last - first;
+    if (span <= 0) return { spark: '—', range: '' };
+
+    const slots = Array(12).fill(null);
+    raw.forEach(point => {
+      if (point.timestamp !== null
+          && (point.timestamp < cutoff || point.timestamp > now + 1)) return;
+      const position = point.timestamp === null
+        ? point.index / Math.max(1, raw.length - 1)
+        : (point.timestamp - first) / span;
+      const slot = Math.max(0, Math.min(slots.length - 1, Math.round(position * (slots.length - 1))));
+      // Keep null samples as gaps; omitting them would shift the graph and
+      // imply continuity across an unavailable or reset measurement.
+      slots[slot] = point.value;
+    });
+    const values = slots.filter(Number.isFinite);
+    const low = values.length ? Math.min(...values) : 0;
+    const high = values.length ? Math.max(...values) : 0;
     const chars = '▁▂▃▄▅▆▇█';
-    const samples = Array.from({ length: Math.min(12, points.length) }, (_, index) =>
-      points[Math.round(index * (points.length - 1) / (Math.min(12, points.length) - 1))]);
-    return samples.map(value => chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
+    const spark = slots.map(value => !Number.isFinite(value) ? '·'
+      : chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
+    const range = span >= 60 ? `${Math.round(span / 60)}M` : `${Math.round(span)}S`;
+    return { spark, range };
   }
   function updateOpsSystemMetrics(container, metrics) {
     const panel = container?.querySelector?.('.ops-system-metrics');
@@ -1508,12 +1537,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const spark = row.querySelector('.ops-metric-spark');
       const status = row.querySelector('.ops-metric-state');
       if (!valueNode || !spark || !status) return;
-      const valid = !stale && Number.isFinite(value) && value >= 0 && value <= 100;
+      const valid = hasSample && !stale && Number.isFinite(value) && value >= 0 && value <= 100;
+      const trend = metricHistory(metrics?.history, valueKey);
       valueNode.textContent = valid ? `${Math.round(value)}%${detail || ''}` : '—';
       valueNode.className = `ops-metric-value${valid && value >= threshold ? ' warn' : ''}${valid ? '' : ' unknown'}`;
-      spark.textContent = metricSparkline(metrics?.history, valueKey);
+      spark.textContent = trend.spark;
       spark.setAttribute('aria-label', `${label} history`);
-      status.textContent = valid ? '3M' : (stale ? 'STALE' : 'UNKNOWN');
+      spark.title = `${label} history ${trend.range || 'unknown duration'}`;
+      status.textContent = valid ? (trend.range || '—') : (stale ? 'STALE' : 'UNKNOWN');
     };
     const used = metrics?.memoryUsedBytes;
     const total = metrics?.memoryTotalBytes;
