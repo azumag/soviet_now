@@ -1575,7 +1575,8 @@ async function gameLoop(page, calibration, gameNumber) {
           sessionId: latency.profileSession,
           reason: rejectedReason,
           observation,
-          confidence: boardState.confidence,
+          boardConfidence: boardState.confidence,
+          currentPieceConfidence: boardState.next?.confidence,
         });
       }
       // ランク追跡

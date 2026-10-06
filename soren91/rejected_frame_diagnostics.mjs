@@ -1,7 +1,7 @@
 /** Optional, bounded retention of already captured frames rejected by observation. */
 import {
-  closeSync, constants, fstatSync, lstatSync, linkSync, mkdirSync, openSync, readSync,
-  readdirSync, unlinkSync, writeFileSync,
+  closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync,
+  readdirSync, renameSync, rmSync, writeFileSync, fsyncSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -10,7 +10,16 @@ export const MAX_REJECTED_FRAME_BYTES = 8 * 1024 * 1024;
 const ELIGIBLE_REASONS = new Set(['non-move', 'unknown-current', 'confirm-frame']);
 const UUID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const RUN_DIR_RE = /^run_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const FRAME_NAME_RE = /^frame_(\d{2})\.(png|jpg)$/;
+const FRAME_DIR_RE = /^frame_(\d{2})$/;
+const STAGING_DIR_RE = /^\.frame_(\d{2})\.([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\.tmp$/i;
+const IMAGE_NAME = 'image.png';
+const JPEG_IMAGE_NAME = 'image.jpg';
+const PAIR_IMAGE_RE = /^image\.(png|jpg)$/;
+const METADATA_NAME = 'metadata.json';
+const CAPTURE_GEOMETRY_KEYS = [
+  'x', 'y', 'width', 'height', 'scrollX', 'scrollY', 'dpr',
+  'viewportWidth', 'viewportHeight', 'viewportScale',
+];
 
 export function rejectedFrameReason(state, perceptionReason) {
   if (ELIGIBLE_REASONS.has(perceptionReason)) return perceptionReason;
@@ -50,9 +59,18 @@ function regularEntries(directory) {
   } catch { return null; }
 }
 
-function safeMetadata({ game, sessionId, reason, turn, format, width, height, now, fileMtimeMs, rawConfidence }) {
-  const confidence = Number.isFinite(rawConfidence)
-    ? Math.max(0, Math.min(1, rawConfidence)) : null;
+function safeMetadata({ game, sessionId, reason, turn, format, width, height, now,
+  fileMtimeMs, boardConfidence, currentPieceConfidence, observation }) {
+  const boundedConfidence = value => Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value)) : null;
+  const captureGeometry = {};
+  for (const key of CAPTURE_GEOMETRY_KEYS) {
+    const value = observation?.geometry?.[key];
+    if (!Number.isFinite(value)) return null;
+    captureGeometry[key] = value;
+  }
+  if (!Number.isFinite(observation?.capturedAt) || observation.capturedAt < 0
+      || !Number.isFinite(observation?.captureMs) || observation.captureMs < 0) return null;
   return {
     schema: 1,
     game,
@@ -60,10 +78,16 @@ function safeMetadata({ game, sessionId, reason, turn, format, width, height, no
     sessionId,
     reason,
     imageFormat: format,
-    confidence,
+    boardConfidence: boundedConfidence(boardConfidence),
+    currentPieceConfidence: boundedConfidence(currentPieceConfidence),
     image: { width, height },
     fileMtimeMs: Number.isFinite(fileMtimeMs) ? Math.round(fileMtimeMs) : null,
     recordedAtMs: now,
+    capture: {
+      capturedAtMs: observation.capturedAt,
+      captureMs: observation.captureMs,
+      geometry: captureGeometry,
+    },
   };
 }
 
@@ -82,7 +106,8 @@ function hasFormatSignature(buffer, format) {
  */
 export function saveRejectedFrame({
   enabled = false, runtimeDir = process.cwd(), game, turn, sessionId,
-  reason, observation, confidence = null, now = Date.now(),
+  reason, observation, boardConfidence = null, currentPieceConfidence = null,
+  now = Date.now(), stageHook = null,
 } = {}) {
   if (!enabled) return { saved: false, reason: 'disabled' };
   if (!ELIGIBLE_REASONS.has(reason)) return { saved: false, reason: 'ineligible' };
@@ -111,78 +136,126 @@ export function saveRejectedFrame({
   if (!RUN_DIR_RE.test(runName)) return { saved: false, reason: 'invalid-session' };
   const runDir = join(root, runName);
   if (!ensureDirectory(runDir, true)) return { saved: false, reason: 'unsafe-directory' };
-  const entries = regularEntries(runDir);
+  let entries = regularEntries(runDir);
   if (!entries) return { saved: false, reason: 'unsafe-entry' };
-
-  const frames = entries.filter(entry => FRAME_NAME_RE.test(entry.name));
-  if (frames.length >= MAX_REJECTED_FRAMES_PER_SESSION) return { saved: false, reason: 'limit' };
-  const metadataEntries = entries.filter(entry => /^frame_\d{2}\.json$/.test(entry.name));
-  if (entries.some(entry => !FRAME_NAME_RE.test(entry.name) && !/^frame_\d{2}\.json$/.test(entry.name))) {
-    return { saved: false, reason: 'unsafe-entry' };
-  }
-  if (frames.length !== metadataEntries.length) return { saved: false, reason: 'incomplete-existing-evidence' };
-  const indexes = frames.map(entry => Number(entry.name.match(FRAME_NAME_RE)[1])).sort((a, b) => a - b);
-  const metadataIndexes = metadataEntries.map(entry => Number(entry.name.match(/^frame_(\d{2})\.json$/)[1])).sort((a, b) => a - b);
-  if (indexes.some((value, index) => value !== index)
-      || metadataIndexes.some((value, index) => value !== index)) {
+  let frames = entries.filter(entry => FRAME_DIR_RE.test(entry.name));
+  const indexes = frames.map(entry => Number(entry.name.match(FRAME_DIR_RE)[1])).sort((a, b) => a - b);
+  if (indexes.length > MAX_REJECTED_FRAMES_PER_SESSION
+      || indexes.some((value, index) => value !== index)) {
     return { saved: false, reason: 'incomplete-existing-evidence' };
   }
 
-  let seenReasons = new Set();
-  for (const entry of metadataEntries) {
+  // A power loss can leave only a private staging directory. It is never
+  // treated as evidence: validate its exact owned shape, discard it, then
+  // continue with committed frame directories. Completed frames stay intact.
+  const staging = entries.filter(entry => STAGING_DIR_RE.test(entry.name));
+  const unknownEntries = entries.filter(entry => !FRAME_DIR_RE.test(entry.name)
+    && !STAGING_DIR_RE.test(entry.name));
+  if (unknownEntries.length || staging.length > 1) return { saved: false, reason: 'unsafe-entry' };
+  if (staging.length) {
+    const match = staging[0].name.match(STAGING_DIR_RE);
+    const stageIndex = Number(match[1]);
+    if (stageIndex !== indexes.length || match[2].toLowerCase() !== sessionId.toLowerCase()) {
+      return { saved: false, reason: 'incomplete-existing-evidence' };
+    }
+    const stagePath = join(runDir, staging[0].name);
     try {
-      const fd = openSync(join(runDir, entry.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const stageInfo = lstatSync(stagePath);
+      if (!stageInfo.isDirectory() || stageInfo.isSymbolicLink() || (stageInfo.mode & 0o077) !== 0) {
+        return { saved: false, reason: 'unsafe-entry' };
+      }
+      const stageEntries = regularEntries(stagePath);
+      if (!stageEntries || stageEntries.some(entry => ![IMAGE_NAME, JPEG_IMAGE_NAME, METADATA_NAME].includes(entry.name))) {
+        return { saved: false, reason: 'unsafe-entry' };
+      }
+      for (const entry of stageEntries) {
+        const fileInfo = lstatSync(join(stagePath, entry.name));
+        if (!fileInfo.isFile() || fileInfo.isSymbolicLink() || fileInfo.nlink !== 1
+            || (fileInfo.mode & 0o077) !== 0) return { saved: false, reason: 'unsafe-entry' };
+      }
+      rmSync(stagePath, { recursive: true, force: false });
+    } catch { return { saved: false, reason: 'incomplete-existing-evidence' }; }
+    entries = regularEntries(runDir);
+    if (!entries || entries.length !== indexes.length) return { saved: false, reason: 'unsafe-entry' };
+  }
+  if (indexes.length >= MAX_REJECTED_FRAMES_PER_SESSION) return { saved: false, reason: 'limit' };
+
+  let seenReasons = new Set();
+  for (const entry of frames) {
+    try {
+      const pairDir = join(runDir, entry.name);
+      const pairInfo = lstatSync(pairDir);
+      if (!pairInfo.isDirectory() || pairInfo.isSymbolicLink() || (pairInfo.mode & 0o077) !== 0) {
+        return { saved: false, reason: 'unsafe-entry' };
+      }
+      const pairEntries = regularEntries(pairDir);
+      const pairImage = pairEntries?.filter(item => PAIR_IMAGE_RE.test(item.name)) || [];
+      if (!pairEntries || pairEntries.length !== 2 || pairImage.length !== 1
+          || pairEntries.some(item => ![pairImage[0].name, METADATA_NAME].includes(item.name))) {
+        return { saved: false, reason: 'incomplete-existing-evidence' };
+      }
+      const fd = openSync(join(pairDir, METADATA_NAME), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
         const info = fstatSync(fd);
-        if (!info.isFile() || info.size <= 0 || info.size > 16 * 1024) return { saved: false, reason: 'unsafe-entry' };
+        if (!info.isFile() || info.size <= 0 || info.size > 16 * 1024
+            || info.nlink !== 1 || (info.mode & 0o077) !== 0) return { saved: false, reason: 'unsafe-entry' };
       } finally { closeSync(fd); }
-      // Metadata is an internal fixed schema; unknown or malformed data closes the save path.
-      const parsed = JSON.parse(readMetadata(join(runDir, entry.name)));
-      if (!ELIGIBLE_REASONS.has(parsed?.reason)) return { saved: false, reason: 'unsafe-entry' };
+      const imageFd = openSync(join(pairDir, pairImage[0].name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const info = fstatSync(imageFd);
+        if (!info.isFile() || info.size <= 0 || info.size > MAX_REJECTED_FRAME_BYTES
+            || info.nlink !== 1 || (info.mode & 0o077) !== 0) return { saved: false, reason: 'unsafe-entry' };
+      } finally { closeSync(imageFd); }
+      const parsed = JSON.parse(readMetadata(join(pairDir, METADATA_NAME)));
+      if (!ELIGIBLE_REASONS.has(parsed?.reason) || parsed.sessionId !== sessionId
+          || parsed.imageFormat !== (pairImage[0].name.endsWith('.png') ? 'png' : 'jpeg')) {
+        return { saved: false, reason: 'unsafe-entry' };
+      }
       seenReasons.add(parsed.reason);
     } catch { return { saved: false, reason: 'unsafe-entry' }; }
   }
   if (seenReasons.has(reason)) return { saved: false, reason: 'reason-already-saved' };
 
-  const index = frames.length;
-  const extension = observation.format === 'jpeg' ? 'jpg' : 'png';
-  const imageName = `frame_${String(index).padStart(2, '0')}.${extension}`;
-  const metadataName = `frame_${String(index).padStart(2, '0')}.json`;
-  const imagePath = join(runDir, imageName);
-  const metadataPath = join(runDir, metadataName);
-  const temporaryImage = join(runDir, `.frame_${String(index).padStart(2, '0')}.${sessionId}.tmp`);
-  const temporaryMetadata = join(runDir, `.frame_${String(index).padStart(2, '0')}.${sessionId}.json.tmp`);
+  const index = indexes.length;
+  const frameName = `frame_${String(index).padStart(2, '0')}`;
+  const framePath = join(runDir, frameName);
+  const temporaryDirectory = join(runDir, `.${frameName}.${sessionId}.tmp`);
+  const imageName = observation.format === 'jpeg' ? JPEG_IMAGE_NAME : IMAGE_NAME;
   let fd;
   try {
-    fd = openSync(temporaryImage, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    mkdirSync(temporaryDirectory, { mode: 0o700 });
+    fd = openSync(join(temporaryDirectory, imageName), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, image);
+    fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
-    const imageInfo = lstatSync(temporaryImage);
+    if (typeof stageHook === 'function') stageHook('image-written');
+    const imageInfo = lstatSync(join(temporaryDirectory, imageName));
     if (!imageInfo.isFile() || imageInfo.isSymbolicLink() || imageInfo.size !== image.length) {
       return { saved: false, reason: 'write-validation-failed' };
     }
     const metadata = safeMetadata({
       game, sessionId, reason, turn, format: observation.format, width, height, now,
-      fileMtimeMs: imageInfo.mtimeMs, rawConfidence: confidence,
+      fileMtimeMs: imageInfo.mtimeMs, boardConfidence, currentPieceConfidence, observation,
     });
-    fd = openSync(temporaryMetadata, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    if (!metadata) return { saved: false, reason: 'invalid-capture-metadata' };
+    fd = openSync(join(temporaryDirectory, METADATA_NAME), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, JSON.stringify(metadata) + '\n');
+    fsyncSync(fd);
     closeSync(fd);
     fd = undefined;
-    // Hard-link creation is atomic and refuses to replace an existing frame.
-    linkSync(temporaryImage, imagePath);
-    unlinkSync(temporaryImage);
-    linkSync(temporaryMetadata, metadataPath);
-    unlinkSync(temporaryMetadata);
-    return { saved: true, image: imageName, metadata: metadataName };
+    if (typeof stageHook === 'function') stageHook('pair-written');
+    const completedPair = readdirSync(temporaryDirectory);
+    if (completedPair.length !== 2 || !completedPair.includes(imageName)
+        || !completedPair.includes(METADATA_NAME)) return { saved: false, reason: 'write-validation-failed' };
+    // One directory rename publishes the complete image/sidecar pair atomically.
+    renameSync(temporaryDirectory, framePath);
+    return { saved: true, image: `${frameName}/${imageName}`, metadata: `${frameName}/${METADATA_NAME}` };
   } catch {
     return { saved: false, reason: 'write-failed' };
   } finally {
     if (fd !== undefined) closeSync(fd);
-    for (const path of [temporaryImage, temporaryMetadata]) {
-      try { unlinkSync(path); } catch {}
-    }
+    try { rmSync(temporaryDirectory, { recursive: true, force: true }); } catch {}
   }
 }
 

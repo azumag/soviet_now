@@ -186,8 +186,16 @@ export function parseStartBody(raw) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('request body must be a JSON object');
   }
-  if (parsed.srtUrl == null) return {};
-  return { srtUrl: validateStartSrtUrl(parsed.srtUrl) };
+  if (Object.keys(parsed).some((key) => !['srtUrl', 'captureProfile'].includes(key))) {
+    throw new Error('request body contains unsupported fields');
+  }
+  if (parsed.captureProfile != null && parsed.captureProfile !== 'rejected_png_v1') {
+    throw new Error('captureProfile is not supported');
+  }
+  return {
+    ...(parsed.srtUrl == null ? {} : { srtUrl: validateStartSrtUrl(parsed.srtUrl) }),
+    ...(parsed.captureProfile == null ? {} : { captureProfile: parsed.captureProfile }),
+  };
 }
 
 function readBody(req, limit = MAX_START_BODY_BYTES) {
@@ -294,6 +302,7 @@ export function createServer(options, {
   const reap = reapImpl || (() => runWindowsReaper(spawnImpl));
   let reaping = null;
   let child = null;
+  let childCaptureSettings = null;
   let lastExit = null;
   let cdpDriverState = 'idle';
   let cdpStdoutTail = '';
@@ -305,6 +314,7 @@ export function createServer(options, {
     running: Boolean(child && child.exitCode == null),
     pid: child?.pid || null,
     lastExit,
+    captureSettings: child && child.exitCode == null ? childCaptureSettings : null,
     ...(sessionMode === 'cdp-host' ? { driverState: cdpDriverState } : {}),
   });
 
@@ -329,12 +339,18 @@ export function createServer(options, {
         return json(res, status, { ok: false, error: error?.message || 'invalid request body' });
       }
       let srtUrl = null;
+      let captureProfile = null;
       try {
-        ({ srtUrl = null } = parseStartBody(raw));
+        ({ srtUrl = null, captureProfile = null } = parseStartBody(raw));
       } catch (error) {
         return json(res, 400, { ok: false, error: error?.message || 'invalid request body' });
       }
-      const childEnv = srtUrl ? { ...process.env, SOREN91_LOCAL_SRT_URL: srtUrl } : process.env;
+      const childEnv = srtUrl || captureProfile ? { ...process.env } : process.env;
+      if (srtUrl) childEnv.SOREN91_LOCAL_SRT_URL = srtUrl;
+      if (captureProfile === 'rejected_png_v1') {
+        childEnv.SOREN91_CAPTURE_FORMAT = 'png';
+        childEnv.SOREN91_REJECT_FRAME_DIAGNOSTICS = '1';
+      }
       // Both spawn targets take all configuration from the child env
       // (SOREN91_LOCAL_SRT_URL for the srtUrl override above; SOREN91_CDP_*
       // etc. flow through process.env untouched), never from argv.
@@ -354,6 +370,14 @@ export function createServer(options, {
         stdio: [windowsCdpHost ? 'pipe' : 'ignore', sessionMode === 'cdp-host' ? 'pipe' : 'inherit', 'inherit'],
         windowsHide: platform === 'win32' ? windowsCdpHost : undefined,
       });
+      const requestedFormat = String(childEnv.SOREN91_CAPTURE_FORMAT || '').trim().toLowerCase();
+      const effectiveFormat = requestedFormat === 'jpg' || requestedFormat === 'jpeg' ? 'jpeg'
+        : requestedFormat === 'png' ? 'png'
+          : (String(childEnv.SOREN91_REMOTE_CDP_URL || '').trim() ? 'jpeg' : 'png');
+      childCaptureSettings = {
+        format: effectiveFormat,
+        rejectedFrameDiagnostics: childEnv.SOREN91_REJECT_FRAME_DIAGNOSTICS === '1',
+      };
       if (sessionMode === 'cdp-host' && child?.stdout?.on) {
         child.stdout.on('data', (chunk) => {
           try { process.stdout.write(chunk); } catch {}
@@ -368,6 +392,7 @@ export function createServer(options, {
           cdpStdoutTail = '';
         }
         child = null;
+        childCaptureSettings = null;
         if (windowsCdpHost) {
           const current = Promise.resolve().then(reap).catch(() => {});
           reaping = current;

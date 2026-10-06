@@ -155,6 +155,7 @@ test('HTTP: second start conflicts with 409; unknown paths 404', async () => {
     assert.equal(status.status, 200);
     assert.deepEqual(await status.json(), {
       ok: true, backend: 'local-macos', mode: 'session', running: false, pid: null, lastExit: null,
+      captureSettings: null,
     });
     const first = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
     assert.equal(first.status, 202);
@@ -189,13 +190,16 @@ test('validateStartSrtUrl accepts Tailscale caller URLs and rejects the rest', (
   }
 });
 
-test('parseStartBody: empty body is legacy, srtUrl is validated, garbage is 400-shaped', () => {
+test('parseStartBody: fixed srtUrl/profile keys are validated and unknown keys fail closed', () => {
   assert.deepEqual(parseStartBody(''), {});
   assert.deepEqual(parseStartBody('   '), {});
   assert.deepEqual(parseStartBody('{}'), {});
-  assert.deepEqual(parseStartBody('{"other":1}'), {});
+  assert.throws(() => parseStartBody('{"other":1}'), /unsupported fields/);
   const good = 'srt://100.71.107.106:19192?mode=caller';
   assert.deepEqual(parseStartBody(JSON.stringify({ srtUrl: good })), { srtUrl: good });
+  assert.deepEqual(parseStartBody(JSON.stringify({ srtUrl: good, captureProfile: 'rejected_png_v1' })),
+    { srtUrl: good, captureProfile: 'rejected_png_v1' });
+  assert.throws(() => parseStartBody(JSON.stringify({ captureProfile: 'anything' })), /not supported/);
   assert.throws(() => parseStartBody('{oops'), /valid JSON/);
   assert.throws(() => parseStartBody('[1]'), /object/);
   assert.throws(() => parseStartBody(JSON.stringify({ srtUrl: 'srt://8.8.8.8:1?mode=caller' })), /Tailscale/);
@@ -234,6 +238,37 @@ test('HTTP: /v1/start with a valid srtUrl body overrides the child env only', as
     // process.env itself is untouched by the override.
     assert.notEqual(process.env.SOREN91_LOCAL_SRT_URL, srtUrl);
   });
+});
+
+test('HTTP: approved rejected-frame profile applies only to the renderer child and is visible in status', async () => {
+  const oldFormat = process.env.SOREN91_CAPTURE_FORMAT;
+  const oldDiagnostics = process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS;
+  delete process.env.SOREN91_CAPTURE_FORMAT;
+  delete process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS;
+  try {
+    await withCapturingServer('darwin', async (base, seen) => {
+      const auth = { authorization: `Bearer ${LONG_TOKEN}`, 'content-type': 'application/json' };
+      const srtUrl = 'srt://100.71.107.106:19192?mode=caller';
+      const res = await fetch(`${base}/v1/start`, {
+        method: 'POST', headers: auth,
+        body: JSON.stringify({ srtUrl, captureProfile: 'rejected_png_v1' }),
+      });
+      assert.equal(res.status, 202);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].env.SOREN91_CAPTURE_FORMAT, 'png');
+      assert.equal(seen[0].env.SOREN91_REJECT_FRAME_DIAGNOSTICS, '1');
+      assert.equal(process.env.SOREN91_CAPTURE_FORMAT, undefined);
+      assert.equal(process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS, undefined);
+      const status = await fetch(`${base}/v1/status`, { headers: auth });
+      assert.deepEqual((await status.json()).captureSettings,
+        { format: 'png', rejectedFrameDiagnostics: true });
+    });
+  } finally {
+    if (oldFormat == null) delete process.env.SOREN91_CAPTURE_FORMAT;
+    else process.env.SOREN91_CAPTURE_FORMAT = oldFormat;
+    if (oldDiagnostics == null) delete process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS;
+    else process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS = oldDiagnostics;
+  }
 });
 
 test('HTTP: /v1/start without a body keeps the legacy process.env spawn', async () => {
@@ -345,6 +380,7 @@ test('HTTP: cdp-host mode spawns the CDP host script and reports its mode', asyn
     assert.equal(status.status, 200);
     assert.deepEqual(await status.json(), {
       ok: true, backend: 'local-macos', mode: 'cdp-host', running: false, pid: null, lastExit: null,
+      captureSettings: null,
       driverState: 'idle',
     });
     const started = await fetch(`${base}/v1/start`, { method: 'POST', headers: auth });
@@ -372,7 +408,7 @@ test('HTTP: cdp-host status exposes only fixed driver lifecycle states', async (
   try {
     let status = await (await fetch(`${base}/v1/status`, { headers })).json();
     assert.equal(status.driverState, 'idle');
-    assert.deepEqual(Object.keys(status).sort(), ['backend', 'driverState', 'lastExit', 'mode', 'ok', 'pid', 'running'].sort());
+    assert.deepEqual(Object.keys(status).sort(), ['backend', 'captureSettings', 'driverState', 'lastExit', 'mode', 'ok', 'pid', 'running'].sort());
     const started = await fetch(`${base}/v1/start`, { method: 'POST', headers });
     assert.equal(started.status, 202);
     status = await (await fetch(`${base}/v1/status`, { headers })).json();
