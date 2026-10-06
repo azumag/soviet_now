@@ -98,7 +98,7 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
     showStatusG:{text, segments:kind==='monitor'&&process.env.SOREN_MONITOR_FEED?JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).segments:undefined, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
     systemMetrics:{sampledAt:['initial','missing-time'].includes(metricsKind)?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
-      memoryUsedBytes:metrics.memory===null?null:9*1073741824,memoryTotalBytes:16*1073741824,
+      memoryUsedBytes:metrics.memory===null?null:Math.round(16*1073741824*metrics.memory/100),memoryTotalBytes:16*1073741824,
       history:metricsKind==='gaps'?[{ts:now-10,cpuPercent:10,memoryPercent:20},{ts:now-5,cpuPercent:null,memoryPercent:null},{ts:now,cpuPercent:80,memoryPercent:60}]
         :Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
@@ -257,9 +257,17 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         const metricLayout=await page.locator('.ops-system-metrics').evaluate(el=>({
           clipped:el.scrollWidth>el.clientWidth+1,
           outside:[...el.children].some(row=>{const r=row.getBoundingClientRect(),p=el.getBoundingClientRect();return r.left<p.left-1||r.right>p.right+1;}),
+          charts:[...el.querySelectorAll('.ops-metric-spark')].map(chart=>({
+            clipped:chart.scrollWidth>chart.clientWidth+1,
+            chars:Array.from(chart.textContent||'').length,
+            width:chart.clientWidth,
+          })),
         }));
         assert.equal(metricLayout.clipped,false,`${kind}: CPU/RAM cards fit sidebar width`);
         assert.equal(metricLayout.outside,false,`${kind}: CPU/RAM rows stay within their panel`);
+        assert.ok(metricLayout.charts.every(chart=>!chart.clipped&&chart.chars>=2&&chart.chars*7<=chart.width+1),
+          `${kind}: history uses the full time range without clipping the newest sample`);
+        if(kind==='metrics-high') assert.match(metricsText,/RAM\s+91%\s+14[.]6\/16G/);
         if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}-sidebar.png`),clip:{x:960,y:0,width:320,height:720}});
       }
       if(kind==='stress') {

@@ -1482,7 +1482,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     return '';
   }
-  function metricHistory(history, key) {
+  function metricHistory(history, key, slotCount = 12) {
     const now = Date.now() / 1000;
     const cutoff = now - 180;
     const raw = (Array.isArray(history) ? history : []).slice(-36).map((point, index) => {
@@ -1502,7 +1502,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const span = last - first;
     if (span <= 0) return { spark: '—', range: '' };
 
-    const slots = Array(12).fill(null);
+    const slots = Array(slotCount).fill(null);
     raw.forEach(point => {
       if (point.timestamp !== null
           && (point.timestamp < cutoff || point.timestamp > now + 1)) return;
@@ -1538,7 +1538,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const status = row.querySelector('.ops-metric-state');
       if (!valueNode || !spark || !status) return;
       const valid = hasSample && !stale && Number.isFinite(value) && value >= 0 && value <= 100;
-      const trend = metricHistory(metrics?.history, valueKey);
+      const visibleSlots = Math.max(2, Math.min(12, Math.floor((spark.clientWidth || 84) / 7)));
+      const trend = metricHistory(metrics?.history, valueKey, visibleSlots);
       valueNode.textContent = valid ? `${Math.round(value)}%${detail || ''}` : '—';
       valueNode.className = `ops-metric-value${valid && value >= threshold ? ' warn' : ''}${valid ? '' : ' unknown'}`;
       spark.textContent = trend.spark;
