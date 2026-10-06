@@ -217,7 +217,7 @@ export FIXTURE_MODE
 PROMPT="$TMP/prompt_partial.txt"
 printf '%s\n' "legacy prompt must not be consumed" >"$PROMPT"
 _radio_generate_and_play "$PROMPT" 43 8 "ai_knowledge" --topic "部分取得トピック" || fail "partial native result should queue"
-grep -q "部分取得" "$TMP/queued_43_ai_knowledge.txt" || fail "partial native body was not queued"
+grep -q "一部だけ得られた" "$TMP/queued_43_ai_knowledge.txt" || fail "partial native body was not queued"
 grep -q '部分取得のテスト要約です。' "$TMP/history_43_ai_knowledge.txt" || fail "partial summary was not preserved"
 [ -f "$TMP_MARKERS_DIR/.radio_done_43_ai_knowledge" ] || fail "partial success must be marked done after enqueue"
 unset FIXTURE_MODE
