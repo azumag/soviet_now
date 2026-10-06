@@ -110,7 +110,7 @@ function analyzeHistoryText(text) {
 }
 
 function parsedTurnFile(name) {
-  const match = String(name).match(/^turn_(\d+).*\.png$/i);
+  const match = String(name).match(/^turn_(\d+).*\.(?:png|jpe?g)$/i);
   return match ? { name: String(name), turn: Number.parseInt(match[1], 10) } : null;
 }
 
@@ -200,7 +200,7 @@ export function archiveCriticalTurnScreenshots({
   }
 
   const sourceNames = readdirSync(screenshotDir)
-    .filter(name => /^turn_\d+.*\.png$/i.test(name));
+    .filter(name => /^turn_\d+.*\.(?:png|jpe?g)$/i.test(name));
   const names = historyStatus === 'discontinuous'
     ? []
     : selectCriticalSnapshotNames(sourceNames, maxShots, preferredTurns);

@@ -24,7 +24,7 @@ async function replay(frames) {
   const ended = [], history = [], logs = [], decisions = [];
   const context = {
     join, dirname, fileURLToPath,
-    HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens',
+    HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
     DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55,
     MIN_RANKING_DETECTION_TURNS: 10,
@@ -38,6 +38,7 @@ async function replay(frames) {
     snapshotCurrentStrategyForGame: game => ({ strategyHash: 'fixed', snapshotPath: `${game}.mjs` }),
     existsSync: path => path === 'tmp/stop' && shots >= frames.length,
     writeFileSync() {}, copyFileSync() {},
+    copyScreenshotAsPng: async () => {},
     appendFileSync: (path, row) => history.push({ path, ...JSON.parse(row) }),
     loadCommentModule: async () => null,
     midgameCommentStatus,

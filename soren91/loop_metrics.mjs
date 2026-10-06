@@ -11,7 +11,7 @@ const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-fr
 const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
 const SAFE_FAILURE_CLASSES = new Set([
   'capture-budget-exhausted', 'capture-session-busy', 'capture-timeout',
-  'capture-invalid-geometry', 'capture-invalid-png', 'capture-invalid-image',
+  'capture-invalid-geometry', 'capture-invalid-png', 'capture-invalid-jpeg', 'capture-invalid-image',
   'capture-pixel-scale-mismatch', 'capture-geometry-changed',
   'input-stale-observation', 'input-calibration-mismatch', 'input-geometry-changed',
 ]);

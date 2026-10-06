@@ -17,6 +17,8 @@ import {
   captureTimeoutMs,
   captureErrorBackoffMs,
   captureErrorLimit,
+  captureImageFormat,
+  captureJpegQuality,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
 import { markDropSent as markObservationDropSent } from './observation_guard.mjs';
@@ -49,6 +51,7 @@ async function loadModule(name) {
 // comment.mjs は実行中に変化しないので、ビート判定用に一度だけ読み込んで使い回す
 // 内容が変わるモジュールだけ更新時に再importする。
 let commentModulePromise = null;
+let sharpModulePromise = null;
 function loadCommentModule() {
   if (!commentModulePromise) {
     const url = new URL('./comment.mjs', `file://${process.cwd()}/`).href;
@@ -56,6 +59,16 @@ function loadCommentModule() {
   }
   return commentModulePromise;
 }
+
+async function copyScreenshotAsPng(sourcePath, destinationPath) {
+  if (!sharpModulePromise) {
+    sharpModulePromise = import('sharp').then(mod => mod.default || mod)
+      .catch(err => { sharpModulePromise = null; throw err; });
+  }
+  const sharp = await sharpModulePromise;
+  await sharp(sourcePath).png().toFile(destinationPath);
+}
+
 // ラウンド固定の戦略スナップショットは不変。同一URLの再評価・蓄積を避ける。
 async function loadStrategy(strategyPath = './strategy.mjs') {
   const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
@@ -145,6 +158,9 @@ const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
 );
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
+const CAPTURE_IMAGE_FORMAT = captureImageFormat();
+const CAPTURE_JPEG_QUALITY = captureJpegQuality();
+const SCREENSHOT_EXTENSION = CAPTURE_IMAGE_FORMAT === 'jpeg' ? 'jpg' : 'png';
 
 const canvasIO = createCanvasIO();
 
@@ -154,14 +170,25 @@ async function captureGameScreenshot(page, path, options = {}) {
     options.timeoutMs ?? Infinity,
   );
   if (!(timeoutMs > 0)) throw new Error('capture-budget-exhausted');
+  // The path is part of the evidence contract: never write JPEG bytes under a
+  // .png name. Hot gameplay frames use SCREENSHOT_EXTENSION (.jpg remotely),
+  // while title/ranking artifacts that are explicitly .png remain PNG.
+  const lowerPath = String(path).toLowerCase();
+  const imageFormat = /\.jpe?g$/.test(lowerPath) ? 'jpeg'
+    : /\.png$/.test(lowerPath) ? 'png'
+    : CAPTURE_IMAGE_FORMAT;
+  const captureOptions = { timeoutMs, type: imageFormat };
+  if (imageFormat === 'jpeg') captureOptions.quality = CAPTURE_JPEG_QUALITY;
   if (process.env.SOREN91_CAPTURE_MODE !== 'locator') {
-    const frame = await canvasIO.capture(page, { timeoutMs });
+    const frame = await canvasIO.capture(page, captureOptions);
     // Only a completed, geometry-checked canvas frame reaches disk/the analyzer.
     writeFileSync(path, frame.buffer);
     return frame;
   }
   const canvas = page.locator('canvas').first();
-  await canvas.screenshot({ path, timeout: timeoutMs });
+  const locatorOptions = { path, timeout: timeoutMs, type: imageFormat };
+  if (imageFormat === 'jpeg') locatorOptions.quality = CAPTURE_JPEG_QUALITY;
+  await canvas.screenshot(locatorOptions);
   return null;
 }
 
@@ -1528,7 +1555,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // Observe during cooldown; never carry an early frame across a long sleep to input.
       // スクリーンショット取得
-      const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.png`);
+      const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.${SCREENSHOT_EXTENSION}`);
       const observation = await latency.measure('capture', () => captureGameScreenshot(page, screenshotPath));
 
       // 盤面解析
@@ -1554,7 +1581,7 @@ async function gameLoop(page, calibration, gameNumber) {
           const activeRankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
           if (activeRankResult != null && activeRankResult > 0) {
             const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-            try { copyFileSync(screenshotPath, rkPath); } catch {}
+            try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
             lastKnownRank = activeRankResult;
             boardState.rank = activeRankResult;
             boardState.state = 'WAITING';
@@ -1618,7 +1645,7 @@ async function gameLoop(page, calibration, gameNumber) {
             // ゲーム1につき最大6枚、リング上書き。SOREN91_RANKDIAG=0 で無効化。
             if (process.env.SOREN91_RANKDIAG !== '0' && turn > 5 && waitingCount >= 1 && waitingCount <= 6) {
               try {
-                copyFileSync(screenshotPath, join('tmp/summaries',
+                await copyScreenshotAsPng(screenshotPath, join('tmp/summaries',
                   `_rankdiag_g${String(gameNumber).padStart(4, '0')}_w${waitingCount}_r${rankResult ?? 'null'}.png`));
               } catch {}
             }
@@ -1627,7 +1654,7 @@ async function gameLoop(page, calibration, gameNumber) {
               // rankResult > 0 なら正確な値で確定、-1 は星なし(late pathで再試行)
               if (rankResult > 0) {
                 // 確定順位つきのフレームは最も価値が高いので保存する
-                try { copyFileSync(screenshotPath, rkPath); } catch {}
+                try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
                 lastKnownRank = rankResult;
                 if (!rankingDetected) {
                   console.log(`[game] RANKING screen detected! rank=${rankResult}`);
@@ -1639,7 +1666,7 @@ async function gameLoop(page, calibration, gameNumber) {
                 // 不完全なランキング候補は最初の1枚だけ残す。
                 // 後続の白フェード/遷移フレームで有用な画像を上書きしない。
                 if (!existsSync(rkPath)) {
-                  try { copyFileSync(screenshotPath, rkPath); } catch {}
+                  try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
                 }
                 console.log(`[game] RANKING screen detected (star not yet visible)`);
               }
@@ -1736,7 +1763,7 @@ async function gameLoop(page, calibration, gameNumber) {
               const prevGameNum = gameNumber - 1;
               // ランキングスクリーンショット保存
               const rkPath = join('tmp/summaries', `ranking_${String(prevGameNum).padStart(4, '0')}.png`);
-              try { copyFileSync(screenshotPath, rkPath); } catch {}
+              try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
               // ゲームサマリーにランクを追記 (星検出はOCRより信頼性が高いため上書き可)
               const summaryPath = join('tmp/summaries', `game_${String(prevGameNum).padStart(4, '0')}.json`);
               if (existsSync(summaryPath)) {
@@ -1984,7 +2011,10 @@ async function executeDrop(page, gameX, calibration, frame = null) {
   const { board } = calibration;
   const pixelY = board.top + Math.floor(board.height * 0.18);
 
-  const box = await inputCanvasBox(page, calibration, frame);
+  // The capture already verified its geometry before+after the image transfer.
+  // Reuse that geometry for pointer aiming, then perform exactly one fresh
+  // remote geometry/freshness validation immediately before the click.
+  const box = frame ? canvasIO.frameBox(frame, calibration) : await inputCanvasBox(page, calibration, frame);
   const sx = frame ? box.width / frame.width : 1;
   const sy = frame ? box.height / frame.height : 1;
   const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX * sx));

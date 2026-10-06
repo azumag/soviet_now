@@ -36,6 +36,13 @@ function historyRecord(turn, { confidence = 0.9, risk = 0, clearance = 1 } = {})
   };
 }
 
+test('critical screenshot selection accepts JPEG turn evidence', () => {
+  assert.deepEqual(
+    selectCriticalSnapshotNames(['turn_0000.jpg', 'turn_0001.jpeg', 'turn_0002.png'], 3, []),
+    ['turn_0000.jpg', 'turn_0001.jpeg', 'turn_0002.png'],
+  );
+});
+
 test('critical turns take priority over the old early/middle/late sample', () => {
   assert.deepEqual(
     selectCriticalSnapshotNames(makeTurnNames(9), 3, [8, 2, 6]),
