@@ -1454,8 +1454,38 @@ json.dump({"topic": topic, "queries": [topic], "agents": agents}, sys.stdout, en
 		return 1
 	fi
 
-	PYTHONPATH="$root/src" python3 -P -m docich.radio.consumer <"$request_file" >"$result_file"
+	local process_timeout="${DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC:-50}"
+	case "$process_timeout" in
+	'' | *[!0-9]*)
+		rm -f "$request_file" "$result_file"
+		printf '%s' "invalid_process_timeout"
+		return 2
+		;;
+	esac
+	if [ "$process_timeout" -lt 1 ] || [ "$process_timeout" -gt 60 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "invalid_process_timeout"
+		return 2
+	fi
+	if ! command -v timeout >/dev/null 2>&1; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "missing_timeout"
+		return 2
+	fi
+
+	PYTHONPATH="$root/src" timeout --signal=TERM --kill-after=2 "${process_timeout}s" \
+		python3 -P -m docich.radio.consumer <"$request_file" >"$result_file"
 	bridge_rc=$?
+	if [ "$bridge_rc" -eq 124 ] || [ "$bridge_rc" -eq 137 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "process_timeout"
+		return 1
+	fi
+	if [ "$bridge_rc" -ne 0 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "bridge_failed"
+		return 1
+	fi
 
 	parse_meta=$(python3 - "$result_file" "$body_file" "$summary_file" <<'PY'
 import json
