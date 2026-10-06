@@ -9,6 +9,7 @@ on:
       - 'soren91/presentation_ready.mjs'
       - 'soren91/realtime_io.mjs'
       - 'soren91/loop_metrics.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
@@ -37,6 +38,7 @@ on:
       - 'soren91/presentation_ready.mjs'
       - 'soren91/realtime_io.mjs'
       - 'soren91/loop_metrics.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
@@ -52,6 +54,7 @@ on:
       - 'soviet_now.png'
       - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -80,6 +83,7 @@ jobs:
           node --check soren91/main.mjs
           node --check soren91/realtime_io.mjs
           node --check soren91/loop_metrics.mjs
+          node --check soren91/rejected_frame_diagnostics.mjs
           node --check soren91/summarize_drop_profile.mjs
           node --check soren91/strategy.mjs
           node --check soren91/strategy_contract.mjs

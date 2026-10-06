@@ -7,6 +7,7 @@ import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
   captureErrorLimit, captureImageFormat, captureJpegQuality } from '../soren91/realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
+import { rejectedFrameReason } from '../soren91/rejected_frame_diagnostics.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -271,9 +272,10 @@ function extract(name, end) {
   return mainSource.slice(start, stop).trim();
 }
 const loopSource = extract('gameLoop', '/**\n * HOLD').replaceAll('import.meta.url', '"file:///soren91/main.mjs"');
-async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [], source = loopSource } = {}) {
+async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [],
+  observation = null, diagnosticsEnabled = false, source = loopSource } = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
-  const dropTimes = [], writes = [], comments = [];
+  const dropTimes = [], writes = [], comments = [], diagnosticCalls = [];
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
     DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
@@ -282,13 +284,16 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     Date: class extends Date { static now() { return now; } },
     LoopMetrics: class extends LoopMetrics { constructor(opts) { super({ ...opts, now: () => now }); } },
     writeMetricsAtomically: (_, value) => writes.push(value),
+    REJECTED_FRAME_DIAGNOSTICS_ENABLED: diagnosticsEnabled,
+    rejectedFrameReason,
+    saveRejectedFrame: options => { diagnosticCalls.push(options); return { saved: false }; },
     console: { log() {}, error() {} },
     snapshotCurrentStrategyForGame: () => ({ strategyHash: 'fixed', snapshotPath: 'fixed.mjs' }),
     existsSync: path => path === 'tmp/stop' && (drops >= maxDrops || shots > Math.max(12, maxDrops * 5)),
     writeFileSync() {}, appendFileSync() {},
     loadCommentModule: async () => null,
     midgameCommentStatus,
-    captureGameScreenshot: async () => { shots++; now += captureMs; return null; },
+    captureGameScreenshot: async () => { shots++; now += captureMs; return observation; },
     loadModule: async () => ({
       generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
       analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
@@ -301,7 +306,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   };
   const loop = vm.runInNewContext(`(${source})`, context);
   await loop({}, calibration, 1);
-  return { now, shots, drops, holds, dropTimes, writes, comments };
+  return { now, shots, drops, holds, dropTimes, writes, comments, diagnosticCalls };
 }
 test('real main loop overlaps slow capture with cooldown instead of adding 1.2s each turn', async () => {
   const s = await simulateLoop({ captureMs: 1200 });
@@ -329,6 +334,14 @@ test('unknown-current remains fail-closed; faster polling cannot force a blind d
   const s = await simulateLoop({ blocked: 100 });
   assert.equal(s.drops, 0); assert.equal(s.holds, 0);
   assert.ok(s.writes.some(v => v.reasonCounts['unknown-current'] > 1));
+});
+test('diagnostic receives the original capture bytes only for an eligible rejection', async () => {
+  const frame = { buffer: Buffer.from('original captured bytes'), format: 'jpeg', width: 960, height: 540 };
+  const s = await simulateLoop({ blocked: 1, maxDrops: 1, observation: frame, diagnosticsEnabled: true });
+  assert.equal(s.diagnosticCalls.length, 1);
+  assert.equal(s.diagnosticCalls[0].observation, frame);
+  assert.equal(s.diagnosticCalls[0].reason, 'unknown-current');
+  assert.equal(s.diagnosticCalls[0].enabled, true);
 });
 test('real drop does one final remote geometry validation and never clicks after a changed aim', async () => {
   let validations = 0, clicks = 0;

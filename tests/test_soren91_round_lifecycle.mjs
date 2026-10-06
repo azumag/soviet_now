@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { LoopMetrics } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
+import { rejectedFrameReason, saveRejectedFrame } from '../soren91/rejected_frame_diagnostics.mjs';
 
 // Exercise the production loop without a browser, disk writes, or network I/O.
 const mainSource = readFileSync(new URL('../soren91/main.mjs', import.meta.url), 'utf8');
@@ -18,7 +19,7 @@ const move = (ranking = null) => ({ state: 'MOVE', ranking });
 const waiting = (ranking = null) => ({ state: 'WAITING', ranking });
 const repeat = (count, frame) => Array.from({ length: count }, () => ({ ...frame }));
 
-async function replay(frames) {
+async function replay(frames, { diagnosticSave = saveRejectedFrame, diagnosticsEnabled = false } = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, reentries = 0;
   let current;
   const ended = [], history = [], logs = [], decisions = [];
@@ -33,6 +34,9 @@ async function replay(frames) {
       constructor(options) { super({ ...options, now: () => now }); }
     },
     writeMetricsAtomically() {},
+    REJECTED_FRAME_DIAGNOSTICS_ENABLED: diagnosticsEnabled,
+    rejectedFrameReason,
+    saveRejectedFrame: diagnosticSave,
     console: { log: message => logs.push(message), error: message => logs.push(message) },
     process: { env: { SOREN91_RANKDIAG: '0' } },
     snapshotCurrentStrategyForGame: game => ({ strategyHash: 'fixed', snapshotPath: `${game}.mjs` }),
@@ -70,8 +74,19 @@ async function replay(frames) {
   };
   const loop = vm.runInNewContext(`(${loopSource})`, context);
   await loop({}, {}, 1);
-  return { drops, holds, ended, history, reentries, logs, decisions };
+  return { shots, drops, holds, ended, history, reentries, logs, decisions };
 }
+
+test('a diagnostic save exception cannot stop the next game observation', async () => {
+  let attempts = 0;
+  const result = await replay([waiting(), move()], {
+    diagnosticsEnabled: true,
+    diagnosticSave: () => { attempts++; throw new Error('injected diagnostic close failure'); },
+  });
+  assert.equal(attempts, 1);
+  assert.equal(result.shots, 2);
+  assert.equal(result.drops, 1);
+});
 
 test('a confirmed short-round ranking archives that round and the next MOVE can play', async () => {
   const result = await replay([move(), ...repeat(6, waiting(8)), move(), move()]);
