@@ -693,18 +693,19 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
 .ops-kpis .dash-kpi-value { font-size: 19px; }
 .ops-system-metrics {
   display: grid;
-  gap: 3px;
-  padding: 5px 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 3px 6px;
   border-radius: 4px;
   background: #071720;
 }
 .ops-metric-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 34px minmax(48px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: 26px minmax(40px, auto) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
-  min-height: 17px;
+  gap: 3px;
+  min-height: 16px;
 }
 .ops-metric-label,
 .ops-metric-state {
@@ -732,7 +733,8 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   line-height: 12px;
   white-space: nowrap;
 }
-.ops-metric-state { text-align: right; }
+.ops-metric-state { text-align: right; white-space: nowrap; }
+.ops-metric-state:empty { display: none; }
 .game-live,
 .game-trend-line {
   padding: 6px 8px;
@@ -1488,7 +1490,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (points.length < 2) return '—';
     const low = Math.min(...points), high = Math.max(...points);
     const chars = '▁▂▃▄▅▆▇█';
-    return points.map(value => chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
+    const samples = Array.from({ length: Math.min(12, points.length) }, (_, index) =>
+      points[Math.round(index * (points.length - 1) / (Math.min(12, points.length) - 1))]);
+    return samples.map(value => chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
   }
   function updateOpsSystemMetrics(container, metrics) {
     const panel = container?.querySelector?.('.ops-system-metrics');
@@ -1509,7 +1513,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       valueNode.className = `ops-metric-value${valid && value >= threshold ? ' warn' : ''}${valid ? '' : ' unknown'}`;
       spark.textContent = metricSparkline(metrics?.history, valueKey);
       spark.setAttribute('aria-label', `${label} history`);
-      status.textContent = valid ? 'LAST 3 MIN' : (stale ? 'STALE' : 'UNKNOWN');
+      status.textContent = valid ? '3M' : (stale ? 'STALE' : 'UNKNOWN');
     };
     const used = metrics?.memoryUsedBytes;
     const total = metrics?.memoryTotalBytes;
