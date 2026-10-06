@@ -1687,6 +1687,7 @@ async function gameLoop(page, calibration, gameNumber) {
           currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
           console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;
+          holdUsedThisTurn = false;
           lastKnownRank = null;
           rankingDetected = false;
           roundResultConfirmed = false;
