@@ -107,7 +107,7 @@ function hasFormatSignature(buffer, format) {
 export function saveRejectedFrame({
   enabled = false, runtimeDir = process.cwd(), game, turn, sessionId,
   reason, observation, boardConfidence = null, currentPieceConfidence = null,
-  now = Date.now(), stageHook = null,
+  now = Date.now(), stageHook = null, io = null,
 } = {}) {
   if (!enabled) return { saved: false, reason: 'disabled' };
   if (!ELIGIBLE_REASONS.has(reason)) return { saved: false, reason: 'ineligible' };
@@ -221,13 +221,15 @@ export function saveRejectedFrame({
   const framePath = join(runDir, frameName);
   const temporaryDirectory = join(runDir, `.${frameName}.${sessionId}.tmp`);
   const imageName = observation.format === 'jpeg' ? JPEG_IMAGE_NAME : IMAGE_NAME;
+  const closeWriter = io?.closeSync || closeSync;
+  const syncWriter = io?.fsyncSync || fsyncSync;
   let fd;
   try {
     mkdirSync(temporaryDirectory, { mode: 0o700 });
     fd = openSync(join(temporaryDirectory, imageName), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, image);
-    fsyncSync(fd);
-    closeSync(fd);
+    syncWriter(fd);
+    closeWriter(fd);
     fd = undefined;
     if (typeof stageHook === 'function') stageHook('image-written');
     const imageInfo = lstatSync(join(temporaryDirectory, imageName));
@@ -241,8 +243,8 @@ export function saveRejectedFrame({
     if (!metadata) return { saved: false, reason: 'invalid-capture-metadata' };
     fd = openSync(join(temporaryDirectory, METADATA_NAME), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     writeFileSync(fd, JSON.stringify(metadata) + '\n');
-    fsyncSync(fd);
-    closeSync(fd);
+    syncWriter(fd);
+    closeWriter(fd);
     fd = undefined;
     if (typeof stageHook === 'function') stageHook('pair-written');
     const completedPair = readdirSync(temporaryDirectory);
@@ -254,7 +256,9 @@ export function saveRejectedFrame({
   } catch {
     return { saved: false, reason: 'write-failed' };
   } finally {
-    if (fd !== undefined) closeSync(fd);
+    if (fd !== undefined) {
+      try { closeWriter(fd); } catch {}
+    }
     try { rmSync(temporaryDirectory, { recursive: true, force: true }); } catch {}
   }
 }

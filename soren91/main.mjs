@@ -1568,16 +1568,20 @@ async function gameLoop(page, calibration, gameNumber) {
       latency.observe(boardState);
       const rejectedReason = rejectedFrameReason(boardState.state, boardState.perception?.reason);
       if (rejectedReason) {
-        saveRejectedFrame({
-          enabled: REJECTED_FRAME_DIAGNOSTICS_ENABLED,
-          game: gameNumber,
-          turn,
-          sessionId: latency.profileSession,
-          reason: rejectedReason,
-          observation,
-          boardConfidence: boardState.confidence,
-          currentPieceConfidence: boardState.next?.confidence,
-        });
+        try {
+          saveRejectedFrame({
+            enabled: REJECTED_FRAME_DIAGNOSTICS_ENABLED,
+            game: gameNumber,
+            turn,
+            sessionId: latency.profileSession,
+            reason: rejectedReason,
+            observation,
+            boardConfidence: boardState.confidence,
+            currentPieceConfidence: boardState.next?.confidence,
+          });
+        } catch {
+          // Best-effort diagnostics must never alter the gameplay observation loop.
+        }
       }
       // ランク追跡
       if (boardState.rank != null) lastKnownRank = boardState.rank;

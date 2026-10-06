@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+  closeSync as closeSyncNative, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,6 +175,26 @@ test('injected failure between image and sidecar leaves no published half-pair',
     assert.deepEqual(readdirSync(run), ['frame_00']);
     assert.equal(save('confirm-frame').saved, true);
     assert.deepEqual(readdirSync(run).sort(), ['frame_00', 'frame_01']);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('fsync and cleanup close faults return an error and allow the next reason to save', () => {
+  const { root, save } = fixture();
+  const run = join(root, 'tmp', 'rejected_frame_diagnostics', `run_${SESSION}`);
+  const io = {
+    fsyncSync() { throw new Error('fixture-fsync-fault'); },
+    closeSync(fd) {
+      closeSyncNative(fd);
+      throw new Error('fixture-close-fault');
+    },
+  };
+  try {
+    assert.equal(save('unknown-current').saved, true);
+    assert.deepEqual(save('confirm-frame', { io }), { saved: false, reason: 'write-failed' });
+    assert.deepEqual(readdirSync(run), ['frame_00']);
+    assert.deepEqual(save('confirm-frame'), {
+      saved: true, image: 'frame_01/image.png', metadata: 'frame_01/metadata.json',
+    });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
