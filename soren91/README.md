@@ -8,8 +8,9 @@ Soren91 が試合後・一定試合数ごと・日次スケジュール等で LL
 
 - 旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも削除済みで、runtimeから自動改善を起動する経路はありません。
 - 試合履歴、summary、strategy snapshot、スクリーンショットは引き続き保存し、明示的な手動レビューや再現評価に利用できます。
+- 認識拒否フレームの追加保存は既定で無効です。必要な実測の承認後に `SOREN91_REJECT_FRAME_DIAGNOSTICS=1` を明示した場合だけ、既存captureのbytesから `non-move` / `unknown-current` / `confirm-frame` を1実行sessionごと最大3枚保存します。追加captureは行わず、画像は `tmp/rejected_frame_diagnostics/run_<session-uuid>/` に0600、親directoryは0700で保存し、固定allowlistのJSON provenanceだけを添えます。
 - 戦略変更は、原因仮説・評価・テストを伴う通常のレビュー済みリポジトリ変更として行います。
-- runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。
+- runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。拒否フレームのexportは行わず、画像内容をpublic telemetryやログへ投影しません。
 
 ## 起動時の枠の準備
 
@@ -40,11 +41,13 @@ strategy_contract.mjs    # 戦略の共通契約
 comment.mjs              # 試合中/結果コメント
 result_screen_ocr.mjs    # ランキング画面解析
 critical_turn_screenshots.mjs # 重要局面の証拠選別
+rejected_frame_diagnostics.mjs # 任意・上限付きの認識拒否フレーム保存
 cleanup_retention.mjs    # 証拠データの保持期間管理
 
 game_history/            # ラウンドごとのJSONL
 tmp/summaries/           # ラウンドsummary
 tmp/game_screenshots/    # 保存スクリーンショット
+tmp/rejected_frame_diagnostics/ # 明示opt-inした拒否フレーム／session別（既定off）
 tmp/strategy_snapshots/  # 試合時点のstrategy snapshot
 ```
 

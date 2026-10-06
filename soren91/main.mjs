@@ -22,6 +22,7 @@ import {
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
 import { markDropSent as markObservationDropSent } from './observation_guard.mjs';
+import { rejectedFrameReason, saveRejectedFrame } from './rejected_frame_diagnostics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { waitForInlineRails } from './presentation_ready.mjs';
 import { chromium } from 'playwright';
@@ -161,6 +162,7 @@ const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWP
 const CAPTURE_IMAGE_FORMAT = captureImageFormat();
 const CAPTURE_JPEG_QUALITY = captureJpegQuality();
 const SCREENSHOT_EXTENSION = CAPTURE_IMAGE_FORMAT === 'jpeg' ? 'jpg' : 'png';
+const REJECTED_FRAME_DIAGNOSTICS_ENABLED = process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS === '1';
 
 const canvasIO = createCanvasIO();
 
@@ -1564,6 +1566,18 @@ async function gameLoop(page, calibration, gameNumber) {
         return analyzeScreenshot(screenshotPath, calibration);
       });
       latency.observe(boardState);
+      const rejectedReason = rejectedFrameReason(boardState.state, boardState.perception?.reason);
+      if (rejectedReason) {
+        saveRejectedFrame({
+          enabled: REJECTED_FRAME_DIAGNOSTICS_ENABLED,
+          game: gameNumber,
+          turn,
+          sessionId: latency.profileSession,
+          reason: rejectedReason,
+          observation,
+          confidence: boardState.confidence,
+        });
+      }
       // ランク追跡
       if (boardState.rank != null) lastKnownRank = boardState.rank;
       console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}, trans=${boardState.perception?.queueTransition ?? '?'}, gapMs=${Math.round(boardState.perception?.frameGapMs ?? -1)}`);

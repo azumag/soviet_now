@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { LoopMetrics } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
+import { rejectedFrameReason, saveRejectedFrame } from '../soren91/rejected_frame_diagnostics.mjs';
 
 // Exercise the production loop without a browser, disk writes, or network I/O.
 const mainSource = readFileSync(new URL('../soren91/main.mjs', import.meta.url), 'utf8');
@@ -33,6 +34,9 @@ async function replay(frames) {
       constructor(options) { super({ ...options, now: () => now }); }
     },
     writeMetricsAtomically() {},
+    REJECTED_FRAME_DIAGNOSTICS_ENABLED: false,
+    rejectedFrameReason,
+    saveRejectedFrame,
     console: { log: message => logs.push(message), error: message => logs.push(message) },
     process: { env: { SOREN91_RANKDIAG: '0' } },
     snapshotCurrentStrategyForGame: game => ({ strategyHash: 'fixed', snapshotPath: `${game}.mjs` }),
