@@ -1621,6 +1621,15 @@ _radio_generate_and_play() {
 		rm -f "$_native_body_file" "$_native_summary_file" "$prompt_file" 2>/dev/null || true
 		_native_body=$(_ensure_corner_announce "$_native_body" "$corner_name")
 		_native_body=$(printf '%s' "$_native_body" | _normalize_radio_tone)
+		local _native_quality
+		_native_quality=$(_radio_quality_check "$_native_body" "$corner_name" "")
+		if [ "$_native_quality" != "OK" ]; then
+			log "[RADIO:${corner_name}] docich native quality failed (${_native_quality})"
+			_write_radio_corner_status "native_quality_failed" "$corner_name" "$game_num" "$score" "$topic" "$_native_quality" "$selected_news"
+			_radio_clear_state "$corner_name" "native_quality_failed"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
 		if ! _is_valid_radio_talk "$_native_body"; then
 			log "[RADIO:${corner_name}] docich native body invalid after presentation normalization"
 			_write_radio_corner_status "native_body_invalid" "$corner_name" "$game_num" "$score" "$topic" "native_body_invalid" "$selected_news"
