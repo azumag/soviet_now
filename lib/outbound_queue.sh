@@ -258,6 +258,7 @@ _outbound_chat_claim_enqueue_key() {
 	local message="$1"
 	local source="$2"
 	local priority="$3"
+	local delivery_key="${4:-}"
 	local ttl="${OUTBOUND_CHAT_ENQUEUE_DEDUP_TTL_SEC:-30}"
 	case "$ttl" in
 	''|*[!0-9]*) ttl=30 ;;
@@ -266,7 +267,13 @@ _outbound_chat_claim_enqueue_key() {
 
 	mkdir -p "$OUTBOUND_CHAT_DEDUP_DIR" 2>/dev/null || true
 	local key marker now mt age
-	key=$(_outbound_chat_hash "${source}"$'\037'"${priority}"$'\037'"${message}")
+	local identity="${source}"$'\037'"${priority}"$'\037'"${message}"
+	# Transport identity belongs only in dedup, never in the source category or
+	# visible body. Keep the legacy hash exactly unchanged when no key is given.
+	if [ -n "$delivery_key" ]; then
+		identity="${identity}"$'\037delivery_key\037'"${delivery_key}"
+	fi
+	key=$(_outbound_chat_hash "$identity")
 	[ -n "$key" ] || return 0
 	marker="$OUTBOUND_CHAT_DEDUP_DIR/$key"
 	now=$(date +%s)
@@ -339,10 +346,11 @@ _comment_audio_claim_enqueue_key() {
 	return 0
 }
 
-# enqueue_chat_message MESSAGE [SOURCE] [PRIORITY]
+# enqueue_chat_message MESSAGE [SOURCE] [PRIORITY] [DELIVERY_KEY]
 #   MESSAGE  : 投稿する本文 (1行)
 #   SOURCE   : 呼び出し元の識別子 (default: "unknown")
 #   PRIORITY : 数値 (小さいほど高優先, default: 5)
+#   DELIVERY_KEY : optional run/part identity used only for enqueue dedup
 #
 # ファイル名: {epoch_ns}_{source}_{priority}.msg
 # 内容: メッセージ本文のみ
@@ -356,6 +364,7 @@ enqueue_chat_message() {
 	local message="${1:-}"
 	local source="${2:-unknown}"
 	local priority="${3:-5}"
+	local delivery_key="${4:-}"
 
 	if [ -z "$message" ]; then
 		return 1
@@ -366,15 +375,30 @@ enqueue_chat_message() {
 		return 0
 	fi
 
-	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority"; then
+	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority" "$delivery_key"; then
 		return 0
 	fi
 
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true
 
-	# nanosecond timestamp for uniqueness (fallback to epoch + random)
+	# BSD date exits successfully while leaving %N literal. Validate its output
+	# before using it as a filename, or all same-second parts overwrite one file.
 	local ts
-	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
+	ts=$(date +%s%N 2>/dev/null || true)
+	case "$ts" in
+	''|*[!0-9]*)
+		ts=$(python3 -c 'import time; print(time.time_ns())' 2>/dev/null) \
+			|| ts="$(date +%s)${RANDOM}${RANDOM}"
+		;;
+	esac
+	# Distinct keyed passages must also have distinct filenames if the clock
+	# returns the same timestamp. Keep the source/priority fields unchanged.
+	if [ -n "$delivery_key" ]; then
+		local delivery_id
+		delivery_id=$(_outbound_chat_hash "${message}"$'\037'"${delivery_key}")
+		[ -n "$delivery_id" ] || return 1
+		ts="${ts}-${delivery_id}"
+	fi
 
 	local filename="${ts}_${source}_${priority}.msg"
 	local tmpfile="${OUTBOUND_CHAT_PENDING_DIR}/.${filename}.tmp"

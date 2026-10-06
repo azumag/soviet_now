@@ -233,6 +233,80 @@ class TestOutboundQueueYoutubeMirrorSplit(unittest.TestCase):
         self.assert_sent_once()
         self.assertFalse(self.lines("youtube-attempts.log"))
 
+    def test_delivery_keys_keep_equal_parts_and_runs_with_exact_retry_dedup(self):
+        result = self.shell(
+            'enqueue_chat_message "$1" retro-corner 5 run1:part1 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part1 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part2 && '
+            'enqueue_chat_message "$1" retro-corner 5 run2:part1 && '
+            'outbound_queue_consume_once && outbound_queue_consume_once && '
+            'outbound_queue_consume_once', MESSAGE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lines("twitch.log"), [MESSAGE] * 3)
+        self.assertEqual("".join(self.lines("youtube.log")), MESSAGE * 3)
+        self.assertTrue(all(len(part.encode("utf-8")) <= 200 for part in self.lines("youtube.log")))
+        queue = Path(self.env["OUTBOUND_CHAT_QUEUE_DIR"])
+        self.assertEqual(len(list((queue / "sent").glob("*_retro-corner_5.msg"))), 3)
+        self.assertFalse(list((queue / "pending").glob("*.msg")))
+
+    def test_delivery_keys_preserve_existing_source_mirror_exclusion(self):
+        self.env["OUTBOUND_CHAT_YOUTUBE_MIRROR_EXCLUDE_SOURCES"] = "other retro-corner"
+        result = self.shell(
+            'enqueue_chat_message "$1" retro-corner 5 run1:part1 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part2 && '
+            'outbound_queue_consume_once && outbound_queue_consume_once', MESSAGE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lines("twitch.log"), [MESSAGE] * 2)
+        self.assertFalse(self.lines("youtube-attempts.log"))
+
+    def test_bsd_date_literal_nanoseconds_keep_all_parts_in_order(self):
+        real_date = shutil.which("date")
+        self.write_script(
+            "bin/date",
+            'if [ "${1:-}" = +%s%N ]; then printf "1791300000%%N\\n"; '
+            f'else exec "{real_date}" "$@"; fi\n',
+        )
+        self.env["PATH"] = str(self.work / "bin") + os.pathsep + self.env["PATH"]
+        closing = "今回の挑戦はここまでです。"
+        result = self.shell(
+            'enqueue_chat_message "$1" retro-corner 5 run1:part1 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part2 && '
+            'enqueue_chat_message "$2" retro-corner 5 run1:part3 && '
+            'outbound_queue_consume_once && outbound_queue_consume_once && '
+            'outbound_queue_consume_once', MESSAGE, closing)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.lines("twitch.log"), [MESSAGE, MESSAGE, closing])
+        self.assertEqual("".join(self.lines("youtube.log")), MESSAGE * 2 + closing)
+        queue = Path(self.env["OUTBOUND_CHAT_QUEUE_DIR"])
+        self.assertEqual(len(list((queue / "sent").glob("*_retro-corner_5.msg"))), 3)
+
+    def test_empty_delivery_key_keeps_legacy_hash_and_dedup(self):
+        result = self.shell(
+            'enqueue_chat_message "$1" retro-corner 5 && '
+            'enqueue_chat_message "$1" retro-corner 5 "" && '
+            'key=$(_outbound_chat_hash "retro-corner"$\'\\037\'"5"$\'\\037\'"$1") && '
+            'test -d "$OUTBOUND_CHAT_DEDUP_DIR/$key" && outbound_queue_consume_once', MESSAGE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_sent_once()
+
+    def test_fixed_numeric_timestamp_does_not_overwrite_distinct_delivery_keys(self):
+        real_date = shutil.which("date")
+        self.write_script(
+            "bin/date",
+            'if [ "${1:-}" = +%s%N ]; then printf "1791300000000000000\\n"; '
+            f'else exec "{real_date}" "$@"; fi\n',
+        )
+        self.env["PATH"] = str(self.work / "bin") + os.pathsep + self.env["PATH"]
+        result = self.shell(
+            'enqueue_chat_message "$1" retro-corner 5 run1:part1 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part2 && '
+            'enqueue_chat_message "$1" retro-corner 5 run1:part3', MESSAGE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        queue = Path(self.env["OUTBOUND_CHAT_QUEUE_DIR"])
+        pending = list((queue / "pending").glob("*_retro-corner_5.msg"))
+        self.assertEqual(len(pending), 3)
+        self.assertTrue(all(path.read_text(encoding="utf-8").rstrip("\n") == MESSAGE for path in pending))
+
     def test_youtube_quota_backoff_keeps_twitch_only(self):
         chat_dir = self.work / "youtube"
         chat_dir.mkdir()
