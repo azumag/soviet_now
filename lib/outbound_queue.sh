@@ -165,13 +165,15 @@ _outbound_chat_source_is_youtube_mirror_excluded() {
 # Split a mirror message before youtube_chat.sh so the sink never silently
 # truncates a multibyte result. The Twitch copy keeps its own, larger budget.
 _outbound_chat_split_utf8() {
-	local message="\${1:-}"
-	local limit="\${2:-200}"
+	local message="${1:-}"
+	local limit="${2:-200}"
 	[ -n "$message" ] || return 0
 	case "$limit" in
 	''|*[!0-9]*) return 1 ;;
 	esac
 	[ "$limit" -gt 0 ] || return 1
+	# youtube_chat.sh truncates at 200 bytes; an override may only lower it.
+	[ "$limit" -le 200 ] || limit=200
 	python3 - "$message" "$limit" <<'PY'
 import sys
 
@@ -215,9 +217,9 @@ _outbound_chat_send_youtube_mirror() {
 	_outbound_chat_source_is_youtube_mirror_excluded "$source" && return 0
 
 	local err_file parts_file part
-	err_file=$(mktemp "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_\${RANDOM}")
-	parts_file=$(mktemp "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts.XXXXXXXX" 2>/dev/null || echo "\${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts_\${RANDOM}")
-	if ! _outbound_chat_split_utf8 "$message" "\${OUTBOUND_CHAT_YOUTUBE_MAX_BYTES:-200}" >"$parts_file"; then
+	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_${RANDOM}")
+	parts_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts_${RANDOM}")
+	if ! _outbound_chat_split_utf8 "$message" "${OUTBOUND_CHAT_YOUTUBE_MAX_BYTES:-200}" >"$parts_file"; then
 		printf '%s\n' 'youtube mirror split failed' >"$err_file"
 		_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
 		rm -f "$err_file" "$parts_file"
