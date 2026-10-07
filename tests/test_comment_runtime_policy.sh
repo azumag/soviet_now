@@ -140,6 +140,31 @@ _gacha_multi="$TMP/gacha_multi.txt"
 printf '%s\n' '@ふぉくし_ が12連ガチャで エピックx1、レアx1、コモンx10 を獲得しました!一ドル札、クレジットカード' >"$_gacha_multi"
 _comment_debounce_is_card_batch "$_gacha_multi" && pass 'multi-draw summary is detected as a card batch' || not_ok 'multi-draw summary was missed'
 
+# macOS BSD grep fails any repetition bound above 255 (rc=2
+# "maximum repetition exceeds 255"); the call-site stderr redirect used to
+# turn that into a silent non-match, losing the card quiet window (#417).
+# Pin the portability contract without weakening detection: every shell grep
+# bound fits the 255 cap, the patterns compile under the system grep, and a
+# long production-length card line is still detected.
+_portable_ok=1
+: >"$TMP/grep_portable_err.txt"
+for _re_name in _COMMENT_CARD_ACQUIRED_RE _COMMENT_CARD_MULTI_RE; do
+	_re="${!_re_name}"
+	while IFS= read -r _bound; do
+		[ "$_bound" -le 255 ] || _portable_ok=0
+	done < <(printf '%s' "$_re" | grep -o -E '\{[0-9]+,[0-9]+\}' | sed -E 's/^\{[0-9]+,([0-9]+)\}$/\1/')
+	_grep_rc=0
+	printf 'probe\n' | grep -Eq "$_re" 2>"$TMP/grep_portable_err.txt" || _grep_rc=$?
+	[ "$_grep_rc" -le 1 ] || _portable_ok=0
+	if [ -s "$TMP/grep_portable_err.txt" ]; then
+		_portable_ok=0
+	fi
+done
+[ "$_portable_ok" -eq 1 ] && pass 'card grep patterns fit the macOS 255 repetition cap' || not_ok 'card grep pattern exceeds the macOS repetition cap'
+_long_gap="$(python3 -c 'print("あ" * 230)')"
+printf '%s\n' "alice が [コモン] カードA${_long_gap}を獲得しました" >"$TMP/gacha_long.txt"
+_comment_debounce_is_card_batch "$TMP/gacha_long.txt" && pass 'long card line is still detected within portable bounds' || not_ok 'long card line was missed'
+
 # Consolidation key: card-only same viewer yields a key; mixed content or
 # multiple viewers must not consolidate.
 _gacha_batch="$TMP/gacha_batch.txt"
