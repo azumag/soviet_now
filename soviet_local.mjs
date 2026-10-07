@@ -32,6 +32,7 @@ import {
   resolveStaticBindAddress,
 } from './lib/static_file_server.mjs';
 import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
+import { browserIdFromWebSocketUrl, decideMuteAction } from './lib/mute_flag_reader.mjs';
 import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
 import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
 import { GameObservationWriter } from './lib/game_observation.mjs';
@@ -79,6 +80,11 @@ const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
 const PLAYER_STATE_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_state.json');
 const PLAYER_CAPABILITY_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_capabilities.json');
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
+// The flag is an ownership record managed by lib/mute_flag.py (see that module
+// for the fail-closed release contract).  The reader shells out to it, so the
+// re-evaluation is throttled; the cheap fs.existsSync stays per-iteration.
+const MUTE_FLAG_HELPER = path.join(__dirname, 'lib', 'mute_flag.py');
+const MUTE_FLAG_RECHECK_MS = 2000;
 // Stray-tab guard cadence. soren91 runs as a GUEST tab in this same Chrome
 // (SOREN91_SHARED_BROWSER) and can orphan an about:blank tab over the local
 // game, turning the OBS window-capture white. While the local game is active
@@ -2151,6 +2157,131 @@ async function executeCommand(page, command, externalGameAudio = null, jevDropGu
   return state;
 }
 
+// --- Mute-flag ownership reader (see lib/mute_flag.py) ----------------------
+// The local game is muted while tmp/mute_local_bgm holds an ownership record
+// written by soren91_control.sh.  The record is released by the owner itself
+// (leave) or, when the session died with the flag still set, by THIS reader: a
+// reap is allowed only if the record in front of us is provably the stale one
+// (its exact token/revision/browser_id, every owner dead, and no CDP page other
+// than the local game) — the compare-and-swap itself lives in mute_flag.py.
+function muteFlagCli(args, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    execFile('python3', [MUTE_FLAG_HELPER, ...args], { timeout: timeoutMs, maxBuffer: 1 << 20 },
+      (error, stdout) => {
+        if (error) {
+          resolve({ ok: false, reason: 'cli-error', error: String((error && error.message) || error) });
+          return;
+        }
+        try {
+          resolve(JSON.parse(String(stdout)));
+        } catch (e) {
+          resolve({ ok: false, reason: 'unparsable', error: String((e && e.message) || e) });
+        }
+      });
+  });
+}
+
+// Same endpoint resolution as soren91_control.sh:_soren91_cdp_base_url so both
+// sides hash the same browser instance.
+function cdpBaseUrl() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CDP_ENDPOINT_FILE, 'utf-8'));
+    const url = parsed && parsed.url;
+    if (url) return String(url).replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+  } catch (e) { /* fall back to the listener port */ }
+  return `http://127.0.0.1:${CDP_PORT}`;
+}
+
+async function currentBrowserId() {
+  try {
+    const response = await withTimeout(fetch(`${cdpBaseUrl()}/json/version`), 3000, 'mute flag cdp version');
+    if (!response.ok) return '';
+    const payload = await response.json();
+    return browserIdFromWebSocketUrl(payload && payload.webSocketDebuggerUrl);
+  } catch (e) {
+    return '';
+  }
+}
+
+// CDP Target.getTargets: how many targets of type "page" exist besides our own
+// local game page.  Returns -1 when unavailable so the decision stays muted.
+async function countForeignPages(context, page) {
+  let session = null;
+  try {
+    session = await withTimeout(context.newCDPSession(page), 3000, 'mute flag CDP session');
+    const own = await withTimeout(session.send('Target.getTargetInfo'), 3000, 'Target.getTargetInfo');
+    const ownId = own && own.targetInfo ? own.targetInfo.targetId : '';
+    if (!ownId) return -1;
+    const targets = await withTimeout(session.send('Target.getTargets'), 3000, 'Target.getTargets');
+    const infos = (targets && targets.targetInfos) || [];
+    return infos.filter((info) => info.type === 'page' && info.targetId !== ownId).length;
+  } catch (e) {
+    return -1;
+  } finally {
+    try { if (session) await session.detach(); } catch (e) { /* session may be gone */ }
+  }
+}
+
+async function evaluateMuteFlag({ page, context, log, previousReason = '' }) {
+  // Cheap path first: with no flag file at all nothing else can be needed.
+  if (!fs.existsSync(MUTE_FLAG_FILE)) {
+    return { muted: false, reason: 'absent' };
+  }
+  const status = await muteFlagCli(['status', '--flag', MUTE_FLAG_FILE]);
+  const shouldCountPages = Boolean(status && status.ok === true && status.state === 'owned'
+    && status.armed && status.all_owners_dead);
+  const foreignPages = shouldCountPages ? await countForeignPages(context, page) : -1;
+  const ownBrowserId = shouldCountPages ? await currentBrowserId() : '';
+  const decision = decideMuteAction({ status, ownBrowserId, foreignPages });
+  if (!decision.reap) {
+    // One line per reason change only: a kept flag would otherwise append to the
+    // diagnostic log on every tick for the whole soren91 session.
+    if (decision.reason !== previousReason) log(`MUTE flag kept (${decision.reason})`);
+    return { muted: true, reason: decision.reason };
+  }
+  const result = await muteFlagCli([
+    'reap', '--flag', MUTE_FLAG_FILE,
+    '--token', String(decision.reap.token),
+    '--revision', String(decision.reap.revision),
+    '--browser-id', String(decision.reap.browserId),
+    '--foreign-pages', '0',
+  ]);
+  if (result && result.ok === true) {
+    log(`MUTE flag reaped (all owners dead, no foreign page; rev=${decision.reap.revision})`);
+    return { muted: false, reaped: true, reason: 'reaped' };
+  }
+  log(`MUTE flag reap refused (${(result && result.reason) || 'unknown'})`);
+  return { muted: true, reason: 'reap-refused' };
+}
+
+// soren91 freezes the local game page for its whole session
+// (soren91/main.mjs setNormalGameLifecycle: Page.setWebLifecycleState=frozen,
+// CPU throttle, canvas hidden, __sorenRenderPaused).  After a reap that session
+// is gone, so undo the freeze or the broadcast keeps the dead, blank canvas.
+async function restoreLocalPageLifecycleAfterReap(page, context) {
+  let session = null;
+  try {
+    session = await withTimeout(context.newCDPSession(page), 3000, 'mute flag restore session');
+    await withTimeout(session.send('Page.setWebLifecycleState', { state: 'active' }), 3000, 'Page.setWebLifecycleState');
+    await withTimeout(session.send('Emulation.setCPUThrottlingRate', { rate: 1 }), 3000, 'Emulation.setCPUThrottlingRate');
+    await withTimeout(page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      const saved = globalThis.__soren91NormalCanvasStyle;
+      if (canvas && saved) {
+        canvas.style.visibility = saved.visibility;
+        canvas.style.pointerEvents = saved.pointerEvents;
+      }
+      globalThis.__sorenRenderPaused = false;
+      delete globalThis.__soren91NormalCanvasStyle;
+    }), 3000, 'mute flag restore evaluate');
+    console.log('[MUTE-FLAG] restored local game page lifecycle after reap');
+  } catch (e) {
+    console.warn(`[MUTE-FLAG] lifecycle restore failed: ${(e && e.message) || e}`);
+  } finally {
+    try { if (session) await session.detach(); } catch (e) { /* session may be gone */ }
+  }
+}
+
 async function runLocalController() {
   // Check build directory exists
   if (!fs.existsSync(BUILD_DIR)) {
@@ -2820,6 +2951,12 @@ async function runLocalController() {
   let checkCount = 0;
   let nullStateCount = 0;
   let isMuted = false;
+  // Mute-flag ownership state.  Seeded fail-closed from the flag file so the
+  // very first iteration cannot drive the game while a record exists, then
+  // refreshed (throttled) by evaluateMuteFlag().
+  let muteFlagMuted = fs.existsSync(MUTE_FLAG_FILE);
+  let muteFlagReason = '';
+  let lastMuteFlagCheckAt = 0;
   let lastAudioRouteHealAt = 0;
   let lastAudioWatchdogAt = 0;
   let lastUnityAudioRecoverAt = 0;
@@ -2891,13 +3028,33 @@ async function runLocalController() {
       continue;
     }
 
-    // Check mute flag file (independent of commands.txt to avoid race condition)
-    const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
+    // Mute gate: the ownership record (lib/mute_flag.py, independent of
+    // commands.txt to avoid a race condition) decides.  A record that is
+    // provably stale — matching token/revision/browser_id, every owner dead, no
+    // CDP page other than the local game — is reaped with the compare-and-swap
+    // inside mute_flag.py, and only then do we drive the game again.  Anything
+    // unprovable (legacy/corrupt/unarmed/unknown owner/other browser) keeps the
+    // mute.  The check shells out to python3, so it is throttled.
     const audioDiagLog = (msg) => {
       const line = `[${new Date().toISOString()}] ${msg}`;
       console.log(line);
       try { fs.appendFileSync('tmp/audio_diag.log', line + '\n'); } catch (e) {}
     };
+    // The presence check stays cheap and immediate: a record that appears (a
+    // soren91 session starting) or disappears must gate the very next iteration,
+    // exactly like the old `fs.existsSync` did.  Only the *contents* of an
+    // existing record are re-read on the throttle.
+    const muteFlagPresent = fs.existsSync(MUTE_FLAG_FILE);
+    if (muteFlagPresent !== muteFlagMuted
+      || Date.now() - lastMuteFlagCheckAt >= MUTE_FLAG_RECHECK_MS) {
+      lastMuteFlagCheckAt = Date.now();
+      const evaluated = await evaluateMuteFlag({
+        page, context, log: audioDiagLog, previousReason: muteFlagReason,
+      });
+      muteFlagMuted = evaluated.muted;
+      muteFlagReason = evaluated.reason;
+    }
+    const shouldMute = muteFlagMuted;
     if (shouldMute && !isMuted) {
       audioDiagLog('MUTE flag detected, muting audio');
       externalGameAudio.setMuted(true);
@@ -2914,8 +3071,12 @@ async function runLocalController() {
       });
       isMuted = true;
     } else if (!shouldMute && isMuted) {
-      audioDiagLog('MUTE flag removed, resuming audio');
+      audioDiagLog('MUTE flag released, resuming audio');
       externalGameAudio.setMuted(false);
+      // The record is gone (the owner released it, or we reaped it): no soren91
+      // session owns the local game any more, so undo the lifecycle freeze it
+      // applied.  Idempotent when soren91 restored the page on its own exit.
+      await restoreLocalPageLifecycleAfterReap(page, context);
       // Diagnosis (from [AUDIO-UNMUTE] logs): the tracked AudioContext stays
       // "suspended" after resume() even though the tab is visible. The local
       // game is driven via the window.__sorenCommand JS bridge, so after the
@@ -3190,6 +3351,11 @@ export {
   lifecycleStopWriteStillCurrent,
   processGameLifecycleControl,
   restoreGameOnlyRuntime,
+  // Mute-flag ownership reader (see lib/mute_flag.py).  Exported so the real
+  // decision/restore path can be driven against a live CDP browser by
+  // tests/e2e_stale_mute.mjs.
+  evaluateMuteFlag,
+  restoreLocalPageLifecycleAfterReap,
 };
 
 if (process.env.SOREN_LOCAL_CONTROLLER_IMPORT_ONLY !== '1') {
