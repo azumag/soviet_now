@@ -286,6 +286,8 @@ RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
 RADIO_THEME_PICK_STATUS_FILE="$TMP_STATE_DIR/.radio_theme_pick_status.json"
 RADIO_CORNER_STATUS_FILE="$TMP_STATE_DIR/.radio_corner_status.json"
 COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
+# docich#1182: WebUI 生成中インジケータの詳細 JSON (model/preview/count/attempt/max_retry/batch_hash/mode/owner_pid)。
+COMMENT_GEN_DETAIL_FILE="${COMMENT_GEN_DETAIL_FILE:-${EVENT_OVERLAY_COMMENT_GEN_DETAIL_STATE:-$TMP_STATE_DIR/.comment_gen_state.json}}"
 LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
 MANUAL_MERIKEN_MODE_FILE="$TMP_STATE_DIR/manual_meriken_mode.json"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","webfetch":"allow","web":"allow","web-search":"allow","external_directory":"allow"}'
