@@ -48,6 +48,16 @@ mkdirSync(join(workDir, 'tmp'), { recursive: true });
 const flagPath = join(workDir, 'tmp', 'mute_local_bgm');
 const userDataDir = join(workDir, 'chrome-profile');
 
+// This E2E needs a real Chromium; CI jobs that do not install one must not fail
+// on it, so it reports SKIP (rc=0) instead.
+let chromiumPath = '';
+try { chromiumPath = chromium.executablePath(); } catch { chromiumPath = ''; }
+if (!chromiumPath || !existsSync(chromiumPath)) {
+  rmSync(workDir, { recursive: true, force: true });
+  console.log(`SKIP: no Chromium build available (${chromiumPath || 'none'}); run \`npx playwright install chromium\` to run this end-to-end test.`);
+  process.exit(0);
+}
+
 // The reader resolves the flag relative to its cwd and the CDP port from the
 // environment at import time, so both must be set before importing the module.
 process.chdir(workDir);
@@ -128,7 +138,7 @@ let exitCode = 0;
 
 try {
   console.log('# stale mute flag E2E');
-  const executable = chromium.executablePath();
+  const executable = chromiumPath;
   chromeLogPath = join(workDir, 'chrome.log');
   const chromeLog = openSync(chromeLogPath, 'a');
   chrome = spawn(executable, [

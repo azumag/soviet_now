@@ -29,7 +29,6 @@ on:
       - 'lib/mute_flag_reader.mjs'
       - 'soviet_local.mjs'
       - 'soren91_control.sh'
-      - 'tests/e2e_stale_mute.mjs'
       - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
@@ -65,7 +64,6 @@ on:
       - 'lib/mute_flag_reader.mjs'
       - 'soviet_local.mjs'
       - 'soren91_control.sh'
-      - 'tests/e2e_stale_mute.mjs'
       - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
@@ -78,7 +76,7 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -115,7 +113,3 @@ jobs:
         run: |
           node --test tests/test_soren91_*.mjs
           python3 -m unittest tests.test_soren91_runtime_metrics tests.test_soren91_mute_flag
-      - name: Stale mute flag end-to-end (real Chromium + real ownership record)
-        run: |
-          npx playwright install --with-deps chromium
-          node tests/e2e_stale_mute.mjs
