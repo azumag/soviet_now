@@ -14,6 +14,50 @@ RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
 CHILD_MAIN_PID=""
 METRICS_PID=""
 
+# --- 停止フラグの所有権レコード (lib/mute_flag.py) ---
+# runner は soren91 セッションの耐久 owner。join した owner が生きている限り bridge
+# (soviet_local.mjs) はフラグを解除できない。解除は「leave」または bridge が
+# 「全 owner 死亡 + 他ページ無し」を実証した reap だけ。
+MUTE_TOKEN="${SOREN91_MUTE_TOKEN:-}"
+MUTE_FLAG="${SOREN91_MUTE_FLAG:-}"
+MUTE_HELPER="${SOREN91_MUTE_HELPER:-}"
+MUTE_BROWSER_ID="${SOREN91_MUTE_BROWSER_ID:-}"
+if [ -z "$MUTE_FLAG" ]; then
+	MUTE_FLAG="$(cd "$SCRIPT_DIR/.." && pwd)/tmp/mute_local_bgm"
+fi
+if [ -z "$MUTE_HELPER" ]; then
+	MUTE_HELPER="$(cd "$SCRIPT_DIR/.." && pwd)/lib/mute_flag.py"
+fi
+
+_mute_cli() {
+	command -v python3 >/dev/null 2>&1 || return 1
+	[ -r "$MUTE_HELPER" ] || return 1
+	python3 "$MUTE_HELPER" "$@" --flag "$MUTE_FLAG"
+}
+
+_mute_join() {
+	[ -n "$MUTE_TOKEN" ] || return 0
+	# begin 直後のレコードに join する。ここで失敗したまま(未 armed)になると、bridge
+	# 側は「全 owner 死亡」を実証できず自動解除できないので、数回だけ再試行する。
+	local attempt=1 out=""
+	while [ "$attempt" -le 3 ]; do
+		out="$(_mute_cli join --token "$MUTE_TOKEN" --role runner --pid $$ \
+			${MUTE_BROWSER_ID:+--browser-id "$MUTE_BROWSER_ID"} 2>/dev/null || true)"
+		case "$out" in
+		*'"ok": true'*) break ;;
+		esac
+		attempt=$((attempt + 1))
+		[ "$attempt" -le 3 ] && sleep 1
+	done
+	printf '[%s] [runner] mute ownership record join (attempt=%s): %s\n' \
+		"$(date '+%H:%M:%S')" "$attempt" "${out:-failed}" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+_mute_leave() {
+	[ -n "$MUTE_TOKEN" ] || return 0
+	_mute_cli leave --token "$MUTE_TOKEN" --role runner --pid $$ >/dev/null 2>&1 || true
+}
+
 # Remote CDP already pays a multi-second round trip for each canvas observation.
 # main.mjs also has a post-drop ranking probe (up to 16 extra screenshots over
 # 1.2s) after turn 10. That probe duplicates the normal WAITING/ranking
@@ -109,6 +153,7 @@ _on_signal() {
 	printf '[%s] [runner] received %s; stopping child and exiting\n' "$(date '+%H:%M:%S')" "$sig" >>"$LOG_FILE" 2>/dev/null || true
 	_stop_child_main
 	_stop_metrics
+	_mute_leave
 	_cleanup_lock
 	exit 0
 }
@@ -117,6 +162,7 @@ _on_exit() {
 	local rc=$?
 	_stop_metrics
 	printf '[%s] [runner] exit rc=%s\n' "$(date '+%H:%M:%S')" "$rc" >>"$LOG_FILE" 2>/dev/null || true
+	_mute_leave
 	_cleanup_lock
 }
 
@@ -149,6 +195,7 @@ trap '' HUP
 trap '_on_exit' EXIT
 _acquire_runner_lock
 echo "$$" >"$PID_FILE" 2>/dev/null || true
+_mute_join
 _ensure_metrics
 
 # rc=0-即時終了は「今は走るべきでない」(共有Chrome attach失敗等を main().catch が
