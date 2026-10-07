@@ -770,6 +770,28 @@ class AbRemainingGamesTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_malformed_version_falls_back_to_env_schedule(self):
+        """Unparseable rule version keeps the legacy .env behavior (#298)."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=10,20\nAB_GATE_MAX_BLOCKS=20\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": "not-a-version",
+                "decision_rule": {"version": "not-a-version"},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], (10, 20))
+            self.assertEqual(ab["max_blocks"], 20)
+            self.assertEqual(ab["next_look"], 10)
+            self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
     def test_env_last_match_wins_and_quotes_stripped(self):
         def _test():
             state, games, meta, env = self._write_ab(
