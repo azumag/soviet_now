@@ -3420,8 +3420,19 @@ except Exception:
     eval_stats = None
 
 # Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
-sys.path.insert(0, _os.environ.get("ELOOP_LIB_DIR") or _os.getcwd())
-from lib.strategy_archive import candidate_paths as _sa_candidates
+# この check_regression heredoc は lib/ 不在（素の環境や caseK: ELOOP_LIB_DIR に
+# lib が無い場合）でも動く契約があるため、import できない時は同等の候補列挙を
+# ローカルに持って判定を継続する。
+try:
+    sys.path.insert(0, _os.environ.get("ELOOP_LIB_DIR") or _os.getcwd())
+    from lib.strategy_archive import candidate_paths as _sa_candidates
+except Exception:
+    def _sa_candidates(hash_value, dirs):
+        for _sa_base in dirs:
+            if not _sa_base:
+                continue
+            yield os.path.join(_sa_base, f"{hash_value}.py.gz")
+            yield os.path.join(_sa_base, f"{hash_value}.py")
 
 # STATGATE emission: every print() in this heredoc is the single terminal
 # verdict, so we wrap print to emit exactly one STATGATE: line after it. The
