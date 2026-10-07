@@ -43,9 +43,13 @@ const IGNORE_AUTHORS = (process.env.KICK_IGNORE_AUTHORS ?? '')
   .filter(Boolean)
   .map((s) => s.toLowerCase());
 const SPAM_FILTER_ENABLED = (process.env.KICK_SPAM_FILTER_ENABLED ?? '1') === '1';
+// Patterns match the SANITIZED form (see sanitizeMessage: `$`, backticks, etc.
+// are stripped, whitespace collapsed). isSpam() must therefore receive the
+// sanitized message, not the raw payload. Raw `di$c0rd` arrives here as
+// `dic0rd`, so the Discord lure allows the `$`-less form and `0` for `o`.
 const SPAM_PATTERNS = [
   /^kick\s+view\s*bot,?\s*follower\s*bot\s+chat\s*bot\s+and\s+more\b/i,
-  /^ad\s*d\s+me\s+on\s+d1s\s*cord[.!\s]*$/i,
+  /^ad\s*d\s+me\s+on\s+d[i1!]\s*[s5]?\s*c[o0]rd[.!\s]*$/i,
 ];
 
 function intEnv(name, fallback) {
@@ -320,7 +324,9 @@ function connectOnce(chatroomId) {
       const message = sanitizeMessage(payload?.content);
       if (!message || !username) return;
       if (isIgnoredAuthor(payload?.sender?.username, senderSlug)) return;
-      if (isSpam(payload?.content)) {
+      // Spam patterns are written for the sanitized form (sanitizeMessage strips
+      // `$` and metacharacters), so evaluate the sanitized message here.
+      if (isSpam(message)) {
         log(`spam dropped (author=${sanitizeMetadataToken(senderSlug || username, 80)}, reason=known-ad-template)`);
         return;
       }
