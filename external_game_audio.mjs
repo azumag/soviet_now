@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 
 function clampInteger(raw, fallback, min, max) {
@@ -33,10 +33,61 @@ function stateNumber(state, key) {
   return Number.isFinite(value) ? value : 0;
 }
 
+// Fixed PulseAudio stream identity for the game BGM. module-stream-restore
+// keys restored mute/volume per stream; a stable application.name/media.name
+// keeps the BGM stream identifiable and lets the audible check find its own
+// sink-inputs by name as well as by child PID. Scoped to the game BGM only;
+// the shared audio bus and distribution encoder are untouched.
+export const BGM_STREAM_APP_NAME = 'soren-game-bgm';
+export const BGM_STREAM_MEDIA_NAME = 'soren-game-bgm';
+// The ffplay sink-input appears in PulseAudio asynchronously, so the
+// post-startup audible check is delayed instead of running synchronously.
+const BGM_AUDIBLE_ENFORCE_DELAY_MS = 1500;
+
+function defaultPactl(args) {
+  try {
+    const result = spawnSync('pactl', args, { encoding: 'utf8' });
+    return {
+      ok: result.status === 0,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+    };
+  } catch (error) {
+    return { ok: false, stdout: '', error };
+  }
+}
+
+// Parse `pactl list sink-inputs` into
+// [{ index, mute, appName, mediaName, pid }]. Unknown fields are left empty;
+// unparsable input yields an empty list rather than throwing.
+export function parsePactlSinkInputs(output) {
+  const text = String(output || '');
+  const blocks = text.split(/^Sink Input #(\d+)\s*$/m).slice(1);
+  const inputs = [];
+  for (let i = 0; i + 1 < blocks.length; i += 2) {
+    const index = Number(blocks[i]);
+    const body = blocks[i + 1];
+    if (!Number.isInteger(index)) continue;
+    const muteMatch = body.match(/^\s*Mute:\s*(yes|no)\s*$/mi);
+    const appMatch = body.match(/application\.name\s*=\s*"([^"]*)"/);
+    const mediaMatch = body.match(/media\.name\s*=\s*"([^"]*)"/);
+    const pidMatch = body.match(/application\.process\.id\s*=\s*"(\d+)"/);
+    inputs.push({
+      index,
+      mute: muteMatch ? muteMatch[1].toLowerCase() === 'yes' : false,
+      appName: appMatch ? appMatch[1] : '',
+      mediaName: mediaMatch ? mediaMatch[1] : '',
+      pid: pidMatch ? Number(pidMatch[1]) : null,
+    });
+  }
+  return inputs;
+}
+
 export class ExternalGameAudio {
   constructor(config, dependencies = {}) {
     this.config = config;
     this.spawnFn = dependencies.spawnFn || spawn;
+    this.pactlFn = dependencies.pactlFn || defaultPactl;
     this.fileExists = dependencies.fileExists || fs.existsSync;
     this.setTimeoutFn = dependencies.setTimeoutFn || setTimeout;
     this.clearTimeoutFn = dependencies.clearTimeoutFn || clearTimeout;
@@ -65,11 +116,12 @@ export class ExternalGameAudio {
     return Boolean(this.config && this.config.enabled);
   }
 
-  _audioEnvironment() {
+  _audioEnvironment(extra = {}) {
     return {
       ...process.env,
       SDL_AUDIODRIVER: 'pulse',
       PULSE_LATENCY_MSEC: String(this.config.pulseLatencyMs),
+      ...extra,
     };
   }
 
@@ -113,10 +165,18 @@ export class ExternalGameAudio {
     else args.push('-autoexit');
     args.push(filePath);
 
+    // The looping BGM gets a fixed PulseAudio stream identity so
+    // module-stream-restore cannot confuse it with other ffplay streams.
+    // (libpulse honors PULSE_PROP_* environment properties.)
+    const pulseProps = loop ? {
+      'PULSE_PROP_application.name': BGM_STREAM_APP_NAME,
+      'PULSE_PROP_media.name': BGM_STREAM_MEDIA_NAME,
+      'PULSE_PROP_media.role': 'music',
+    } : {};
     try {
       return this.spawnFn('ffplay', args, {
         stdio: 'ignore',
-        env: this._audioEnvironment(),
+        env: this._audioEnvironment(pulseProps),
       });
     } catch (error) {
       this.logger.warn(`[GAME-AUDIO] ${label} start failed: ${error && error.message}`);
@@ -149,6 +209,10 @@ export class ExternalGameAudio {
       if (!this.bgmChild && !this.bgmRestartTimer) {
         this.logger.warn('[GAME-AUDIO] BGM health check: missing, re-ensuring');
         this._ensureBgm(this.desiredBgmMode);
+      } else if (this.bgmChild) {
+        // The child can be alive yet inaudible: module-stream-restore may
+        // re-apply a remembered mute to the new ffplay sink-input (#493).
+        this._enforceBgmAudible('health');
       }
     }, this.bgmHealthIntervalMs);
   }
@@ -189,6 +253,12 @@ export class ExternalGameAudio {
     this.bgmChild = child;
     this.activeBgmMode = mode;
     this.bgmRestartBackoff = 1;
+    // The sink-input appears asynchronously, so verify audibility after a
+    // short delay: unmute a stream-restore-muted BGM and pin mute/volume
+    // explicitly instead of trusting the restored state (#493).
+    this._schedule(BGM_AUDIBLE_ENFORCE_DELAY_MS, () => {
+      this._enforceBgmAudible('startup');
+    });
     child.on?.('error', (error) => {
       if (this.bgmChild !== child) return;
       this.logger.warn(`[GAME-AUDIO] BGM:${mode} ffplay error: ${error && error.message}`);
@@ -203,6 +273,51 @@ export class ExternalGameAudio {
       if (!this.stopped && !this.muted) this._scheduleBgmRestart();
     });
     this.logger.log(`[GAME-AUDIO] BGM:${mode} started: ${filePath} (vol=${this.config.bgmVolumePct}%, pulse=${this.config.pulseLatencyMs}ms)`);
+  }
+
+  // Verify the live BGM child is actually audible in PulseAudio and repair a
+  // module-stream-restore mute (#493). Only sink-inputs owned by this bridge
+  // (child PID or the fixed BGM stream identity) are touched; the shared
+  // audio bus and distribution encoder are never addressed.
+  // reason 'startup' additionally pins mute/volume explicitly right after
+  // launch; 'health' only repairs a detected mute.
+  _enforceBgmAudible(reason) {
+    if (!this.isEnabled() || this.muted || this.stopped) return 'skipped';
+    const child = this.bgmChild;
+    if (!child) return 'no-child';
+    let listResult;
+    try {
+      listResult = this.pactlFn(['list', 'sink-inputs']);
+    } catch (error) {
+      this.logger.warn(`[GAME-AUDIO] BGM audible check failed: ${error && error.message}`);
+      return 'list-error';
+    }
+    if (!listResult || !listResult.ok) return 'list-failed';
+    const ours = parsePactlSinkInputs(listResult.stdout).filter((input) =>
+      (child.pid != null && input.pid === child.pid) ||
+      (input.appName !== '' && input.appName === BGM_STREAM_APP_NAME) ||
+      (input.mediaName !== '' && input.mediaName === BGM_STREAM_MEDIA_NAME),
+    );
+    if (!ours.length) return 'not-found';
+    let unmuted = 0;
+    for (const input of ours) {
+      try {
+        if (input.mute || reason === 'startup') {
+          const unmute = this.pactlFn(['set-sink-input-mute', String(input.index), '0']);
+          if (unmute && unmute.ok && input.mute) unmuted += 1;
+        }
+        if (reason === 'startup') {
+          this.pactlFn(['set-sink-input-volume', String(input.index), `${this.config.bgmVolumePct}%`]);
+        }
+      } catch (error) {
+        this.logger.warn(`[GAME-AUDIO] BGM audible repair failed: ${error && error.message}`);
+      }
+    }
+    if (unmuted > 0) {
+      this.logger.warn(`[GAME-AUDIO] BGM was PulseAudio-muted; unmuted ${unmuted} sink-input(s) (${reason})`);
+      return 'unmuted';
+    }
+    return 'ok';
   }
 
   _playSe(filePath, label) {
