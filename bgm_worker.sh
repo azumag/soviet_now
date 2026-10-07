@@ -11,6 +11,7 @@ BGM_FILE="${SOREN_BGM_FILE:-/home/ubuntu/soren/sorengame/assets/BGM/インター
 SINK="${SOREN_BGM_SINK:-soren_null}"
 VOL="${SOREN_BGM_VOLUME:-25}"
 STATE_DIR="${SOREN_BGM_STATE_DIR:-$BGM_SCRIPT_DIR/tmp/state}"
+source "$BGM_SCRIPT_DIR/lib/poll_wait.sh" 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 TAG="soren-bgm-loop"
 PLAYER_PID=""
 
@@ -126,7 +127,7 @@ run_bgm_worker() {
 		else
 			stop_player
 		fi
-		sleep 1
+		docich_poll_sleep 1
 	done
 }
 

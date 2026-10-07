@@ -40,6 +40,7 @@ unset CHAT_WORKER_ENV_REEXEC
 
 # --- 共通ライブラリ ---
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 CHANNEL="${1:-azumagbanjo}"
 WORKER_NAME="chat_worker"
@@ -296,7 +297,7 @@ while true; do
 	_sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
-		sleep 1
+		docich_poll_sleep 1
 		_sleep_remaining=$((_sleep_remaining - 1))
 	done
 done

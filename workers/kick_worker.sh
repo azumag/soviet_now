@@ -18,6 +18,7 @@ cd "$SCRIPT_DIR"
 [ -f .env ] && set -a && . ./.env && set +a
 
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 WORKER_NAME="kick_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
@@ -189,7 +190,7 @@ _sleep_for_poll_interval() {
 	local remaining="$interval"
 	while [ "${remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && return 0
-		sleep 1
+		docich_poll_sleep 1
 		remaining=$((remaining - 1))
 	done
 }
