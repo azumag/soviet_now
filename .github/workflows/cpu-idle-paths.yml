@@ -7,7 +7,19 @@ on:
       - 'core/config.sh'
       - 'show_status.sh'
       - 'lib/status_ai_output_filter.pl'
+      - 'lib/poll_wait.sh'
+      - 'workers/audio_worker.sh'
+      - 'workers/chat_worker.sh'
+      - 'workers/kick_worker.sh'
+      - 'workers/youtube_worker.sh'
+      - 'workers/poll_worker.sh'
+      - 'workers/prediction_worker.sh'
+      - 'workers/stream_noon_audit.sh'
+      - 'workers/radio_worker.sh'
+      - 'soviet_watchdog.sh'
+      - 'bgm_worker.sh'
       - 'tests/test_cpu_idle_paths.py'
+      - 'tests/test_poll_wait.py'
       - 'tests/test_codex_bug_dispatch_lockdown.sh'
       - 'tests/test_codex_agent_env_redaction.sh'
       - '.github/workflows/cpu-idle-paths.yml'
@@ -18,7 +30,19 @@ on:
       - 'core/config.sh'
       - 'show_status.sh'
       - 'lib/status_ai_output_filter.pl'
+      - 'lib/poll_wait.sh'
+      - 'workers/audio_worker.sh'
+      - 'workers/chat_worker.sh'
+      - 'workers/kick_worker.sh'
+      - 'workers/youtube_worker.sh'
+      - 'workers/poll_worker.sh'
+      - 'workers/prediction_worker.sh'
+      - 'workers/stream_noon_audit.sh'
+      - 'workers/radio_worker.sh'
+      - 'soviet_watchdog.sh'
+      - 'bgm_worker.sh'
       - 'tests/test_cpu_idle_paths.py'
+      - 'tests/test_poll_wait.py'
       - 'tests/test_codex_bug_dispatch_lockdown.sh'
       - 'tests/test_codex_agent_env_redaction.sh'
       - '.github/workflows/cpu-idle-paths.yml'
@@ -35,7 +59,9 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_cpu_idle_paths
+      - run: python3 -m unittest tests.test_poll_wait
       - run: bash tests/test_codex_bug_dispatch_lockdown.sh
       - run: bash tests/test_codex_agent_env_redaction.sh
       - run: perl -c lib/status_ai_output_filter.pl
       - run: bash -n codex_bug_dispatcher.sh
+      - run: bash -n lib/poll_wait.sh workers/audio_worker.sh workers/chat_worker.sh workers/kick_worker.sh workers/youtube_worker.sh workers/poll_worker.sh workers/prediction_worker.sh workers/stream_noon_audit.sh workers/radio_worker.sh soviet_watchdog.sh bgm_worker.sh

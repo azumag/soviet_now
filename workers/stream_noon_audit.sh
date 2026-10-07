@@ -32,6 +32,7 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 [ -f .env ] && set -a && . ./.env && set +a
 
@@ -506,7 +507,7 @@ while true; do
 	_sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
-		sleep 1
+		docich_poll_sleep 1
 		_sleep_remaining=$((_sleep_remaining - 1))
 	done
 done

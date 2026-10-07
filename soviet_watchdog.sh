@@ -19,6 +19,7 @@ set -u
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 cd "$SCRIPT_DIR" || exit 1
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 # A stopped/closing game bridge is an intentional game-only state.  Load the
 # shared predicate so this watchdog never respawns it or touches the common
@@ -115,7 +116,7 @@ heartbeat() { [ -d "$LOCK_DIR" ] && touch "$LOCK_DIR" 2>/dev/null || true; }
 wait_poll_interval() {
 	local remaining="$INTERVAL"
 	while [ "$remaining" -gt 0 ]; do
-		sleep 1
+		docich_poll_sleep 1
 		remaining=$((remaining - 1))
 	done
 }
