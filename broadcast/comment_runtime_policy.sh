@@ -35,6 +35,11 @@ _comment_runtime_policy_capture \
 # Twica production format), legacy fullwidth "【tier】card", or the multi-draw
 # summary "N連ガチャで ...を獲得しました". Every detection point must accept all
 # forms; keying on 【...】 alone silently missed 100% of live notifications.
+# NOTE(macOS portability, #417): BSD grep rejects any repetition bound above
+# 255 ("maximum repetition exceeds 255", rc=2), and the call-site stderr
+# redirect turns that into a silent non-match (card quiet window lost). Keep
+# every {m,n} upper bound below in the shell patterns at or under 255;
+# tests/test_comment_runtime_policy.sh pins this invariant.
 _COMMENT_CARD_ACQUIRED_RE='が[[:space:]]*(【[^】]{1,80}】|\[[^]]{1,80}\])[^を]{0,240}を獲得しました'
 _COMMENT_CARD_MULTI_RE='が[[:space:]]*[0-9]+[[:space:]]*連ガチャで[^を]{0,160}を獲得しました'
 
