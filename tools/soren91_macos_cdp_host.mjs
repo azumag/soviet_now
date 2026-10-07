@@ -704,8 +704,26 @@ export async function startAudioTapWithRetry({
   throw new Error(`audio tap attach failed after ${budgetMs}ms (fail-closed): ${lastError?.message || lastError}`);
 }
 
-export async function main(argv = process.argv.slice(2), { platform = process.platform } = {}) {
+export async function main(argv = process.argv.slice(2), { platform = process.platform, deps = {} } = {}) {
   const options = validateOptions(parseArgs(argv), platform);
+  // Dependency seams for the main() smoke test (Issue #358): every
+  // process/CDP/hardware touchpoint behind an injectable default so tests
+  // can run driver ready -> streaming/watch setup -> full-session wait with
+  // stub children and no Chrome/ffmpeg/SRT/Tailscale.
+  const {
+    startVirtualDisplay: startVirtualDisplayImpl = startVirtualDisplay,
+    reapStaleProfileDirs: reapStaleProfileDirsImpl = reapStaleProfileDirs,
+    spawn: spawnImpl = spawn,
+    spawnSync: spawnSyncImpl = spawnSync,
+    fetch: fetchImpl = fetch,
+    fetchJsonList: fetchJsonListImpl = fetchJsonList,
+    startCdpProxy: startCdpProxyImpl = startCdpProxy,
+    connectOverCDP = (url) => chromium.connectOverCDP(url),
+    waitForStableCanvasGeometry: waitForStableCanvasGeometryImpl = waitForStableCanvasGeometry,
+    startCaptureHelper: startCaptureHelperImpl = startCaptureHelper,
+    startAudioTapWithRetry: startAudioTapWithRetryImpl = startAudioTapWithRetry,
+    createSessionDeadline: createSessionDeadlineImpl = createSessionDeadline,
+  } = deps;
   const allowedPeerIp = options.srtUrl ? new URL(options.srtUrl).hostname : '';
   const plan = {
     backend: 'macos-cdp-host', tier: -1, execute: options.execute,
@@ -735,7 +753,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // orphaned (and audible) if this host is SIGKILLed mid-cleanup. Kill
     // every process still bound to OUR temp profile dir so nothing leaks.
     if (profileDir) {
-      try { spawnSync('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
+      try { spawnSyncImpl('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
       // Best-effort, same as the pkill above: Chrome may still hold files in
       // profileDir open for a moment, but unlinking underneath it is safe on
       // POSIX and this is our only chance to reclaim it on a signal-driven
@@ -758,17 +776,17 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   process.once('SIGTERM', onSigterm);
   const startedAt = Date.now();
   try {
-    const held = await startVirtualDisplay(options.virtualDisplayBin, { timeoutMs: 30_000 });
+    const held = await startVirtualDisplayImpl(options.virtualDisplayBin, { timeoutMs: 30_000 });
     vdisplay = held.child;
     console.log(`SOREN91_CDP_HOST_VDISPLAY_READY=${JSON.stringify(held.status)}`);
     const { placementFor: place } = { placementFor };
     const placement = place(held.status.bounds);
-    reapStaleProfileDirs();
+    reapStaleProfileDirsImpl();
     profileDir = path.join(os.tmpdir(), `${PROFILE_DIR_PREFIX}${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
     // `--remote-allow-origins=*` is safe only behind the source-locked Tailscale
     // proxy above; Chrome itself remains bound to 127.0.0.1.
-    chrome = spawn(options.chromeBin, buildChromeArgs(options, placement, profileDir), {
+    chrome = spawnImpl(options.chromeBin, buildChromeArgs(options, placement, profileDir), {
       stdio: ['ignore', 'ignore', 'inherit'],
     });
     console.log(`SOREN91_CDP_HOST_CHROME_PID=${chrome.pid}`);
@@ -777,14 +795,14 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     for (let i = 0; i < 60 && !ready; i += 1) {
       if (chrome.exitCode != null) throw new Error(`chrome exited early (code=${chrome.exitCode})`);
       try {
-        const res = await fetch(`http://127.0.0.1:${options.cdpPort}/json/version`);
+        const res = await fetchImpl(`http://127.0.0.1:${options.cdpPort}/json/version`);
         ready = res.ok;
       } catch {}
       if (!ready) await sleep(500);
     }
     if (!ready) throw new Error('chrome DevTools endpoint did not come up');
     console.log(`SOREN91_CDP_HOST_CDP_READY=http://127.0.0.1:${options.cdpPort}`);
-    proxy = await startCdpProxy({
+    proxy = await startCdpProxyImpl({
       bindIp: options.bindIp,
       proxyPort: options.proxyPort,
       cdpPort: options.cdpPort,
@@ -806,7 +824,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     while (Date.now() < driverDeadline) {
       if (chrome.exitCode != null) throw new Error(`chrome exited while waiting (code=${chrome.exitCode})`);
       let targets = [];
-      try { targets = await fetchJsonList(options.cdpPort); } catch (e) {
+      try { targets = await fetchJsonListImpl(options.cdpPort); } catch (e) {
         console.error(`[cdp-host] /json/list poll failed: ${e?.message || e}`);
       }
       const pageCount = targets.filter((t) => t?.type === 'page').length;
@@ -826,7 +844,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // 1280x720 when the 960x540 calibration does not stick) and is NEVER a
     // failure condition: the crop below is computed from measured geometry
     // and scaled/padded to the fixed 960x540 output.
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
+    browser = await connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
     const context = browser.contexts()[0];
     if (!context) throw new Error('remote chrome has no browser context');
     const page = context.pages().find((p) => isExactGameTargetUrl(p.url() || ''));
@@ -872,7 +890,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       x: bounds.bounds.left, y: bounds.bounds.top,
       width: bounds.bounds.width, height: bounds.bounds.height,
     };
-    const listResult = spawnSync(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+    const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
     if (listResult.error) throw listResult.error;
     const line = String(listResult.stderr || '').trim().split('\n').pop()
       || String(listResult.stdout || '').trim().split('\n').pop();
@@ -940,7 +958,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         chromeTop: options.chromeTop,
       };
     };
-    const stable = await waitForStableCanvasGeometry(sampleGeometry);
+    const stable = await waitForStableCanvasGeometryImpl(sampleGeometry);
     const canvasGeom = stable.canvas;
     const captureInfo = {
       bundleId: 'com.google.Chrome',
@@ -979,13 +997,13 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     } catch {}
 
     const captureArgs = buildCaptureArgs({ captureHelperBin: options.captureHelperBin }, captureInfo);
-    const started = await startCaptureHelper(options.captureHelperBin, captureArgs, 30_000);
+    const started = await startCaptureHelperImpl(options.captureHelperBin, captureArgs, 30_000);
     capture = started.child;
     console.log(`SOREN91_CDP_HOST_CAPTURE_READY=${JSON.stringify(started.status)}`);
 
     if (options.audioTap) {
       // Retry until the AudioService process exists (see helper above).
-      const tapStarted = await startAudioTapWithRetry({
+      const tapStarted = await startAudioTapWithRetryImpl({
         audioTapBin: options.audioTapBin,
         rootPid: chrome.pid,
         budgetMs: options.audioTapWaitSec * 1000,
@@ -1004,7 +1022,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
-    ffmpeg = spawn(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
+    ffmpeg = spawnImpl(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
     // Bounded ffmpeg stderr tail: the session-end classifier needs the
     // receiver-close signature; the live stream still goes to process.stderr.
     const ffmpegStderr = createStderrTail();
@@ -1055,7 +1073,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
           width: live.bounds.width, height: live.bounds.height,
         };
         const liveContent = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-        const listResult = spawnSync(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+        const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
         const listLine = String(listResult.stderr || '').trim().split('\n').pop()
           || String(listResult.stdout || '').trim().split('\n').pop();
         const decision = evaluateGeometryDrift({
@@ -1095,7 +1113,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // (resolveSessionEnd): only an explicit receiver-close signature in
     // ffmpeg stderr counts as a normal consumer close; an unexplained or
     // unobserved exit fails closed.
-    const deadline = createSessionDeadline(Math.max(0, sessionDeadline - Date.now()));
+    const deadline = createSessionDeadlineImpl(Math.max(0, sessionDeadline - Date.now()));
     const outcome = await Promise.race([
       deadline.promise,
       childExitOutcome(ffmpeg, 'ffmpeg-exit', 'close'),
