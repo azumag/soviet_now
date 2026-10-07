@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +19,7 @@ import {
   findGameTarget,
   isAllowedCdpPeer,
   isExactGameTargetUrl,
+  main,
   normalizeRemoteAddress,
   parseCanvasGeometry,
   PROFILE_DIR_PREFIX,
@@ -538,4 +540,201 @@ test('reapStaleProfileDirs never throws when listing or removing fails', () => {
     isInUse: () => false,
     rmImpl: () => { throw new Error('permission denied'); },
   }));
+});
+
+// --- main() smoke test (Issue #358) -------------------------------------
+// Runs driver ready -> streaming/watch setup -> full-session wait with every
+// process/CDP/hardware touchpoint stubbed: no Chrome, ScreenCaptureKit,
+// ffmpeg, SRT, Tailscale, or secrets. A #357-class wiring bug (e.g. an
+// undefined `deadline` reference on the ready path) throws out of main()
+// here instead of passing silently.
+
+const SMOKE_GAME_URL = 'https://74337.play.unityroom.com/games/smoke';
+const SMOKE_VDISPLAY_STATUS = { displayID: 7, bounds: { x: -3000, y: 0, width: 1600, height: 900 } };
+const SMOKE_LIST_LINE = JSON.stringify({
+  ok: true,
+  displays: [
+    { id: 7, bounds: { x: -3000, y: 0, width: 1600, height: 900 } },
+    { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+  ],
+});
+const SMOKE_WINDOW_BOUNDS = { left: -2980, top: 20, width: 1280, height: 807 };
+const SMOKE_STABLE_GEOMETRY = {
+  canvas: { x: 0, y: 0, width: 1280, height: 720, iw: 1280, ih: 720, dpr: 1 },
+  outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87,
+};
+
+class SmokeChild extends EventEmitter {
+  constructor() {
+    super();
+    this.pid = 20000 + Math.floor(Math.random() * 10000);
+    this.exitCode = null;
+    this.signalCode = null;
+    this.killed = false;
+    this.stdout = new EventEmitter();
+    this.stdout.pipe = () => {};
+    this.stdout.destroy = () => {};
+    this.stderr = new EventEmitter();
+    this.stdin = { destroy: () => {}, on: () => {}, write: () => true };
+    this.stdio = [null, this.stdout, this.stderr, new EventEmitter()];
+  }
+
+  kill() {
+    if (this.killed || this.exitCode != null) return false;
+    this.killed = true;
+    this.exitCode = 0;
+    setImmediate(() => this.emit('exit', 0, null));
+    return true;
+  }
+}
+
+function buildSmokeStubs(overrides = {}) {
+  const calls = {
+    spawn: 0, spawnSync: 0, fetchJsonList: 0, waitForStableCanvasGeometry: 0,
+    startCdpProxy: 0, connectOverCDP: 0, browserClose: 0,
+  };
+  const vdisplay = new SmokeChild();
+  const capture = new SmokeChild();
+  const deps = {
+    startVirtualDisplay: async () => ({ child: vdisplay, status: SMOKE_VDISPLAY_STATUS }),
+    reapStaleProfileDirs: () => {},
+    spawn: () => {
+      calls.spawn += 1;
+      return new SmokeChild();
+    },
+    spawnSync: (bin, args) => {
+      calls.spawnSync += 1;
+      if (args?.[0] === '--list') return { error: undefined, stdout: '', stderr: `${SMOKE_LIST_LINE}\n` };
+      return { status: 1 };
+    },
+    fetch: async () => ({ ok: true }),
+    fetchJsonList: async () => {
+      calls.fetchJsonList += 1;
+      return [{ type: 'page', url: SMOKE_GAME_URL }];
+    },
+    startCdpProxy: async () => {
+      calls.startCdpProxy += 1;
+      return { close: (cb) => { cb?.(); } };
+    },
+    connectOverCDP: async () => {
+      calls.connectOverCDP += 1;
+      const cdp = {
+        send: async (method) => {
+          if (method === 'Browser.getWindowForTarget') return { windowId: 1 };
+          if (method === 'Browser.getWindowBounds') return { bounds: { ...SMOKE_WINDOW_BOUNDS } };
+          return {};
+        },
+      };
+      const page = {
+        url: () => SMOKE_GAME_URL,
+        title: async () => {
+          if (overrides.pageTitleError) throw overrides.pageTitleError;
+          return 'smoke game';
+        },
+        evaluate: async () => ({ iw: 1280, ih: 720 }),
+      };
+      return {
+        close: async () => { calls.browserClose += 1; },
+        contexts: () => [{ pages: () => [page], newCDPSession: async () => cdp }],
+      };
+    },
+    waitForStableCanvasGeometry: async () => {
+      calls.waitForStableCanvasGeometry += 1;
+      return { ...SMOKE_STABLE_GEOMETRY };
+    },
+    startCaptureHelper: async () => ({ child: capture, status: { ok: true } }),
+    startAudioTapWithRetry: async () => { throw new Error('audio tap must be disabled in the smoke test'); },
+    ...overrides.deps,
+  };
+  return { calls, deps };
+}
+
+async function withSmokeEnv(vars, fn) {
+  const prev = new Map();
+  for (const [key, value] of Object.entries(vars)) {
+    prev.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of prev) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function smokeEnv(resultPath, { sessionSec, driverWaitSec }) {
+  return {
+    SOREN91_LOCAL_SRT_URL: 'srt://100.70.0.3:9000?mode=caller',
+    SOREN91_CDP_BIND_IP: '100.70.0.2',
+    SOREN91_CDP_HOST_SESSION_SEC: String(sessionSec),
+    SOREN91_CDP_HOST_DRIVER_WAIT_SEC: String(driverWaitSec),
+    SOREN91_LOCAL_AUDIO_TAP: '0',
+    SOREN91_CDP_HOST_RESULT_PATH: resultPath,
+  };
+}
+
+test('cdp-host main() runs driver-ready to full-session deadline with stubs only (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  const { calls, deps } = buildSmokeStubs();
+  const outcome = await withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1, driverWaitSec: 5 }), () =>
+    main(['--execute'], { platform: 'darwin', deps }));
+  assert.deepEqual(outcome, { ok: true });
+  const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+  assert.equal(result.ok, true);
+  assert.equal(result.windowTitle, 'smoke game');
+  assert.deepEqual(result.canvasCrop, { x: 0, y: 86, w: 1280, h: 720 });
+  // The driver was observed, the watch-setup geometry ran, and exactly the
+  // chrome + ffmpeg children were spawned (nothing real).
+  assert.ok(calls.fetchJsonList >= 1);
+  assert.equal(calls.startCdpProxy, 1);
+  assert.equal(calls.connectOverCDP, 1);
+  assert.equal(calls.waitForStableCanvasGeometry, 1);
+  assert.equal(calls.spawn, 2);
+  assert.equal(calls.browserClose, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cdp-host main() keeps the full-session deadline when the driver wait is short (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  let requestedMs = null;
+  const { deps } = buildSmokeStubs({
+    deps: {
+      createSessionDeadline: (ms) => {
+        requestedMs = ms;
+        return { promise: Promise.resolve({ kind: 'deadline' }), cancel() {} };
+      },
+    },
+  });
+  const outcome = await withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1500, driverWaitSec: 5 }), () =>
+    main(['--execute'], { platform: 'darwin', deps }));
+  assert.deepEqual(outcome, { ok: true });
+  // The 5s driver window must not shorten the 1500s full session in main()'s
+  // wiring (the session race waits on computeSessionDeadline, not the
+  // driver deadline).
+  assert.ok(requestedMs > 5 * 1000, `session wait must exceed the driver window (got ${requestedMs}ms)`);
+  assert.ok(
+    Math.abs(requestedMs - 1500 * 1000) < 60_000,
+    `session wait must be the full session (got ${requestedMs}ms)`,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cdp-host main() surfaces runtime-only exceptions instead of passing silently (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  // A #357-class ReferenceError thrown anywhere on the ready path must fail
+  // the smoke run instead of being swallowed.
+  const { deps } = buildSmokeStubs({ pageTitleError: new ReferenceError('deadline is not defined') });
+  await assert.rejects(
+    () => withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1, driverWaitSec: 5 }), () =>
+      main(['--execute'], { platform: 'darwin', deps })),
+    /deadline is not defined/,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
 });
