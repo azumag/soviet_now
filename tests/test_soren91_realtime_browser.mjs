@@ -40,6 +40,36 @@ for (const dpr of [1, 2]) {
     });
   }
 }
+for (const dpr of [1]) {
+  test(`real Chromium: cdp backend canvas crop is byte-identical to the locator screenshot (DPR=${dpr})`, opts, async () => {
+    await fixture(dpr, async (page, io) => {
+      const expectedPng = await page.locator('canvas').screenshot({ scale: 'css', type: 'png' });
+      const expectedJpeg = await page.locator('canvas').screenshot({ scale: 'css', type: 'jpeg', quality: 85 });
+      const pngFrame = await io.capture(page, { backend: 'cdp', type: 'png' });
+      const jpegFrame = await io.capture(page, { backend: 'cdp', type: 'jpeg', quality: 85 });
+      assert.equal(pngFrame.width, 800); assert.equal(pngFrame.height, 450);
+      assert.ok(pngFrame.buffer.equals(expectedPng), 'cdp png must be the canvas pixels only');
+      assert.ok(jpegFrame.buffer.equals(expectedJpeg), 'cdp jpeg must be the canvas pixels only');
+      io.close(page);
+    });
+  });
+}
+test('real Chromium: cdp backend never leaves an emulated device scale disturbed', opts, async () => {
+  await fixture(2, async (page, io) => {
+    const before = await page.evaluate(() => ({ dpr: devicePixelRatio, w: innerWidth, h: innerHeight }));
+    assert.equal(before.dpr, 2);
+    // A foreign raw capture resets the emulated metrics; the capture must refuse
+    // the disturbed frame, put the metrics back and stop using the raw backend.
+    await assert.rejects(io.capture(page, { backend: 'cdp' }), /geometry-changed/);
+    const after = await page.evaluate(() => ({ dpr: devicePixelRatio, w: innerWidth, h: innerHeight }));
+    assert.deepEqual(after, before);
+    const expected = await page.locator('canvas').screenshot({ scale: 'css' });
+    const frame = await io.capture(page, { backend: 'cdp' });
+    assert.equal(frame.width, 800);
+    assert.ok(frame.buffer.equals(expected), 'the downgraded capture is the plain canvas screenshot');
+    io.close(page);
+  });
+});
 test('real Chromium: same-size canvas replacement invalidates the old frame before input', opts, async () => {
   await fixture(2, async (page, io) => {
     const frame = await io.capture(page);

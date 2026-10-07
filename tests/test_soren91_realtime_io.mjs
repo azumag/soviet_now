@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
   validGeometry, sameGeometry, captureTimeoutMs, captureErrorBackoffMs,
-  captureErrorLimit, captureImageFormat, captureJpegQuality } from '../soren91/realtime_io.mjs';
+  captureErrorLimit, captureImageFormat, captureJpegQuality, captureBackend, captureClip } from '../soren91/realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { rejectedFrameReason } from '../soren91/rejected_frame_diagnostics.mjs';
@@ -32,13 +32,14 @@ function jpeg(width = 800, height = 450) {
   return b.toString('base64');
 }
 function mockPage({ geometries = [G], capture = async () => ({ data: png() }),
-  detach = async () => {} } = {}) {
+  detach = async () => {}, cdp = false } = {}) {
   const calls = [];
   let reads = 0, attaches = 0, detaches = 0;
   const session = {
     async send(method, args) {
       calls.push({ method, args });
       if (method === 'Runtime.evaluate') return { result: { value: geometries[Math.min(reads++, geometries.length - 1)] } };
+      if (method === 'Page.captureScreenshot' && cdp) return { data: (await capture(args)).data };
       throw new Error('Unexpected method');
     },
     async detach() { detaches++; await detach(); },
@@ -129,6 +130,90 @@ test('JPEG capture preserves geometry checks and forwards bounded quality', asyn
     /invalid-jpeg/,
   );
 });
+test('remote capture backend defaults to raw CDP and stays overridable', () => {
+  assert.equal(captureBackend({ SOREN91_REMOTE_CDP_URL: 'http://remote.invalid' }), 'playwright');
+  assert.equal(captureBackend({}), 'playwright');
+  assert.equal(captureBackend({ SOREN91_CAPTURE_BACKEND: 'CDP' }), 'cdp');
+  assert.equal(captureBackend({ SOREN91_CAPTURE_BACKEND: 'playwright' }), 'playwright');
+  assert.equal(captureBackend({ SOREN91_CAPTURE_BACKEND: 'nonsense' }), 'playwright');
+});
+
+test('capture clip mirrors Playwright for a region inside the viewport and rejects invalid geometry', () => {
+  assert.deepEqual(captureClip(G), { x: 10, y: 20, width: 800, height: 450, scale: 1 });
+  assert.deepEqual(captureClip({ ...G, x: 10.5, y: 20.25, width: 800.5, height: 450.75, scrollX: 4, scrollY: 100 }),
+    { x: 14.5, y: 120.25, width: 800, height: 450, scale: 1 });
+  assert.throws(() => captureClip({ ...G, viewportScale: 2 }), /invalid-geometry/);
+  assert.throws(() => captureClip(null), /invalid-geometry/);
+});
+
+test('cdp backend captures with one Page.captureScreenshot on the reusable geometry session', async () => {
+  const page = mockPage({ cdp: true, capture: async () => ({ data: jpeg() }) });
+  const io = createCanvasIO();
+  const frame = await io.capture(page, { type: 'jpeg', quality: 85, backend: 'cdp' });
+  assert.equal(frame.format, 'jpeg');
+  assert.equal(frame.width, 800);
+  assert.equal(frame.height, 450);
+  assert.equal(page.counts().attaches, 1);
+  assert.deepEqual(page.calls.map(c => c.method),
+    ['Runtime.evaluate', 'Page.captureScreenshot', 'Runtime.evaluate']);
+  const params = page.calls[1].args;
+  assert.equal(params.format, 'jpeg');
+  assert.equal(params.quality, 85);
+  assert.equal(params.captureBeyondViewport, false);
+  assert.deepEqual(params.clip, { x: 10, y: 20, width: 800, height: 450, scale: 1 });
+});
+
+test('cdp backend keeps every capture guard and fails closed on malformed frames', async () => {
+  const page = mockPage({ cdp: true, capture: async () => ({ data: png() }) });
+  const frame = await createCanvasIO().capture(page, { backend: 'cdp' });
+  assert.equal(frame.captureMs >= 0, true);
+  assert.deepEqual(Object.keys(frame.captureStageMs),
+    ['geometryBefore', 'screenshot', 'imageValidate', 'geometryAfter']);
+  // A remote resize/scroll/navigation during transfer is still rejected.
+  for (const patch of [{ width: 801 }, { scrollY: 2 }, { documentId: 200 }, { x: 11 }]) {
+    await assert.rejects(createCanvasIO().capture(
+      mockPage({ cdp: true, geometries: [G, { ...G, ...patch }] }), { backend: 'cdp' }), /geometry-changed/);
+  }
+  // Empty, non-image and wrongly scaled payloads keep their fixed error classes.
+  await assert.rejects(createCanvasIO().capture(mockPage({ cdp: true, capture: async () => ({ data: '' }) }),
+    { backend: 'cdp' }), /invalid-png/);
+  await assert.rejects(createCanvasIO().capture(mockPage({ cdp: true, capture: async () => ({ data: 'not an image' }) }),
+    { backend: 'cdp' }), /invalid-png/);
+  await assert.rejects(createCanvasIO().capture(mockPage({ cdp: true, capture: async () => ({ data: 'bm90LWEtanBlZw==' }) }),
+    { type: 'jpeg', backend: 'cdp' }), /invalid-jpeg/);
+  await assert.rejects(createCanvasIO().capture(mockPage({ cdp: true, capture: async () => ({ data: png(400, 225) }) }),
+    { backend: 'cdp' }), /scale-mismatch/);
+  await assert.rejects(createCanvasIO().capture(mockPage({ cdp: true }), { backend: 'locator' }),
+    /invalid-backend/);
+});
+
+test('a disturbed device-metrics override disables the raw backend and restores the measured metrics', async () => {
+  const page = mockPage({ cdp: true, geometries: [G, { ...G, dpr: 2 }], capture: async () => ({ data: png() }) });
+  const io = createCanvasIO();
+  await assert.rejects(io.capture(page, { backend: 'cdp' }), /geometry-changed/);
+  const restore = page.calls.find(c => c.method === 'Emulation.setDeviceMetricsOverride');
+  assert.deepEqual(restore.args, {
+    width: 1280, height: 720, deviceScaleFactor: 1, mobile: false, dontSetVisibleSize: true,
+  });
+  // The page is disturbed at most once: the next capture uses the Playwright path.
+  const frame = await io.capture(page, { backend: 'cdp' });
+  assert.equal(frame.width, 800);
+  assert.equal(page.calls.filter(c => c.method === 'Page.captureScreenshot').length, 1);
+  assert.equal(page.calls.filter(c => c.method === 'Page.screenshot').length, 1);
+});
+
+test('cdp backend timeouts retire only their session and never return a late frame', async () => {
+  let finish;
+  const page = mockPage({ cdp: true, capture: () => new Promise(resolve => { finish = resolve; }) });
+  const io = createCanvasIO();
+  await assert.rejects(io.capture(page, { timeoutMs: 15, backend: 'cdp' }), /capture-timeout/);
+  assert.equal(page.counts().detaches, 1);
+  await assert.rejects(io.capture(page, { backend: 'cdp' }), /session-busy/);
+  finish({ data: png() });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.counts().reads, 1); // No late post-capture geometry/side effects.
+});
+
 test('CSS and native DPR PNGs are valid; unexpected scaling fails closed', async () => {
   const g = { ...G, dpr: 2 };
   for (const scale of [1, 2]) {
@@ -313,6 +398,16 @@ test('real main loop overlaps slow capture with cooldown instead of adding 1.2s 
   const s = await simulateLoop({ captureMs: 1200 });
   assert.deepEqual(s.dropTimes, [1400, 2800]);
   assert.equal(s.dropTimes[1] - s.dropTimes[0], 1400);
+});
+test('a re-observation that already outran the state-check interval adds no extra wait', async () => {
+  const s = await simulateLoop({ captureMs: 1200, blocked: 1, maxDrops: 1 });
+  assert.equal(s.drops, 1);
+  assert.equal(s.dropTimes[0], 2600); // 2x1200 capture + 200 input, no added poll sleep
+});
+test('a fast re-observation still waits out the state-check interval floor', async () => {
+  const s = await simulateLoop({ captureMs: 50, blocked: 1, maxDrops: 1 });
+  assert.equal(s.drops, 1);
+  assert.equal(s.dropTimes[0], 450); // 50 + (200-50) poll floor + 50 + 200 input
 });
 test('real main loop requests midgame commentary once before turn 20 in a slow round', async () => {
   const s = await simulateLoop({ captureMs: 10000, maxDrops: 9, pieces: [{}, {}, {}] });

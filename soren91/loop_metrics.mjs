@@ -12,6 +12,7 @@ const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
 const SAFE_FAILURE_CLASSES = new Set([
   'capture-budget-exhausted', 'capture-session-busy', 'capture-timeout',
   'capture-invalid-geometry', 'capture-invalid-png', 'capture-invalid-jpeg', 'capture-invalid-image',
+  'capture-invalid-backend',
   'capture-pixel-scale-mismatch', 'capture-geometry-changed',
   'input-stale-observation', 'input-calibration-mismatch', 'input-geometry-changed',
 ]);
