@@ -1,10 +1,10 @@
 name: Game lifecycle pause race
 on:
   pull_request:
-    paths: ['lib/game_lifecycle.sh', 'strategy/improve.sh', 'infra/cleanup.sh', 'tests/test_game_lifecycle_pause_race.sh', 'lib/bridge_recovery.sh', 'tests/test_bridge_recovery_parked.sh', '.github/workflows/game-lifecycle-pause.yml']
+    paths: ['lib/game_lifecycle.sh', 'strategy/improve.sh', 'infra/cleanup.sh', 'tests/test_game_lifecycle_pause_race.sh', 'lib/bridge_recovery.sh', 'tests/test_bridge_recovery_parked.sh', 'tests/test_bridge_recovery_stale_observation.sh', '.github/workflows/game-lifecycle-pause.yml']
   push:
     branches: [main]
-    paths: ['lib/game_lifecycle.sh', 'strategy/improve.sh', 'infra/cleanup.sh', 'tests/test_game_lifecycle_pause_race.sh', 'lib/bridge_recovery.sh', 'tests/test_bridge_recovery_parked.sh', '.github/workflows/game-lifecycle-pause.yml']
+    paths: ['lib/game_lifecycle.sh', 'strategy/improve.sh', 'infra/cleanup.sh', 'tests/test_game_lifecycle_pause_race.sh', 'lib/bridge_recovery.sh', 'tests/test_bridge_recovery_parked.sh', 'tests/test_bridge_recovery_stale_observation.sh', '.github/workflows/game-lifecycle-pause.yml']
 permissions:
   contents: read
 jobs:
@@ -17,4 +17,5 @@ jobs:
       - run: bash tests/test_game_lifecycle_pause_race.sh
       - run: bash tests/test_pid_settle.sh
       - run: bash tests/test_bridge_recovery_parked.sh
+      - run: bash tests/test_bridge_recovery_stale_observation.sh
       - run: bash -n lib/game_lifecycle.sh lib/bridge_recovery.sh
