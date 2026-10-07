@@ -23,19 +23,17 @@ start)
 	[ -n "$src" ] || { echo "usage: $0 start <path|hash> [pattern]"; exit 1; }
 	if [ ! -f "$src" ]; then
 		found=""
-		for cand in "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${src}.py" "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${src}.py"; do
-			[ -f "$cand" ] || continue
-			[ "$(hash_of "$cand")" = "$src" ] || continue
-			found="$cand"
-			break
-		done
+		# Phase A: `<hash>.py.gz` → `<hash>.py` の順に解決する。gz 一致候補は
+		# 作業アーカイブへ平文展開したパスが返る（下流の cp は平文前提）。
+		found=$(strategy_archive_resolve_plaintext "$src" 2>/dev/null || true)
 		[ -n "$found" ] || { echo "代替戦略が見つかりません (パスでも hash でも解決不可): $src"; exit 1; }
 		src="$found"
 	fi
 	[ -f "$STATE" ] && { echo "既に A/B 状態があります ($STATE)。finish/stop してから。"; exit 1; }
 	[ -f "$ACTIVE_BRANCH_FILE" ] && { echo "active_branch.json があります。先に整理が必要。"; exit 1; }
 	bundle=$(mktemp -d "${TMP_STATE_DIR}/ab_bundle.XXXXXX")
-	cp -p "$src" "$bundle/strategy.py"
+	# Phase A: src が .py.gz でも平文として bundle へ展開する。
+	strategy_archive_copy "$src" "$bundle/strategy.py"
 	if _ab_start_from_bundle "$bundle" "$pattern"; then
 		echo "A/B 開始: A=$(hash_of "$STRATEGY_FILE") (root) B=$(hash_of "$src") ($src) pattern=$pattern — 次の試合から有効。revert 先 tmp/revert_strategy.py=A"
 		grep -E "^(REGRESSION_DISABLED|SOREN_AB_ALT_STRATEGY|SOREN_AB_PATTERN)=" .env

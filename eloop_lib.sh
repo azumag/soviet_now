@@ -14,6 +14,9 @@ source "$ELOOP_LIB_DIR/core/config.sh"
 source "$ELOOP_LIB_DIR/core/radio_timeout_guard.sh"
 source "$ELOOP_LIB_DIR/core/runtime_toggles.sh"
 source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
+# Phase A (docich#392): .py.gz → .py の透過 reader ヘルパー。config.sh の
+# STRATEGY_HASH_ARCHIVE_DIR に依存するため config.sh の後で読み込む。
+source "$ELOOP_LIB_DIR/lib/strategy_archive.sh"
 # A resident chat shell predating record clips already sources this shim each
 # tick. Replace only its clip handler; other workers never load this module.
 if [ "${WORKER_NAME:-}" = "chat_worker" ]; then

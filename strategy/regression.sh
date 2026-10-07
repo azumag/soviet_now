@@ -1,5 +1,13 @@
 # strategy/regression.sh - rolling scores, check_regression, rollback候補選定, postmortem生成
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+# 通常は eloop_lib.sh が読み込む。単体 source（テスト等）でも解決できるよう補う。
+if ! command -v strategy_archive_candidates >/dev/null 2>&1; then
+	_strategy_archive_shim_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+	[ -f "$_strategy_archive_shim_dir/lib/strategy_archive.sh" ] && source "$_strategy_archive_shim_dir/lib/strategy_archive.sh"
+	unset _strategy_archive_shim_dir
+fi
+
 _write_rollback_analysis_file() {
 	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
 	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" "eval_score_history.txt" <<'PY'
@@ -444,6 +452,10 @@ import subprocess
 import sys
 import time
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable, resolve_plaintext as _sa_resolve_plaintext
+
 rolling_file, archive_dir, versions_dir, strategy_file, revert_file, hash_script, current_hash, rollback_hash, game_num, rollback_note, out_file = sys.argv[1:12]
 
 def load_json(path):
@@ -505,8 +517,10 @@ def decide_hash(path):
 def find_strategy_file(target_hash):
     if not target_hash:
         return ""
-    by_hash = os.path.join(archive_dir, f"{target_hash}.py")
-    if os.path.exists(by_hash):
+    # Phase A: 作業アーカイブの `.py.gz` → `.py` を平文で解決する
+    # （postmortem sandbox は平文ソースを前提にする）。
+    by_hash = _sa_resolve_plaintext(target_hash, archive_dir)
+    if by_hash:
         return by_hash
 
     candidates = []
@@ -782,19 +796,34 @@ _find_rollback_candidate_file_for_hash() {
 	[ -n "$target_hash" ] || return 1
 	local primary_file="$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py"
 	local permanent_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${target_hash}.py"
-	if _strategy_file_hash_matches "$target_hash" "$primary_file"; then
-		echo "$primary_file"
-		return 0
-	fi
-	if _strategy_file_hash_matches "$target_hash" "$permanent_file"; then
+	local cand
+	# Phase A: `<hash>.py.gz` → `<hash>.py` を gz 優先で走査し、hash 一致した候補を
+	# 平文で返す（gz は作業アーカイブへ展開。呼び出し側の cp/validate は平文前提）。
+	while IFS= read -r cand; do
+		[ -f "$cand" ] || continue
+		_strategy_file_hash_matches "$target_hash" "$cand" || continue
+		if [ "$cand" = "$primary_file" ]; then
+			echo "$cand"
+			return 0
+		fi
+		if [ "$cand" = "$permanent_file" ]; then
+			if [ -f "$primary_file" ]; then
+				log "[HASH-ARCHIVE] repairing stale by_hash archive: ${target_hash}" >&2
+			fi
+			mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR" 2>/dev/null || true
+			cp "$permanent_file" "$primary_file" 2>/dev/null || true
+			echo "$permanent_file"
+			return 0
+		fi
+		# 永久アーカイブの `.py.gz` 一致 → 作業アーカイブへ平文展開して返す
 		if [ -f "$primary_file" ]; then
 			log "[HASH-ARCHIVE] repairing stale by_hash archive: ${target_hash}" >&2
 		fi
 		mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR" 2>/dev/null || true
-		cp "$permanent_file" "$primary_file" 2>/dev/null || true
-		echo "$permanent_file"
+		strategy_archive_copy "$cand" "$primary_file" || return 1
+		echo "$primary_file"
 		return 0
-	fi
+	done < <(strategy_archive_candidates "$target_hash")
 	[ -f "$primary_file" ] && echo "$primary_file" && return 0
 	[ -f "$permanent_file" ] && echo "$permanent_file" && return 0
 	return 1
@@ -814,11 +843,12 @@ _backfill_hash_archive_from_known_versions() {
 	# 復元削除ループになり、次ゲーム開始を遅らせるため明示時だけ戻す。
 	if [ "$include_permanent" = "1" ] && [ -n "${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-}" ] && [ -d "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" ]; then
 		local perm_file base
-		for perm_file in "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py; do
+		# Phase A: `.py` と `.py.gz` の両方を走査し、作業アーカイブへは平文で戻す。
+		for perm_file in "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR"/*.py.gz; do
 			[ -f "$perm_file" ] || continue
-			base=$(basename "$perm_file")
+			base=$(basename "${perm_file%.gz}")
 			if [ ! -f "$STRATEGY_HASH_ARCHIVE_DIR/$base" ] || ! _strategy_file_hash_matches "${base%.py}" "$STRATEGY_HASH_ARCHIVE_DIR/$base"; then
-				cp "$perm_file" "$STRATEGY_HASH_ARCHIVE_DIR/$base" 2>/dev/null || true
+				strategy_archive_copy "$perm_file" "$STRATEGY_HASH_ARCHIVE_DIR/$base" 2>/dev/null || true
 			fi
 		done
 	fi
@@ -969,6 +999,10 @@ import os
 import sys
 import time
 from pathlib import Path
+
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
 
 rs_file, anchor_file = sys.argv[1], sys.argv[2]
 min_games = int(sys.argv[3])
@@ -1209,18 +1243,6 @@ def objective_progress(data, hash_value=""):
         "soviet_frontier": bool(soviet_frontier),
     }
 
-def archive_is_runtime_stable(path):
-    if not path:
-        return True
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            src = f.read(200000)
-    except Exception:
-        return False
-    # validate_strategy auto-injects this guard. Archives without it normalize to
-    # a different hash on rollback, so they cannot be durable anchors.
-    return "BEGIN DEADLINE GUARD" in src
-
 # 候補リストを作る (raw metrics で comp 上位順)
 candidates = []
 for h, data in rs.items():
@@ -1228,12 +1250,12 @@ for h, data in rs.items():
         continue
     if h in rejected:
         continue
-    archive_paths = []
+    dirs = []
     if archive_dir:
-        archive_paths.append(os.path.join(archive_dir, f"{h}.py"))
+        dirs.append(archive_dir)
     if permanent_archive_dir:
-        archive_paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    archive_path = next((p for p in archive_paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+        dirs.append(permanent_archive_dir)
+    archive_path = _sa_find_path(h, dirs, archive_is_runtime_stable)
     if (archive_dir or permanent_archive_dir) and not archive_path:
         continue
     m = metrics(data.get("scores", []))
@@ -1399,14 +1421,13 @@ else:
         "lcb": float(existing.get("lcb", 0.0)),
         "n": existing_key[3],
     }, existing_data, existing_key[0])
-    existing_archive_paths = []
-    if existing_hash and archive_dir:
-        existing_archive_paths.append(os.path.join(archive_dir, f"{existing_hash}.py"))
-    if existing_hash and permanent_archive_dir:
-        existing_archive_paths.append(os.path.join(permanent_archive_dir, f"{existing_hash}.py"))
-    existing_has_file = bool(existing_hash) and any(
-        os.path.exists(path) and archive_is_runtime_stable(path)
-        for path in existing_archive_paths
+    existing_archive_dirs = []
+    if archive_dir:
+        existing_archive_dirs.append(archive_dir)
+    if permanent_archive_dir:
+        existing_archive_dirs.append(permanent_archive_dir)
+    existing_has_file = bool(existing_hash) and bool(
+        _sa_find_path(existing_hash, existing_archive_dirs, archive_is_runtime_stable)
     )
     existing_rejected = bool(existing_hash) and existing_hash in rejected
     if not existing_has_file:
@@ -2408,6 +2429,10 @@ import sys
 import math
 import os
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import candidate_paths as _sa_candidates
+
 rs_file = sys.argv[1]
 current_hash = sys.argv[2]
 min_games = int(sys.argv[3])
@@ -2427,9 +2452,10 @@ rs = json.load(open(rs_file))
 def has_restorable_archive(hash_value):
     if not archive_dir and not permanent_archive_dir:
         return True
+    # Phase A: `.py.gz` も「復元可能」とみなす。
     return any(
-        base and os.path.exists(os.path.join(base, f"{hash_value}.py"))
-        for base in (archive_dir, permanent_archive_dir)
+        os.path.exists(path)
+        for path in _sa_candidates(hash_value, (archive_dir, permanent_archive_dir))
     )
 
 def quantile(vals, p):
@@ -2805,7 +2831,10 @@ _merge_rolling_scores_on_normalize() {
 
 	# 永続アーカイブに stale_hash の正しいファイルがあれば、それで作業アーカイブを修復するだけ。
 	# 異なる戦略のスコアをマージしてはならない。
-	local perm_file="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${stale_hash}.py"
+	# Phase A: `.py.gz` を先に、無ければ `.py` を候補にする。
+	local perm_dir="${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}"
+	local perm_file="$perm_dir/${stale_hash}.py.gz"
+	[ -f "$perm_file" ] || perm_file="$perm_dir/${stale_hash}.py"
 	local work_file="${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${stale_hash}.py"
 	if [ -f "$perm_file" ]; then
 		local perm_hash
@@ -2813,7 +2842,7 @@ _merge_rolling_scores_on_normalize() {
 		if [ "$perm_hash" = "$stale_hash" ]; then
 			# 永続アーカイブに正しいファイルがある → 作業アーカイブを修復してスコアはそのまま保持
 			mkdir -p "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" 2>/dev/null || true
-			cp "$perm_file" "$work_file" 2>/dev/null || true
+			strategy_archive_copy "$perm_file" "$work_file" 2>/dev/null || true
 			log "[ROLLING] normalize-repair: ${stale_hash} working archive repaired from permanent (skip merge)"
 			return 0
 		fi
@@ -3390,6 +3419,10 @@ try:
 except Exception:
     eval_stats = None
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, _os.environ.get("ELOOP_LIB_DIR") or _os.getcwd())
+from lib.strategy_archive import candidate_paths as _sa_candidates
+
 # STATGATE emission: every print() in this heredoc is the single terminal
 # verdict, so we wrap print to emit exactly one STATGATE: line after it. The
 # legacy verdict (and thus rollback) is unchanged -- the STATGATE line is
@@ -3542,9 +3575,10 @@ permanent_archive_dir = sys.argv[47] if len(sys.argv) > 47 else ""
 def has_restorable_archive(hash_value):
     if not archive_dir and not permanent_archive_dir:
         return True
+    # Phase A: `.py.gz` も「復元可能」とみなす。
     return any(
-        base and os.path.exists(os.path.join(base, f"{hash_value}.py"))
-        for base in (archive_dir, permanent_archive_dir)
+        os.path.exists(path)
+        for path in _sa_candidates(hash_value, (archive_dir, permanent_archive_dir))
     )
 
 # 帯域脱出機構 F: stagnation_counter / wildcard origin override
@@ -5008,9 +5042,14 @@ with open(meta_file, "w", encoding="utf-8") as f:
 PY
 				local normalized_anchor_hash=""
 				normalized_anchor_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_hash=([^,]+).*/\1/p')
-				if [ -n "$normalized_anchor_hash" ] && [ "$rollback_hash" != "$normalized_anchor_hash" ] && [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py" ]; then
+				local normalized_anchor_file=""
+				if [ -n "$normalized_anchor_hash" ] && [ "$rollback_hash" != "$normalized_anchor_hash" ]; then
+					# Phase A: 作業アーカイブの `.py.gz` → `.py` を平文で解決する
+					# （gz は作業アーカイブへ展開。以後の cp/validate は平文前提）。
+					normalized_anchor_file=$(strategy_archive_resolve_plaintext "$normalized_anchor_hash" 0 0 2>/dev/null || true)
+				fi
+				if [ -n "$normalized_anchor_file" ]; then
 					log "[REGRESSION] normalized fallback target rejected; retry anchor rollback: ${normalized_anchor_hash}"
-					local normalized_anchor_file="$STRATEGY_HASH_ARCHIVE_DIR/${normalized_anchor_hash}.py"
 					if cp "$normalized_anchor_file" "$STRATEGY_FILE"; then
 						local normalized_anchor_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_normalized_anchor_validate_${normalized_anchor_hash}_$$.py"
 						cp "$STRATEGY_FILE" "$normalized_anchor_validate_tmp" 2>/dev/null || true

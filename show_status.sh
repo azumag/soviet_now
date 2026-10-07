@@ -1416,6 +1416,9 @@ import sys
 import time
 
 from lib.country_names import country_name
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import candidate_paths as _sa_candidates, find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
 
 rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir, permanent_archive_dir = sys.argv[1:9]
 
@@ -1469,13 +1472,6 @@ def metrics(scores):
         "p25": quantile(vals, 0.25),
     }
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 def boolish(value, default=True):
     if value is None:
         return default
@@ -1484,21 +1480,18 @@ def boolish(value, default=True):
 include_permanent = boolish(os.getenv("ARCHIVE_RESTART_INCLUDE_PERMANENT", "1"), True)
 allow_origin_retry = boolish(os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1"), True)
 
-def find_archive_path(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+def archive_candidate_dirs():
+    dirs = [archive_dir] if archive_dir else []
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    for path in paths:
-        if os.path.exists(path) and archive_is_runtime_stable(path):
-            return path
-    return ""
+        dirs.append(permanent_archive_dir)
+    return dirs
+
+def find_archive_path(h):
+    return _sa_find_path(h, archive_candidate_dirs(), archive_is_runtime_stable)
 
 def archive_path_blocker(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
-    if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
     saw_file = False
-    for path in paths:
+    for path in _sa_candidates(h, archive_candidate_dirs()):
         if not os.path.exists(path):
             continue
         saw_file = True

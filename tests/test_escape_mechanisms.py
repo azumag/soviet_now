@@ -13013,8 +13013,18 @@ PY
 
         self.assertIn("repair_strategy_to_active_branch_head_if_needed()", eloop)
         self.assertIn('data.get("head_hash")', eloop)
-        self.assertIn('${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py', eloop)
-        self.assertIn('${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py', eloop)
+        # Phase A (docich#392): 候補解決（`.py.gz` → `.py`、作業 → 永久アーカイブ）は
+        # 共有 reader helper に集約した。ここでは委譲と呼び出し契約を固定する。
+        self.assertIn("strategy_archive_resolve_plaintext \"$expected_hash\"", eloop)
+        archive_helper = (REPO_ROOT / "lib" / "strategy_archive.sh").read_text()
+        self.assertIn(
+            'strategy_archive_dir_candidates "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" "$hash"',
+            archive_helper,
+        )
+        self.assertIn(
+            'strategy_archive_dir_candidates "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" "$hash"',
+            archive_helper,
+        )
         self.assertIn("_strategy_source_has_invalid_structural_wildcard", eloop)
         self.assertIn("fallback to best", eloop)
         self.assertIn("_clear_active_branch", eloop)
