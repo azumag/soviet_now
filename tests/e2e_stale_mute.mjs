@@ -17,7 +17,8 @@
 // Run: node tests/e2e_stale_mute.mjs   (rc=0 on success, rc=1 on failure)
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,7 +27,21 @@ import { chromium } from 'playwright';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HELPER = join(REPO_ROOT, 'lib', 'mute_flag.py');
 const TOKEN = `e2e-${Date.now()}`;
-const CDP_PORT = 9400 + Math.floor(Math.random() * 400);
+
+// Grab an ephemeral port rather than guessing one: CI runs other jobs on the
+// same machine and a busy port would look like a Chrome launch failure.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+const CDP_PORT = await freePort();
 
 const workDir = mkdtempSync(join(tmpdir(), 'stale-mute-e2e-'));
 mkdirSync(join(workDir, 'tmp'), { recursive: true });
@@ -108,23 +123,34 @@ async function readLocalPageState(page) {
 const owner = spawnOwner();
 let browser = null;
 let chrome = null;
+let chromeLogPath = '';
 let exitCode = 0;
 
 try {
   console.log('# stale mute flag E2E');
   const executable = chromium.executablePath();
+  chromeLogPath = join(workDir, 'chrome.log');
+  const chromeLog = openSync(chromeLogPath, 'a');
   chrome = spawn(executable, [
     `--remote-debugging-port=${CDP_PORT}`,
     `--user-data-dir=${userDataDir}`,
     '--headless=new',
+    // CI containers: no user namespaces / small /dev/shm.
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-gpu',
     '--disable-features=Translate,BackForwardCache',
     'about:blank',
-  ], { stdio: 'ignore', detached: false });
+  ], { stdio: ['ignore', chromeLog, chromeLog], detached: false });
 
-  const version = await waitForCdpVersion(CDP_PORT);
+  const version = await waitForCdpVersion(CDP_PORT).catch((error) => {
+    let tail = '';
+    try { tail = readFileSync(chromeLogPath, 'utf-8').split('\n').slice(-40).join('\n'); } catch {}
+    throw new Error(`${error.message}\n--- chrome.log (tail) ---\n${tail}`);
+  });
   const browserId = new URL(version.webSocketDebuggerUrl).pathname;
   console.log(`# browser_id=${browserId}`);
   check('CDP /json/version exposes a browser-scoped websocket pathname',
