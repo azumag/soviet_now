@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 
-import { ExternalGameAudio, loadExternalGameAudioConfig } from '../external_game_audio.mjs';
+import { ExternalGameAudio, loadExternalGameAudioConfig, parsePactlSinkInputs } from '../external_game_audio.mjs';
 
 
 class FakeChild extends EventEmitter {
@@ -89,6 +89,8 @@ function harness(overrides = {}) {
   const clock = fakeClock();
   const spawns = [];
   const logs = [];
+  const pactlCalls = [];
+  let pactlListOutput = '';
   const config = {
     enabled: true,
     initialBgmFile: '/audio/International.ogg',
@@ -107,8 +109,14 @@ function harness(overrides = {}) {
   const audio = new ExternalGameAudio(config, {
     ...clock,
     fileExists: () => true,
+    pactlFn(args) {
+      pactlCalls.push(args);
+      if (args[0] === 'list') return { ok: true, stdout: pactlListOutput };
+      return { ok: true, stdout: '' };
+    },
     spawnFn(command, args, options) {
       const child = new FakeChild();
+      child.pid = 4000 + spawns.length + 1;
       spawns.push({ command, args, options, child, file: args.at(-1) });
       return child;
     },
@@ -117,7 +125,24 @@ function harness(overrides = {}) {
       warn(message) { logs.push(`WARN:${message}`); },
     },
   });
-  return { audio, clock, spawns, logs };
+  return {
+    audio, clock, spawns, logs, pactlCalls,
+    setPactlListOutput(output) { pactlListOutput = output; },
+  };
+}
+
+function sinkInputList(entries) {
+  return entries.map((entry) => [
+    `Sink Input #${entry.index}`,
+    '\tDriver: protocol-native.c',
+    '\tOwner Module: 12',
+    `\tMute: ${entry.mute ? 'yes' : 'no'}`,
+    '\tVolume: front-left: 39321 /  60% / -13.32 dB,   front-right: 39321 /  60% / -13.32 dB',
+    '\tProperties:',
+    `\t\tapplication.name = "${entry.appName}"`,
+    `\t\tapplication.process.id = "${entry.pid}"`,
+    `\t\tmedia.name = "${entry.mediaName}"`,
+  ].join('\n')).join('\n');
 }
 
 test('config keeps legacy BGM compatibility and is Linux-only', () => {
@@ -195,7 +220,7 @@ test('drop, mute, and retry control external audio without stale timers', () => 
   assert.equal(spawns.at(-1).file, '/audio/drop.wav');
 
   audio.observeState({ state: 'STOP', score: 0, makeSorenCount: 1 });
-  assert.equal(clock.pending(), 3, 'hammer + soviet BGM timers plus the BGM health interval');
+  assert.equal(clock.pending(), 4, 'hammer + soviet BGM + startup audible check plus the BGM health interval');
   audio.setMuted(true);
   assert.equal(clock.pending(), 0);
   const spawnCountWhileMuted = spawns.length;
@@ -323,4 +348,104 @@ test('periodic health check re-ensures BGM when it silently disappears', () => {
   const before = spawns.length;
   clock.advance(60000);
   assert.equal(spawns.length, before, 'healthy BGM must not be duplicated');
+});
+
+
+test('parsePactlSinkInputs reads mute, names, and pid per sink-input', () => {
+  const output = [
+    'Sink Input #12',
+    '\tMute: yes',
+    '\tProperties:',
+    '\t\tapplication.name = "ffplay"',
+    '\t\tapplication.process.id = "4242"',
+    '\t\tmedia.name = "old-stream"',
+    'Sink Input #13',
+    '\tMute: no',
+    '\tProperties:',
+    '\t\tapplication.name = "soren-game-bgm"',
+    '\t\tapplication.process.id = "4343"',
+    '\t\tmedia.name = "soren-game-bgm"',
+  ].join('\n');
+  assert.deepEqual(parsePactlSinkInputs(output), [
+    { index: 12, mute: true, appName: 'ffplay', mediaName: 'old-stream', pid: 4242 },
+    { index: 13, mute: false, appName: 'soren-game-bgm', mediaName: 'soren-game-bgm', pid: 4343 },
+  ]);
+  assert.deepEqual(parsePactlSinkInputs('garbage without sink inputs'), []);
+  assert.deepEqual(parsePactlSinkInputs(''), []);
+});
+
+
+test('looping BGM carries a fixed PulseAudio stream identity', () => {
+  const { audio, spawns } = harness();
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+
+  const bgmEnv = spawns[0].options.env;
+  assert.equal(bgmEnv['PULSE_PROP_application.name'], 'soren-game-bgm');
+  assert.equal(bgmEnv['PULSE_PROP_media.name'], 'soren-game-bgm');
+  assert.equal(bgmEnv['PULSE_PROP_media.role'], 'music');
+
+  // One-shot SE keeps the shared environment unchanged.
+  audio.playDrop();
+  const seEnv = spawns.at(-1).options.env;
+  assert.equal(seEnv['PULSE_PROP_application.name'], undefined);
+  assert.equal(seEnv['PULSE_PROP_media.name'], undefined);
+});
+
+
+test('BGM startup unmutes a stream-restore-muted sink-input and pins volume', () => {
+  const { audio, clock, spawns, pactlCalls, setPactlListOutput } = harness();
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  const pid = spawns[0].child.pid;
+  setPactlListOutput(sinkInputList([
+    { index: 7, mute: true, appName: 'soren-game-bgm', pid, mediaName: 'soren-game-bgm' },
+    { index: 9, mute: true, appName: 'other-app', pid: 9999, mediaName: 'other' },
+  ]));
+
+  clock.advance(1500);
+
+  const mutes = pactlCalls.filter((args) => args[0] === 'set-sink-input-mute');
+  assert.ok(mutes.some((args) => args[1] === '7' && args[2] === '0'), 'muted BGM sink-input must be unmuted');
+  assert.ok(!mutes.some((args) => args[1] === '9'), 'unrelated sink-inputs must not be touched');
+  const volumes = pactlCalls.filter((args) => args[0] === 'set-sink-input-volume');
+  assert.ok(volumes.some((args) => args[1] === '7' && args[2] === '60%'), 'BGM volume must be pinned at startup');
+  assert.ok(!volumes.some((args) => args[1] === '9'), 'unrelated sink-inputs must not be touched');
+  assert.equal(spawns.length, 1, 'audible repair must not respawn BGM');
+});
+
+
+test('health check unmutes a BGM stream muted after startup without respawning', () => {
+  const { audio, clock, spawns, pactlCalls, setPactlListOutput, logs } = harness({ bgmHealthIntervalMs: 30000 });
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  clock.advance(1500);
+  pactlCalls.length = 0;
+
+  // module-stream-restore mutes the running BGM stream after startup (#493).
+  const pid = spawns[0].child.pid;
+  setPactlListOutput(sinkInputList([
+    { index: 7, mute: true, appName: 'soren-game-bgm', pid, mediaName: 'soren-game-bgm' },
+  ]));
+  clock.advance(28500);
+
+  const mutes = pactlCalls.filter((args) => args[0] === 'set-sink-input-mute');
+  assert.ok(mutes.some((args) => args[1] === '7' && args[2] === '0'), 'health check must unmute the BGM sink-input');
+  assert.ok(!pactlCalls.some((args) => args[0] === 'set-sink-input-volume'), 'health check only repairs mute');
+  assert.equal(spawns.length, 1, 'alive-but-muted BGM must not be respawned');
+  assert.ok(logs.some((line) => line.includes('PulseAudio-muted')), 'unmute repair must be logged');
+});
+
+
+test('health check leaves an unmuted BGM stream alone', () => {
+  const { audio, clock, spawns, pactlCalls, setPactlListOutput } = harness({ bgmHealthIntervalMs: 30000 });
+  audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+  const pid = spawns[0].child.pid;
+  setPactlListOutput(sinkInputList([
+    { index: 7, mute: false, appName: 'soren-game-bgm', pid, mediaName: 'soren-game-bgm' },
+  ]));
+  clock.advance(30000);
+
+  const mutes = pactlCalls.filter((args) => args[0] === 'set-sink-input-mute');
+  // Exactly one explicit pin comes from the startup check; the health check
+  // itself must not issue further mute commands for an audible stream.
+  assert.equal(mutes.length, 1, `expected only the startup pin, got ${JSON.stringify(mutes)}`);
+  assert.equal(spawns.length, 1, 'audible BGM must not be respawned');
 });
