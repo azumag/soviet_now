@@ -21,10 +21,13 @@ import {
   isExactGameTargetUrl,
   main,
   normalizeRemoteAddress,
+  OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES,
+  OFFSCREEN_WATCH_MAX_REASSERTS,
   parseCanvasGeometry,
   PROFILE_DIR_PREFIX,
   reapStaleProfileDirs,
   resolveCanvasCropFrame,
+  runGeometryWatchTick,
   signalExitCode,
   STALE_PROFILE_DIR_MS,
   startAudioTapWithRetry,
@@ -476,6 +479,192 @@ test('geometry watchdog fails closed when the virtual display is absent from the
     () => drift({ displays: [{ id: 2, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] }),
     /fail-closed/,
   );
+});
+
+// --- Runtime geometry watchdog failure paths are all fail-closed (Issue #319) ---
+
+function watchTick(overrides = {}) {
+  const failures = [];
+  const logs = [];
+  const state = { reasserts: 0, observeFailures: 0 };
+  const tick = {
+    getWindowBounds: async () => ({ ...WATCH_CALIBRATED_RECT }),
+    getContentGeometry: async () => ({ ...WATCH_CONTENT }),
+    listDisplays: () => WATCH_DISPLAYS.map((d) => ({ id: d.id, bounds: { ...d.bounds } })),
+    setWindowBounds: async () => {},
+    calibratedRect: { ...WATCH_CALIBRATED_RECT },
+    calibratedContent: { ...WATCH_CONTENT },
+    virtualDisplayId: WATCH_VIRTUAL_ID,
+    state,
+    failClosed: (reason) => { failures.push(reason); },
+    log: (message) => { logs.push(message); },
+    ...overrides,
+  };
+  return { tick, failures, logs, state };
+}
+
+test('geometry watchdog stops the stream when re-asserting the window fails (Issue #319)', async () => {
+  // The window is confirmed on a physical display and the repair move
+  // itself rejects: streaming on would risk an on-screen frame, so the
+  // host must stop instead of logging best-effort and continuing.
+  const { tick, failures } = watchTick({
+    getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+    setWindowBounds: async () => { throw new Error('Protocol error: Target closed'); },
+  });
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /re-assert failed \(fail-closed\)/);
+});
+
+test('geometry watchdog fails closed when window bounds cannot be observed (Issue #319)', async () => {
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => { throw new Error('Protocol error: Not connected'); },
+  });
+  assert.ok(OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES >= 2, 'retry budget must allow a transient failure');
+  // Transient single failures only retry — the stream keeps running.
+  assert.equal(await runGeometryWatchTick(tick), 'retrying');
+  assert.equal(failures.length, 0);
+  assert.equal(state.observeFailures, 1);
+  // ... until the bounded budget is reached, then the stream stops: a
+  // blind watchdog can no longer prove the window is still offscreen.
+  for (let n = 2; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+    assert.equal(await runGeometryWatchTick(tick), 'retrying');
+  }
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /observation failed \(fail-closed\): window-bounds/);
+});
+
+test('geometry watchdog fails closed when page geometry cannot be observed (Issue #319)', async () => {
+  const { tick, failures } = watchTick({
+    getContentGeometry: async () => { throw new Error('page.evaluate failed: Execution context destroyed'); },
+  });
+  let result = null;
+  for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+    result = await runGeometryWatchTick(tick);
+  }
+  assert.equal(result, 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /observation failed \(fail-closed\): content-geometry/);
+});
+
+test('geometry watchdog fails closed when the display list cannot be fetched or parsed (Issue #319)', async () => {
+  // Fetch failure (the runtime closure throws spawnSync's error).
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => { throw new Error('spawnSync soren91_virtual_display ENOENT'); },
+    });
+    let result = null;
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      result = await runGeometryWatchTick(tick);
+    }
+    assert.equal(result, 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /observation failed \(fail-closed\): display-list/);
+  }
+  // Parse failure (the runtime closure throws out of parseVDisplayList on
+  // garbage output) takes the same fail-closed path.
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => { throw new Error('virtual display --list emitted non-JSON: <garbage>'); },
+    });
+    let result = null;
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      result = await runGeometryWatchTick(tick);
+    }
+    assert.equal(result, 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /observation failed \(fail-closed\): display-list/);
+  }
+  // A list that parses but excludes the virtual display is not transient:
+  // the drift decision itself throws, so the stream stops immediately.
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => [{ id: 2, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }],
+    });
+    assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /drift check failed \(fail-closed\)/);
+  }
+});
+
+test('geometry watchdog stops after the bounded re-assert budget (Issue #319)', async () => {
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+  });
+  assert.ok(OFFSCREEN_WATCH_MAX_REASSERTS >= 2, 're-assert budget must allow a transient drift');
+  for (let n = 1; n < OFFSCREEN_WATCH_MAX_REASSERTS; n += 1) {
+    assert.equal(await runGeometryWatchTick(tick), 'reasserted');
+    assert.equal(failures.length, 0);
+  }
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /offscreen window kept drifting/);
+  assert.equal(state.reasserts, OFFSCREEN_WATCH_MAX_REASSERTS);
+});
+
+test('geometry watchdog resets its budgets once geometry is healthy again', async () => {
+  let drifted = true;
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => (drifted
+      ? { x: -1800, y: 0, width: 1280, height: 807 }
+      : { ...WATCH_CALIBRATED_RECT }),
+  });
+  assert.equal(await runGeometryWatchTick(tick), 'reasserted');
+  assert.equal(state.reasserts, 1);
+  drifted = false;
+  assert.equal(await runGeometryWatchTick(tick), 'ok');
+  assert.equal(state.reasserts, 0);
+  assert.equal(state.observeFailures, 0);
+  assert.equal(failures.length, 0);
+});
+
+test('geometry watchdog fail-closed reasons never carry titles, URLs, or secrets (Issue #319)', async () => {
+  const SECRET_TITLE = 'Secret Game Title 9f8e7d6c';
+  const SECRET_URL = 'https://play.unityroom.com/games/secret-9f8e7d6c';
+  const SECRET = 'srt://user:secret-pass@100.70.0.3:9000?mode=caller';
+  const scenarios = [
+    { getWindowBounds: async () => { throw new Error(`bounds failed for ${SECRET_TITLE} ${SECRET_URL}`); } },
+    { getContentGeometry: async () => { throw new Error(`evaluate failed at ${SECRET_URL}: ${SECRET}`); } },
+    { listDisplays: () => { throw new Error(`list failed: ${SECRET}`); } },
+    {
+      getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+      setWindowBounds: async () => { throw new Error(`move failed for ${SECRET_TITLE}: ${SECRET}`); },
+    },
+  ];
+  const reasons = [];
+  for (const overrides of scenarios) {
+    const { tick, failures } = watchTick(overrides);
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      await runGeometryWatchTick(tick);
+    }
+    assert.ok(failures.length >= 1, 'each failure path must reach failClosed');
+    reasons.push(...failures);
+  }
+  // Content-size drift also fails closed; its reason is a fixed token.
+  {
+    const { tick, failures } = watchTick({
+      getContentGeometry: async () => ({ iw: 1000, ih: 600 }),
+    });
+    assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+    reasons.push(...failures);
+  }
+  assert.ok(reasons.length >= scenarios.length + 1);
+  for (const reason of reasons) {
+    assert.ok(!reason.includes(SECRET_TITLE), `reason leaks window title: ${reason}`);
+    assert.ok(!reason.includes(SECRET_URL), `reason leaks URL: ${reason}`);
+    assert.ok(!reason.includes(SECRET), `reason leaks secret: ${reason}`);
+    assert.ok(!reason.includes('secret-pass'), `reason leaks credential: ${reason}`);
+  }
+});
+
+test('runtime geometry watchdog has no best-effort escape hatch (Issue #319)', () => {
+  const source = fs.readFileSync(path.join(root, 'tools/soren91_macos_cdp_host.mjs'), 'utf8');
+  // The pre-#319 catch-all (log + keep streaming while blind) must not
+  // come back in the watchdog: every failure path reaches failClosed().
+  assert.doesNotMatch(source, /geometry watchdog error \(best-effort\)/);
+  assert.match(source, /await runGeometryWatchTick\(\{/);
+  assert.match(source, /geometry watchdog unexpected error \(fail-closed\)/);
 });
 
 test('audio gain adds a volume filter only when it differs from 1', () => {

@@ -449,6 +449,14 @@ export function resolveCanvasCropFrame({ outerWidth, outerHeight, chromeLeft, ch
 export const OFFSCREEN_WATCH_MS = 2000;
 export const OFFSCREEN_WATCH_MAX_REASSERTS = 3;
 
+// Bounded consecutive observation failures before the watchdog stops the
+// stream (Issue #319). A single transient CDP/spawn hiccup retries; a
+// persistently blind watchdog can no longer prove the window is offscreen,
+// so reaching this budget fails closed. Kept separate from the re-assert
+// budget above: that one counts successful observations of a drifted window,
+// this one counts observations that never completed.
+export const OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES = 3;
+
 // Decide what to do when the live geometry drifts from the calibrated state.
 // Pure (no live WindowServer/CDP) so the Mission Control behaviour is unit
 // testable:
@@ -487,6 +495,116 @@ export function evaluateGeometryDrift({
     || Math.abs(Number(content.ih) - Number(calibratedContent.ih)) > epsilon;
   if (contentChanged) return { action: 'fail', reason: 'content-size-drift' };
   return { action: 'ok', reason: null };
+}
+
+// One runtime geometry-watchdog tick with every failure path fail-closed
+// (Issue #319). `state` ({ reasserts, observeFailures }) is mutated in place
+// so the interval caller keeps the consecutive counters across ticks.
+//
+// Fail-closed paths (each reaches `failClosed`, never a best-effort continue):
+//   - getWindowBounds / getContentGeometry / listDisplays reject: counted as
+//     consecutive observation failures. Below
+//     OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES the tick only logs and retries;
+//     reaching the budget stops the stream — a blind watchdog cannot prove
+//     the window is still offscreen. Values that resolve but are unusable
+//     (or a display list that parses but excludes the virtual display) throw
+//     inside the drift decision below and stop immediately.
+//   - the drift decision itself throws (e.g. the virtual display vanished
+//     from the list): stops immediately; there is nothing transient here.
+//   - setWindowBounds rejects after a reassert decision: stops immediately.
+//     The window is known-drifted and the repair failed, so retrying the
+//     same move while streaming would risk an on-screen frame.
+//   - reasserts reach OFFSCREEN_WATCH_MAX_REASSERTS: stops, as before.
+//
+// Privacy: failClosed reasons carry only fixed tokens (kind + counters).
+// Raw window titles, URLs, other-window info, and secrets are never
+// interpolated — observability detail stays on the log line only.
+export async function runGeometryWatchTick({
+  getWindowBounds,
+  getContentGeometry,
+  listDisplays,
+  setWindowBounds,
+  decide = evaluateGeometryDrift,
+  calibratedRect,
+  calibratedContent,
+  virtualDisplayId,
+  maxReasserts = OFFSCREEN_WATCH_MAX_REASSERTS,
+  maxObserveFailures = OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES,
+  state,
+  failClosed,
+  log = () => {},
+} = {}) {
+  if (!state || typeof state !== 'object') {
+    throw new Error('geometry watchdog tick requires a state object (fail-closed)');
+  }
+  if (typeof failClosed !== 'function') {
+    throw new Error('geometry watchdog tick requires failClosed (fail-closed)');
+  }
+  const observeFailed = (kind) => {
+    state.observeFailures = Number(state.observeFailures || 0) + 1;
+    if (state.observeFailures >= maxObserveFailures) {
+      failClosed(
+        `geometry watchdog observation failed (fail-closed): ${kind} (${state.observeFailures}/${maxObserveFailures})`,
+      );
+      return 'fail-closed';
+    }
+    log(`[cdp-host] geometry watchdog observation failed (${kind}); retrying (${state.observeFailures}/${maxObserveFailures})`);
+    return 'retrying';
+  };
+  let liveRect;
+  try {
+    liveRect = await getWindowBounds();
+  } catch {
+    return observeFailed('window-bounds');
+  }
+  let liveContent;
+  try {
+    liveContent = await getContentGeometry();
+  } catch {
+    return observeFailed('content-geometry');
+  }
+  let displays;
+  try {
+    displays = await listDisplays();
+  } catch {
+    return observeFailed('display-list');
+  }
+  state.observeFailures = 0;
+  let decision;
+  try {
+    decision = decide({
+      windowRect: liveRect,
+      displays,
+      virtualDisplayId,
+      calibratedRect,
+      content: liveContent,
+      calibratedContent,
+    });
+  } catch {
+    failClosed('geometry watchdog drift check failed (fail-closed)');
+    return 'fail-closed';
+  }
+  if (decision?.action === 'reassert') {
+    state.reasserts = Number(state.reasserts || 0) + 1;
+    log(`[cdp-host] geometry watchdog: ${decision.reason}; re-asserting offscreen window bounds (${state.reasserts}/${maxReasserts})`);
+    try {
+      await setWindowBounds();
+    } catch {
+      failClosed(`geometry watchdog re-assert failed (fail-closed): ${decision.reason}`);
+      return 'fail-closed';
+    }
+    if (state.reasserts >= maxReasserts) {
+      failClosed(`offscreen window kept drifting (${decision.reason})`);
+      return 'fail-closed';
+    }
+    return 'reasserted';
+  }
+  if (decision?.action === 'fail') {
+    failClosed(`geometry watchdog: ${decision.reason}`);
+    return 'fail-closed';
+  }
+  state.reasserts = 0;
+  return 'ok';
 }
 
 // Canvas crop -> 960x540 output filter: crop the game canvas, scale to fit
@@ -1061,43 +1179,44 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // re-assert the calibrated offscreen position when the window drifts, and
     // fail closed (stop streaming) if it lands on a physical display or the
     // content size changes (the fixed crop would then misframe the stream).
+    // Every observation/re-assert failure path is fail-closed (Issue #319):
+    // runGeometryWatchTick owns the bounded-retry budgets and reaches
+    // failClosed() instead of logging best-effort and streaming on blind.
     let watchBusy = false;
-    let watchReasserts = 0;
+    const watchState = { reasserts: 0, observeFailures: 0 };
     geometryWatch = setInterval(async () => {
       if (watchBusy) return;
       watchBusy = true;
       try {
-        const live = await cdp.send('Browser.getWindowBounds', { windowId });
-        const liveRect = {
-          x: live.bounds.left, y: live.bounds.top,
-          width: live.bounds.width, height: live.bounds.height,
-        };
-        const liveContent = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-        const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
-        const listLine = String(listResult.stderr || '').trim().split('\n').pop()
-          || String(listResult.stdout || '').trim().split('\n').pop();
-        const decision = evaluateGeometryDrift({
-          windowRect: liveRect,
-          displays: parseVDisplayList(listLine),
-          virtualDisplayId: held.status.displayID,
+        await runGeometryWatchTick({
+          getWindowBounds: async () => {
+            const live = await cdp.send('Browser.getWindowBounds', { windowId });
+            return {
+              x: live.bounds.left, y: live.bounds.top,
+              width: live.bounds.width, height: live.bounds.height,
+            };
+          },
+          getContentGeometry: () => page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight })),
+          listDisplays: () => {
+            const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+            if (listResult.error) throw listResult.error;
+            const listLine = String(listResult.stderr || '').trim().split('\n').pop()
+              || String(listResult.stdout || '').trim().split('\n').pop();
+            return parseVDisplayList(listLine);
+          },
+          setWindowBounds: () => cdp.send('Browser.setWindowBounds', { windowId, bounds: calibratedBounds }),
           calibratedRect,
-          content: liveContent,
           calibratedContent: { iw: captureInfo.contentWidth, ih: captureInfo.contentHeight },
+          virtualDisplayId: held.status.displayID,
+          state: watchState,
+          failClosed,
+          log: (message) => console.error(message),
         });
-        if (decision.action === 'reassert') {
-          watchReasserts += 1;
-          console.error(`[cdp-host] geometry watchdog: ${decision.reason}; re-asserting offscreen window bounds (${watchReasserts}/${OFFSCREEN_WATCH_MAX_REASSERTS})`);
-          await cdp.send('Browser.setWindowBounds', { windowId, bounds: calibratedBounds });
-          if (watchReasserts >= OFFSCREEN_WATCH_MAX_REASSERTS) {
-            failClosed(`offscreen window kept drifting (${decision.reason})`);
-          }
-        } else if (decision.action === 'fail') {
-          failClosed(`geometry watchdog: ${decision.reason}`);
-        } else {
-          watchReasserts = 0;
-        }
       } catch (error) {
-        console.error(`[cdp-host] geometry watchdog error (best-effort): ${error?.message || error}`);
+        // Defensive: runGeometryWatchTick converts every expected failure
+        // into failClosed/log above. Anything escaping here is a bug, and a
+        // possibly-moved window must never keep streaming because of it.
+        failClosed(`geometry watchdog unexpected error (fail-closed): ${error?.message || error}`);
       } finally {
         watchBusy = false;
       }
