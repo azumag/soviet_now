@@ -289,6 +289,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     saveRejectedFrame: options => { diagnosticCalls.push(options); return { saved: false }; },
     console: { log() {}, error() {} },
     snapshotCurrentStrategyForGame: () => ({ strategyHash: 'fixed', snapshotPath: 'fixed.mjs' }),
+    archiveLatestHistory: () => null,
     existsSync: path => path === 'tmp/stop' && (drops >= maxDrops || shots > Math.max(12, maxDrops * 5)),
     writeFileSync() {}, appendFileSync() {},
     loadCommentModule: async () => null,
