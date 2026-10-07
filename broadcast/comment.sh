@@ -2879,6 +2879,45 @@ _comment_is_valid_generation_candidate() {
 	_is_valid_comment_talk "$cleaned"
 }
 
+# docich#1182: WebUI 生成中インジケータの詳細表示用 writer。tmp/state/.comment_gen_state
+# (generating: 行の有無) だけでは「どのモデル・何件・何試行目・生きているか」が
+# 分からず、生成途中で表示が消えるため、機械可読の detail JSON を並行して置く。
+# 書き損じ・python3 不在でも生成は壊さない (best-effort: 常に戻り値 0)。
+_write_comment_gen_detail() {
+	# $1=mode $2=model $3=count $4=attempt $5=max_retry $6=batch_hash $7=preview $8=owner_pid
+	local detail_file="${COMMENT_GEN_DETAIL_FILE:-${EVENT_OVERLAY_COMMENT_GEN_DETAIL_STATE:-tmp/state/.comment_gen_state.json}}"
+	command -v python3 >/dev/null 2>&1 || return 0
+	_CG_D_MODE="$1" _CG_D_MODEL="$2" _CG_D_COUNT="$3" _CG_D_ATTEMPT="$4" \
+	_CG_D_MAX_RETRY="$5" _CG_D_BATCH="$6" _CG_D_PREVIEW="$7" _CG_D_PID="$8" \
+	_CG_D_FILE="$detail_file" python3 -c '
+import json, os, time
+def _int(v):
+    try:
+        return int(str(v or "").strip() or 0)
+    except Exception:
+        return 0
+doc = {
+    "ts": int(time.time()),
+    "owner_pid": _int(os.environ.get("_CG_D_PID")),
+    "model": os.environ.get("_CG_D_MODEL") or "",
+    "preview": (os.environ.get("_CG_D_PREVIEW") or "")[:240],
+    "count": _int(os.environ.get("_CG_D_COUNT")),
+    "attempt": _int(os.environ.get("_CG_D_ATTEMPT")),
+    "max_retry": _int(os.environ.get("_CG_D_MAX_RETRY")),
+    "batch_hash": os.environ.get("_CG_D_BATCH") or "",
+    "mode": os.environ.get("_CG_D_MODE") or "",
+}
+path = os.environ.get("_CG_D_FILE") or ""
+parent = os.path.dirname(path)
+if parent:
+    os.makedirs(parent, exist_ok=True)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(doc, f, ensure_ascii=False)
+os.replace(tmp, path)
+' 2>/dev/null || true
+}
+
 generate_comment_response() {
 	local viewer_chat_source="${1:-twitch}"
 	local viewer_chat_script="./twitch_chat.sh"
@@ -3224,10 +3263,13 @@ else:
 		time_period="未明"
 	fi
 
-	local comment_parent_pid comment_started_at
+	local comment_parent_pid comment_started_at comment_batch_count comment_batch_preview
 	comment_parent_pid="${BASHPID:-$(_my_pid)}"
 	comment_started_at=$(date +%s)
 	echo "generating:comment:${comment_started_at}" >$COMMENT_GEN_STATE_FILE
+	comment_batch_count=$(printf '%s\n' "$twitch_comments" | grep -c . 2>/dev/null || true)
+	comment_batch_preview=$(printf '%s' "$twitch_comments" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-120)
+	_write_comment_gen_detail "" "" "$comment_batch_count" 0 "" "$comment_batch_hash" "$comment_batch_preview" "$comment_parent_pid"
 	_mark_comment_batch_inflight "$comment_batch_hash"
 	export dominant_category
 
@@ -3242,6 +3284,7 @@ else:
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
 			rm -f $COMMENT_GEN_STATE_FILE
+			rm -f "${COMMENT_GEN_DETAIL_FILE:-${EVENT_OVERLAY_COMMENT_GEN_DETAIL_STATE:-tmp/state/.comment_gen_state.json}}"
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 			if [ -n "$comment_prompt_batch_file" ]; then
@@ -3400,12 +3443,14 @@ PY
 		fi
 		local comments_talk="" comment_model_used="" generation_rate_limited=false
 		echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
+		_write_comment_gen_detail "$_comment_mode_generated" "$comment_agent_list" "${comment_batch_count:-0}" 1 "$comment_retry_max" "$comment_batch_hash" "${comment_batch_preview:-}" "$_cg_my_pid"
 		log "[COMMENT] コメント返し生成中... (source=${viewer_chat_label}, agents=${comment_agent_list}${comment_peak_note}, max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
 			[ -n "$comment_speech_meta_file" ] && rm -f "$comment_speech_meta_file"
 			comment_speech_meta_file=""
 			echo "generating:comment:$(date +%s)" >$COMMENT_GEN_STATE_FILE
+			_write_comment_gen_detail "$_comment_mode_generated" "$comment_agent_list" "${comment_batch_count:-0}" "$attempt" "$comment_retry_max" "$comment_batch_hash" "${comment_batch_preview:-}" "$_cg_my_pid"
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
 				prompt_for_attempt=$(mktemp /tmp/eloop_comment_prompt_retry_XXXXXXXX)
@@ -3787,6 +3832,8 @@ RETRYCOMMENT
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
+			_cg_done_preview=$(printf '%s' "$comments_talk" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-120)
+			_write_comment_gen_detail "$_comment_mode_generated" "${comment_model_used:-$comment_agent_list}" "${comment_batch_count:-0}" "$attempt" "$comment_retry_max" "$comment_batch_hash" "$_cg_done_preview" "$_cg_my_pid"
 			if [ -x ./overlay_notify.sh ]; then
 				local _ov_reply
 				_ov_reply=$(printf '%s' "$comments_talk" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //')
