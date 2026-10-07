@@ -24,6 +24,48 @@ function chooseArchivePath(historyDir, gameNumber, now) {
   throw new Error('archive_name_exhausted');
 }
 
+function resolveNow(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : Date.now();
+}
+
+/**
+ * Archive one game's pre-existing latest_N.jsonl as an abandoned partial
+ * session. Returns the archive path, or null when there is nothing to move.
+ * Throws (fail closed) on unsafe filesystem entries instead of deleting them.
+ *
+ * A restarted process always resets turn/session state to zero, so the old
+ * file is a different logical session: the caller must write the new session
+ * to a fresh latest_N.jsonl afterwards.
+ *
+ * @param {string} [historyDir]
+ * @param {number|string} gameNumber
+ * @param {object} [options]
+ * @param {number} [options.now]
+ * @param {(message: string) => void} [options.log]
+ * @returns {string|null}
+ */
+export function archiveLatestHistory(historyDir, gameNumber, options = {}) {
+  const dir = historyDir || 'game_history';
+  const now = resolveNow(options.now);
+  const log = options.log || (() => {});
+  const padded = String(gameNumber).padStart(4, '0');
+
+  const source = join(dir, `latest_${padded}.jsonl`);
+  if (!existsSync(source)) return null;
+
+  // Never follow or rewrite unexpected filesystem objects. A fixed latest_N
+  // history created by main.mjs is always a regular, single-link file.
+  const stat = lstatSync(source);
+  if (!stat.isFile() || stat.nlink !== 1) {
+    throw new Error('unsafe_latest_history_entry');
+  }
+
+  const target = chooseArchivePath(dir, padded, now);
+  renameSync(source, target);
+  log(`[history] archived_partial_session=${padded} -> ${target}`);
+  return target;
+}
+
 /**
  * @param {object} [options]
  * @param {string} [options.historyDir]
@@ -33,7 +75,7 @@ function chooseArchivePath(historyDir, gameNumber, now) {
  */
 export function archivePartialHistories(options = {}) {
   const historyDir = options.historyDir || 'game_history';
-  const now = Number.isSafeInteger(options.now) && options.now >= 0 ? options.now : Date.now();
+  const now = resolveNow(options.now);
   const log = options.log || (() => {});
 
   mkdirSync(historyDir, { recursive: true });

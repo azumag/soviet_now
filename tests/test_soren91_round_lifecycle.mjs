@@ -40,6 +40,7 @@ async function replay(frames, { diagnosticSave = saveRejectedFrame, diagnosticsE
     console: { log: message => logs.push(message), error: message => logs.push(message) },
     process: { env: { SOREN91_RANKDIAG: '0' } },
     snapshotCurrentStrategyForGame: game => ({ strategyHash: 'fixed', snapshotPath: `${game}.mjs` }),
+    archiveLatestHistory: () => null,
     existsSync: path => path === 'tmp/stop' && shots >= frames.length,
     writeFileSync() {}, copyFileSync() {},
     copyScreenshotAsPng: async () => {},

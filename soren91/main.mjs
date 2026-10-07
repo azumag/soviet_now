@@ -35,6 +35,7 @@ import {
   recordCompletedGame,
   snapshotCurrentStrategyForGame,
 } from './lineage.mjs';
+import { archiveLatestHistory } from './archive_partial_history.mjs';
 import { archiveCriticalTurnScreenshots } from './critical_turn_screenshots.mjs';
 import {
   installDirectGameStage,
@@ -1513,6 +1514,21 @@ async function fetchGameUrl() {
  */
 async function gameLoop(page, calibration, gameNumber) {
   let historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
+  // A (re)started process always resets turn/session state to zero, so a
+  // pre-existing latest_N left by the previous process is a different logical
+  // session. Move it aside as abandoned evidence (never append turn=0 onto
+  // it) so the completed game_N history stays a single contiguous session.
+  // Direct main.mjs launches bypass the runner-level archival in
+  // run_player_loop.sh; gameplay decision logic is untouched.
+  try {
+    const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
+    if (archived) {
+      console.log(`[game] Archived pre-existing partial history before session start: ${archived} (game #${gameNumber} starts fresh)`);
+    }
+  } catch (err) {
+    console.log(`[game] Refusing session start: pre-existing history for game #${gameNumber} is unsafe (${err.message})`);
+    throw err;
+  }
   let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
   let lastDropTime = -Infinity;
@@ -1628,7 +1644,17 @@ async function gameLoop(page, calibration, gameNumber) {
             console.log(`[game] Connection error screen detected; abandoning game #${gameNumber} without ranking comment`);
             await recoverFromConnectionError(page);
             if (turn > 0 || existsSync(historyFile)) {
-              try { unlinkSync(historyFile); } catch {}
+              // Abandoned partials stay available as retained evidence under
+              // the normal retention window instead of being silently deleted.
+              // Turn/gameNumber reset below is unchanged (gameplay untouched).
+              try {
+                const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
+                if (archived) {
+                  console.log(`[game] Abandoned partial history preserved: ${archived} (game #${gameNumber})`);
+                }
+              } catch (err) {
+                console.log(`[game] Partial history archival failed for game #${gameNumber}: ${err.message}`);
+              }
               gameNumber++;
               historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
               currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
