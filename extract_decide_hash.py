@@ -13,6 +13,7 @@ keep their historical IDs.
 """
 
 import ast
+import gzip
 import hashlib
 import sys
 
@@ -143,10 +144,23 @@ def extract_decide_body_from_source(source):
     return ""
 
 
+def read_strategy_source(filepath):
+    """Read strategy source text, transparently decompressing ``.py.gz``.
+
+    Phase A (docich#392): archived strategies may be gzip-compressed. Callers
+    keep passing the resolved archive path; this reader hides the container so
+    a ``.py.gz`` hash is identical to its plaintext ``.py`` hash.
+    """
+    if str(filepath).endswith(".gz"):
+        with gzip.open(filepath, "rt", encoding="utf-8") as f:
+            return f.read()
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def extract_decide_body(filepath):
     """Extract normalized strategy policy, including reachable local helpers."""
-    with open(filepath, "r", encoding="utf-8") as f:
-        return extract_decide_body_from_source(f.read())
+    return extract_decide_body_from_source(read_strategy_source(filepath))
 
 
 def compute_hash_from_source(source):
@@ -159,8 +173,7 @@ def compute_hash_from_source(source):
 
 def compute_hash(filepath):
     """Compute the stable strategy-policy MD5 prefix."""
-    with open(filepath, "r", encoding="utf-8") as f:
-        return compute_hash_from_source(f.read())
+    return compute_hash_from_source(read_strategy_source(filepath))
 
 
 if __name__ == "__main__":

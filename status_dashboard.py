@@ -27,6 +27,11 @@ from lib.country_names import (
     last_drop_turn_country_label,
 )
 from lib.docich_corner_stats import load_active_corner
+from lib.strategy_archive import (
+    candidate_paths as _sa_candidates,
+    find_path as _sa_find_path,
+    is_runtime_stable as _sa_is_runtime_stable,
+)
 
 W = 57
 RANK_LCB_Z = 1.28
@@ -459,8 +464,10 @@ def load_restorable_hashes():
     for archive_dir in (STRATEGY_HASH_ARCHIVE_DIR, STRATEGY_HASH_PERMANENT_ARCHIVE_DIR):
         by_hash_dir = Path(archive_dir)
         if by_hash_dir.exists():
-            for f in by_hash_dir.glob("*.py"):
-                restorable.add(f.stem)
+            # Phase A: `.py` と `.py.gz` の両方を復元可能 hash として数える。
+            for f in list(by_hash_dir.glob("*.py")) + list(by_hash_dir.glob("*.py.gz")):
+                name = f.name[:-3] if f.name.endswith(".gz") else f.name
+                restorable.add(Path(name).stem)
     return restorable
 
 
@@ -1851,33 +1858,24 @@ def load_archive_restart_candidate():
     allow_origin_retry = os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
     def find_archive_path(hash_value):
-        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        dirs = [STRATEGY_HASH_ARCHIVE_DIR]
         if include_permanent:
-            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
-        for path in candidates:
-            if path.exists():
-                try:
-                    if "BEGIN DEADLINE GUARD" not in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
-                        continue
-                except Exception:
-                    continue
-                return path
-        return None
+            dirs.append(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR)
+        # Phase A: `.py.gz` → `.py` を透過的に解決する。
+        found = _sa_find_path(hash_value, dirs, _sa_is_runtime_stable)
+        return Path(found) if found else None
 
     def archive_path_blocker(hash_value):
-        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        dirs = [STRATEGY_HASH_ARCHIVE_DIR]
         if include_permanent:
-            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
+            dirs.append(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR)
         saw_file = False
-        for path in candidates:
-            if not path.exists():
+        for path in _sa_candidates(hash_value, dirs):
+            if not os.path.exists(path):
                 continue
             saw_file = True
-            try:
-                if "BEGIN DEADLINE GUARD" in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
-                    return ""
-            except Exception:
-                continue
+            if _sa_is_runtime_stable(path):
+                return ""
         return "unstable" if saw_file else "miss"
 
     def is_cooled_down(hash_value):

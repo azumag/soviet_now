@@ -65,6 +65,7 @@ class SorenOverlayFailOpenTests(unittest.TestCase):
             "lib/ai_backoff_status.py",
             "lib/country_names.py",
             "lib/docich_corner_stats.py",
+            "lib/strategy_archive.py",
             "tools/ab_report.py",
         ):
             target = self.root / name
