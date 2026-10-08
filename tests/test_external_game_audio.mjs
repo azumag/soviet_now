@@ -407,9 +407,37 @@ test('BGM startup unmutes a stream-restore-muted sink-input and pins volume', ()
   assert.ok(mutes.some((args) => args[1] === '7' && args[2] === '0'), 'muted BGM sink-input must be unmuted');
   assert.ok(!mutes.some((args) => args[1] === '9'), 'unrelated sink-inputs must not be touched');
   const volumes = pactlCalls.filter((args) => args[0] === 'set-sink-input-volume');
-  assert.ok(volumes.some((args) => args[1] === '7' && args[2] === '60%'), 'BGM volume must be pinned at startup');
+  assert.ok(volumes.some((args) => args[1] === '7' && args[2] === '100%'), 'PulseAudio must not attenuate ffplay a second time');
   assert.ok(!volumes.some((args) => args[1] === '9'), 'unrelated sink-inputs must not be touched');
   assert.equal(spawns.length, 1, 'audible repair must not respawn BGM');
+});
+
+test('BGM configured gain applies once across startup, restart, and track switches', () => {
+  for (const bgmVolumePct of [0, 30, 60, 100]) {
+    const { audio, clock, spawns, pactlCalls, setPactlListOutput } = harness({ bgmVolumePct });
+    audio.start({ state: 'MOVE', score: 0, makeSorenCount: 0 });
+    const verifyCurrent = () => {
+      const spawn = spawns.at(-1);
+      assert.equal(spawn.args[spawn.args.indexOf('-volume') + 1], String(bgmVolumePct));
+      setPactlListOutput(sinkInputList([
+        { index: 7, mute: false, appName: 'soren-game-bgm', pid: spawn.child.pid, mediaName: 'soren-game-bgm' },
+        { index: 9, mute: false, appName: 'narration', pid: 9999, mediaName: 'speech' },
+      ]));
+      clock.advance(1500);
+      assert.deepEqual(pactlCalls.filter((args) => args[0] === 'set-sink-input-volume').at(-1),
+        ['set-sink-input-volume', '7', '100%']);
+      assert.ok(!pactlCalls.some((args) => args[1] === '9'));
+    };
+    verifyCurrent();
+    spawns.at(-1).child.emit('exit', 1, null);
+    clock.advance(audio.bgmRestartDelayMs);
+    verifyCurrent();
+    audio.observeState({ state: 'MOVE', makeSorenCount: 1 });
+    clock.advance(audio.config.sovietBgmDelayMs);
+    verifyCurrent();
+    assert.equal(spawns.at(-1).file, '/audio/SovietAnthem.ogg');
+    audio.shutdown();
+  }
 });
 
 

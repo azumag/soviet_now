@@ -307,7 +307,11 @@ export class ExternalGameAudio {
           if (unmute && unmute.ok && input.mute) unmuted += 1;
         }
         if (reason === 'startup') {
-          this.pactlFn(['set-sink-input-volume', String(input.index), `${this.config.bgmVolumePct}%`]);
+          // ffplay already applies bgmVolumePct to the PCM samples. Applying
+          // the same percentage again in PulseAudio compounds the attenuation
+          // (30% in both stages measured about -63 dB on the live monitor).
+          // Keep the Pulse input at unity; ffplay owns the configured gain.
+          this.pactlFn(['set-sink-input-volume', String(input.index), '100%']);
         }
       } catch (error) {
         this.logger.warn(`[GAME-AUDIO] BGM audible repair failed: ${error && error.message}`);
