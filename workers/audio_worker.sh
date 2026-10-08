@@ -126,7 +126,10 @@ _start_pid_heartbeat() {
 	(
 		while true; do
 			echo $$ >"$PID_FILE" 2>/dev/null || true
-			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+			# #970: refresh the pid file without forking `/bin/sleep` every
+			# interval; docich_poll_sleep waits the same wall-clock slice
+			# with bash's `read -t` builtin (falls back to sleep on failure).
+			docich_poll_sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
 		done
 	) &
 	_HEARTBEAT_PID=$!
