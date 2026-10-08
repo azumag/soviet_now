@@ -186,6 +186,36 @@ class PollWaitTest(unittest.TestCase):
                 for snippet in converted:
                     self.assertNotIn(snippet, body)
 
+    def test_pid_file_heartbeats_are_forkless(self):
+        # The pid-file heartbeat subshell runs every WORKER_PID_HEARTBEAT_INTERVAL
+        # seconds; a bare `sleep` there was a second `sleep <- worker:*` source
+        # (12/60s per worker in the 2026-10-08 production profile).
+        heartbeat_users = (
+            "workers/audio_worker.sh",
+            "workers/chat_worker.sh",
+            "workers/kick_worker.sh",
+            "workers/radio_worker.sh",
+            "workers/youtube_worker.sh",
+        )
+        for relative in heartbeat_users:
+            body = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(worker=relative):
+                # A tab immediately before `sleep` cannot be our `docich_poll_sleep`
+                # call (which has `_` there), so this catches a bare fork.
+                self.assertNotIn('\tsleep "${WORKER_PID_HEARTBEAT_INTERVAL', body)
+                self.assertIn('\tdocich_poll_sleep "${WORKER_PID_HEARTBEAT_INTERVAL', body)
+
+    def test_say_enqueue_waits_are_forkless(self):
+        # say_enqueue.sh runs as a short-lived child of audio_worker and its
+        # per-second heartbeat / player-wait loops were attributed to
+        # `sleep <- worker:audio_worker`.
+        body = (ROOT / "say_enqueue.sh").read_text(encoding="utf-8")
+        self.assertIn("lib/poll_wait.sh", body)
+        self.assertIn('docich_poll_sleep() { sleep "${1:-1}"', body)
+        self.assertIn("\t\tdocich_poll_sleep 1\n\t\twaited=$((waited + 1))\n", body)
+        self.assertNotIn("\t\t_touch_lock_heartbeat\n\t\tsleep 1\n", body)
+        self.assertNotIn('\t\tsleep 1\n\t\tif [ "$max_wait_sec" -gt 0 ]; then', body)
+
 
 if __name__ == "__main__":
     unittest.main()

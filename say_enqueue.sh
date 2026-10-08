@@ -22,6 +22,11 @@ cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
 source lib/outbound_queue.sh 2>/dev/null || true
+# #970: the per-second heartbeat / player-wait loops must not fork `/bin/sleep`
+# (the CPU profile attributed them to `sleep <- worker:audio_worker`). The
+# helper waits the same wall-clock slice with bash's `read -t` builtin and
+# degrades to `sleep` if it cannot set up its private wait descriptor.
+source lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 if [ -f lib/closed_captions.sh ] && source lib/closed_captions.sh; then
 	:
 else
@@ -1288,7 +1293,7 @@ _sleep_with_heartbeat() {
 	local sec="${1:-1}" waited=0
 	while [ "$waited" -lt "$sec" ]; do
 		_touch_lock_heartbeat
-		sleep 1
+		docich_poll_sleep 1
 		waited=$((waited + 1))
 	done
 }
@@ -1589,7 +1594,7 @@ _wait_for_player_pid() {
 	while kill -0 "$player_pid" 2>/dev/null; do
 		_touch_lock_heartbeat
 		[ "$touch_synth_lock" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
-		sleep 1
+		docich_poll_sleep 1
 		if [ "$max_wait_sec" -gt 0 ]; then
 			now_ts=$(date +%s)
 			PLAYER_WAIT_ELAPSED=$((now_ts - start_ts))

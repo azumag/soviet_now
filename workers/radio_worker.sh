@@ -279,7 +279,8 @@ _start_pid_heartbeat() {
 	(
 		while true; do
 			echo $$ >"$PID_FILE" 2>/dev/null || true
-			sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+			# #970: forkless pid-file heartbeat (no per-interval `/bin/sleep`).
+			docich_poll_sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
 		done
 	) &
 	_HEARTBEAT_PID=$!
