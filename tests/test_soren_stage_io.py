@@ -12,7 +12,7 @@ from lib import soren_stage_ledger as m
 
 class StageReaderTests(unittest.TestCase):
     def test_reader_rejects_unreadable_symlink_fifo_and_directory(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             root = Path(directory)
             (root / "source").write_bytes(b"private text")
             (root / "link.jsonl").symlink_to(root / "source")

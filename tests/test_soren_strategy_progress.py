@@ -249,12 +249,12 @@ class ProgressTests(unittest.TestCase):
 class HistoryTests(unittest.TestCase):
     def text(self, pair=True):
         return "\n".join(json.dumps({"turn": i, "strategy_hash": A,
-                                      "state_snapshot": {"pieces": [{"type": 15}] * (2 if pair and i == 2 else 1)}})
+                                      "state_snapshot": {"pieces": [{"id": j - 10, "type": 15} for j in range(2 if pair and i == 2 else 1)]}})
                          for i in (1, 2)) + "\n"
 
     def test_positive_observation_but_absence_is_unknown(self):
-        self.assertIs(m.history_pair(self.text(), A), True)
-        self.assertIsNone(m.history_pair(self.text(False), A))
+        self.assertIs(m.history_pair(self.text().encode(), dict(rows()[0], turns=2)), True)
+        self.assertIsNone(m.history_pair(self.text(False).encode(), dict(rows()[0], turns=2)))
 
     def test_bad_history_invalidates_even_an_earlier_pair(self):
         for text in (self.text() + '{bad}\n', self.text() + self.text(),
@@ -262,7 +262,7 @@ class HistoryTests(unittest.TestCase):
                      self.text().replace(A, B), self.text().replace('"type": 15', '"type": true')):
             with self.subTest(text=text[:50]):
                 with self.assertRaises(m.EvidenceError):
-                    m.history_pair(text, A)
+                    m.history_pair(text.encode(), dict(rows()[0], turns=2))
 
     def test_digest_bound_pair_and_pruned_history(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -270,16 +270,57 @@ class HistoryTests(unittest.TestCase):
             Path(directory, "sample0.jsonl").write_text(text)
             data = rows()
             data[0]["archive_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+            data[0]["turns"] = 2
             report = m.build_report(state(), data, A, history_dir=directory)
             metric = report["arms"]["baseline"]["stages"]["two_russias_observed"]
             self.assertEqual((metric["successes"], metric["unknown"]), (1, 1))
-            self.assertEqual(report["history"]["counts"]["input_unreadable"], 3)
+            self.assertEqual(report["history"]["counts"]["archive_unreadable"], 3)
 
     def test_legacy_history_without_digest_is_not_assigned(self):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "sample0.jsonl").write_text(self.text())
             report = m.build_report(state(), rows(), A, history_dir=directory)
             self.assertEqual(report["history"]["counts"]["history_digest_unbound"], 1)
+
+    def test_invalid_piece_identity_and_turn_count_remain_unknown(self):
+        valid = [{"turn": i, "strategy_hash": A,
+                  "state_snapshot": {"pieces": [{"id": -1, "type": 15}, {"id": 2, "type": 15}]}}
+                 for i in (1, 2)]
+        for kind, reason in (("duplicate", "duplicate_piece_identity"),
+                             ("missing", "piece_identity_unknown"),
+                             ("turn_count", "turn_count_mismatch"),
+                             ("piece_limit", "history_pieces_unknown"),
+                             ("row_limit", "invalid_row_identity")):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                frames = copy.deepcopy(valid)
+                if kind == "duplicate":
+                    frames[1]["state_snapshot"]["pieces"][1]["id"] = -1
+                elif kind == "missing":
+                    frames[1]["state_snapshot"]["pieces"][1].pop("id")
+                elif kind == "piece_limit":
+                    frames[1]["state_snapshot"]["pieces"] = [{"id": j, "type": 15} for j in range(257)]
+                elif kind == "row_limit":
+                    frames = [dict(valid[0], turn=j) for j in range(1, 20002)]
+                text = "\n".join(json.dumps(frame) for frame in frames) + "\n"
+                Path(directory, "sample0.jsonl").write_text(text)
+                data = rows()
+                data[0]["turns"] = 3 if kind == "turn_count" else len(frames)
+                data[0]["archive_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+                report = m.build_report(state(), data, A, history_dir=directory)
+                metric = report["arms"]["baseline"]["stages"]["two_russias_observed"]
+                self.assertEqual((metric["successes"], metric["unknown"]), (0, 2))
+                self.assertEqual(report["history"]["counts"][reason], 1)
+
+    def test_raw_path_uses_producer_byte_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            text = self.text()
+            Path(directory, "sample0.jsonl").write_text(text)
+            data = rows()
+            data[0].update(turns=2, archive_sha256=hashlib.sha256(text.encode()).hexdigest())
+            with patch("lib.soren_stage_ledger.MAX_BYTES", len(text.encode()) - 1):
+                report = m.build_report(state(), data, A, history_dir=directory)
+            self.assertEqual(report["history"]["counts"]["not_bounded_regular_file"], 1)
+            self.assertEqual(report["arms"]["baseline"]["stages"]["two_russias_observed"]["successes"], 0)
 
     def test_path_traversal_and_symlink_are_not_followed(self):
         with tempfile.TemporaryDirectory() as directory:

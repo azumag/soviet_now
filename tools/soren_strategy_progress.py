@@ -18,7 +18,7 @@ import statistics
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.soren_stage_ledger import retained_pair
+from lib.soren_stage_ledger import EvidenceError as StageEvidenceError, read_archive, retained_pair, summarize
 
 MAX_BYTES = 32 * 1024 * 1024
 HASH = re.compile(r"[0-9a-f]{12,64}\Z")
@@ -158,25 +158,12 @@ def stages(row):
             "two_russias_observed": row.get("_two_russias_observed")}
 
 
-def history_pair(text, expected_hash):
-    """A positive observation only. No pair in snapshots is NOT a failure."""
-    rows = [decode(line) for line in text.splitlines() if line.strip()]
-    if not rows:
-        raise EvidenceError("empty_history")
-    seen = False
-    for turn, row in enumerate(rows, 1):
-        if (not isinstance(row, dict) or type(row.get("turn")) is not int
-                or row["turn"] != turn or row.get("strategy_hash") != expected_hash):
-            raise EvidenceError("history_lineage_unverified")
-        snapshot = row.get("state_snapshot")
-        pieces = snapshot.get("pieces") if isinstance(snapshot, dict) else None
-        if not isinstance(pieces, list):
-            raise EvidenceError("history_pieces_unknown")
-        if any(not isinstance(p, dict) or type(p.get("type")) is not int
-               or not 1 <= p["type"] <= 16 for p in pieces):
-            raise EvidenceError("history_pieces_invalid")
-        seen |= sum(p["type"] == 15 for p in pieces) >= 2
-    return True if seen else None
+def history_pair(raw, row):
+    """Apply the producer's bounds, row/turn identity and distinct piece IDs."""
+    try:
+        return summarize(raw, row)["stage_evidence"]["two_russias_observed"]
+    except StageEvidenceError as exc:
+        raise EvidenceError(str(exc)) from exc
 
 
 def enrich(rows, history_dir):
@@ -202,13 +189,14 @@ def enrich(rows, history_dir):
                 counts["invalid_archive_name"] += 1
             else:
                 try:
-                    text, digest = read_file(root / name)
+                    raw = read_archive(root / name)
+                    digest = hashlib.sha256(raw).hexdigest()
                     if row.get("archive_sha256") != digest:
                         raise EvidenceError("history_digest_unbound")
-                    item["_two_russias_observed"] = history_pair(text, row["hash"])
+                    item["_two_russias_observed"] = history_pair(raw, row)
                     counts["read"] += 1
                     digests.append({"idx": row["idx"], "sha256": digest})
-                except EvidenceError as exc:
+                except (EvidenceError, StageEvidenceError) as exc:
                     counts[str(exc)] += 1
         result.append(item)
     return result, {"counts": dict(sorted(counts.items())), "sources": digests}

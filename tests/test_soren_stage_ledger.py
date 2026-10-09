@@ -164,7 +164,7 @@ class StageTests(unittest.TestCase):
         self.assertEqual(m.retained_pair(dict(record(), stage_evidence=[])), (None, "invalid_stage_evidence"))
 
     def test_capture_is_read_only_and_bounded(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             path = Path(directory, "sample.jsonl")
             path.write_bytes(raw())
             original = path.read_bytes()
@@ -176,7 +176,7 @@ class StageTests(unittest.TestCase):
                 self.assertEqual(m.capture_stage_evidence(path, record())["stage_evidence"]["status"], "unavailable")
 
     def test_unreadable_symlink_and_fifo_are_fixed_errors(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             root = Path(directory)
             root.joinpath("source").write_bytes(raw())
             root.joinpath("link.jsonl").symlink_to(root / "source")
@@ -187,14 +187,14 @@ class StageTests(unittest.TestCase):
                 self.assertNotIn(directory, json.dumps(value))
 
     def test_archive_basename_must_match_the_ledger_row(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             path = Path(directory, "other.jsonl")
             path.write_bytes(raw())
             value = m.capture_stage_evidence(path, record())
             self.assertEqual(value["stage_evidence"]["reason"], "archive_name_mismatch")
 
     def test_concurrent_replacement_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             path = Path(directory, "sample.jsonl")
             path.write_bytes(raw())
             actual = m.os.stat
@@ -213,7 +213,7 @@ class StageTests(unittest.TestCase):
 
 
 class WriterTests(unittest.TestCase):
-    def execute(self, directory, helper="real", source=None):
+    def execute(self, directory, helper="real", source=None, verified=True):
         root = Path(directory)
         root.joinpath("lib").mkdir(exist_ok=True)
         if helper == "real":
@@ -232,6 +232,8 @@ AB_ARM=A AB_HASH=aaaaaaaaaaaa AB_IDX=0 GAME_NUM=100
 AB_STATE_FILE=state.json AB_GAMES_FILE=games.jsonl
 _ab_record_game 1234 5678 3 sample.jsonl false true
 '''
+        if verified:
+            shell = shell.rstrip() + ' sample.jsonl\n'
         env = {"PATH": os.environ["PATH"], "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
         run = subprocess.run(["bash", "-c", shell], cwd=root, env=env, text=True, capture_output=True, timeout=10)
         self.assertEqual(run.returncode, 0, run.stderr)
@@ -239,7 +241,7 @@ _ab_record_game 1234 5678 3 sample.jsonl false true
         return json.loads(root.joinpath("games.jsonl").read_text()), json.loads(root.joinpath("state.json").read_text())
 
     def test_real_shell_writer_persists_pair_and_digest(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             row, state = self.execute(directory)
             self.assertEqual(row["stage_evidence"]["status"], "observed")
             self.assertTrue(row["stage_evidence"]["two_russias_observed"])
@@ -249,12 +251,19 @@ _ab_record_game 1234 5678 3 sample.jsonl false true
 
     def test_optional_helper_failure_preserves_existing_result(self):
         for helper in ("missing", "broken"):
-            with self.subTest(helper=helper), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(helper=helper), tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
                 row, state = self.execute(directory, helper)
                 self.assertEqual(row["stage_evidence"]["status"], "unavailable")
                 self.assertEqual((row["score"], row["eval"], row["soviet_created"], row["russia_created"]), (1234, 5678, False, True))
                 self.assertEqual(state["games_recorded"], 1)
                 self.assertNotIn("archive_sha256", row)
+
+    def test_old_signature_cannot_certify_unverified_archive_creation(self):
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
+            row, state = self.execute(directory, verified=False)
+            self.assertEqual(row["stage_evidence"]["reason"], "archive_creation_unverified")
+            self.assertNotIn("archive_sha256", row)
+            self.assertEqual((row["score"], row["eval"], row["t15"], state["games_recorded"]), (1234, 5678, 1, 1))
 
     def test_legacy_record_and_frozen_state_are_unchanged(self):
         source = (ROOT / "strategy/ab_interleave.sh").read_text()
@@ -262,7 +271,7 @@ _ab_record_game 1234 5678 3 sample.jsonl false true
         end = source.index('with open(games_file, "a", encoding="utf-8") as fh:', begin)
         baseline = source[:begin] + source[end:]
         # Compare the real producer with only the new enrichment removed.
-        with tempfile.TemporaryDirectory() as old, tempfile.TemporaryDirectory() as new:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as old, tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as new:
             original, original_state = self.execute(old, source=baseline)
             current, current_state = self.execute(new)
             current.pop("archive_sha256")
@@ -274,7 +283,7 @@ _ab_record_game 1234 5678 3 sample.jsonl false true
             self.assertEqual(Path(new, "sample.jsonl").read_bytes(), raw())
 
     def test_report_works_after_history_pruning(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as directory:
             row, _ = self.execute(directory)
             Path(directory, "sample.jsonl").unlink()
             state = {"a_hash": HASH, "b_hash": "b"*12, "pattern": "ABBA", "games_recorded": 1,

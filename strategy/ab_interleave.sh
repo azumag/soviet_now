@@ -129,8 +129,10 @@ _ab_select_arm() {
 
 # 腕・hash・スコアを ab_games.jsonl に追記し games_recorded を進める。
 # runner が実際にその腕を打ったかを snapshot 記録と archive の strategy_hash で突き合わせ、不一致は tainted。
+# Optional arg 7 is this game's successfully created archive, separate from
+# the legacy metrics path. Omission/empty means new stage evidence is unknown.
 _ab_record_game() {
-	local score="$1" eval="$2" turns="$3" archive="$4" soviet="${5:-}" russia="${6:-}" played="" hist=""
+	local score="$1" eval="$2" turns="$3" archive="$4" soviet="${5:-}" russia="${6:-}" stage_archive="${7:-}" played="" hist=""
 	[ -n "${AB_ARM:-}" ] || return 0
 	if [ -f "${STRATEGY_FILE:-strategy.py}.game_snapshot" ]; then
 		played=$(_ab_hash "${STRATEGY_FILE:-strategy.py}.game_snapshot")
@@ -149,11 +151,12 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 )
 	fi
-	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" "$soviet" "$russia" <<'PY' || log "[AB] record failed"
+	python3 - "$AB_STATE_FILE" "$AB_GAMES_FILE" "$AB_IDX" "$AB_ARM" "$AB_HASH" "$played" "$hist" "$score" "$eval" "$turns" "$archive" "${GAME_NUM:-}" "$soviet" "$russia" "$stage_archive" <<'PY' || log "[AB] record failed"
 import json, os, sys, time
 state_file, games_file, idx, arm, h, played, hist, score, ev, turns, archive, game_num = sys.argv[1:13]
 soviet_raw = sys.argv[13] if len(sys.argv) > 13 else ""
 russia_raw = sys.argv[14] if len(sys.argv) > 14 else ""
+stage_archive = sys.argv[15] if len(sys.argv) > 15 else ""
 
 
 def _flag(v):
@@ -248,8 +251,12 @@ except Exception:
 # Retain observed stages before history pruning, without changing the gate's
 # existing metrics, outcomes, arm accounting or experiment decision rule.
 try:
-    from lib.soren_stage_ledger import capture_stage_evidence
-    rec.update(capture_stage_evidence(archive, rec))
+    if not stage_archive:
+        rec["stage_evidence"] = {"schema_version": 1, "status": "unavailable",
+                                 "reason": "archive_creation_unverified"}
+    else:
+        from lib.soren_stage_ledger import capture_stage_evidence
+        rec.update(capture_stage_evidence(stage_archive, rec))
 except Exception:
     # Optional telemetry must not block the normal completed-game ledger.
     rec["stage_evidence"] = {"schema_version": 1, "status": "unavailable",

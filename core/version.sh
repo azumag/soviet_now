@@ -115,14 +115,25 @@ PY
 
 archive_history() {
 	local score="$1"
-	local ts
+	# This invocation's successful copy only; never reuse a prior game's path.
+	LAST_CREATED_ARCHIVE_FILE=""
+	[ -f "$HISTORY_FILE" ] || return 1
+	local ts archive temporary
 	ts=$(date '+%Y%m%d_%H%M%S')
-	if [ -f "$HISTORY_FILE" ]; then
-		local archive
-		archive=$(printf "%s/%s_score%04d.jsonl" "$HISTORY_DIR" "$ts" "$score")
-		cp "$HISTORY_FILE" "$archive"
-			log "[ARCHIVE] $archive"
+	# Copy into a unique temporary file, then publish. Failed/partial copies
+	# cannot enter the archive glob or overwrite another game's evidence.
+	archive=$(printf '%s/%s_score%04d.jsonl' "$HISTORY_DIR" "$ts" "$score")
+	temporary=$(mktemp "${archive}.XXXXXX") || return 1
+	# Keep the legacy basename contract. ln publishes atomically and refuses
+	# a same-second/same-score collision instead of replacing old evidence.
+	if ! cp "$HISTORY_FILE" "$temporary" || ! ln "$temporary" "$archive"; then
+		rm -f "$temporary"
+		return 1
 	fi
+	rm -f "$temporary"
+	LAST_CREATED_ARCHIVE_FILE="$archive"
+	log "[ARCHIVE] $LAST_CREATED_ARCHIVE_FILE"
+	return 0
 }
 
 _history_gameover_asset_path() {
