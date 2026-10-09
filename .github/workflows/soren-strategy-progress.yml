@@ -7,6 +7,7 @@ on:
       - strategy/ab_interleave.sh
       - tests/test_soren_strategy_progress.py
       - tests/test_soren_stage_ledger.py
+      - tests/test_soren_stage_io.py
       - .github/workflows/soren-strategy-progress.yml
   push:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - strategy/ab_interleave.sh
       - tests/test_soren_strategy_progress.py
       - tests/test_soren_stage_ledger.py
+      - tests/test_soren_stage_io.py
       - .github/workflows/soren-strategy-progress.yml
 permissions:
   contents: read
@@ -33,4 +35,4 @@ jobs:
           bash -n strategy/ab_interleave.sh
           python3 -m py_compile tools/soren_strategy_progress.py lib/soren_stage_ledger.py
           python3 -m unittest discover -s tests -p 'test_soren_strategy_progress.py' -v
-          python3 -m unittest discover -s tests -p 'test_soren_stage_ledger.py' -v
+          python3 -m unittest discover -s tests -p 'test_soren_stage_*.py' -v
