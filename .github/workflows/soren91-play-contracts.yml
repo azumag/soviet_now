@@ -25,6 +25,11 @@ on:
       - 'soviet_now.png'
       - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
+      - 'lib/mute_flag.py'
+      - 'lib/mute_flag_reader.mjs'
+      - 'soviet_local.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -55,6 +60,11 @@ on:
       - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
       - 'soren91/rejected_frame_diagnostics.mjs'
+      - 'lib/mute_flag.py'
+      - 'lib/mute_flag_reader.mjs'
+      - 'soviet_local.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -79,8 +89,13 @@ jobs:
           node --version
           python3 --version
           bash -n soren91/run_player_loop.sh
+          bash -n soren91_control.sh
           python3 -m py_compile soren91/runtime_metrics.py
+          python3 -m py_compile lib/mute_flag.py
+          python3 -m py_compile tests/test_soren91_mute_flag.py
           node --check soren91/main.mjs
+          node --check soviet_local.mjs
+          node --check lib/mute_flag_reader.mjs
           node --check soren91/realtime_io.mjs
           node --check soren91/loop_metrics.mjs
           node --check soren91/rejected_frame_diagnostics.mjs
@@ -97,4 +112,4 @@ jobs:
       - name: Run play and existing Soren91 regressions
         run: |
           node --test tests/test_soren91_*.mjs
-          python3 -m unittest tests.test_soren91_runtime_metrics
+          python3 -m unittest tests.test_soren91_runtime_metrics tests.test_soren91_mute_flag

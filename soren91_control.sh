@@ -25,6 +25,14 @@ SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_STOPPING_FILE="$SOREN91_DIR/tmp/stopping"
 SOREN91_READY_FILE="$SOREN91_DIR/tmp/ready"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
+# 停止フラグ(中華AI側BGMミュート)の所有権レコード。旧実装は `touch`/`rm -f` だけ
+# だったため、soren91 が強制終了されてフラグが残ると soviet_local が音声だけでなく
+# 全ゲーム操作をスキップし、本編が停止した(2026-09-17)。レコードの解除は owner の
+# leave か、bridge(soviet_local)による実証済みの reap だけに任せる(fail-closed)。
+SOREN91_MUTE_FLAG="${SOREN91_MUTE_FLAG:-$ELOOP_LIB_DIR/tmp/mute_local_bgm}"
+SOREN91_MUTE_HELPER="${SOREN91_MUTE_HELPER:-$ELOOP_LIB_DIR/lib/mute_flag.py}"
+SOREN91_MUTE_TOKEN="${SOREN91_MUTE_TOKEN:-}"
+SOREN91_MUTE_BROWSER_ID="${SOREN91_MUTE_BROWSER_ID:-}"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || _soren91_env_get SOREN91_OBS_SOURCE 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-${SOREN91_OBS_SOURCE:-}}")"
@@ -1084,6 +1092,60 @@ ${vocab_rule}"
 	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "$prompt_text" "${SOREN91_TEXT_FALLBACKS:-claude}"
 }
 
+# --- 停止フラグ(tmp/mute_local_bgm)の所有権レコード操作 (lib/mute_flag.py) ---
+# 解除(rename)は owner の leave と、bridge(soviet_local)の実証済み reap だけが行う。
+# この control 側は「世代開始(begin)」と「owner が join する前の起動失敗(abort)」
+# のみ。時間ベースの期限は一切使わない。
+_soren91_mute_cli() {
+	command -v python3 >/dev/null 2>&1 || return 1
+	[ -r "$SOREN91_MUTE_HELPER" ] || return 1
+	python3 "$SOREN91_MUTE_HELPER" "$@" --flag "$SOREN91_MUTE_FLAG"
+}
+
+_soren91_mute_begin() {
+	SOREN91_MUTE_TOKEN="$(python3 -c 'import uuid;print(uuid.uuid4())' 2>/dev/null || true)"
+	[ -n "$SOREN91_MUTE_TOKEN" ] || SOREN91_MUTE_TOKEN="soren91-$(date +%s)-$$"
+	export SOREN91_MUTE_TOKEN
+	# 共有CDPの資源identity(/json/version の WebSocket pathname)。取得できない
+	# 場合は null のまま = bridge 側の自動解除は起こらない(fail-closed)。
+	local base="" bid=""
+	base="$(_soren91_cdp_base_url)"
+	if [ -n "$base" ]; then
+		bid="$(python3 "$SOREN91_MUTE_HELPER" browser-id --cdp-url "$base" 2>/dev/null || true)"
+	fi
+	SOREN91_MUTE_BROWSER_ID="$bid"
+	export SOREN91_MUTE_BROWSER_ID SOREN91_MUTE_FLAG SOREN91_MUTE_HELPER
+	local out="" revision=""
+	out="$(_soren91_mute_cli begin --token "$SOREN91_MUTE_TOKEN" ${bid:+--browser-id "$bid"} 2>/dev/null || true)"
+	revision="$(printf '%s' "$out" | sed -n 's/.*"revision": \([0-9][0-9]*\).*/\1/p')"
+	if [ -n "$out" ]; then
+		log "[SOREN91] Mute flag ownership record created (revision=${revision:-?}, browser_id=${bid:-unknown})"
+	else
+		log "[SOREN91] WARNING: could not create the mute flag ownership record (${SOREN91_MUTE_FLAG})"
+	fi
+}
+
+# 起動が runner join 前に失敗した経路でだけ呼ぶ。armed 済みなら何もしない。
+# 引数 notoken のときは token 未保持でも実行する(全停止経路 soren91_cleanup 用;
+# 未 join=armed でないレコードしか解放できないので安全)。
+_soren91_mute_abort() {
+	local token="${SOREN91_MUTE_TOKEN:-}"
+	local mode="${1:-token}"
+	if [ "$mode" != "notoken" ] && [ -z "$token" ]; then
+		return 0
+	fi
+	local out=""
+	out="$(_soren91_mute_cli abort ${token:+--token "$token"} 2>/dev/null || true)"
+	case "$out" in
+	*'"released": true'*)
+		log "[SOREN91] Mute flag ownership record aborted (no owner ever joined)"
+		;;
+	esac
+	return 0
+}
+
+# 参考: `[ -f "$SOREN91_MUTE_FLAG" ]` は「レコードが存在する」= ブリッジがミュート中
+# の意味で、_had_mute の判定に使う(解除後の不在も同じ判定で扱える)。
 soren91_start() {
 	_soren91_enabled || return 0
 	local stale_pid=""
@@ -1136,8 +1198,10 @@ soren91_start() {
 	# 窓(~5s)は !isMuted のまま。soviet_local 側の stray-tab ガードが soren91 の
 	# 生成直後 about:blank を孤児と誤認して掃除/前面化で奪い合う恐れがあった。
 	# 先に mute を立てて soren91 アクティブ期間(起動含む)を丸ごと覆い、競合を無くす。
-	# 起動失敗時は下の各 return 経路で rm して中華AIの無音固着を防ぐ。
-	touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+	# 実体は所有権レコードの世代開始(begin)。runner/main が join して armed になる
+	# まで bridge は reap できないので、startup 窓でも誤解除されない。
+	# 起動失敗時は下の各 return 経路で abort して中華AIの無音固着を防ぐ。
+	_soren91_mute_begin
 
 	# 再試行付きランナーを完全 detach 起動。
 	# Playwright + 共有ChromeはTTYなしnohupで起動するとタイトル直後に消えることがあるため、
@@ -1146,7 +1210,7 @@ soren91_start() {
 	if command -v tmux >/dev/null 2>&1; then
 		tmux has-session -t soren91_runner 2>/dev/null && tmux kill-session -t soren91_runner 2>/dev/null || true
 		tmux new-session -d -s soren91_runner \
-			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='$_viewport_width' SOREN91_VIEWPORT_HEIGHT='$_viewport_height' SOREN_STREAM_BACKEND='${SOREN_STREAM_BACKEND:-obs}' SOREN_DIRECT_OVERLAY_ENABLED='${SOREN_DIRECT_OVERLAY_ENABLED:-1}' SOREN_DIRECT_STAGE_LAYOUT='${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}' SOREN_DIRECT_STREAM_SIZE='${SOREN_DIRECT_STREAM_SIZE:-1280x720}' SOREN_DIRECT_GAME_DISPLAY_SIZE='${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
+			"cd '$SOREN91_DIR' && export SOREN91_SHARED_BROWSER='${SOREN91_SHARED_BROWSER:-1}' SOREN91_SHARED_ISOLATED_CONTEXT='${SOREN91_SHARED_ISOLATED_CONTEXT:-0}' SOREN91_BRING_TO_FRONT='${SOREN91_BRING_TO_FRONT:-0}' SOREN91_FULLSCREEN_WINDOW='${SOREN91_FULLSCREEN_WINDOW:-0}' SOREN91_VIEWPORT_WIDTH='$_viewport_width' SOREN91_VIEWPORT_HEIGHT='$_viewport_height' SOREN_STREAM_BACKEND='${SOREN_STREAM_BACKEND:-obs}' SOREN_DIRECT_OVERLAY_ENABLED='${SOREN_DIRECT_OVERLAY_ENABLED:-1}' SOREN_DIRECT_STAGE_LAYOUT='${SOREN_DIRECT_STAGE_LAYOUT:-dashboard}' SOREN_DIRECT_STREAM_SIZE='${SOREN_DIRECT_STREAM_SIZE:-1280x720}' SOREN_DIRECT_GAME_DISPLAY_SIZE='${SOREN_DIRECT_GAME_DISPLAY_SIZE:-960x540}' SOREN_CDP_PORT='${SOREN_CDP_PORT:-9222}' SOREN_CHROME_AUDIO_OUTPUT_LABEL='${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}' SOREN91_AUDIO_GAIN_MULTIPLIER='${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}' SOREN91_MUTE_TOKEN='$SOREN91_MUTE_TOKEN' SOREN91_MUTE_FLAG='$SOREN91_MUTE_FLAG' SOREN91_MUTE_HELPER='$SOREN91_MUTE_HELPER' SOREN91_MUTE_BROWSER_ID='$SOREN91_MUTE_BROWSER_ID' && exec /bin/bash '$SOREN91_RUNNER_SCRIPT'" \
 			>/dev/null 2>&1 || true
 		pid=$(tmux display-message -p -t soren91_runner '#{pane_pid}' 2>/dev/null || echo "")
 	else
@@ -1166,6 +1230,10 @@ soren91_start() {
 			SOREN_CDP_PORT="${SOREN_CDP_PORT:-9222}" \
 			SOREN_CHROME_AUDIO_OUTPUT_LABEL="${SOREN_CHROME_AUDIO_OUTPUT_LABEL:-BlackHole 2ch}" \
 			SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
+			SOREN91_MUTE_TOKEN="$SOREN91_MUTE_TOKEN" \
+			SOREN91_MUTE_FLAG="$SOREN91_MUTE_FLAG" \
+			SOREN91_MUTE_HELPER="$SOREN91_MUTE_HELPER" \
+			SOREN91_MUTE_BROWSER_ID="$SOREN91_MUTE_BROWSER_ID" \
 				/usr/bin/nohup /bin/bash "$SOREN91_RUNNER_SCRIPT" </dev/null >/dev/null 2>&1 &
 			echo $!
 		)
@@ -1173,7 +1241,7 @@ soren91_start() {
 	case "$pid" in
 	''|*[!0-9]*)
 		log "[SOREN91] Failed to launch detached runner"
-		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		_soren91_mute_abort
 		return 1
 		;;
 	esac
@@ -1185,9 +1253,8 @@ soren91_start() {
 	live_pid_after_start=$(_soren91_read_alive_player_pid 2>/dev/null || true)
 	if _soren91_pid_is_alive "$pid" || [ -n "$live_pid_after_start" ]; then
 		log "[SOREN91] Started successfully (PID=$pid, live=${live_pid_after_start:-$pid}, start_game=$start_game)"
-		# 中華AI側のBGMミュートは起動前に立て済み。ここは冪等な再確認（消えていたら再set）。
-		touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
-		log "[SOREN91] Muted local game BGM (flag file)"
+		# 所有権レコードは起動前に作成済み。runner/main が join して armed になる。
+		log "[SOREN91] Muted local game BGM (ownership record)"
 		log "[SOREN91] soren91 browser audio gain=${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}"
 		# 読み上げアナウンス + 戦略解説 (バックグラウンド)
 		{
@@ -1259,7 +1326,7 @@ soren91_start() {
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
 		rm -f "$SOREN91_PID_FILE"
-		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		_soren91_mute_abort
 		return 1
 	fi
 	return 0
@@ -1359,12 +1426,12 @@ soren91_stop() {
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_READY_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		_soren91_clear_stale_runner_lock
-		local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
-		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		# レコードの解除は owner の leave か bridge の実証済み reap が行う(ここでは消さない)。
+		local _had_mute=0; [ -f "$SOREN91_MUTE_FLAG" ] && _had_mute=1
 		_soren91_close_shared_game_tabs
 		_soren91_stop_standalone_browser
 		_soren91_switch_obs_layout china || true
-		log "[SOREN91] Unmuted local game BGM (flag file removed)"
+		log "[SOREN91] Local game BGM release left to the bridge (ownership record)"
 		SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
@@ -1442,13 +1509,12 @@ soren91_stop() {
 	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
 	_clear_soren91_mode_flag
-	# 中華AI側のBGMをアンミュート（改善終了・復帰）
-	local _had_mute=0; [ -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm" ] && _had_mute=1
-	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+	# レコードの解除は owner の leave か bridge の実証済み reap が行う(ここでは消さない)。
+	local _had_mute=0; [ -f "$SOREN91_MUTE_FLAG" ] && _had_mute=1
 	_soren91_close_shared_game_tabs
 	_soren91_stop_standalone_browser
 	_soren91_switch_obs_layout china || true
-	log "[SOREN91] Unmuted local game BGM (flag file removed)"
+	log "[SOREN91] Local game BGM release left to the bridge (ownership record)"
 	SOREN91_UNMUTE_EPOCH=$(date +%s) _soren91_restart_bridge_after_improve "$_had_mute"
 
 	# メリケンAI終了あいさつ (TTS + Twitch) — 重複防止
@@ -1502,8 +1568,11 @@ soren91_cleanup() {
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" \
 		"$SOREN91_MAIN_PID_FILE" \
 		"$SOREN91_READY_FILE" \
-		"$SOREN91_DIR/tmp/in_game" \
-		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		"$SOREN91_DIR/tmp/in_game"
+	# 全停止経路: 所有権レコードは owner の leave / bridge の reap に任せる。ただし
+	# 起動が join 前に失敗して未 armed のまま残ったレコードだけは、ここで解放しないと
+	# 中華AIが無音固着する(abort は armed のレコードを触らない)。
+	_soren91_mute_abort notoken
 	_soren91_clear_stale_runner_lock
 	_clear_meriken_time_state
 	_soren91_close_shared_game_tabs

@@ -29,7 +29,7 @@ import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync, execFile, spawn } from 'child_process';
+import { execSync, execFile, execFileSync, spawn } from 'child_process';
 import {
   computeStrategyHashFromFile,
   recordCompletedGame,
@@ -100,6 +100,48 @@ async function loadStrategy(strategyPath = './strategy.mjs') {
     shutdownTimer.unref?.();
   });
 });
+
+// --- 停止フラグの所有権レコード (lib/mute_flag.py) ---
+// runner (run_player_loop.sh) が開始した世代に、このプロセスの pid を owner として
+// join する。main が強制終了 (SIGKILL) された場合でも、bridge (soviet_local.mjs) が
+// 「全 owner 死亡」を実証できなければレコードは解除されない (fail-closed)。
+// leave は正常終了時のみ: 解除は owner の leave か bridge の実証済み reap だけ。
+const MUTE_FLAG_TOKEN = process.env.SOREN91_MUTE_TOKEN || '';
+const MUTE_FLAG_PATH = process.env.SOREN91_MUTE_FLAG || '';
+const MUTE_FLAG_HELPER = process.env.SOREN91_MUTE_HELPER
+  || join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'mute_flag.py');
+let muteFlagOwnerLeft = false;
+
+function muteFlagOwnerCommand(args) {
+  if (!MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return '';
+  try {
+    return execFileSync('python3', [MUTE_FLAG_HELPER, ...args, '--flag', MUTE_FLAG_PATH],
+      { encoding: 'utf-8', timeout: 5000 }).trim();
+  } catch (err) {
+    return '';
+  }
+}
+
+function muteFlagOwnerJoin() {
+  if (!MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return;
+  const out = muteFlagOwnerCommand(['join', '--token', MUTE_FLAG_TOKEN, '--role', 'main',
+    '--pid', String(process.pid)]);
+  if (out && out.includes('"ok": true')) {
+    console.log('[main] mute ownership record: joined as main owner');
+  } else {
+    console.log(`[main] mute ownership record: join failed (${out || 'no output'})`);
+  }
+}
+
+function muteFlagOwnerLeave() {
+  if (muteFlagOwnerLeft || !MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return;
+  muteFlagOwnerLeft = true;
+  muteFlagOwnerCommand(['leave', '--token', MUTE_FLAG_TOKEN, '--role', 'main',
+    '--pid', String(process.pid)]);
+}
+
+// 異常終了でも owner を残さない (残っても dead owner として reap 対象になるだけ)。
+process.on('exit', () => muteFlagOwnerLeave());
 
 // --- 定数 ---
 const GAME_URL = 'https://unityroom.com/games/sorengame91';
@@ -447,6 +489,9 @@ async function cleanupRuntime(reason = 'normal') {
     try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
     try { unlinkSync(SOREN91_READY_FILE); } catch {}
     clearSoren91ModeFlag();
+
+    // 停止フラグの所有権レコードから抜ける (未接続で終了する経路も含む)。
+    muteFlagOwnerLeave();
 
     if (!browser) return;
 
@@ -1152,6 +1197,9 @@ async function main() {
     console.log(`[main] Failed to set soren91 mode flag: ${err.message}`);
   }
   cleanupCompletedRankingCommentClaims();
+
+  // 停止フラグの所有権レコードに owner として参加 (browser 接続前に join する)。
+  muteFlagOwnerJoin();
 
   // Step 1: トップページHTMLからゲームURLを取得
   console.log('[main] Fetching game URL...');
