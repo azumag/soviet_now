@@ -245,6 +245,15 @@ try:
                 rec["area_relief_per_turn"] = round((1.0656 * nturns - area) / nturns, 4)
 except Exception:
     pass
+# Retain observed stages before history pruning, without changing the gate's
+# existing metrics, outcomes, arm accounting or experiment decision rule.
+try:
+    from lib.soren_stage_ledger import capture_stage_evidence
+    rec.update(capture_stage_evidence(archive, rec))
+except Exception:
+    # Optional telemetry must not block the normal completed-game ledger.
+    rec["stage_evidence"] = {"schema_version": 1, "status": "unavailable",
+                             "reason": "stage_capture_unavailable"}
 with open(games_file, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
 try:

@@ -17,6 +17,9 @@ import stat
 import statistics
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lib.soren_stage_ledger import retained_pair
+
 MAX_BYTES = 32 * 1024 * 1024
 HASH = re.compile(r"[0-9a-f]{12,64}\Z")
 CLASSES = {"continue", "significant_win", "provisional_win", "loss", "neutral",
@@ -182,6 +185,14 @@ def enrich(rows, history_dir):
     for row in rows:
         item = dict(row)
         item["_two_russias_observed"] = None
+        if "stage_evidence" in row:
+            observed, reason = retained_pair(row)
+            item["_two_russias_observed"] = observed
+            counts[reason] += 1
+            if reason == "retained_observation":
+                digests.append({"idx": row["idx"], "sha256": row["archive_sha256"]})
+            result.append(item)
+            continue
         if root is None:
             counts["not_requested"] += 1
         else:
@@ -337,7 +348,10 @@ def markdown(report):
         cells = []
         for role in ("baseline", "candidate"):
             v = arms[role]["stages"][key]
-            cells.append(f'{v["successes"]}/{v["known"]}（未知 {v["unknown"]}）')
+            if key == "two_russias_observed":
+                cells.append(f'観測 {v["successes"]}/{v["total"]}（未知 {v["unknown"]}）')
+            else:
+                cells.append(f'{v["successes"]}/{v["known"]}（未知 {v["unknown"]}）')
         lines.append(f'|{label}|{"|".join(cells)}|')
     lines += ["", f'採用記録：{report["recorded_adoption"]["decision_class"]}（入力ファイルとの帰属は未検証）。',
               f'入力 {report["input_rows"]} 件／有効 {report["accepted_rows"]} 件。',
