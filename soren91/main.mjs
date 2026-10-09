@@ -19,6 +19,7 @@ import {
   captureErrorLimit,
   captureImageFormat,
   captureJpegQuality,
+  captureBackend,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
 import { markDropSent as markObservationDropSent } from './observation_guard.mjs';
@@ -162,6 +163,7 @@ const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPOR
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
 const CAPTURE_IMAGE_FORMAT = captureImageFormat();
 const CAPTURE_JPEG_QUALITY = captureJpegQuality();
+const CAPTURE_BACKEND = captureBackend();
 const SCREENSHOT_EXTENSION = CAPTURE_IMAGE_FORMAT === 'jpeg' ? 'jpg' : 'png';
 const REJECTED_FRAME_DIAGNOSTICS_ENABLED = process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS === '1';
 
@@ -180,7 +182,7 @@ async function captureGameScreenshot(page, path, options = {}) {
   const imageFormat = /\.jpe?g$/.test(lowerPath) ? 'jpeg'
     : /\.png$/.test(lowerPath) ? 'png'
     : CAPTURE_IMAGE_FORMAT;
-  const captureOptions = { timeoutMs, type: imageFormat };
+  const captureOptions = { timeoutMs, type: imageFormat, backend: CAPTURE_BACKEND };
   if (imageFormat === 'jpeg') captureOptions.quality = CAPTURE_JPEG_QUALITY;
   if (process.env.SOREN91_CAPTURE_MODE !== 'locator') {
     const frame = await canvasIO.capture(page, captureOptions);
@@ -1565,6 +1567,7 @@ async function gameLoop(page, calibration, gameNumber) {
     latency.begin(gameNumber, turn);
     let loopOutcome = 'observe';
     try {
+      const iterationStartedAt = performance.now();
       if (existsSync('tmp/stop')) {
         if (pendingGameOver) await pendingGameOver;
         console.log('[game] Stop requested, exiting main loop');
@@ -1881,7 +1884,13 @@ async function gameLoop(page, calibration, gameNumber) {
       // could replace valid anchors while pieces or garbage were moving.
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
-        await latency.measure('poll', () => sleep(POLL_INTERVAL_MS));
+        // The state-check interval is a cadence floor, not an extra wait: one
+        // remote capture already costs several seconds, so adding the whole
+        // interval on top only inflates the drop interval (measured poll stage
+        // ~0.6s per interval for three re-observations). Sleep the remainder of
+        // this iteration's interval only; the stability gate is unchanged.
+        const pollRemainderMs = Math.max(0, POLL_INTERVAL_MS - (performance.now() - iterationStartedAt));
+        await latency.measure('poll', () => sleep(pollRemainderMs));
         continue;
       }
 

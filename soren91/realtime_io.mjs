@@ -46,6 +46,50 @@ export function captureErrorLimit(env = process.env) {
   return Number.isFinite(raw) && raw >= 1 ? Math.min(Math.floor(raw), 200) : 30;
 }
 
+// Screenshot transport for the hot observation loop. Playwright's own
+// page.screenshot({clip}) wrapper costs ~9 extra CDP round-trips per frame
+// (viewport-size probe, utility-world prepare + document.fonts.ready evaluates,
+// Page.getLayoutMetrics, cleanup evaluate) on top of the single
+// Page.captureScreenshot the capture contract actually needs: measured through a
+// delayed CDP tunnel, a full capture sequence is 9-14 client->server messages via
+// Playwright and 3 via the raw command. On the remote-Mac cadence one CDP
+// round-trip costs ~0.3s, so the wrapper - not the image bytes - dominates the
+// drop interval.
+//
+// The raw command is byte-identical to page.screenshot with real Chromium
+// (launched and connectOverCDP) because it reproduces Playwright's clip for a
+// region inside the viewport. It is NOT the default: a raw capture on a session
+// that does not own the page's device-metrics override resets the page's
+// emulated metrics, which production applies to the game page. The capture path
+// detects that (scale mismatch / geometry change), restores the measured
+// metrics best-effort and disables the backend for the process, so an operator
+// opt-in is one-way safe. Enable with SOREN91_CAPTURE_BACKEND=cdp after
+// verifying on the game host that window.devicePixelRatio/innerWidth are
+// unchanged by one capture.
+export function captureBackend(env = process.env) {
+  const explicit = String(env?.SOREN91_CAPTURE_BACKEND || '').trim().toLowerCase();
+  return explicit === 'cdp' ? 'cdp' : 'playwright';
+}
+
+/**
+ * Clip for a raw Page.captureScreenshot that reproduces what Playwright sends
+ * for page.screenshot({clip, scale: 'css'}) when the clipped region already fits
+ * inside the viewport: the canvas rect offset by the page scroll, converted with
+ * Playwright's enclosing integer size, and left at the attached context's
+ * implicit device scale of 1. Verified byte-identical against page.screenshot
+ * and locator.screenshot with real Chromium (launched and connectOverCDP).
+ */
+export function captureClip(g) {
+  if (!validGeometry(g) || g.viewportScale !== 1) throw new Error('capture-invalid-geometry');
+  return {
+    x: g.scrollX + g.x,
+    y: g.scrollY + g.y,
+    width: Math.floor(g.width + 1e-3),
+    height: Math.floor(g.height + 1e-3),
+    scale: 1,
+  };
+}
+
 /** A duration is a wall-clock budget, not a number of slow screenshots. */
 export function probeBudget(durationMs, intervalMs, now = () => performance.now()) {
   const duration = boundedMs(durationMs, 1200, 40, 5000);
@@ -139,6 +183,9 @@ function imageSize(buffer, type) {
 export function createCanvasIO({ now = () => performance.now() } = {}) {
   const sessions = new WeakMap();
   const expression = `(${canvasGeometryInPage.toString()})()`;
+  // Sticky per-process switch: after a raw CDP screenshot disturbs the page's
+  // host-owned device metrics, never use it again for this process.
+  let cdpBlocked = false;
 
   function retire(page, entry) {
     entry.retiring = true;
@@ -204,42 +251,93 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
     return g;
   }
 
+  /**
+   * A raw Page.captureScreenshot issued on a session that does not own the
+   * page's device-metrics override replaces that override with this session's
+   * defaults (verified: devicePixelRatio 2 -> 1, screen 1280x720 -> 800x600).
+   * Put the measured metrics back - best-effort, never resizing the visible
+   * window - and stop using the raw backend for the rest of the process so the
+   * page can only be disturbed once.
+   */
+  async function disableCdpAfterDisturbance(session, measured) {
+    cdpBlocked = true;
+    try {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width: Math.round(measured.viewportWidth),
+        height: Math.round(measured.viewportHeight),
+        deviceScaleFactor: measured.dpr,
+        mobile: false,
+        dontSetVisibleSize: true,
+      });
+      console.log('[capture] raw CDP screenshot disturbed the host device metrics; restored and disabled for this process');
+    } catch {
+      console.log('[capture] raw CDP screenshot disturbed the host device metrics; disabled for this process');
+    }
+  }
+
   return {
-    async capture(page, { timeoutMs = 3000, type = 'png', quality = 85 } = {}) {
+    async capture(page, { timeoutMs = 3000, type = 'png', quality = 85, backend = 'playwright' } = {}) {
       if (!['png', 'jpeg'].includes(type)) throw new Error('capture-invalid-image');
+      if (!['cdp', 'playwright'].includes(backend)) throw new Error('capture-invalid-backend');
       return run(page, timeoutMs, async (session, check, remaining) => {
+        const useCdp = backend === 'cdp' && !cdpBlocked;
         const geometryBeforeStartedAt = now();
         const before = await geometry(session, check);
         const geometryBeforeEndedAt = now();
         const capturedAt = geometryBeforeEndedAt; // Preserve existing freshness semantics.
-        // Page-level clipping skips locator actionability/scroll/stability waits.
-        // Use Playwright's own screenshot session: raw capture on a NEW CDP
-        // session can reset DPR emulation belonging to the host's session.
         const screenshotStartedAt = capturedAt;
-        const screenshotOptions = {
-          type, scale: 'css', timeout: remaining(),
-          clip: { x: before.x, y: before.y, width: before.width, height: before.height },
-        };
-        if (type === 'jpeg') screenshotOptions.quality = Math.max(60, Math.min(95, Math.round(quality)));
-        const buffer = await page.screenshot(screenshotOptions);
+        // Page-level clipping skips locator actionability/scroll/stability waits.
+        // 'cdp' issues the single Page.captureScreenshot the contract needs on the
+        // already-attached geometry session; 'playwright' keeps page.screenshot,
+        // which uses Playwright's own session (raw capture on a NEW CDP session
+        // could reset DPR emulation belonging to the host's session, so the
+        // backend never creates an extra session).
+        let buffer;
+        if (useCdp) {
+          const params = {
+            format: type,
+            clip: captureClip(before),
+            captureBeyondViewport: false,
+          };
+          if (type === 'jpeg') params.quality = Math.max(60, Math.min(95, Math.round(quality)));
+          const result = await session.send('Page.captureScreenshot', params);
+          buffer = Buffer.from(typeof result?.data === 'string' ? result.data : '', 'base64');
+        } else {
+          const screenshotOptions = {
+            type, scale: 'css', timeout: remaining(),
+            clip: { x: before.x, y: before.y, width: before.width, height: before.height },
+          };
+          if (type === 'jpeg') screenshotOptions.quality = Math.max(60, Math.min(95, Math.round(quality)));
+          buffer = await page.screenshot(screenshotOptions);
+        }
         check();
         const screenshotEndedAt = now();
         const imageValidateStartedAt = screenshotEndedAt;
-        if (!Buffer.isBuffer(buffer) || buffer.length > 24 * 1024 * 1024) throw new Error('capture-invalid-image');
-        const size = imageSize(buffer, type);
-        // Attached browsers may not expose their native DPR in context options.
-        // CSS-pixel and native-DPR PNGs are both valid;
-        // input maps from actual PNG dimensions instead of guessing from DPR.
-        const matchesScale = scale => Math.abs(size.width - before.width * scale) <= 1
-          && Math.abs(size.height - before.height * scale) <= 1;
-        if ((!matchesScale(1) && !matchesScale(before.dpr)) || size.width * size.height > 16_777_216) {
-          throw new Error('capture-pixel-scale-mismatch');
+        let size;
+        try {
+          if (!Buffer.isBuffer(buffer) || buffer.length > 24 * 1024 * 1024) throw new Error('capture-invalid-image');
+          size = imageSize(buffer, type);
+          // Attached browsers may not expose their native DPR in context options.
+          // CSS-pixel and native-DPR PNGs are both valid;
+          // input maps from actual PNG dimensions instead of guessing from DPR.
+          const matchesScale = scale => Math.abs(size.width - before.width * scale) <= 1
+            && Math.abs(size.height - before.height * scale) <= 1;
+          if ((!matchesScale(1) && !matchesScale(before.dpr)) || size.width * size.height > 16_777_216) {
+            throw new Error('capture-pixel-scale-mismatch');
+          }
+        } catch (error) {
+          // A disturbed device-metrics override also shows up as a scale jump.
+          if (useCdp) await disableCdpAfterDisturbance(session, before);
+          throw error;
         }
         const imageValidateEndedAt = now();
         const geometryAfterStartedAt = imageValidateEndedAt;
         const after = await geometry(session, check);
         const geometryAfterEndedAt = now();
-        if (!sameGeometry(before, after)) throw new Error('capture-geometry-changed');
+        if (!sameGeometry(before, after)) {
+          if (useCdp) await disableCdpAfterDisturbance(session, before);
+          throw new Error('capture-geometry-changed');
+        }
         return {
           buffer, format: type, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
           captureStageMs: {
