@@ -11,6 +11,8 @@ on:
       - 'core/config.sh'
       - 'core/phyrogenetic.sh'
       - 'lib/news_topic_filter.py'
+      - 'lib/fetch_google_headlines.py'
+      - 'tests/test_jiji_headline_selection.py'
       - 'lib/news_filter.py'
       - 'lib/news_priority.py'
       - 'lib/radio_mixed_language.py'
@@ -44,6 +46,8 @@ on:
       - 'core/config.sh'
       - 'core/phyrogenetic.sh'
       - 'lib/news_topic_filter.py'
+      - 'lib/fetch_google_headlines.py'
+      - 'tests/test_jiji_headline_selection.py'
       - 'lib/news_filter.py'
       - 'lib/news_priority.py'
       - 'lib/radio_mixed_language.py'
@@ -75,7 +79,7 @@ jobs:
         with:
           persist-credentials: false
       - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_news_priority.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/config.sh core/phyrogenetic.sh tests/test_news_lane_event_dedup.sh tests/test_news_political_priority.sh tests/test_radio_mixed_language_repair.sh tests/test_docich_radio_native_consumer.sh
-      - run: python3 -m unittest -v tests.test_news_tragedy_policy tests.test_news_topic_filter tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_political_priority tests.test_news_shared_history
+      - run: python3 -m unittest -v tests.test_news_tragedy_policy tests.test_news_topic_filter tests.test_jiji_headline_selection tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_political_priority tests.test_news_shared_history
       - run: python3 -m unittest -v tests.test_radio_mixed_language
       - run: python3 -m unittest -v tests.test_radio_parser
       - run: bash tests/test_news_lane_event_dedup.sh
