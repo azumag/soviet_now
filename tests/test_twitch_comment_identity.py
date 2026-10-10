@@ -130,6 +130,97 @@ class TwitchCommentIdentityTests(unittest.TestCase):
             self.assertNotIn("id=msg-target", pending)
             self.assertIn("id=msg-keep", pending)
 
+    def test_fetch_keeps_comment_appended_while_raw_log_is_read(self):
+        # The IRC daemon appends to raw.log without the chat lock. A comment that
+        # lands while fetch is reading/rotating raw.log must surface on this or
+        # the next fetch, never be marked read without reaching pending.log.
+        with tempfile.TemporaryDirectory() as td:
+            temp = Path(td)
+            chat_dir = temp / "chat"
+            chat_dir.mkdir()
+            out = temp / "comments.txt"
+            raw_log = chat_dir / "raw.log"
+            (chat_dir / "last_offset").write_text("0\n", encoding="utf-8")
+            raw_log.write_text(
+                "id=msg-old\tuser-id=uid-1\tlogin=alice\tdisplay=Alice\tflags=\tAlice: first\n",
+                encoding="utf-8",
+            )
+            real_tail = subprocess.run(
+                ["bash", "-c", "command -v tail"], text=True, capture_output=True, check=True
+            ).stdout.strip()
+            shim_dir = temp / "bin"
+            shim_dir.mkdir()
+            shim = shim_dir / "tail"
+            # Simulate the daemon appending right after fetch's first raw.log read.
+            shim.write_text(
+                "#!/bin/bash\n"
+                f'"{real_tail}" "$@"; rc=$?\n'
+                'if [ -n "${RACE_RAW_LOG:-}" ] && [ ! -e "$RACE_FLAG" ]; then\n'
+                '    : > "$RACE_FLAG"\n'
+                '    printf \'id=msg-new\\tuser-id=uid-2\\tlogin=bob\\tdisplay=Bob\\tflags=\\tBob: second\\n\' >> "$RACE_RAW_LOG"\n'
+                "fi\n"
+                "exit $rc\n",
+                encoding="utf-8",
+            )
+            shim.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TWITCH_CHAT_DIR": str(chat_dir),
+                    "TWITCH_CHAT_OUTFILE": str(out),
+                    "CHAT_INGEST_OVERLAY_NOTIFY": "0",
+                    "PATH": f"{shim_dir}{os.pathsep}{env.get('PATH', '')}",
+                    "RACE_RAW_LOG": str(raw_log),
+                    "RACE_FLAG": str(temp / "race.done"),
+                }
+            )
+
+            for _ in range(2):
+                result = subprocess.run(
+                    ["bash", str(ROOT / "twitch_chat.sh"), "fetch"],
+                    cwd=ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((temp / "race.done").exists())
+
+            pending = (chat_dir / "pending.log").read_text(encoding="utf-8")
+            self.assertEqual(pending.count("id=msg-old"), 1)
+            self.assertEqual(pending.count("id=msg-new"), 1)
+
+    def test_fetch_recovers_when_offset_exceeds_raw_log(self):
+        with tempfile.TemporaryDirectory() as td:
+            temp = Path(td)
+            chat_dir = temp / "chat"
+            chat_dir.mkdir()
+            out = temp / "comments.txt"
+            (chat_dir / "last_offset").write_text("5\n", encoding="utf-8")
+            (chat_dir / "raw.log").write_text(
+                "id=msg-1\tuser-id=uid-1\tlogin=alice\tdisplay=Alice\tflags=\tAlice: hello\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TWITCH_CHAT_DIR": str(chat_dir),
+                    "TWITCH_CHAT_OUTFILE": str(out),
+                    "CHAT_INGEST_OVERLAY_NOTIFY": "0",
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "twitch_chat.sh"), "fetch"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(out.read_text(encoding="utf-8"), "Alice: hello\n")
+
     def test_legacy_plain_ack_normalizes_full_width_punctuation(self):
         with tempfile.TemporaryDirectory() as td:
             temp = Path(td)
