@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Google News マルチソース見出し取得スクリプト.
 
-Google News RSS (11ソース: 世界/US/ビジネス/テクノロジー/科学/ヘルス/日本/日本ビジネス/日本世界/中国)
-からトップ見出しを取得し、tmp/google_headlines.txt に ■ プレフィックス形式で出力する。
+Google News RSS (日本政治/日本経済/日本国際/世界/US/ビジネス)
+から見出しを取得し、tmp/google_headlines.txt に ■ プレフィックス形式で出力する。
 既読管理ファイルで重複排除。
+
+時事コーナーは先頭の未読見出しを採るため、ソースを巡回順に並べ、
+芸能・週刊誌・下世話な事件・地方の小さな事件を出力前に落とす。
 
 Usage:
     python3 lib/fetch_google_headlines.py
@@ -27,19 +30,33 @@ except Exception:  # fallback
     def is_sports_title(title: str) -> bool:  # type: ignore
         return False
 
+try:
+    from news_topic_filter import (  # type: ignore
+        is_low_value_news_title,
+        is_public_affairs_beyond_incident_title,
+        is_uncontextualized_tragedy,
+    )
+except Exception:  # fallback
+    def is_low_value_news_title(title: str) -> bool:  # type: ignore
+        return False
+
+    def is_public_affairs_beyond_incident_title(title: str) -> bool:  # type: ignore
+        return True
+
+    def is_uncontextualized_tragedy(title: str, article_text: str = "") -> bool:  # type: ignore
+        return False
+
 RSS_URLS = {
-    # 日本政治を優先: Google News は MAX_HEADLINES まで逐次取得なので JP を先頭に
-    "jp":         "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNRE5mTTJRU0FtcGhLQUFQAQ?hl=ja&gl=JP&ceid=JP%3Aja",
+    # 日本の総合トップ (topics/...MDNfM2Q) は地方の事件・生活情報・週刊誌記事が先頭を占め、
+    # 先頭採用の時事コーナーが俗っぽくなるため使わない。日本政治を巡回の先頭に置く。
+    # 科学/テクノロジー・ヘルス・中国総合はゲーム情報・雑学・生活記事・宣伝記事が多く、
+    # 時事として扱える見出しがほぼ無いため使わない。
     "jp_politics":"https://news.google.com/rss/search?q=%E6%94%BF%E6%B2%BB+OR+%E5%9B%BD%E4%BC%9A+OR+%E9%A6%96%E7%9B%B8+OR+%E6%94%BF%E5%BA%9C+OR+%E9%81%B8%E6%8C%99&hl=ja&gl=JP&ceid=JP:ja",
     "jp_biz":     "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
     "jp_wrld":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
-    "jp_sci":     "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
     "world":      "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
     "us":         "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRGxqTjNjd0VnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
     "biz":        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
-    "sci":        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
-    "health":     "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US%3Aen",
-    "china":      "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
 }
 DEFAULT_RSS = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
 OUTPUT_FILE = "tmp/google_headlines.txt"
@@ -48,6 +65,13 @@ PAST_TITLES_FILE = "tmp/history/.past_jiji_titles.txt"
 PAST_KEYS_FILE = "tmp/history/.past_jiji_keys.txt"
 USER_AGENT = "soren-radio-grounding/1.0"
 MAX_HEADLINES = 50
+MAX_PER_FEED = 8
+# 政党・官邸の自前ページは報道ではなく一次資料なので、党派を問わず時事の題材にしない。
+NON_NEWS_SOURCES = frozenset((
+    "首相官邸", "衆議院トップページ", "参議院", "衆議院",
+    "自由民主党", "立憲民主党", "公明党", "日本維新の会", "国民民主党", "新・国民民主党",
+    "日本共産党", "れいわ新選組", "参政党", "社会民主党", "日本保守党", "チームみらい",
+))
 
 
 def http_get(url: str, timeout: float = 10.0) -> str:
@@ -84,25 +108,44 @@ def load_past_keys() -> set:
     return keys
 
 
+def is_jiji_eligible_title(title: str) -> bool:
+    """Return True for headlines fit for the jiji (public affairs) corner."""
+    source = re.search(r"\s[-–—]\s([^-–—]{1,80})$", title)
+    if source and source.group(1).strip() in NON_NEWS_SOURCES:
+        return False
+    return (
+        not is_sports_title(title)
+        and not is_low_value_news_title(title)
+        and is_public_affairs_beyond_incident_title(title)
+        and not is_uncontextualized_tragedy(title)
+    )
+
+
 def fetch_headlines() -> list[tuple[str, str]]:
-    """Return list of (title, url) from all configured Google News RSS feeds."""
-    items = []
+    """Return eligible (title, url) pairs, interleaved across feeds."""
+    per_feed = []
     for feed_url in RSS_URLS.values():
+        feed_items = []
         try:
             raw = http_get(feed_url)
             root = ET.fromstring(raw)
             for item in root.findall("./channel/item"):
                 t = strip_tags(item.findtext("title", default=""))
                 link = (item.findtext("link", default="") or "").strip()
-                if t and not is_sports_title(t):
-                    items.append((t, link))
-                if len(items) >= MAX_HEADLINES:
+                if t and is_jiji_eligible_title(t):
+                    feed_items.append((t, link))
+                if len(feed_items) >= MAX_PER_FEED:
                     break
         except Exception as e:
             print(f"  [fetch_google_headlines] feed failed, continuing: {e}", file=sys.stderr)
-        if len(items) >= MAX_HEADLINES:
-            break
-    return items
+        per_feed.append(feed_items)
+    # 1フィードが先頭を独占しないよう、各フィードから1件ずつ巡回して並べる。
+    items = []
+    for rank in range(MAX_PER_FEED):
+        for feed_items in per_feed:
+            if rank < len(feed_items):
+                items.append(feed_items[rank])
+    return items[:MAX_HEADLINES]
 
 
 def main():
@@ -124,15 +167,12 @@ def main():
         if url:
             meta[t] = {"url": url}
         k = title_key(t)
-        # double-check sports filter (already filtered in fetch, but keep for safety)
-        if is_sports_title(t):
-            continue
         if k and k not in past_keys:
             lines.append(f"\u25a0 {t}")
 
-    # Even if all are read, output all titles (caller handles empty unread) — still exclude sports
+    # Even if all are read, output all eligible titles (caller handles empty unread)
     if not lines:
-        lines = [f"\u25a0 {t}" for t, _url in items if not is_sports_title(t)]
+        lines = [f"\u25a0 {t}" for t, _url in items]
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:

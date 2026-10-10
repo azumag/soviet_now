@@ -19,7 +19,7 @@ def _norm(text: str) -> str:
 _ENTERTAINMENT_TERMS = (
     "芸能", "エンタメ", "アイドル", "タレント", "お笑い", "芸人", "声優",
     "俳優", "女優", "主演", "歌手", "映画", "音楽", "花火", "芸術家",
-    "テレビ番組", "24時間テレビ",
+    "テレビ番組", "24時間テレビ", "キャラクター",
     "熱愛", "不倫", "恋人", "結婚発表", "離婚発表", "交際発表", "写真集", "♥",
     "ドラマ", "映画公開", "映画『", "映画「", "アニメ", "漫画", "コミック",
     "ライブ開催", "コンサート", "新曲", "ニューアルバム", "視聴率",
@@ -64,6 +64,46 @@ _LOW_VALUE_OUTLETS = (
     "選挙ドットコム",
 )
 
+# Weekly-magazine / soft-news outlets.  Matched exactly against the trailing
+# " - 媒体名" of a Google News title so short names never hit ordinary words.
+_TABLOID_OUTLETS = frozenset(_norm(name) for name in (
+    "文春オンライン", "週刊文春", "日刊ゲンダイDIGITAL", "日刊ゲンダイ", "デイリー新潮",
+    "週刊新潮", "女性自身", "週刊女性PRIME", "NEWSポストセブン", "SmartFLASH",
+    "FRIDAYデジタル", "東スポWEB", "東スポ", "夕刊フジ", "zakzak", "日刊SPA!",
+    "ENCOUNT", "Sirabee", "オトナンサー", "まいどなニュース", "CREA WEB",
+    "集英社オンライン", "アサ芸プラス", "よろず～ニュース", "J-CAST ニュース",
+    "J-CASTニュース", "デイリースポーツ", "New York Post", "Daily Mail", "The Sun", "TMZ",
+))
+
+# Sex crimes, petty scandal and clickbait framing.  A headline that also names a
+# concrete institutional response (law, ordinance, Diet debate) is kept: the
+# story is then about the system, not about the lurid detail.
+_SENSATIONAL_TERMS = (
+    "ソープ", "売春", "買春", "わいせつ", "猥褻", "盗撮", "痴漢", "性的暴行",
+    "下着", "風俗店", "パパ活", "不倫", "愛人", "万引き", "不適切動画",
+    "不適切投稿", "迷惑動画", "《", "嗚咽", "呆れた", "素顔", "ワケ", "“異変”",
+    "ネット騒然", "話題に", "無断撮影", "無断投稿", "金賞",
+)
+_INSTITUTIONAL_RESPONSE_TERMS = (
+    "法改正", "改正法", "法案", "条例", "制度", "国会", "閣議", "審議会", "規制",
+)
+
+
+def _source_suffix(title: str) -> str:
+    match = re.search(r"\s[-–—]\s([^-–—]{1,80})$", title or "")
+    return _norm(match.group(1)) if match else ""
+
+
+def is_tabloid_news_title(title: str) -> bool:
+    """Return True for tabloid outlets or lurid/clickbait headlines."""
+    if _source_suffix(title) in _TABLOID_OUTLETS:
+        return True
+    norm = _norm(title)
+    return any(term in norm for term in _SENSATIONAL_TERMS) and not any(
+        term in norm for term in _INSTITUTIONAL_RESPONSE_TERMS
+    )
+
+
 # Google News search/topic feeds sometimes return weakly related consumer stories.
 # For those feeds, require at least one explicit public-affairs or economy signal
 # in the headline.  Other curated feeds (NHK politics / Global Voices) do not use
@@ -75,6 +115,8 @@ _PUBLIC_INTEREST_TERMS = (
     "医療", "病院", "感染", "福祉", "介護", "教育", "学校", "子育て", "少子", "人口",
     "労働", "雇用", "賃金", "給与", "パワハラ", "人権", "市民権", "移民", "難民",
     "農業", "農家", "食料", "コメ", "環境", "気候", "公害", "インフラ",
+    "選管", "最高裁", "高裁", "地裁", "当局", "入管", "不法就労", "補助金", "助成金",
+    "サイバー", "ランサム", "個人情報",
     # politics, government, diplomacy, security
     "政府", "国会", "首相", "大統領", "閣僚", "外相", "防衛相", "知事", "市長", "議会",
     "選挙", "政党", "与党", "野党", "自民", "立民", "公明", "維新", "国民民主", "中道",
@@ -109,6 +151,8 @@ def is_low_value_news_title(title: str) -> bool:
         return True
     if any(term in norm for term in _LOW_VALUE_OUTLETS):
         return True
+    if is_tabloid_news_title(title):
+        return True
     # A generic word such as 「発売」 alone can occur in business/regulatory news.
     # Require both a consumer-product noun and a launch/review/sale action.
     return (
@@ -121,6 +165,23 @@ def is_public_interest_news_title(title: str) -> bool:
     """Return True when a headline explicitly concerns public affairs/business."""
     norm = _norm(title)
     return bool(norm) and any(term in norm for term in _PUBLIC_INTEREST_TERMS)
+
+
+# Words that only say "a crime/incident happened".  A local arrest story carries
+# these and nothing else; the jiji corner needs a wider public-affairs signal.
+_INCIDENT_ONLY_TERMS = frozenset((
+    "社会", "事件", "事故", "逮捕", "容疑", "起訴", "警察",
+    "police", "arrest", "crime",
+))
+
+
+def is_public_affairs_beyond_incident_title(title: str) -> bool:
+    """Return True when a public-affairs signal other than crime words is present."""
+    # A suspect's nationality (「中国籍の男」) is not an international-affairs story.
+    norm = re.sub(r"[一-龥ァ-ヶー]{1,8}籍", "", _norm(title))
+    return bool(norm) and any(
+        term in norm for term in _PUBLIC_INTEREST_TERMS if term not in _INCIDENT_ONLY_TERMS
+    )
 
 
 FILTER_REASON_LOW_VALUE_TOPIC = "low_value_topic"
