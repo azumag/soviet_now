@@ -40,6 +40,30 @@ test('canvas capture exposes fixed phase timings without changing capture freshn
   assert.equal(frame.captureMs, 20);
 });
 
+test('cdp backend exposes the same fixed phase timings without the Playwright wrapper', async () => {
+  let clock = 0;
+  const session = {
+    async send(method) {
+      if (method === 'Runtime.evaluate') { clock += 7; return { result: { value: geometry } }; }
+      assert.equal(method, 'Page.captureScreenshot');
+      clock += 13;
+      return { data: png(800, 450).toString('base64') };
+    },
+    async detach() {},
+  };
+  const page = {
+    context: () => ({ async newCDPSession() { return session; } }),
+    async screenshot() { throw new Error('Playwright screenshot wrapper must not run'); },
+  };
+  const frame = await createCanvasIO({ now: () => clock }).capture(page, { backend: 'cdp' });
+  assert.deepEqual(Object.keys(frame.captureStageMs), CAPTURE_PROFILE_STAGES);
+  assert.deepEqual(frame.captureStageMs, {
+    geometryBefore: 7, screenshot: 13, imageValidate: 0, geometryAfter: 7,
+  });
+  assert.equal(frame.capturedAt, 7);
+  assert.equal(frame.captureMs, 20);
+});
+
 test('drop profile accepts only complete numeric capture timing objects and never persists free text', async () => {
   let clock = 0;
   const metrics = new LoopMetrics({ now: () => clock });
