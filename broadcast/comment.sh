@@ -1017,6 +1017,42 @@ print("\n".join(hints) if hints else "（なし）")
 PY
 }
 
+# docich の「特別コーナー」(OBS/SRT で受けた配信者PCのゲーム映像 = external-video-view)
+# 用のコメントUIメモ。WebUI で設定したタイトル・説明を docich が canonical と同じ
+# state dir の special_corner_memo.md へ書き出す。ここではメイン画面(canonical の
+# active.game)が external-video-view のときだけ、そのファイルを毎回読み直して返す。
+# 設定変更はファイルの再読込だけで効く(この関数自体の変更は eloop 再起動で反映)。
+_comment_special_corner_memo() {
+	local ctx="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	local memo="${DOCICH_SPECIAL_CORNER_MEMO_FILE:-$(dirname "$ctx")/special_corner_memo.md}"
+	[ -f "$ctx" ] && [ -f "$memo" ] || return 0
+	# Cheap pre-check: only parse when the canonical mentions the view at all.
+	grep -q '"external-video-view"' "$ctx" 2>/dev/null || return 0
+	python3 - "$ctx" "$memo" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    raise SystemExit(0)
+active = data.get("active") if isinstance(data, dict) else None
+if not isinstance(active, dict) or active.get("game") != "external-video-view":
+    raise SystemExit(0)
+try:
+    with open(sys.argv[2], "rb") as fh:
+        raw = fh.read(8192)
+except OSError:
+    raise SystemExit(0)
+text = raw.decode("utf-8", "ignore")
+# docich already validates the settings; drop template/shell metacharacters and
+# control characters again so a damaged file cannot reach the prompt template.
+text = "".join(ch for ch in text if ch == "\n" or (ch >= " " and ch not in "$`\\<>\x7f"))
+sys.stdout.write(text.strip("\n"))
+PY
+}
+
 # soren91(メリケンAI)中に本編(ソレンゲーム)のスコア歴を読み上げさせないための
 # 差し替えメモ。ソ連ゲーム91はスコアの概念がなく順位で振り返るゲームなので、
 # 本編のスコア・建国統計を「いまの画面のゲームのもの」として注入すると誤読する。
@@ -1283,7 +1319,7 @@ soren_game_state_file = sys.argv[13] if len(sys.argv) > 13 else ""
 soren_game_count_file = sys.argv[14] if len(sys.argv) > 14 else ""
 soren_improve_paused_file = sys.argv[15] if len(sys.argv) > 15 else ""
 
-GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)"}
+GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)", "external-video-view": "特別コーナー(配信者のPCで遊んでいるゲームの映像をOBSから受けて映している。内容はコメントUIメモの特別コーナー節を見る)"}
 ROUTING = (
     "- 返答の話題はメイン画面のゲームに合わせる。コメントがソ連ゲームの話"
     "(ソ連建国・スコア・戦略改善)なら、画面が違ってもソレンゲームの話として答える"
@@ -3311,6 +3347,11 @@ else:
 		fi
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
+		if [ "$_mode_suffix" = "main" ]; then
+			local _special_corner_memo=""
+			_special_corner_memo=$(_comment_special_corner_memo)
+			[ -n "$_special_corner_memo" ] && _comment_ui_memo="${_comment_ui_memo}"$'\n'"${_special_corner_memo}"
+		fi
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
 		if [ "$_comment_mode_generated" = "soren91" ]; then
 			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、内容のある話題なら3-5文を目安にすること。短い質問・訂正・相づちには要点を先に1-2文で返してよい。文量を満たすための水増しは禁止。会話を続けるだけの質問は足さないこと\n- メリケンAIらしく、内容に合う時だけ短い皮肉・ツッコミ・意外な比喩を添えてよい。ただし質問の答えや真面目な話題を冗談で置き換えないこと\n- ただし azumagbanjo、azumagdev、または表示名「あずまぐ」の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
