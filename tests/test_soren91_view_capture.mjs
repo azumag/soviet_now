@@ -97,12 +97,8 @@ for (const dpr of [1, 2]) for (const scale of new Set([1, dpr])) {
 test('native JPEG keeps format/quality and validates actual dimensions', async () => {
   const f = fixture({ native: opts => {
     assert.deepEqual(opts, { format: 'jpeg', fromSurface: false, captureBeyondViewport: false, quality: 95 });
-    return { data: 'unused' };
-  } });
-  f.state.native = opts => {
-    assert.deepEqual(opts, { format: 'jpeg', fromSurface: false, captureBeyondViewport: false, quality: 95 });
     return { data: jpeg().toString('base64') };
-  };
+  } });
   const frame = await f.io.capture(f.page, { view: true, type: 'jpeg', quality: 100 });
   assert.equal(frame.format, 'jpeg'); assert.equal(frame.width, 1280);
 });
