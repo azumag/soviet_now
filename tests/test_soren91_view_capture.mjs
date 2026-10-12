@@ -97,8 +97,12 @@ for (const dpr of [1, 2]) for (const scale of new Set([1, dpr])) {
 test('native JPEG keeps format/quality and validates actual dimensions', async () => {
   const f = fixture({ native: opts => {
     assert.deepEqual(opts, { format: 'jpeg', fromSurface: false, captureBeyondViewport: false, quality: 95 });
-    return { data: jpeg().toString('base64') };
+    return { data: 'unused' };
   } });
+  f.state.native = opts => {
+    assert.deepEqual(opts, { format: 'jpeg', fromSurface: false, captureBeyondViewport: false, quality: 95 });
+    return { data: jpeg().toString('base64') };
+  };
   const frame = await f.io.capture(f.page, { view: true, type: 'jpeg', quality: 100 });
   assert.equal(frame.format, 'jpeg'); assert.equal(frame.width, 1280);
 });
@@ -145,12 +149,19 @@ test('input keeps the fresh/calibration/geometry checks and rejects a now-hidden
 });
 
 test('timeout retires the session, never overlaps capture, and disables native retry', async () => {
-  const f = fixture(); let rejectNative;
-  f.state.native = () => new Promise((_, reject) => { rejectNative = reject; });
+  const f = fixture(); let rejectNative, markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  f.state.native = () => new Promise((_, reject) => {
+    rejectNative = reject;
+    markStarted();
+  });
   const first = f.io.capture(f.page, { view: true, timeoutMs: 20 });
-  await new Promise(resolve => setImmediate(resolve));
+  // Register the expected rejection before yielding: a busy CI event loop may
+  // expire the timer before setImmediate runs. Synchronize on capture startup.
+  const timedOut = assert.rejects(first, /capture-timeout/);
+  await started;
   await assert.rejects(f.io.capture(f.page, { view: true }), /capture-session-busy/);
-  await assert.rejects(first, /capture-timeout/);
+  await timedOut;
   await assert.rejects(f.io.capture(f.page, { view: true }), /capture-session-busy/);
   rejectNative(new Error('fixture detached'));
   await new Promise(resolve => setImmediate(resolve));
