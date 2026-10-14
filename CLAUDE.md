@@ -212,6 +212,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 - 12ゲームサイクルの開始時に「建国できる？」予想を作成 - 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
 - ソ連建国・粛清は即 resolve、ロシア建国は12ゲーム後に判定
+- **賭けが成立していない予想は resolve せず CANCEL にして全額返却する**（2026-10-15 オーナー判断）。`resolve` の直前に `GET /helix/predictions` の `outcomes[].users` / `channel_points` を見て、賭けが入った選択肢が1つ以下（0件を含む）なら PATCH `CANCELED` に切り替える。判定不能・リモート取得失敗のときは現行どおり resolve する（settle を新しい理由で止めない）
 - azumagdev ボットが GQL API でランダムに1票自動投票。`TWITCH_BOT_GQL_TOKEN` 設定時は残高の10%を賭ける。未設定時は固定 `TWITCH_AUTO_VOTE_POINTS`（デフォルト10pt）
 - `cleanup` サブコマンドで `PREDICTION_MAX_GAMES`（デフォルト12）超過等の古い予想状態を自動クリア
 - `TWITCH_PREDICTIONS_ENABLED=1` と `TWITCH_PREDICTIONS_TOKEN` が必要（チャネルオーナートークン）
