@@ -67,6 +67,18 @@ export function postDropBoardAdvanceMs(env = process.env) {
     : DEFAULT_POSTDROP_BOARD_ADVANCE_MS;
 }
 
+// How long a sent drop keeps offering its post-click advance path. Three
+// remote frames (~1.2s each) fit the default, which covers the frame that
+// cannot identify the new piece yet plus the first frame that can.
+export const DEFAULT_POSTDROP_WINDOW_MS = 4_000;
+
+export function postDropWindowMs(env = process.env) {
+  const raw = Number(env?.SOREN91_POSTDROP_WINDOW_MS);
+  return Number.isFinite(raw) && raw >= DEFAULT_SINGLE_FRAME_ADVANCE_MS
+    ? raw
+    : DEFAULT_POSTDROP_WINDOW_MS;
+}
+
 export function markDropSent(calibration, now = Date.now()) {
   if (!calibration || typeof calibration !== 'object') return false;
   const previous = observations.get(calibration);
@@ -75,7 +87,12 @@ export function markDropSent(calibration, now = Date.now()) {
     pendingDrops.delete(calibration);
     return false;
   }
-  pendingDrops.set(calibration, { at: now, previousAt: previous.at });
+  // The placed piece's type is the baseline for the expected change: after a
+  // sent drop the next controllable piece is a different one, so comparing
+  // against it proves the queue advanced even when the first post-click frame
+  // could not identify anything.
+  pendingDrops.set(calibration, { at: now, previousAt: previous.at,
+    previousCurrent: previewType(previous.next) });
   return true;
 }
 
@@ -235,11 +252,20 @@ export function gateObservation(state, calibration, now = Date.now()) {
     piece?.temporalSource === 'shifted' || piece?.temporalSource === 'same-turn');
 
   const pendingDrop = pendingDrops.get(calibration);
-  const postDropBoundary = !!pendingDrop && !!previous
-    && pendingDrop.previousAt === previous.at
-    && now >= pendingDrop.at;
-  const postDropElapsedMs = postDropBoundary ? now - pendingDrop.at : null;
-  if (pendingDrop && !postDropBoundary) pendingDrops.delete(calibration);
+  const postDropAgeMs = pendingDrop ? now - pendingDrop.at : null;
+  // The post-click boundary stays available for a bounded window instead of a
+  // single frame. On the remote cadence the first frame after the click often
+  // cannot identify the new controllable piece yet (the previous one is still
+  // falling), and a one-shot boundary made the whole post-drop advance path
+  // unreachable there: measured 5-6 observations and 9-10s per drop, where the
+  // intended fast path is 2 (docich#414 speed work). Bounded by wall time so a
+  // click that was never accepted cannot reopen the path much later.
+  const postDropWindow = !!pendingDrop && Number.isFinite(postDropAgeMs)
+    && postDropAgeMs >= 0 && postDropAgeMs <= postDropWindowMs();
+  const postDropBoundary = postDropWindow && !!previous
+    && pendingDrop.previousAt <= previous.at;
+  const postDropElapsedMs = postDropBoundary ? postDropAgeMs : null;
+  if (pendingDrop && !postDropWindow) pendingDrops.delete(calibration);
 
   const current = {
     ...state,
@@ -259,7 +285,8 @@ export function gateObservation(state, calibration, now = Date.now()) {
   if (!next || next.fallback || !(next.confidence >= 0.58)) reason = 'unknown-current';
   else if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
-  else if (!previous || !previous.usable || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
+  else if (!previous || !(previous.usable || (postDropWindow && previous.frameValid))
+      || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
   else {
     const sameTypeVerticalMotion = previewType(previous.next) === previewType(next)
       && Number.isFinite(previous.next?.y) && Number.isFinite(next.y)
@@ -268,18 +295,26 @@ export function gateObservation(state, calibration, now = Date.now()) {
     const currentChanged = previewType(previous.next) != null
       && previewType(next) != null
       && previewType(previous.next) !== previewType(next);
+    // Inside the bounded post-drop window the baseline for "the current piece
+    // changed" is the piece that was placed, not the immediately preceding
+    // frame: that frame often cannot identify the new piece yet, and comparing
+    // against it made the intended fast path unreachable on the live cadence.
+    const postDropCurrentChanged = !!pendingDrop && postDropBoundary
+      && previewType(next) != null
+      && pendingDrop.previousCurrent != null
+      && previewType(next) !== pendingDrop.previousCurrent;
 
     // Do not mistake the expected PRE-drop -> POST-drop board delta for ongoing
-    // motion. This is only available after a click was actually sent, only for
-    // the first following observation, and only after enough wall time for the
-    // game-side drop/settle window. A same-type current visibly moving through
-    // the spawn band remains blocked exactly as before.
+    // motion. This is only available after a click was actually sent, only
+    // inside the bounded post-drop window, and only after enough wall time for
+    // the game-side drop/settle window. A same-type current visibly moving
+    // through the spawn band remains blocked exactly as before.
     postDropAdvanceUsed = postDropBoundary
       && postDropSingleFrameEnabled()
       && !sameTypeVerticalMotion
       && !boardStable
       && (
-        (currentChanged && postDropElapsedMs >= singleFrameAdvanceMs())
+        ((currentChanged || postDropCurrentChanged) && postDropElapsedMs >= singleFrameAdvanceMs())
         || postDropElapsedMs >= postDropBoardAdvanceMs()
       );
 
@@ -308,6 +343,11 @@ export function gateObservation(state, calibration, now = Date.now()) {
   }
 
   current.usable = !['unknown-current', 'uncalibrated', 'invalid-board'].includes(reason);
+  // A frame whose calibration and board reading are sound stays a valid
+  // continuity baseline even when the controllable piece was not identified
+  // yet (unknown-current). Only the bounded post-drop window may use it, so a
+  // generic detection miss still requires a fresh confirmation.
+  current.frameValid = !['uncalibrated', 'invalid-board'].includes(reason);
 
   const rawHoldPresent = Boolean(state.hold);
   const rawHoldKnown = rawHoldPresent && !state.hold.fallback && state.hold.confidence >= 0.6;
@@ -331,7 +371,8 @@ export function gateObservation(state, calibration, now = Date.now()) {
   if (holdKnownEmpty) stableReason += '-hold-empty';
 
   observations.set(calibration, current);
-  if (postDropBoundary) pendingDrops.delete(calibration);
+  // The boundary is not consumed by one frame: markDropSent() overwrites it
+  // with the next sent drop, and the wall-clock window above expires it.
   return {
     ...state,
     next,

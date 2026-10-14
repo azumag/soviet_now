@@ -96,6 +96,44 @@ test('a sent drop can use a settled first post-drop board delta instead of a sec
   assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
 }));
 
+const board = entries => entries.map(([type, x, y]) =>
+  ({ type, x, y, r: 0.207, confidence: 0.9 }));
+
+test('an unrecognised first post-drop frame still reaches the advance path on the next frame', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0, { pieces: board([[1, 0, -4]]) }), cal, 1000);
+  assert.equal(gateObservation(observation([1, 2, 3], 0, { pieces: board([[1, 0, -4]]) }), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  // Measured live sequence: the placed piece is still falling and the new
+  // controllable piece is not identified yet, so the first post-click frame
+  // cannot act. It must still leave a valid continuity baseline.
+  const missed = gateObservation(observation([null, 3, 4], 1,
+    { pieces: board([[1, 1, -3.4], [2, 0, -4]]) }), cal, 3700);
+  assertBlocked(missed, 'unknown-current');
+  // The next frame identifies the new piece while the board is still settling:
+  // the bounded post-drop window accepts it instead of spending two more frames
+  // on settle + confirmation (which cost ~2.4s per drop on the remote cadence).
+  const advanced = gateObservation(observation([4, 5, 6], 1,
+    { pieces: board([[1, 1, -3.0], [2, 0, -4]]) }), cal, 4900);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+}));
+
+test('the post-drop window is bounded so an expired boundary cannot reopen the path', () => withRemoteCadence(() => {
+  const saved = process.env.SOREN91_POSTDROP_WINDOW_MS;
+  process.env.SOREN91_POSTDROP_WINDOW_MS = '1500';
+  try {
+    const cal = calibration();
+    gateObservation(observation([1, 2, 3], 0), cal, 1000);
+    assert.equal(gateObservation(observation([1, 2, 3], 0), cal, 2200).state, 'MOVE');
+    assert.equal(markDropSent(cal, 2500), true);
+    assertBlocked(gateObservation(observation([4, 5, 6], 1), cal, 4200), 'preview-changed');
+  } finally {
+    if (saved === undefined) delete process.env.SOREN91_POSTDROP_WINDOW_MS;
+    else process.env.SOREN91_POSTDROP_WINDOW_MS = saved;
+  }
+}));
+
 test('post-drop board delta still waits when the first frame arrives before the conservative settle floor', () => withRemoteCadence(() => {
   const cal = calibration();
   gateObservation(observation([1, 1, 1], 0), cal, 1000);

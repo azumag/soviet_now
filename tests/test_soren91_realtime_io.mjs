@@ -94,19 +94,59 @@ test('only a fully visible, finite, axis-aligned canvas geometry is accepted', (
   }
   assert.equal(sameGeometry(G, { ...G, dpr: 2 }), false);
 });
-test('capture uses one reusable session and exactly geometry/canvas/geometry without locator waits', async () => {
+test('capture uses one reusable session, one verified geometry per frame, and no locator waits', async () => {
   const page = mockPage(); const io = createCanvasIO();
   const frame = await io.capture(page);
   await io.capture(page);
   assert.equal(frame.width, 800);
   assert.equal(page.counts().attaches, 1);
+  // The geometry read before the screenshot is reused from the previous
+  // frame's verified sample, so only the post-screenshot read runs again
+  // (docich#414 speed work: each remote round trip is ~0.3s).
   assert.deepEqual(page.calls.map(c => c.method), ['Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate',
-    'Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate']);
+    'Page.screenshot', 'Runtime.evaluate']);
   const opts = page.calls[1].args;
   assert.equal(opts.scale, 'css');
   assert.ok(opts.timeout > 0 && opts.timeout <= 3000);
   assert.equal(opts.fullPage, undefined);
   assert.deepEqual(opts.clip, { x: 10, y: 20, width: 800, height: 450 });
+  io.close(page);
+});
+test('a geometry sample is reused only while it is fresh; reuse expiry re-reads it', async () => {
+  const saved = process.env.SOREN91_GEOMETRY_REUSE_MS;
+  try {
+    const page = mockPage(); const io = createCanvasIO();
+    await io.capture(page);
+    await io.capture(page);
+    assert.deepEqual(page.calls.map(c => c.method).slice(3), ['Page.screenshot', 'Runtime.evaluate']);
+
+    process.env.SOREN91_GEOMETRY_REUSE_MS = '0';
+    const strict = mockPage(); const strictIo = createCanvasIO();
+    await strictIo.capture(strict);
+    await strictIo.capture(strict);
+    assert.deepEqual(strict.calls.map(c => c.method),
+      ['Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate',
+        'Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate']);
+    strictIo.close(strict);
+    io.close(page);
+  } finally {
+    if (saved === undefined) delete process.env.SOREN91_GEOMETRY_REUSE_MS;
+    else process.env.SOREN91_GEOMETRY_REUSE_MS = saved;
+  }
+});
+test('a rejected frame drops the reused geometry so the next frame re-reads it', async () => {
+  // Frame 1 is verified. Frame 2 moves the canvas during transfer, so its
+  // reused baseline is rejected. Frame 3 must sample the geometry again
+  // instead of trusting the rejected sample.
+  const page = mockPage({ geometries: [G, G, { ...G, x: 11 }, { ...G, x: 11 }, { ...G, x: 11 }] });
+  const io = createCanvasIO();
+  await io.capture(page);
+  await assert.rejects(io.capture(page), /geometry-changed/);
+  await io.capture(page);
+  assert.deepEqual(page.calls.map(c => c.method),
+    ['Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate',
+      'Page.screenshot', 'Runtime.evaluate',
+      'Runtime.evaluate', 'Page.screenshot', 'Runtime.evaluate']);
   io.close(page);
 });
 for (const [name, patch] of Object.entries({ resize: { width: 801 }, scroll: { scrollY: 2 },

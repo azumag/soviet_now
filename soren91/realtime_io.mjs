@@ -46,6 +46,16 @@ export function captureErrorLimit(env = process.env) {
   return Number.isFinite(raw) && raw >= 1 ? Math.min(Math.floor(raw), 200) : 30;
 }
 
+// How long a frame-verified canvas geometry stays the baseline for the next
+// frame. Each remote CDP round trip costs ~0.3s on the Mac link and the drop
+// cadence is dominated by them (docich#414 speed work): the geometry read
+// before the screenshot is reused from the previous frame's verified sample
+// while the post-screenshot read still runs every frame, so any change is
+// still caught before the frame is used. Env override: SOREN91_GEOMETRY_REUSE_MS.
+export function geometryReuseMs(env = process.env) {
+  return boundedMs(env?.SOREN91_GEOMETRY_REUSE_MS, 5000, 0, 60000);
+}
+
 /** A duration is a wall-clock budget, not a number of slow screenshots. */
 export function probeBudget(durationMs, intervalMs, now = () => performance.now()) {
   const duration = boundedMs(durationMs, 1200, 40, 5000);
@@ -158,6 +168,8 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
   // Sticky per page, including across session retirement. Never repeatedly try
   // an unsupported native capture or publish a frame from a failed attempt.
   const viewDisabled = new WeakSet();
+  // Last frame-verified canvas geometry per page. See geometryReuseMs().
+  const geometryBaseline = new WeakMap();
   const expression = `(${canvasGeometryInPage.toString()})()`;
 
   function retire(page, entry) {
@@ -230,7 +242,11 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
       let usedView = false;
       return run(page, timeoutMs, async (session, check, remaining) => {
         const geometryBeforeStartedAt = now();
-        const before = await geometry(session, check);
+        const cachedBaseline = geometryBaseline.get(page);
+        const reuseMs = geometryReuseMs();
+        const reusable = cachedBaseline && validGeometry(cachedBaseline.geometry)
+          && reuseMs > 0 && now() - cachedBaseline.at <= reuseMs;
+        const before = reusable ? cachedBaseline.geometry : await geometry(session, check);
         const geometryBeforeEndedAt = now();
         const capturedAt = geometryBeforeEndedAt; // Preserve existing freshness semantics.
         const screenshotStartedAt = capturedAt;
@@ -277,8 +293,12 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         const after = await geometry(session, check);
         const geometryAfterEndedAt = now();
         if (!sameGeometry(before, after) || (usedView && !viewCaptureEligible(after))) {
+          // Never keep a baseline that no longer matches the page. The next
+          // frame re-reads it instead of reusing a stale sample.
+          geometryBaseline.delete(page);
           throw new Error('capture-geometry-changed');
         }
+        geometryBaseline.set(page, { geometry: after, at: geometryAfterEndedAt });
         return {
           buffer, format: type, captureBackend: usedView ? 'view' : 'playwright', geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
           captureStageMs: {
@@ -290,6 +310,12 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         };
       }).catch(error => {
         if (usedView) viewDisabled.add(page);
+        // A geometry or scale divergence retires the reused baseline so the
+        // next frame re-reads the page instead of trusting an old sample.
+        if (error?.message === 'capture-invalid-geometry'
+            || error?.message === 'capture-pixel-scale-mismatch') {
+          geometryBaseline.delete(page);
+        }
         throw error; // No input or second screenshot in this failed iteration.
       });
     },
