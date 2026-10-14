@@ -338,11 +338,12 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     writeFileSync() {}, appendFileSync() {},
     loadCommentModule: async () => null,
     midgameCommentStatus,
-    captureGameScreenshot: async () => { shots++; now += captureMs; return observation; },
+    captureGameScreenshot: async () => { shots++; now += captureMs; return typeof observation === 'function' ? observation(shots) : observation; },
     loadModule: async () => ({
       generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
       analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
-        pieces, confidence: 1, perception: { reason: shots <= blocked ? blockedReason : 'stable' } }),
+        pieces, confidence: 1, perception: { reason: shots <= blocked
+          ? (typeof blockedReason === 'function' ? blockedReason(shots) : blockedReason) : 'stable' } }),
     }),
     loadStrategy: async () => ({ decide: () => ({ x: 0, reason: 'test', hold: hold && decisions++ === 0 }) }),
     executeHold: async () => { holds++; now += 300; },
@@ -424,6 +425,20 @@ test('every other rejection reason still waits, never a blind drop', async () =>
     assert.equal(s.drops, 0, reason);
     assert.equal(s.logs.some(line => line.includes('Recognition hold escape')), false, reason);
   }
+});
+test('intervening settling observations break the real loop escape streak', async () => {
+  for (const reason of ['board-moving', 'preview-changed', 'invalid-board']) {
+    const s = await simulateLoop({ blocked: 100, maxDrops: 1, captureMs: 1200,
+      blockedReason: shot => shot % 4 === 0 ? reason : 'unknown-current',
+      observation: stalledFrame, calibration: validCalibration() });
+    assert.equal(s.drops, 0, reason);
+  }
+});
+test('an intervening geometry mismatch also breaks the real loop escape streak', async () => {
+  const s = await simulateLoop({ blocked: 100, maxDrops: 1, captureMs: 1200,
+    observation: shot => shot % 4 === 0 ? { width: 800, height: 450 } : stalledFrame,
+    calibration: validCalibration() });
+  assert.equal(s.drops, 0);
 });
 test('diagnostic receives the original capture bytes only for an eligible rejection', async () => {
   const frame = { buffer: Buffer.from('original captured bytes'), format: 'jpeg', width: 960, height: 540 };

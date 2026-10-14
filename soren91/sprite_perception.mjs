@@ -139,6 +139,32 @@ export function createSpriteDescriptor(data, width, height, component) {
   return rgba;
 }
 
+let topOccludedTemplates;
+function templatesBehindHud() {
+  // Only the physical cursor can be hidden behind the HUD. Build bounded
+  // upper-edge variants from the independently labelled artwork, never from
+  // the frame being classified. HUD and settled-board callers do not use them.
+  if (topOccludedTemplates) return topOccludedTemplates;
+  topOccludedTemplates = templates.flatMap(template => {
+    const pixels = [];
+    for (let p = 0; p < DESCRIPTOR_SIZE ** 2; p++) {
+      if (template.pixels[p * 4 + 3] >= 128) pixels.push(p);
+    }
+    const top = Math.min(...pixels.map(p => Math.floor(p / DESCRIPTOR_SIZE)));
+    const bottom = Math.max(...pixels.map(p => Math.floor(p / DESCRIPTOR_SIZE))) + 1;
+    return [0.1, 0.2, 0.3, 0.35].map(topCrop => {
+      const kept = pixels.filter(p => Math.floor(p / DESCRIPTOR_SIZE) >= top + (bottom - top) * topCrop);
+      const xs = kept.map(p => p % DESCRIPTOR_SIZE), ys = kept.map(p => Math.floor(p / DESCRIPTOR_SIZE));
+      const left = Math.min(...xs), right = Math.max(...xs) + 1;
+      const upper = Math.min(...ys), lower = Math.max(...ys) + 1;
+      const bounds = { left, right, top: upper, bottom: lower, width: right - left, height: lower - upper };
+      return { ...template, id: `${template.id}:hud-${topCrop}`, topCrop,
+        pixels: createSpriteDescriptor(template.pixels, DESCRIPTOR_SIZE, DESCRIPTOR_SIZE, { pixels: kept, bounds }) };
+    });
+  });
+  return topOccludedTemplates;
+}
+
 function hasMultipleColours(data, component) {
   const bins = new Map();
   for (const pixel of component.pixels) {
@@ -197,24 +223,54 @@ export function classifySpriteComponent(data, width, height, component, options 
   const descriptor = createSpriteDescriptor(data, width, height, component);
   if (!descriptor) return unknown('invalid-sprite');
   const byType = new Map();
-  for (const template of templates) {
-    if (options.excludeSource && template.source === options.excludeSource) continue;
-    const score = spriteDescriptorDistance(descriptor, template.pixels);
-    const previous = byType.get(template.type);
-    if (!previous || score < previous.score) byType.set(template.type, { type: template.type, score, template });
+  const compare = references => {
+    for (const template of references) {
+      if (options.excludeSource && template.source === options.excludeSource) continue;
+      const score = spriteDescriptorDistance(descriptor, template.pixels);
+      const previous = byType.get(template.type);
+      if (!previous || score < previous.score) byType.set(template.type, { type: template.type, score, template });
+    }
+  };
+  const result = (maximum, minimumMargin) => {
+    const matches = [...byType.values()].sort((a, b) => a.score - b.score);
+    const best = matches[0], second = matches[1];
+    if (!best) return unknown('no-templates');
+    const margin = second ? second.score - best.score : 1;
+    const detail = { score: best.score, margin, templateId: best.template.id };
+    if (best.score > maximum || margin < minimumMargin) return { ...unknown('ambiguous-flag'), ...detail };
+    const confidence = Math.min(best.template.source === 'soviet_now.png' ? 0.82 : 0.94,
+      0.6 + 0.34 * Math.max(0, 1 - best.score / maximum));
+    return { type: best.type, confidence: Math.round(confidence * 100) / 100,
+      fallback: false, recognitionSource: 'flag-template', ...detail, reason: 'matched-flag' };
+  };
+  compare(templates);
+  const complete = result(options.maxDistance ?? 0.18, options.minMargin ?? 0.045);
+  if (complete.type != null || !options.allowTopOcclusion) return complete;
+  compare(templatesBehindHud());
+  // Partial evidence needs a closer match and larger inter-country margin.
+  // Keep complete-template rivals in the comparison; ambiguity stays closed.
+  return result(Math.min(options.maxDistance ?? 0.18, 0.12), Math.max(options.minMargin ?? 0.045, 0.06));
+}
+
+function deadlineAntialiasRows(data, width, height, board) {
+  const red = (r, g, b) => r >= 70 && r - g > 40 && r - b > 40;
+  const radius = Math.max(4, Math.ceil(height / 120));
+  const rows = [];
+  for (let y = Math.max(0, Math.floor(board.top - radius)); y <= Math.min(height - 1, Math.ceil(board.top + radius)); y++) {
+    let count = 0, samples = 0;
+    for (let x = Math.max(0, Math.ceil(board.left + 2)); x < Math.min(width, board.right - 2); x += 2) {
+      const i = (y * width + x) * 4;
+      if (red(data[i], data[i + 1], data[i + 2])) count++;
+      samples++;
+    }
+    if (samples && count / samples >= 0.7) rows.push(y);
   }
-  const matches = [...byType.values()].sort((a, b) => a.score - b.score);
-  const best = matches[0], second = matches[1];
-  if (!best) return unknown('no-templates');
-  const margin = second ? second.score - best.score : 1;
-  const maximum = options.maxDistance ?? 0.18;
-  const minimumMargin = options.minMargin ?? 0.045;
-  const detail = { score: best.score, margin, templateId: best.template.id };
-  if (best.score > maximum || margin < minimumMargin) return { ...unknown('ambiguous-flag'), ...detail };
-  const confidence = Math.min(best.template.source === 'soviet_now.png' ? 0.82 : 0.94,
-    0.6 + 0.34 * Math.max(0, 1 - best.score / maximum));
-  return { type: best.type, confidence: Math.round(confidence * 100) / 100,
-    fallback: false, recognitionSource: 'flag-template', ...detail, reason: 'matched-flag' };
+  // A broad defeat overlay, isolated red sprite, or uncertain line is not UI
+  // evidence. Only remove the observed thin, continuous board-wide deadline.
+  if (!rows.length || rows.length > Math.max(3, Math.ceil(height / 90))
+      || rows.at(-1) - rows[0] + 1 !== rows.length
+      || Math.abs((rows[0] + rows.at(-1)) / 2 - board.top) > 2) return new Set();
+  return new Set(rows);
 }
 
 function validLayout(calibration) {
@@ -295,7 +351,12 @@ export function detectCurrentPiece(data, width, height, calibration, options = {
   // this thin interface before connected-component extraction; retaining it
   // would join the cursor to a board-wide horizontal line.
   const roi = { left: b.left + 1, right: b.right - 1, top: a.top + Math.max(2, height / 135), bottom: b.top - 2 };
-  const components = extractSpriteComponents(data, width, height, roi, { minPixels: 16 });
+  const deadlineRows = deadlineAntialiasRows(data, width, height, b);
+  const components = extractSpriteComponents(data, width, height, roi, { minPixels: 16,
+    // The mouse's neutral tip can overlay this UI line as well. Its observed
+    // rows are outside physical sprite evidence; the clearance check below
+    // still rejects support continuing beyond the line.
+    pixelFilter: (_r, _g, _blue, _alpha, _x, y) => !deadlineRows.has(y) });
   // Locate the physical cursor before assigning its type. Higher settled pieces
   // are not removed merely because they happen to lie above the deadline.
   const inCursorRow = c => c.bounds.width >= 6 && c.bounds.height >= 7
@@ -343,7 +404,8 @@ export function detectCurrentPiece(data, width, height, calibration, options = {
     pixelFilter: (_r, _g, _blue, _alpha, _x, y) => Math.abs(y - b.top) > Math.max(2, height / 180),
   });
   if (supports.length) return unknown('current-not-isolated', 1);
-  const result = classifySpriteComponent(data, width, height, component, options);
+  const result = classifySpriteComponent(data, width, height, component, { ...options,
+    allowTopOcclusion: !sideContact && component.bounds.top === integer.top });
   if (result.type == null) return unknown(result.reason, 1);
   if (sideContact) {
     const template = templates.find(t => t.id === result.templateId);

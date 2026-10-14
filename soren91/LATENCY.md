@@ -36,14 +36,24 @@
 
 ## 認識保留の bounded escape (2026-10-15)
 
-- 背景: #654 の配備で投下間隔 mean 9.58→3.01秒（probe session `0de2df17`）になったが、別の停滞モードが残った。現ピースの本体だけが field と同色 (50,50,48) で描画され、emblem しか見えないフレームでは、配備版の検出が `clipped-current`、ROI を2px内側にしても `ambiguous-flag`（`type=null`）となり現ピースを同定できない。`unknown-current` は入力なし → 盤面が変わらない → 次の観測も同じ、という静止ループになる。実測 `partial/game_0008/original/turn_0002.jpg`（`YOUR 91/91` の新ラウンド）で12観測・約10秒、`game_0007` は最後の投下から93秒後にラウンドが終了した（停滞で時間を消費して敗退）。
+- 背景: #654 の配備で投下間隔 mean 9.58→3.01秒（probe session `0de2df17`）になったが、`unknown-current` が続く停滞が残った。入力なし → 盤面が変わらない → 次の観測も同じ、という静止ループになる。保存証跡では12観測・約10秒、別の完了ラウンド `game_0007` は最後の投下から93秒後に終了した。初期説明の「本体全面がfieldと同色」は原本SHAを固定した再現で否定され、下記の境界線接続とHUDによる上端隠れを確認した。
 - 変更: `observation_guard.mjs` の `createHoldEscapePolicy()` が連続 `unknown-current` を数え、`main.mjs` の非MOVE分岐が上限付きの代替投下（既定 `x=0`）を行う。env:
   - `SOREN91_HOLD_ESCAPE_FRAMES`（既定 6、0で無効、上限200）
   - `SOREN91_HOLD_ESCAPE_INTERVAL_MS`（既定 4000、上限60000）
   - `SOREN91_HOLD_ESCAPE_LIMIT`（既定 3、0で無効、上限100）
-- 前提: `unknown-current` は「校正と盤面は健全で、現在ピースだけが同定できない」を意味する。`observation_guard.mjs` の分類順を `uncalibrated` → `invalid-board` → `unknown-current` にし、壊れた校正・盤面がこのラベルへ丸められないようにした（`usable` / `frameValid` の意味は不変）。加えてループ側でも現フレームの `usableCalibration(...)` を要求し、`next` のないフレームでは発動しない。
+- 前提: `unknown-current` は「校正と盤面は健全で、現在ピースだけが同定できない」を意味する。`observation_guard.mjs` の分類順を `uncalibrated` → `invalid-board` → `unknown-current` にし、壊れた校正・盤面がこのラベルへ丸められないようにした（`usable` / `frameValid` の意味は不変）。加えてループ側でも現フレームの `usableCalibration(...)` を要求する。現ピースが不明なため、escapeでは戦略関数を呼ばず固定位置へ投下する。
 - 実判定の投下（`noteDrop`）またはラウンド境界（`reset`）で連続数と残回数をリセットする。上限に達した後は従来どおり待機する。
+- 呼び出し側も全ての非MOVE観測をpolicyへ渡す。初回実装は短絡条件で `unknown-current` 以外を渡しておらず、途中の `board-moving` / `preview-changed` / 不正geometryをまたいで6回を累積していた。実ループ回帰で誤投下を再現し、別の理由や不正geometryで連続数が途切れるよう修正した。数値設定と1停滞あたりの上限は変更しない。
 - 観測性: telemetry schema は変えない。発動は「`reasonCounts['unknown-current']` が6以上・`holds=0` のまま1区間が閉じた dropProfile レコード」とプレイヤーログ `[game] Recognition hold escape: ...` で確認できる。
+
+## 現ピースの境界接続とHUD上端隠れ（2026-10-15、docich #414）
+
+- 原本fixture `tests/fixtures/soren91-sprites/game_0008_turn_2_20261015.jpg` は evidence export `38625894231` の `partial/game_0008/original/turn_0002.jpg` と同一バイト列。SHA-256 `ca386ba404a46775282c2cc0295bc3be9b087a40a66bf525e11a2f4124c4ce34`。ゲーム画面のみで、視聴者名・チャット・機密情報がないことを目視確認した。
+- 校正は1280×720、board x=442..836、deadline y=223.5、arena top=135。現行spawn ROI x=443..835/y=141..221にdeadlineのAA行y=220が入り、黒い現ピースを盤面幅の成分へ接続して `clipped-current` になる。左右のinset変更だけでは除去できない。
+- 実測した細い連続の赤線（盤面幅の70%以上）だけをspawn抽出から除外する。広い赤い敗退overlayやboard-wide成分の拒否は維持する。現ピースはx=445..619/y=141..220。上部はHUDで隠れており、完全な国旗テンプレートとの距離は0.203で不採用だった。
+- 完全形が不採用で、候補がHUD側のROI上端へ接し、側面へ接していない場合だけ、既存の独立したラベル付きテンプレートの上端10〜35%を隠した形を比較する。部分照合は距離上限0.12、margin下限0.06と完全形より厳しくする。採用confidence閾値0.58・時系列guard・下端clipping・支持物確認は維持する。新fixtureはテンプレートに使わない。
+- 問題原本はtype 11（ウズベキスタン）、confidence 0.74、距離0.07165、margin 0.36763。旧アートを除外しても別実写のテンプレートでconfidence 0.69。これはオフライン認識の結果であり、配備・実戦改善の証明とは分ける。
+- 性能は保存済みsent-to-sent区間に母集団を固定する。`capture/呼出し = capture累積 / phaseCalls.capture` と `capture累積/区間` は別の指標。旧session `1f9e6d46` の12区間は各0.75634秒/4.22288秒、観測5.583回/区間であり、「撮影1回が4秒」という説明は誤り。
 
 ## 配備前の確認
 

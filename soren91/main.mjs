@@ -1951,10 +1951,13 @@ async function gameLoop(page, calibration, gameNumber) {
         const holdReason = boardState.perception?.reason;
         const frameWidth = observation?.width;
         const frameHeight = observation?.height;
-        if (holdReason === 'unknown-current'
-            && Number.isInteger(frameWidth) && Number.isInteger(frameHeight)
-            && usableCalibration(calibration, frameWidth, frameHeight)
-            && holdEscape.observe(holdReason, Date.now())) {
+        const escapeFrameHealthy = Number.isInteger(frameWidth) && Number.isInteger(frameHeight)
+          && usableCalibration(calibration, frameWidth, frameHeight);
+        // Feed every rejected observation to the policy. Short-circuiting on
+        // unknown-current accumulated non-consecutive holds across settling
+        // or invalid geometry, contrary to the bounded escape contract.
+        const escapeDue = holdEscape.observe(escapeFrameHealthy ? holdReason : 'uncalibrated', Date.now());
+        if (holdReason === 'unknown-current' && escapeFrameHealthy && escapeDue) {
           console.log(`[game] Recognition hold escape: reason=${holdReason} -> fallback drop x=${HOLD_ESCAPE_X}`);
           await latency.measure('input', () => executeDrop(page, HOLD_ESCAPE_X, calibration, observation));
           holdUsedThisTurn = false;
