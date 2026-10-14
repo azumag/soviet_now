@@ -152,7 +152,11 @@ class BgmPolicyTest(unittest.TestCase):
         directory.mkdir()
         player = directory / "ffplay"
         player.write_text("#!" + sys.executable + "\n" +
-            "import os, signal, sys, time\n"
+            "import json, os, signal, sys, time\n"
+            "if os.environ.get('PLAYER_AUDIO_ENV'):\n"
+            "    with open(os.environ['PLAYER_AUDIO_ENV'], 'w') as f:\n"
+            "        json.dump({'pulse_prop': os.environ.get('PULSE_PROP'),\n"
+            "                   'sink': os.environ.get('PULSE_SINK'), 'argv': sys.argv[1:]}, f)\n"
             "def event(kind):\n"
             "    with open(os.environ['PLAYER_LOG'], 'a') as f:\n"
             "        f.write(f'{kind} {os.getpid()}\\n')\n"
@@ -262,6 +266,76 @@ class BgmPolicyTest(unittest.TestCase):
         self.canonical_state()
         self.wait_for(lambda: len(self.player_events("start")) == 2)
         self.assertFalse(self.process_alive(pid))
+
+
+    def test_ordinary_corners_get_bgm_except_native_audio_and_exclusions(self):
+        for game, expected in (
+            ("weather-view", 0), ("paper-view", 0), ("tsuitate-view", 0),
+            ("nethack", 0), ("nsnake", 0), ("future-ordinary-view", 0),
+            ("hanjuku-hero", 1), ("external-video-view", 1),
+            ("sorengame", 1), ("soren91", 1),
+        ):
+            with self.subTest(game=game):
+                self.canonical_state(game=game)
+                self.assert_policy(expected)
+
+    def test_weather_cannot_bypass_native_stop_or_transition_gates(self):
+        self.canonical_state(game="weather-view")
+        for status in ("resumed", "stopping", "failed"):
+            with self.subTest(status=status):
+                self.stopped_handover(status)
+                self.assert_policy(1)
+        self.stopped_handover()
+        for phase in ("draining", "starting", "failed"):
+            with self.subTest(phase=phase):
+                self.canonical_state(phase=phase, game="weather-view")
+                self.assert_policy(1)
+        self.canonical_state(game="weather-view")
+        self.assert_policy(0)
+
+    def test_worker_stops_for_both_exclusions_and_restarts_for_weather(self):
+        self.setup_player()
+        self.canonical_state(game="weather-view")
+        self.start_worker()
+        self.wait_for(lambda: len(self.player_events("start")) == 1)
+        for number, game in enumerate(("external-video-view", "hanjuku-hero"), 1):
+            with self.subTest(game=game):
+                pid = self.player_events("start")[-1]
+                self.canonical_state(game=game)
+                self.wait_for(lambda: not self.process_alive(pid))
+                self.assertIn(pid, self.player_events("term"))
+                time.sleep(1.2)  # Stay excluded across another worker poll.
+                self.assertEqual(len(self.player_events("start")), number)
+                self.canonical_state(game="weather-view")
+                self.wait_for(lambda: len(self.player_events("start")) == number + 1)
+        # Ordinary-to-ordinary ready state does not duplicate/restart the loop.
+        pid = self.player_events("start")[-1]
+        self.canonical_state(game="paper-view")
+        time.sleep(1.2)
+        self.assertTrue(self.process_alive(pid))
+        self.assertEqual(len(self.player_events("start")), 3)
+
+    def test_player_has_isolated_restore_identity_and_preserves_audio_settings(self):
+        self.setup_player()
+        audio_env = self.root / "audio-env.json"
+        self.env.update({
+            "PLAYER_AUDIO_ENV": str(audio_env),
+            "PULSE_PROP": "module-stream-restore.id=other-player",
+            "SOREN_BGM_SINK": "test_corner_sink",
+            "SOREN_BGM_VOLUME": "0",  # An explicit operator silence is retained.
+        })
+        self.canonical_state(game="weather-view")
+        self.start_worker()
+        self.wait_for(lambda: len(self.player_events("start")) == 1)
+        recorded = json.loads(audio_env.read_text())
+        self.assertEqual(recorded["pulse_prop"],
+                         "application.id=docich.corner-bgm "
+                         "module-stream-restore.id=docich-corner-bgm")
+        self.assertEqual(recorded["sink"], "test_corner_sink")
+        self.assertEqual(recorded["argv"], [
+            "-nodisp", "-loop", "0", "-volume", "0", "-window_title",
+            "soren-bgm-loop", str(self.bgm),
+        ])
 
 
 if __name__ == "__main__":

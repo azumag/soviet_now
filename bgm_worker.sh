@@ -1,5 +1,6 @@
 #!/bin/bash
-# CLIゲーム向けの補助BGM。本編の停止が確認できない間は再生しない。
+# 天気・論文・CLIゲーム等の共通BGM。半熟英雄・特別企画には重ねない。
+# 本編の停止が確認できない間は再生しない。Soren自身のBGMは既存経路を維持する。
 # canonicalに古いCLIゲーム名が残っても、SorenのBGMへ重ねない。
 # DOCICH_CANONICAL / SOREN_BGM_FILE / SOREN_BGM_SINK / SOREN_BGM_VOLUME は従来通り。
 # SOREN_BGM_STATE_DIR は既存Soren tmp/stateを参照する（別のlifecycleは作らない）。
@@ -48,8 +49,11 @@ try:
         raise ValueError("invalid state")
     active = canonical.get("active")
     game = active.get("game") if isinstance(active, dict) else None
+    # All ordinary corners (including synthetic program views) get BGM.
+    # Native Soren owns its music; Hanjuku and the OBS/SRT special corner
+    # retain their own audio without the common fallback mixed over it.
     if (canonical.get("phase") != "ready" or not isinstance(game, str) or not game
-            or game in {"sorengame", "soren91", "hanjuku-hero"}):
+            or game in {"sorengame", "soren91", "hanjuku-hero", "external-video-view"}):
         raise ValueError("not a fallback game")
     # A matching terminal stop is positive proof; a CLI name or pause marker
     # alone is not. Terminal stopped acknowledgements intentionally have no TTL.
@@ -121,6 +125,10 @@ run_bgm_worker() {
 		if cli_game_active; then
 			if ! player_running; then
 				stop_player
+				# Isolate fallback mute/volume memory from other ffplay streams.
+				# A fixed identity preserves an operator mute of this BGM itself;
+				# never unmute the shared sink or delete the restore database.
+				PULSE_PROP="application.id=docich.corner-bgm module-stream-restore.id=docich-corner-bgm" \
 				PULSE_SINK="$SINK" ffplay -nodisp -loop 0 -volume "$VOL" -window_title "$TAG" "$BGM_FILE" >/dev/null 2>&1 &
 				PLAYER_PID=$!
 			fi
