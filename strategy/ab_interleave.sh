@@ -155,6 +155,18 @@ state_file, games_file, idx, arm, h, played, hist, score, ev, turns, archive, ga
 soviet_raw = sys.argv[13] if len(sys.argv) > 13 else ""
 russia_raw = sys.argv[14] if len(sys.argv) > 14 else ""
 
+# issue #132 Phase 1: `eval` がどの evaluator で測られたか。型ボーナス表
+# (T16=25402) の追加は 2026-09 で、それ以前の ledger 行は同じ eval という名前の
+# 違う目的空間の値です。A/B の事前登録・採否は version が一致した行だけを
+# 標本にできるよう、行自体に version を残します。import 失敗時は None
+# (不明) を書きます。記録自体は失敗させません。
+try:
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, ".")
+    from lib.objective import OBJECTIVE_SCHEMA_VERSION as _OBJ_VER
+except Exception:
+    _OBJ_VER = None
+
 
 def _flag(v):
     """呼び出し元が渡さなかった場合は None (不明) を返す。空を False にすると
@@ -175,7 +187,9 @@ rec = {"idx": int(idx or 0), "arm": arm, "hash": h, "played_hash": played, "hist
        "eval": num(ev), "turns": num(turns), "archive": os.path.basename(archive) if archive else "", "game_num": game_num,
        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "tainted": tainted,
        # issue #132 P0-1: 最終目標 (makeSorenCount>0) と段階到達を ledger に必ず残す
-       "soviet_created": _flag(soviet_raw), "russia_created": _flag(russia_raw)}
+       "soviet_created": _flag(soviet_raw), "russia_created": _flag(russia_raw),
+       # issue #132 Phase 1: 旧 EVAL_SCORE と新目的値を同じ標本へ混ぜないための version
+       "objective_schema_version": _OBJ_VER}
 # 試合ごとの指標 (game_history は直近しか残らないので記録時に取り出す)
 try:
     rs = []

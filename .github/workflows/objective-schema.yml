@@ -1,0 +1,64 @@
+name: Objective schema
+# issue #132 Phase 1: 目的関数の単一 versioned evaluator (lib/objective.py)。
+# eloop.sh / wildcard_parallel.py / repair_current_run_from_history.sh は型ボーナス
+# 表の写しをそれぞれ持っていました。型ボーナス表は「T15×2 を持ったまま終局」が
+# 「実際の建国」より高く評価される逆転 (P0-0) を 2026-09 に修正した経緯があり、
+# どれか 1 件だけが古いまま残ると試合中の評価と候補選抜・修復 seed が違う目的空間
+# の値として同じ hash の標本に混ざります。この workflow は「写しが復活していない」
+# 「version が永続レコードに乗る」「version 混在が黙って隠れない」を固定します。
+on:
+  pull_request:
+    paths:
+      - 'lib/objective.py'
+      - 'eloop.sh'
+      - 'wildcard_parallel.py'
+      - 'repair_current_run_from_history.sh'
+      - 'strategy/ab_interleave.sh'
+      - 'strategy/improve.sh'
+      - 'strategy/regression.sh'
+      - 'tools/ab_report.py'
+      - 'tools/ab_decide.py'
+      - 'tests/test_objective_schema.py'
+      - 'tests/test_objective_schema_ledger.sh'
+      - 'tests/test_soviet_terminal_utility.py'
+      - '.github/workflows/objective-schema.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/objective.py'
+      - 'eloop.sh'
+      - 'wildcard_parallel.py'
+      - 'repair_current_run_from_history.sh'
+      - 'strategy/ab_interleave.sh'
+      - 'strategy/improve.sh'
+      - 'strategy/regression.sh'
+      - 'tools/ab_report.py'
+      - 'tools/ab_decide.py'
+      - 'tests/test_objective_schema.py'
+      - 'tests/test_objective_schema_ledger.sh'
+      - 'tests/test_soviet_terminal_utility.py'
+      - '.github/workflows/objective-schema.yml'
+permissions:
+  contents: read
+jobs:
+  objective-schema:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: objective evaluator contract (table values, no duplicate copy, version stamp)
+        run: python3 -m unittest tests.test_objective_schema
+      - name: terminal utility ordering (founding beats T15x2)
+        run: python3 -m unittest tests.test_soviet_terminal_utility
+      - name: version reaches the A/B ledger, rolling scores and current run
+        run: bash tests/test_objective_schema_ledger.sh
+      - name: A/B ledger field regression (soviet/russia/stage/end reason)
+        run: bash tests/test_ab_ledger_fields.sh
+      - name: shell syntax
+        run: bash -n eloop.sh repair_current_run_from_history.sh strategy/ab_interleave.sh strategy/improve.sh strategy/regression.sh
+      - name: ab_report / ab_decide import cleanly
+        run: >-
+          python3 -c "import sys; sys.path.insert(0, 'tools');
+          import ab_report, ab_decide; print('ok')"

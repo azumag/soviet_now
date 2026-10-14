@@ -38,6 +38,38 @@ PRIMARY_SD_DEFAULTS = {"eval": 3700.0, "score": 650.0}
 # primary_value() が None を返し、blocks() が不完全ブロックとして除外する。
 PRIMARY_FALLBACK = {"eval": ("eval",), "score": ("score",)}
 
+# ── objective schema version (2026-10-14, issue #132 Phase 1) ─────────────
+# `eval` は建国ボーナス込みの終局評価で、型ボーナス表 (T16=25402) が 2026-09 に
+# 追加されました。それ以前の ledger 行は同じ `eval` というキー名の、違う目的空間
+# の値です。version が混在した標本を 1 つの A/B として集計すると、効果の推定が
+# 評価関数の差と候補の差を合わせた意味不明な量になります。
+# 行に version が無い (= その追加以前の記録) 場合は None として扱い、
+# `objective_version_report()` が混在を必ず出すので、黙って混ざりません。
+OBJECTIVE_VERSION_KEY = "objective_schema_version"
+
+
+def objective_version_of(row):
+    """1 行の評価値がどの evaluator version で測られたか。未記録は None。"""
+    value = (row or {}).get(OBJECTIVE_VERSION_KEY)
+    return str(value) if value else None
+
+
+def objective_version_report(rows):
+    """version ごとの行数。キーは version 文字列、未記録は None。
+
+    2 件以上あるとき、その行集合は旧 EVAL_SCORE と新目的値を混ぜているため
+    1 つの標本にはできません。version ごとに分けるか、丸ごと捨ってください。
+    """
+    counts = {}
+    for row in rows or ():
+        version = objective_version_of(row)
+        counts[version] = counts.get(version, 0) + 1
+    return counts
+
+
+def objective_versions_mixed(rows):
+    return len(objective_version_report(rows)) > 1
+
 
 def state_primary(state):
     """実験が記録した正準指標。未記録 (旧 state) は legacy の raw score。"""
@@ -259,6 +291,11 @@ def main():
     primary_rows = with_primary(rows, primary)
     rep = {"pattern": pattern, "a_hash": state.get("a_hash"), "b_hash": state.get("b_hash"), "games": len(rows), "tainted": tainted,
            "primary_name": primary, "primary_sd": primary_sd}
+    # issue #132 Phase 1: 評価値の evaluator version 分布。混在していても集計は
+    # 止めません (既存実験の再現性を壊さない) が、必ず絵に出すので「version が
+    # 違う行を 1 つの標本にした mean 差」を採用判定に使えないことが判ります。
+    rep["objective_versions"] = {str(k): v for k, v in objective_version_report(rows).items()}
+    rep["objective_versions_mixed"] = objective_versions_mixed(rows)
     rep["primary"] = arm_summary(primary_rows, PRIMARY_KEY)
     pd = blocks(primary_rows, pattern, PRIMARY_KEY)
     rep["primary_blocks"] = {"k": len(pd), "mean_diff": st.mean(pd) if pd else None, "se": (st.pstdev(pd) / math.sqrt(len(pd)) if len(pd) > 1 else None), "p_signflip": sign_flip_p(pd)}
@@ -274,6 +311,13 @@ def main():
         print(json.dumps(rep, ensure_ascii=False, indent=1))
         return 0
     print("A/B report: pattern=%s A=%s B=%s games=%d tainted=%d primary=%s(sd=%.0f)" % (pattern, (rep["a_hash"] or "")[:12], (rep["b_hash"] or "")[:12], len(rows), tainted, primary, primary_sd))
+    # issue #132 Phase 1: version 混在は採用判定を無効にする。数字を出すが断定はしない。
+    _ov = rep["objective_versions"]
+    if rep["objective_versions_mixed"]:
+        print("  WARNING objective schema versions MIXED %s -- 旧 EVAL_SCORE と新目的値を"
+              " 1 つの標本にしています。version ごとに分けるか取り直してください。" % _ov)
+    elif _ov:
+        print("  objective schema version: %s" % ", ".join("%s x%d" % (k or "(未記録=旧履歴)", v) for k, v in _ov.items()))
     b = rep["primary_blocks"]
     if b["k"]:
         print("  %-6s blocks k=%d  mean(B-A)=%+.0f  SE=%s  p(sign-flip)=%s  <== verdict metric"

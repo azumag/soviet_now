@@ -801,16 +801,17 @@ json.dump(d,open(f,'w'))
 	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
 	# 建国ボーナス: 最終盤面のtype別ボーナスを加算した評価スコア
+	# issue #132 Phase 1: 型ボーナス表は lib/objective.py の単一定義。以前は
+	# ここにインラインで TB を持っていましたが、wildcard_parallel.py と
+	# repair_current_run_from_history.sh にも同じ写しがあり、どれか 1 件だけが
+	# 古いまま残ると試合中の評価と候補選抜が違う目的空間の値として同じ標本に
+	# 混ざります。値は修正後 (T16=25402) と同一です。
 	local EVAL_SCORE
 	EVAL_SCORE=$(echo "$RESULT_JSON" | python3 -c "
 import json, sys
+from lib.objective import eval_score
 d = json.load(sys.stdin)
-types = d.get('final_types', [])
-soviet = d.get('soviet_created', False)
-TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096,16:25402}
-bonus = sum(TB.get(t, 0) for t in types)
-if soviet: bonus += 800
-print(d.get('score', 0) + bonus)
+print(eval_score(d.get('score', 0), d.get('final_types', []), bool(d.get('soviet_created'))))
 " 2>/dev/null || echo "$LAST_SCORE")
 
 	# EVAL_SCORE履歴（ボーナス込み）
