@@ -150,6 +150,7 @@ const PLAYER_NAME = 'DoCiAI:US';
 const SCREENSHOT_DIR = 'tmp/screenshots';
 const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
+const DROP_OBSERVATION_DELAY_MS = 800; // Observe near the end of the existing spawn animation, retaining two-frame confirmation.
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 // Centre of the calibrated drop area (game x is -3..3). Used only by the
 // bounded recognition-hold escape, never instead of a strategy decision.
@@ -1619,6 +1620,8 @@ async function gameLoop(page, calibration, gameNumber) {
     latency.begin(gameNumber, turn);
     let loopOutcome = 'observe';
     try {
+      const spawnWait = DROP_OBSERVATION_DELAY_MS - (performance.now() - lastDropTime);
+      if (spawnWait > 0) await latency.measure('cooldown', () => sleep(spawnWait));
       // One gameplay-loop attempt starts here. The state-check interval below is
       // a cadence FLOOR measured from this point, not a wait added on top of the
       // work: one remote capture already costs seconds, so sleeping the whole

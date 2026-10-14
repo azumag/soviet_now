@@ -29,7 +29,7 @@ async function replay(frames, {
   const context = {
     join, dirname, fileURLToPath,
     HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
-    DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
+    DROP_COOLDOWN_MS: 1200, DROP_OBSERVATION_DELAY_MS: 800, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
     createHoldEscapePolicy, usableCalibration,
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55,
     MIN_RANKING_DETECTION_TURNS: 10,
