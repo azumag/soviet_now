@@ -9,6 +9,7 @@
  */
 
 import sharp from 'sharp';
+import { hasReadyBanner } from './ready_banner.mjs';
 import { gateObservation, usableCalibration } from './observation_guard.mjs';
 import { detectHudPieces, detectCurrentPiece, extractSpriteComponents,
   classifySpriteComponent } from './sprite_perception.mjs';
@@ -222,7 +223,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
       garbage: { ratio: 0, height: -5, gauge: 0, columns: [] }, rank: null,
       confidence: 0, perception: { reason: 'uncalibrated' }, }, calibration);
   }
-  const state = sceneState;
+  const state = sceneState === 'MOVE' && hasReadyBanner(data, width, height, calibration) ? 'WAITING' : sceneState;
 
   // The controllable piece is in the arena above the deadline, independently
   // of the three horizontal future icons in the HUD. Only its identified

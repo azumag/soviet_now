@@ -320,7 +320,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   const dropTimes = [], writes = [], comments = [], diagnosticCalls = [], logs = [];
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
-    DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
+    DROP_COOLDOWN_MS: 1200, DROP_OBSERVATION_DELAY_MS: 800, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
     createHoldEscapePolicy, usableCalibration,
     process: { env: env ?? {} },
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,
@@ -354,10 +354,11 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   await loop({}, cal, 1);
   return { now, shots, drops, holds, dropTimes, writes, comments, diagnosticCalls, logs };
 }
-test('real main loop overlaps slow capture with cooldown instead of adding 1.2s each turn', async () => {
+test('real loop waits only for spawn before capturing, retaining the input cooldown', async () => {
   const s = await simulateLoop({ captureMs: 1200 });
-  assert.deepEqual(s.dropTimes, [1400, 2800]);
-  assert.equal(s.dropTimes[1] - s.dropTimes[0], 1400);
+  assert.deepEqual(s.dropTimes, [1400, 3600]);
+  assert.equal(s.dropTimes[1] - s.dropTimes[0], 2200);
+  assert.equal(s.writes.at(-1).dropProfile.records[0].stageMs.cooldown, 800);
 });
 test('real main loop requests midgame commentary once before turn 20 in a slow round', async () => {
   const s = await simulateLoop({ captureMs: 10000, maxDrops: 9, pieces: [{}, {}, {}] });
