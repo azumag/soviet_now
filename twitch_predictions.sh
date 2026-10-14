@@ -528,6 +528,67 @@ raise SystemExit(1)
 PY
 }
 
+# 賭けが入った選択肢 (users / channel_points が正の outcome) の数を stdout に返す。
+# リモート取得または件数判定に失敗したら終了ステータス 1 を返し、呼び出し側は
+# 現行どおり resolve する (settle を新しい理由で止めない)。
+_contested_outcome_count() {
+	local prediction_id="$1"
+	local remote_json=""
+	remote_json=$(_fetch_remote_prediction_json "$prediction_id") || return 1
+	python3 - "$remote_json" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    row = json.loads(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+outcomes = row.get("outcomes")
+if not isinstance(outcomes, list) or not outcomes:
+    raise SystemExit(1)
+counted = 0
+known = 0
+for outcome in outcomes:
+    if not isinstance(outcome, dict):
+        raise SystemExit(1)
+    for key in ("users", "channel_points"):
+        value = outcome.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        known += 1
+        if value > 0:
+            counted += 1
+            break
+if known == 0:
+    raise SystemExit(1)
+print(counted)
+PY
+}
+
+# リモート予想を CANCELED にして投票済みのチャンネルポイントを返却する。
+# 成功時 0、失敗時 1 (状態の後始末は呼び出し側が行う)。
+_patch_prediction_cancel() {
+	local prediction_id="$1"
+	[ -n "$prediction_id" ] || return 1
+	local payload=""
+	payload=$(
+		python3 - "$BROADCASTER_ID" "$prediction_id" <<'PY'
+import json
+import sys
+
+bid, pid = sys.argv[1], sys.argv[2]
+print(json.dumps({"broadcaster_id": bid, "id": pid, "status": "CANCELED"}))
+PY
+	) || return 1
+	curl -sf --max-time 15 -X PATCH \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		-H "Content-Type: application/json" \
+		-d "$payload" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _sync_prediction_state_with_remote() {
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
 	local state_json=""
@@ -851,6 +912,33 @@ PY
 		exit 1
 	fi
 
+	# 賭けが成立していない予想 (賭けが入った選択肢が1つ以下) は勝者を出さず、
+	# CANCEL にして投票済みのチャンネルポイントを全額返却する。
+	# 判定不能・リモート取得失敗のときは現行どおり resolve する (settle を止めない)。
+	contested=""
+	if contested=$(_contested_outcome_count "$PREDICTION_ID"); then
+		case "$contested" in '' | *[!0-9]*) contested="" ;; esac
+	else
+		contested=""
+	fi
+	if [ -z "$contested" ]; then
+		_log "WARN: prediction outcome counts unavailable; resolving as before"
+	elif [ "$contested" -le 1 ]; then
+		if _patch_prediction_cancel "$PREDICTION_ID"; then
+			_log "prediction canceled: no contest (outcomes_with_bets=${contested})"
+			rm -f "$PREDICTION_STATE_FILE"
+			_prediction_retry_clear resolve
+			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
+			exit 0
+		fi
+		if _sync_prediction_state_with_remote; then
+			_log "WARN: no-contest cancel failed, but remote sync cleared local state"
+			_prediction_retry_clear resolve
+			exit 0
+		fi
+		_log "WARN: no-contest cancel failed; resolving as before"
+	fi
+
 	payload=$(
 		python3 - "$BROADCASTER_ID" "$PREDICTION_ID" "$WINNING_OUTCOME_ID" <<'PY'
 import json, sys
@@ -942,26 +1030,7 @@ cancel)
 		exit 1
 	fi
 
-	payload=$(
-		python3 - "$BROADCASTER_ID" "$PREDICTION_ID" <<'PY'
-import json, sys
-bid, pid = sys.argv[1], sys.argv[2]
-print(json.dumps({
-    "broadcaster_id": bid,
-    "id": pid,
-    "status": "CANCELED"
-}))
-PY
-	)
-
-	curl -sf --max-time 15 -X PATCH \
-		"https://api.twitch.tv/helix/predictions" \
-		-H "Authorization: Bearer ${TOKEN}" \
-		-H "Client-Id: ${CLIENT_ID}" \
-		-H "Content-Type: application/json" \
-		-d "$payload" >/dev/null 2>&1
-
-	if [ $? -ne 0 ]; then
+	if ! _patch_prediction_cancel "$PREDICTION_ID"; then
 		if _sync_prediction_state_with_remote; then
 			_log "WARN: prediction cancel failed, but remote sync cleared local state"
 			exit 0
