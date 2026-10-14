@@ -79,6 +79,78 @@ export function postDropWindowMs(env = process.env) {
     : DEFAULT_POSTDROP_WINDOW_MS;
 }
 
+// Bounded escape for a persistent recognition hold. Measured 2026-10-15
+// (docich#414): a piece whose body renders in the field colour leaves only its
+// emblem visible, so every frame reports unknown-current without any error.
+// The loop then holds forever -- 12 consecutive frames plus 93s until the round
+// ended -- because a rejected observation means no input, which means the frame
+// never changes. After a bounded run of consecutive holds on a healthy frame
+// (see the classification order in gateObservation) the loop may send one
+// fallback drop at the centre so the game advances. Every other reason resets
+// the run, so ordinary waits and settling frames never become blind drops.
+// Owner-approved bounded relaxation of the "no blind timeout drop" rule
+// (2026-10-15); kill switch: SOREN91_HOLD_ESCAPE_FRAMES=0.
+export const DEFAULT_HOLD_ESCAPE_FRAMES = 6;
+export const DEFAULT_HOLD_ESCAPE_INTERVAL_MS = 4_000;
+export const DEFAULT_HOLD_ESCAPE_LIMIT = 3;
+
+export function holdEscapeFrames(env = process.env) {
+  const raw = Number(env?.SOREN91_HOLD_ESCAPE_FRAMES);
+  return Number.isInteger(raw) && raw >= 0 && raw <= 200 ? raw : DEFAULT_HOLD_ESCAPE_FRAMES;
+}
+
+export function holdEscapeIntervalMs(env = process.env) {
+  const raw = Number(env?.SOREN91_HOLD_ESCAPE_INTERVAL_MS);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 60_000 ? raw : DEFAULT_HOLD_ESCAPE_INTERVAL_MS;
+}
+
+export function holdEscapeLimit(env = process.env) {
+  const raw = Number(env?.SOREN91_HOLD_ESCAPE_LIMIT);
+  return Number.isInteger(raw) && raw >= 0 && raw <= 100 ? raw : DEFAULT_HOLD_ESCAPE_LIMIT;
+}
+
+/**
+ * Counts consecutive `unknown-current` observations and permits at most
+ * `limit` fallback drops per stretch, never closer than `intervalMs`.
+ * `noteDrop()` is called after any real (strategy) drop: it ends the stretch.
+ */
+export function createHoldEscapePolicy(env = process.env) {
+  const frames = holdEscapeFrames(env);
+  const intervalMs = holdEscapeIntervalMs(env);
+  const limit = holdEscapeLimit(env);
+  let holds = 0;
+  let escapes = 0;
+  let lastAt = -Infinity;
+  return {
+    observe(reason, now = Date.now()) {
+      if (frames <= 0 || limit <= 0) return false;
+      if (reason !== 'unknown-current') {
+        holds = 0;
+        return false;
+      }
+      holds += 1;
+      if (holds < frames || escapes >= limit || now - lastAt < intervalMs) return false;
+      holds = 0;
+      escapes += 1;
+      lastAt = now;
+      return true;
+    },
+    noteDrop() {
+      holds = 0;
+      escapes = 0;
+      lastAt = -Infinity;
+    },
+    reset() {
+      holds = 0;
+      escapes = 0;
+      lastAt = -Infinity;
+    },
+    snapshot() {
+      return { holds, escapes };
+    },
+  };
+}
+
 export function markDropSent(calibration, now = Date.now()) {
   if (!calibration || typeof calibration !== 'object') return false;
   const previous = observations.get(calibration);
@@ -282,9 +354,17 @@ export function gateObservation(state, calibration, now = Date.now()) {
   let reason = null;
   let slowAdvanceUsed = false;
   let postDropAdvanceUsed = false;
-  if (!next || next.fallback || !(next.confidence >= 0.58)) reason = 'unknown-current';
-  else if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
+  // Geometry failures are classified BEFORE the controllable piece. The order is
+  // what makes `unknown-current` a usable precondition for the bounded
+  // recognition-hold escape (docich#414): that label now means "the frame's
+  // calibration and physical board are sound, only the current piece could not
+  // be identified". A blind fallback drop must never be triggered by a broken
+  // calibration or a corrupt board reading, which would otherwise hide behind
+  // the missing current piece. `usable` / `frameValid` are unchanged: all three
+  // reasons already withhold both.
+  if (!usableCalibration(calibration, calibration.screen?.width, calibration.screen?.height)) reason = 'uncalibrated';
   else if (state.pieces.length > 256 || state.pieces.some(p => ![p.x, p.y, p.r].every(Number.isFinite) || p.r <= 0)) reason = 'invalid-board';
+  else if (!next || next.fallback || !(next.confidence >= 0.58)) reason = 'unknown-current';
   else if (!previous || !(previous.usable || (postDropWindow && previous.frameValid))
       || previous.geometry !== geometry || now < previous.at) reason = 'confirm-frame';
   else {

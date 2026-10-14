@@ -8,6 +8,7 @@ import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { rejectedFrameReason } from '../soren91/rejected_frame_diagnostics.mjs';
+import { createHoldEscapePolicy, usableCalibration } from '../soren91/observation_guard.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -313,12 +314,15 @@ function extract(name, end) {
 }
 const loopSource = extract('gameLoop', '/**\n * HOLD').replaceAll('import.meta.url', '"file:///soren91/main.mjs"');
 async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [],
-  observation = null, diagnosticsEnabled = false, source = loopSource } = {}) {
+  observation = null, diagnosticsEnabled = false, env = null, calibration: cal = calibration,
+  blockedReason = 'unknown-current', source = loopSource } = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
-  const dropTimes = [], writes = [], comments = [], diagnosticCalls = [];
+  const dropTimes = [], writes = [], comments = [], diagnosticCalls = [], logs = [];
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
-    DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200,
+    DROP_COOLDOWN_MS: 1200, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
+    createHoldEscapePolicy, usableCalibration,
+    process: { env: env ?? {} },
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,
     performance: { now: () => now },
     Date: class extends Date { static now() { return now; } },
@@ -327,7 +331,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     REJECTED_FRAME_DIAGNOSTICS_ENABLED: diagnosticsEnabled,
     rejectedFrameReason,
     saveRejectedFrame: options => { diagnosticCalls.push(options); return { saved: false }; },
-    console: { log() {}, error() {} },
+    console: { log: message => logs.push(String(message)), error: message => logs.push(String(message)) },
     snapshotCurrentStrategyForGame: () => ({ strategyHash: 'fixed', snapshotPath: 'fixed.mjs' }),
     archiveLatestHistory: () => null,
     existsSync: path => path === 'tmp/stop' && (drops >= maxDrops || shots > Math.max(12, maxDrops * 5)),
@@ -338,7 +342,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     loadModule: async () => ({
       generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
       analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
-        pieces, confidence: 1, perception: { reason: shots <= blocked ? 'unknown-current' : 'stable' } }),
+        pieces, confidence: 1, perception: { reason: shots <= blocked ? blockedReason : 'stable' } }),
     }),
     loadStrategy: async () => ({ decide: () => ({ x: 0, reason: 'test', hold: hold && decisions++ === 0 }) }),
     executeHold: async () => { holds++; now += 300; },
@@ -346,8 +350,8 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     sleep: async ms => { now += ms; },
   };
   const loop = vm.runInNewContext(`(${source})`, context);
-  await loop({}, calibration, 1);
-  return { now, shots, drops, holds, dropTimes, writes, comments, diagnosticCalls };
+  await loop({}, cal, 1);
+  return { now, shots, drops, holds, dropTimes, writes, comments, diagnosticCalls, logs };
 }
 test('real main loop overlaps slow capture with cooldown instead of adding 1.2s each turn', async () => {
   const s = await simulateLoop({ captureMs: 1200 });
@@ -371,10 +375,55 @@ test('HOLD no longer adds a fresh 1.2 second drop cooldown', async () => {
   const s = await simulateLoop({ hold: true });
   assert.equal(s.holds, 1); assert.equal(s.dropTimes[0], 1100);
 });
-test('unknown-current remains fail-closed; faster polling cannot force a blind drop', async () => {
-  const s = await simulateLoop({ blocked: 100 });
-  assert.equal(s.drops, 0); assert.equal(s.holds, 0);
+// A usable schema-2 calibration whose screen matches the frame the loop sees.
+const validCalibration = () => ({
+  coordinateSchema: 2, confidence: 0.82,
+  screen: { width: 960, height: 540 },
+  board: { left: 332, right: 627, top: 167, bottom: 518, width: 295, height: 351 },
+  arena: { left: 332, right: 627, top: 100, bottom: 518, width: 295, height: 418 },
+  hud: { top: 0, bottom: 100 },
+});
+const stalledFrame = { width: 960, height: 540 };
+
+test('a persistent recognition hold gets one bounded fallback drop instead of holding forever', async () => {
+  // Measured live on 2026-10-15: 12 consecutive unknown-current frames and 93s
+  // until the round ended, because no input means the frame never changes.
+  const s = await simulateLoop({ blocked: 100, maxDrops: 1,
+    observation: stalledFrame, calibration: validCalibration() });
+  assert.equal(s.drops, 1);
+  assert.equal(s.holds, 0);
   assert.ok(s.writes.some(v => v.reasonCounts['unknown-current'] > 1));
+  assert.ok(s.logs.some(line => line.includes('Recognition hold escape')));
+});
+test('the recognition-hold escape is bounded and kill-switchable', async () => {
+  const disabled = await simulateLoop({ blocked: 100, maxDrops: 4,
+    observation: stalledFrame, calibration: validCalibration(),
+    env: { SOREN91_HOLD_ESCAPE_FRAMES: '0' } });
+  assert.equal(disabled.drops, 0); // explicit kill switch stays fail-closed
+  const capped = await simulateLoop({ blocked: 100, maxDrops: 6,
+    observation: stalledFrame, calibration: validCalibration(),
+    env: { SOREN91_HOLD_ESCAPE_FRAMES: '2', SOREN91_HOLD_ESCAPE_INTERVAL_MS: '0',
+      SOREN91_HOLD_ESCAPE_LIMIT: '3' } });
+  assert.ok(capped.drops <= 3);
+});
+test('an unhealthy calibration or a frame without geometry withholds the escape', async () => {
+  const mismatch = await simulateLoop({ blocked: 100, maxDrops: 1,
+    observation: { width: 800, height: 450 }, calibration: validCalibration() });
+  assert.equal(mismatch.drops, 0);
+  const unknownFrame = await simulateLoop({ blocked: 100, maxDrops: 1,
+    observation: null, calibration: validCalibration() });
+  assert.equal(unknownFrame.drops, 0);
+});
+test('every other rejection reason still waits, never a blind drop', async () => {
+  // The escape is scoped to one label. Motion, settling and board faults keep
+  // the previous fail-closed behaviour.
+  for (const reason of ['board-moving', 'preview-changed', 'confirm-frame',
+    'invalid-board', 'uncalibrated', 'stable']) {
+    const s = await simulateLoop({ blocked: 100, maxDrops: 1, blockedReason: reason,
+      observation: stalledFrame, calibration: validCalibration() });
+    assert.equal(s.drops, 0, reason);
+    assert.equal(s.logs.some(line => line.includes('Recognition hold escape')), false, reason);
+  }
 });
 test('diagnostic receives the original capture bytes only for an eligible rejection', async () => {
   const frame = { buffer: Buffer.from('original captured bytes'), format: 'jpeg', width: 960, height: 540 };
