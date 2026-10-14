@@ -1613,6 +1613,11 @@ async function gameLoop(page, calibration, gameNumber) {
     latency.begin(gameNumber, turn);
     let loopOutcome = 'observe';
     try {
+      // One gameplay-loop attempt starts here. The state-check interval below is
+      // a cadence FLOOR measured from this point, not a wait added on top of the
+      // work: one remote capture already costs seconds, so sleeping the whole
+      // POLL_INTERVAL_MS after it only inflates the drop interval.
+      const iterationStartedAt = performance.now();
       if (existsSync('tmp/stop')) {
         if (pendingGameOver) await pendingGameOver;
         console.log('[game] Stop requested, exiting main loop');
@@ -1929,7 +1934,14 @@ async function gameLoop(page, calibration, gameNumber) {
       // could replace valid anchors while pieces or garbage were moving.
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
-        await latency.measure('poll', () => sleep(POLL_INTERVAL_MS));
+        // Sleep only the remainder of this iteration's state-check interval. A
+        // remote capture already costs seconds, so adding the full
+        // POLL_INTERVAL_MS on top of it is pure added latency (measured poll
+        // stage ~0.6s per drop interval across three re-observations). The
+        // stability gate and every classification are untouched: this only
+        // stops paying the interval twice.
+        const pollRemainderMs = Math.max(0, POLL_INTERVAL_MS - (performance.now() - iterationStartedAt));
+        await latency.measure('poll', () => sleep(pollRemainderMs));
         continue;
       }
 
