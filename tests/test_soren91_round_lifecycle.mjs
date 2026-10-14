@@ -19,7 +19,9 @@ const move = (ranking = null) => ({ state: 'MOVE', ranking });
 const waiting = (ranking = null) => ({ state: 'WAITING', ranking });
 const repeat = (count, frame) => Array.from({ length: count }, () => ({ ...frame }));
 
-async function replay(frames, { diagnosticSave = saveRejectedFrame, diagnosticsEnabled = false } = {}) {
+async function replay(frames, {
+  diagnosticSave = saveRejectedFrame, diagnosticsEnabled = false, captureMs = 1300,
+} = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, reentries = 0;
   let current;
   const ended = [], history = [], logs = [], decisions = [];
@@ -47,7 +49,7 @@ async function replay(frames, { diagnosticSave = saveRejectedFrame, diagnosticsE
     appendFileSync: (path, row) => history.push({ path, ...JSON.parse(row) }),
     loadCommentModule: async () => null,
     midgameCommentStatus,
-    captureGameScreenshot: async () => { current = frames[shots++]; now += 1300; return null; },
+    captureGameScreenshot: async () => { current = frames[shots++]; now += captureMs; return null; },
     loadModule: async () => ({
       analyzeScreenshot: async () => ({
         state: current.state, pieces: current.state === 'MOVE' ? [{}] : [],
@@ -75,7 +77,7 @@ async function replay(frames, { diagnosticSave = saveRejectedFrame, diagnosticsE
   };
   const loop = vm.runInNewContext(`(${loopSource})`, context);
   await loop({}, {}, 1);
-  return { shots, drops, holds, ended, history, reentries, logs, decisions };
+  return { shots, drops, holds, ended, history, reentries, logs, decisions, elapsedMs: () => now };
 }
 
 test('a diagnostic save exception cannot stop the next game observation', async () => {
@@ -174,3 +176,28 @@ for (const ranking of [8, -1]) {
     assert.equal(result.logs.filter(message => message.includes('Ignoring stale post-result ranking')).length, 2);
   });
 }
+
+// #452: a re-observation whose own capture already outran POLL_INTERVAL_MS must
+// not also pay the full state-check interval. The interval is a cadence floor
+// measured from the start of the iteration, so only the remainder is slept.
+// Gate classification, stability and drop behaviour are unchanged. A gated
+// non-MOVE frame (state DROP) is the re-observation path; WAITING takes its own
+// 1s between-round branch and never reaches this sleep.
+const stalled = () => ({ state: 'DROP' });
+
+test('a slow re-observation sleeps only the remainder of the state-check interval', async () => {
+  // capture 1300ms, POLL_INTERVAL_MS 200ms -> remainder 0 for every re-observation.
+  const result = await replay([...repeat(4, stalled()), move()], { captureMs: 1300 });
+  assert.equal(result.shots, 5);
+  assert.equal(result.drops, 1);
+  assert.equal(result.elapsedMs(), 4 * 1300 + (1300 + 200));
+});
+
+test('a fast re-observation still honours the state-check interval as a floor', async () => {
+  // capture 50ms, POLL_INTERVAL_MS 200ms -> each re-observation sleeps the
+  // remaining 150ms, so cadence never tightens below the configured floor.
+  const result = await replay([...repeat(4, stalled()), move()], { captureMs: 50 });
+  assert.equal(result.shots, 5);
+  assert.equal(result.drops, 1);
+  assert.equal(result.elapsedMs(), 4 * 200 + (50 + 200));
+});

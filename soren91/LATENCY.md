@@ -26,6 +26,14 @@
 - 実測: リモート撮影コストは p50 約1.9秒/枚・p95 4.6秒（#519配備後の dropProfile）。既定予算3秒では負荷時に超えやすい。リトライは1秒固定・上限10回だった。
 - 変更: capture予算の既定を **3000→6000ms**（env `SOREN91_CAPTURE_TIMEOUT_MS` で最大9000）。連続エラーは**指数バックオフ**（1s→2s→…最大15s、`SOREN91_ERROR_BACKOFF_MAX_MS`）で再試行し、停止上限を **30回**（`SOREN91_ERROR_LIMIT`）へ。一時的な負荷でコーナーが死なないようにする。
 
+## 状態ポーリング待ちの二重課金 (2026-10-15, #452)
+
+- 実測: リモートでは1 captureが既に p50 約1.9秒 / p95 4.6秒かかるため、`POLL_INTERVAL_MS`=200ms を「capture後の待ち」として毎回フルで足す分は純増だった。dropProfile の `poll` 段は区間あたり約0.6秒（再観測3回分）を占め、投下間隔に対して無条件の追加遅延になっていた。
+- 変更: `gameLoop` の各iteration先頭で `iterationStartedAt` を取り、MOVE以外の状態待ちは `max(0, POLL_INTERVAL_MS - 経過)` だけsleepする。`POLL_INTERVAL_MS` は **cadence floor**（iteration開始からの下限）として意味を保つため、captureが200ms未満の環境では従来どおり200ms待つ。cadenceが締まることはない。
+- 不変: stability gate（`observation_guard` の2フレーム判定・`preview-changed`/`board-moving`/`stable-slow-advance` 分類）、geometry validation、input-before-confirmation、capture cadence、strategy、risk評価、provider/security boundary。gate判定に使う時間は capture の実経過時間のみで、poll sleep の長さは判定に影響しない。
+- 回帰: `tests/test_soren91_round_lifecycle.mjs` に、capture 1300ms（インターバル超過）で余分な200msが乗らないこと、capture 50ms（インターバル未満）で200ms floor が維持されることを確認する2件を追加。投下回数・観測回数・round lifecycle は既存12テストと同一。
+- 本番配備後の `dropSentIntervalMs` p50/p95 と `stageMs.poll` の前後比較は未実施（fresh contiguous runtime evidence が必要）。
+
 ## 配備前の確認
 
 - 本番VMの `soren91/main.mjs` には 2026-09-17 時点で手動パッチ (CDP captureScreenshot) が入っている。PR #371 をマージして配備する場合、VMパッチとの差分を確認してから置換する。無確認上書きはしない。
