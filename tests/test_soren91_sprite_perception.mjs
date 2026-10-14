@@ -198,6 +198,48 @@ test('two plausible cursor components remain unknown instead of picking the larg
   assert.equal(current.reason, 'multiple-current-candidates');
 });
 
+function cursorRoi(im, cal) {
+  const b = cal.board, a = cal.arena;
+  const roi = { left: b.left + 1, right: b.right - 1,
+    top: a.top + Math.max(2, im.height / 135), bottom: b.top - 2 };
+  return { left: Math.ceil(roi.left), top: Math.ceil(roi.top),
+    right: Math.floor(roi.right), bottom: Math.floor(roi.bottom) };
+}
+
+function paintWallOutline(data, im, area) {
+  for (let y = area.top; y < area.bottom; y++) {
+    paint(data, im.width, { left: area.left, right: area.left + 1, top: y, bottom: y + 1 }, [230, 230, 230]);
+    paint(data, im.width, { left: area.right - 1, right: area.right, top: y, bottom: y + 1 }, [230, 230, 230]);
+  }
+  paint(data, im.width, { left: area.left, right: area.right, top: area.bottom - 1, bottom: area.bottom }, [230, 230, 230]);
+}
+
+for (const [source, type] of [['game_0013_turn_1.jpg', 7], ['game_0011_turn_7.jpg', 8]]) {
+  test(`${source}: the ROI wall outline across the cursor row is not a second candidate`, () => {
+    const im = images.get(source), cal = calibration();
+    const data = Buffer.from(im.data);
+    // A live capture labelled the ROI's antialias edge as one board-wide frame
+    // component overlapping the cursor row. It must never veto the cursor it
+    // merely surrounds (docich#414: every observation became unknown-current
+    // and no drop was sent for the rest of the corner).
+    paintWallOutline(data, im, cursorRoi(im, cal));
+    const current = detectCurrentPiece(data, im.width, im.height, cal);
+    assert.equal(current.reason, 'detected-current', JSON.stringify(current.reason));
+    assert.equal(current.piece?.type, type);
+  });
+}
+
+test('a board-wide cursor-row component alone keeps the clipped-current label', () => {
+  const im = images.get('game_0013_turn_1.jpg'), cal = calibration();
+  const data = Buffer.from(im.data);
+  const area = cursorRoi(im, cal);
+  paint(data, im.width, { left: area.left, right: area.right, top: area.top, bottom: area.bottom }, [230, 230, 230]);
+  const current = detectCurrentPiece(data, im.width, im.height, cal);
+  assert.equal(current.piece, null);
+  assert.equal(current.component, null);
+  assert.equal(current.reason, 'clipped-current');
+});
+
 test('a high settled country is not included in the cursor exclusion mask', () => {
   const im = images.get('game_0013_turn_1.jpg'), cal = calibration();
   const data = Buffer.from(im.data);

@@ -298,10 +298,26 @@ export function detectCurrentPiece(data, width, height, calibration, options = {
   const components = extractSpriteComponents(data, width, height, roi, { minPixels: 16 });
   // Locate the physical cursor before assigning its type. Higher settled pieces
   // are not removed merely because they happen to lie above the deadline.
-  const candidates = components.filter(c => c.bounds.width >= 6 && c.bounds.height >= 7
+  const inCursorRow = c => c.bounds.width >= 6 && c.bounds.height >= 7
     && Math.abs((c.bounds.top + c.bounds.bottom) / 2 - centerY) <= unit * 0.32
-    && c.pixelCount >= 25);
-  if (candidates.length !== 1) return unknown(candidates.length > 1 ? 'multiple-current-candidates' : 'missing-current', candidates.length);
+    && c.pixelCount >= 25;
+  const rowComponents = components.filter(inCursorRow);
+  // The ROI's own wall/antialias edge can be labelled as a single board-wide
+  // frame component that overlaps the cursor row. It is never the cursor: the
+  // same extent is already rejected below as clipped-current. Counting it as a
+  // second candidate made every observation unknown on a live frame whose
+  // cursor row carried that outline (2026-10-14, docich#414), which stopped
+  // all drops for the rest of the corner.
+  const boardWide = c => c.bounds.width > b.width * 0.65;
+  const candidates = rowComponents.filter(c => !boardWide(c));
+  if (candidates.length !== 1) {
+    // Keep the historical clipped-current label when the only cursor-row
+    // component is the board-wide frame itself.
+    const reason = candidates.length > 1 ? 'multiple-current-candidates'
+      : rowComponents.length === 1 && boardWide(rowComponents[0]) ? 'clipped-current'
+        : 'missing-current';
+    return unknown(reason, candidates.length);
+  }
   const component = candidates[0];
   // The very top can be hidden by the HUD. A legal cursor can also reach a
   // wall, so a one-pixel side contact is checked against the complete labelled
