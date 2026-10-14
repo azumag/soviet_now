@@ -1695,6 +1695,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // 待機画面 (ランキング/接続中/タイトル画面)
       if (boardState.state === 'WAITING') {
+        holdEscape.observe('non-move', Date.now()); // READY/matchmaking breaks a consecutive recognition hold.
         waitingCount++;
         if (awaitingFreshRoundAfterResult) {
           interRoundWaitingSeen = true;
