@@ -66,6 +66,10 @@ if [ "${EXPLORE_MODE:-0}" = "1" ]; then
 fi
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
+# docich 予想王 (#933): resolve した Helix row を bounded に引き渡すファイル。
+# 台帳の所有者は docich 側で、ここは追記のみ。形式は tools/prediction_resolved.py と
+# docich src/docich/soren_predictions.py が同じ契約を読む。
+PREDICTION_RESOLVED_HANDOFF_FILE="${TMP_STATE_DIR}/prediction_resolved.jsonl"
 # MIN_GAMES_BEFORE_IMPROVE 解決: 環境変数 (soren_loop の hot-reload export) を
 # 最優先、次に .env のリテラル、次に config.sh、最後に 12。
 # set_toggle.sh によるサイクル変更に予想チャットも追従させる。
@@ -367,6 +371,18 @@ if reasons:
 PY
 }
 
+_record_resolved_prediction_handoff() {
+	# 予想王 (#933): resolve の PATCH 応答 row を docich の台帳記録用に引き渡す。
+	# 失敗しても resolve 自体は成功のまま扱う（警告のみ）。docich 側が台帳を書く。
+	local response_file="$1"
+	[ -s "$response_file" ] || return 0
+	if python3 tools/prediction_resolved.py "$response_file" --target "$PREDICTION_RESOLVED_HANDOFF_FILE" >/dev/null 2>&1; then
+		return 0
+	fi
+	_log "WARN: prediction resolved handoff unavailable"
+	return 0
+}
+
 _resolve_prediction_with_best_outcome() {
 	# stale な予想を best_outcome で resolve する (未記録なら「建国なし」= index 0)
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
@@ -415,6 +431,7 @@ print(json.dumps({
 		rm -f "$response_file"
 		return 1
 	fi
+	_record_resolved_prediction_handoff "$response_file"
 	rm -f "$response_file"
 	_prediction_retry_clear resolve
 	python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
@@ -874,6 +891,7 @@ PY
 		rm -f "$response_file"
 		exit 1
 	fi
+	_record_resolved_prediction_handoff "$response_file"
 	rm -f "$response_file"
 	_prediction_retry_clear resolve
 
