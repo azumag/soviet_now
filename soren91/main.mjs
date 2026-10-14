@@ -21,7 +21,8 @@ import {
   captureJpegQuality,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
-import { markDropSent as markObservationDropSent } from './observation_guard.mjs';
+import { createHoldEscapePolicy, markDropSent as markObservationDropSent,
+  usableCalibration } from './observation_guard.mjs';
 import { rejectedFrameReason, saveRejectedFrame } from './rejected_frame_diagnostics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { waitForInlineRails } from './presentation_ready.mjs';
@@ -150,6 +151,9 @@ const SCREENSHOT_DIR = 'tmp/screenshots';
 const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
+// Centre of the calibrated drop area (game x is -3..3). Used only by the
+// bounded recognition-hold escape, never instead of a strategy decision.
+const HOLD_ESCAPE_X = 0;
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
 const MIN_RANKING_DETECTION_TURNS = 10;
 const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
@@ -1583,6 +1587,8 @@ async function gameLoop(page, calibration, gameNumber) {
   const latency = new LoopMetrics({
     write: value => writeMetricsAtomically('tmp/state/soren91_loop_metrics.json', value),
   });
+  // Bounded escape for a persistent recognition hold (docich#414).
+  const holdEscape = createHoldEscapePolicy(process.env);
   let consecutiveErrors = 0;
   let waitingLogged = false;
   let waitingCount = 0;
@@ -1711,6 +1717,7 @@ async function gameLoop(page, calibration, gameNumber) {
               gameNumber++;
               historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
               currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+              holdEscape.reset(); // Bounded per round: a new round starts fresh.
               console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
             }
             turn = 0;
@@ -1810,6 +1817,7 @@ async function gameLoop(page, calibration, gameNumber) {
           gameNumber++;
           historyFile = nextHistoryFile;
           currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+          holdEscape.reset(); // Bounded per round: a new round starts fresh.
           console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;
           holdUsedThisTurn = false;
@@ -1934,6 +1942,41 @@ async function gameLoop(page, calibration, gameNumber) {
       // could replace valid anchors while pieces or garbage were moving.
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
+        // A persistent recognition hold would otherwise hold every observation
+        // forever: no input means the frame never changes (measured 12 frames
+        // and 93s until the round ended, docich#414). `unknown-current` is only
+        // reported for a healthy calibration and board, the hold must be
+        // uninterrupted, and the policy bounds how often this can happen. The
+        // click still goes through the normal pre-input geometry validation.
+        const holdReason = boardState.perception?.reason;
+        const frameWidth = observation?.width;
+        const frameHeight = observation?.height;
+        if (holdReason === 'unknown-current'
+            && Number.isInteger(frameWidth) && Number.isInteger(frameHeight)
+            && usableCalibration(calibration, frameWidth, frameHeight)
+            && holdEscape.observe(holdReason, Date.now())) {
+          console.log(`[game] Recognition hold escape: reason=${holdReason} -> fallback drop x=${HOLD_ESCAPE_X}`);
+          await latency.measure('input', () => executeDrop(page, HOLD_ESCAPE_X, calibration, observation));
+          holdUsedThisTurn = false;
+          lastDropTime = performance.now();
+          latency.dropSent();
+          loopOutcome = 'drop-sent';
+          appendFileSync(historyFile, JSON.stringify({
+            turn,
+            timestamp: new Date().toISOString(),
+            state: boardState,
+            decision: { x: HOLD_ESCAPE_X, reason: 'recognition-hold-fallback', hold: false },
+          }) + '\n');
+          turn++;
+          try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
+          consecutiveErrors = 0;
+          if (existsSync('tmp/stop')) {
+            if (pendingGameOver) await pendingGameOver;
+            console.log('[game] Stop requested after fallback drop, exiting');
+            return;
+          }
+          continue;
+        }
         // Sleep only the remainder of this iteration's state-check interval. A
         // remote capture already costs seconds, so adding the full
         // POLL_INTERVAL_MS on top of it is pure added latency (measured poll
@@ -1979,6 +2022,7 @@ async function gameLoop(page, calibration, gameNumber) {
       lastDropTime = performance.now();
       latency.dropSent();
       loopOutcome = 'drop-sent';
+      holdEscape.noteDrop(); // A real decision ends the recognition-hold stretch.
 
       if (!rankingDetected && turn >= MIN_RANKING_DETECTION_TURNS) {
         try {

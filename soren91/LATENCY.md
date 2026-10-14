@@ -34,6 +34,17 @@
 - 回帰: `tests/test_soren91_round_lifecycle.mjs` に、capture 1300ms（インターバル超過）で余分な200msが乗らないこと、capture 50ms（インターバル未満）で200ms floor が維持されることを確認する2件を追加。投下回数・観測回数・round lifecycle は既存12テストと同一。
 - 本番配備後の `dropSentIntervalMs` p50/p95 と `stageMs.poll` の前後比較は未実施（fresh contiguous runtime evidence が必要）。
 
+## 認識保留の bounded escape (2026-10-15)
+
+- 背景: #654 の配備で投下間隔 mean 9.58→3.01秒（probe session `0de2df17`）になったが、別の停滞モードが残った。現ピースの本体だけが field と同色 (50,50,48) で描画され、emblem しか見えないフレームでは、配備版の検出が `clipped-current`、ROI を2px内側にしても `ambiguous-flag`（`type=null`）となり現ピースを同定できない。`unknown-current` は入力なし → 盤面が変わらない → 次の観測も同じ、という静止ループになる。実測 `partial/game_0008/original/turn_0002.jpg`（`YOUR 91/91` の新ラウンド）で12観測・約10秒、`game_0007` は最後の投下から93秒後にラウンドが終了した（停滞で時間を消費して敗退）。
+- 変更: `observation_guard.mjs` の `createHoldEscapePolicy()` が連続 `unknown-current` を数え、`main.mjs` の非MOVE分岐が上限付きの代替投下（既定 `x=0`）を行う。env:
+  - `SOREN91_HOLD_ESCAPE_FRAMES`（既定 6、0で無効、上限200）
+  - `SOREN91_HOLD_ESCAPE_INTERVAL_MS`（既定 4000、上限60000）
+  - `SOREN91_HOLD_ESCAPE_LIMIT`（既定 3、0で無効、上限100）
+- 前提: `unknown-current` は「校正と盤面は健全で、現在ピースだけが同定できない」を意味する。`observation_guard.mjs` の分類順を `uncalibrated` → `invalid-board` → `unknown-current` にし、壊れた校正・盤面がこのラベルへ丸められないようにした（`usable` / `frameValid` の意味は不変）。加えてループ側でも現フレームの `usableCalibration(...)` を要求し、`next` のないフレームでは発動しない。
+- 実判定の投下（`noteDrop`）またはラウンド境界（`reset`）で連続数と残回数をリセットする。上限に達した後は従来どおり待機する。
+- 観測性: telemetry schema は変えない。発動は「`reasonCounts['unknown-current']` が6以上・`holds=0` のまま1区間が閉じた dropProfile レコード」とプレイヤーログ `[game] Recognition hold escape: ...` で確認できる。
+
 ## 配備前の確認
 
 - 本番VMの `soren91/main.mjs` には 2026-09-17 時点で手動パッチ (CDP captureScreenshot) が入っている。PR #371 をマージして配備する場合、VMパッチとの差分を確認してから置換する。無確認上書きはしない。

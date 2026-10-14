@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gateObservation, markDropSent, queueAdvanceEvidence } from '../soren91/observation_guard.mjs';
+import { createHoldEscapePolicy, gateObservation, holdEscapeFrames, holdEscapeIntervalMs,
+  holdEscapeLimit, markDropSent, queueAdvanceEvidence } from '../soren91/observation_guard.mjs';
 
 const calibration = () => ({
   coordinateSchema: 2,
@@ -332,3 +333,58 @@ test('a same-type candidate falling through the spawn band cannot bypass vertica
   assertBlocked(gateObservation(positioned([1, 2, 3], 4.02), cal, 4000), 'board-moving');
   assert.equal(gateObservation(positioned([1, 2, 3], 4.02), cal, 7000).state, 'MOVE');
 }));
+
+test('the recognition-hold escape counts uninterrupted holds and stays bounded', () => {
+  const policy = createHoldEscapePolicy({ SOREN91_HOLD_ESCAPE_FRAMES: '3',
+    SOREN91_HOLD_ESCAPE_INTERVAL_MS: '1000', SOREN91_HOLD_ESCAPE_LIMIT: '2' });
+  assert.equal(policy.observe('unknown-current', 0), false);
+  assert.equal(policy.observe('unknown-current', 100), false);
+  assert.equal(policy.observe('board-moving', 200), false); // any other reason resets the run
+  assert.equal(policy.observe('unknown-current', 300), false);
+  assert.equal(policy.observe('unknown-current', 400), false);
+  assert.equal(policy.observe('unknown-current', 500), true);
+  assert.equal(policy.observe('unknown-current', 600), false); // interval has not elapsed
+  assert.equal(policy.observe('unknown-current', 700), false);
+  assert.equal(policy.observe('unknown-current', 1600), true);
+  assert.deepEqual(policy.snapshot(), { holds: 0, escapes: 2 });
+  for (const now of [9000, 10000, 11000]) {
+    assert.equal(policy.observe('unknown-current', now), false); // stretch limit reached
+  }
+  policy.noteDrop(); // a real decision ends the stretch
+  assert.equal(policy.observe('unknown-current', 20000), false);
+  assert.equal(policy.observe('unknown-current', 20100), false);
+  assert.equal(policy.observe('unknown-current', 20200), true);
+  policy.reset(); // a new round starts fresh
+  assert.equal(policy.snapshot().escapes, 0);
+  assert.equal(policy.observe('unknown-current', 999999), false);
+});
+
+test('the recognition-hold escape is kill-switchable and bounded by configuration', () => {
+  for (const env of [{ SOREN91_HOLD_ESCAPE_FRAMES: '0' }, { SOREN91_HOLD_ESCAPE_LIMIT: '0' }]) {
+    const policy = createHoldEscapePolicy(env);
+    for (let i = 0; i < 50; i++) {
+      assert.equal(policy.observe('unknown-current', i * 5000), false, JSON.stringify(env));
+    }
+  }
+  assert.equal(holdEscapeFrames({}), 6);
+  assert.equal(holdEscapeFrames({ SOREN91_HOLD_ESCAPE_FRAMES: 'lots' }), 6);
+  assert.equal(holdEscapeFrames({ SOREN91_HOLD_ESCAPE_FRAMES: '-1' }), 6);
+  assert.equal(holdEscapeIntervalMs({}), 4000);
+  assert.equal(holdEscapeIntervalMs({ SOREN91_HOLD_ESCAPE_INTERVAL_MS: '0' }), 0);
+  assert.equal(holdEscapeLimit({}), 3);
+  assert.equal(holdEscapeLimit({ SOREN91_HOLD_ESCAPE_LIMIT: '2.5' }), 3);
+});
+
+test('only a healthy frame may report unknown-current, so the escape cannot fire blind', () => {
+  // The bounded fallback drop keys off `unknown-current` alone. That label must
+  // therefore never hide a broken calibration or a corrupt board reading.
+  const corruptBoard = calibration();
+  const corrupted = observation([null, 2, 3], 0, {
+    pieces: [{ type: 1, x: NaN, y: -4, r: 0.207, confidence: 0.9 }],
+  });
+  assertBlocked(gateObservation(corrupted, corruptBoard, 1000), 'invalid-board');
+
+  const unusable = calibration();
+  unusable.confidence = 0.4;
+  assertBlocked(gateObservation(observation([null, 2, 3]), unusable, 1000), 'uncalibrated');
+});
