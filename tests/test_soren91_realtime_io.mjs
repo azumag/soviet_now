@@ -315,7 +315,7 @@ function extract(name, end) {
 const loopSource = extract('gameLoop', '/**\n * HOLD').replaceAll('import.meta.url', '"file:///soren91/main.mjs"');
 async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [],
   observation = null, diagnosticsEnabled = false, env = null, calibration: cal = calibration,
-  blockedReason = 'unknown-current', source = loopSource } = {}) {
+  blockedReason = 'unknown-current', blockedState = 'DROP', source = loopSource } = {}) {
   let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
   const dropTimes = [], writes = [], comments = [], diagnosticCalls = [], logs = [];
   const context = {
@@ -341,7 +341,10 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     captureGameScreenshot: async () => { shots++; now += captureMs; return typeof observation === 'function' ? observation(shots) : observation; },
     loadModule: async () => ({
       generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
-      analyzeScreenshot: async () => ({ state: shots <= blocked ? 'DROP' : 'MOVE',
+      detectConnectionErrorScreen: async () => false,
+      detectRankingScreen: async () => null,
+      analyzeScreenshot: async () => ({ state: shots <= blocked
+        ? (typeof blockedState === 'function' ? blockedState(shots) : blockedState) : 'MOVE',
         pieces, confidence: 1, perception: { reason: shots <= blocked
           ? (typeof blockedReason === 'function' ? blockedReason(shots) : blockedReason) : 'stable' } }),
     }),
@@ -526,4 +529,12 @@ test('consecutive-error policy backs off exponentially and only stops after a ge
   assert.equal(captureErrorLimit({}), 30);
   assert.equal(captureErrorLimit({ SOREN91_ERROR_LIMIT: '5' }), 5);
   assert.equal(captureErrorLimit({ SOREN91_ERROR_LIMIT: '0' }), 30);
+});
+
+test('WAITING observations break the real loop escape streak before the first drop', async () => {
+  const s = await simulateLoop({ blocked: 100, maxDrops: 1, captureMs: 1200,
+    blockedState: shot => shot % 4 === 0 ? 'WAITING' : 'DROP',
+    observation: stalledFrame, calibration: validCalibration() });
+  assert.equal(s.drops, 0);
+  assert.equal(s.logs.some(line => line.includes('Recognition hold escape')), false);
 });
