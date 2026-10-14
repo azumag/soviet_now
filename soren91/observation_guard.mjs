@@ -80,11 +80,11 @@ export function postDropWindowMs(env = process.env) {
 }
 
 // Bounded escape for a persistent recognition hold. Measured 2026-10-15
-// (docich#414): a piece whose body renders in the field colour leaves only its
-// emblem visible, so every frame reports unknown-current without any error.
-// The loop then holds forever -- 12 consecutive frames plus 93s until the round
-// ended -- because a rejected observation means no input, which means the frame
-// never changes. After a bounded run of consecutive holds on a healthy frame
+// (docich#414): a cursor joined to the deadline's antialias fringe and hidden
+// behind the HUD repeatedly reports unknown-current without any error.
+// A rejected observation means no input, so the same frame can repeat
+// indefinitely. Separate stored traces showed 12 consecutive holds and a
+// completed round ending 93s after its final drop. After a bounded run of consecutive holds on a healthy frame
 // (see the classification order in gateObservation) the loop may send one
 // fallback drop at the centre so the game advances. Every other reason resets
 // the run, so ordinary waits and settling frames never become blind drops.
