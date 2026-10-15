@@ -13,7 +13,7 @@ SOURCE = (ROOT / "twitch_predictions.sh").read_text(encoding="utf-8")
 
 
 def _extract_function(name):
-    match = re.search(rf"(?ms)^{re.escape(name)}\\(\\) \\{{.*?^\\}}", SOURCE)
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{.*?^\}}", SOURCE)
     if not match:
         raise AssertionError(f"function not found: {name}")
     return match.group(0)
