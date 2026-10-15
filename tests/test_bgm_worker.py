@@ -156,6 +156,7 @@ class BgmPolicyTest(unittest.TestCase):
             "if os.environ.get('PLAYER_AUDIO_ENV'):\n"
             "    with open(os.environ['PLAYER_AUDIO_ENV'], 'w') as f:\n"
             "        json.dump({'pulse_prop': os.environ.get('PULSE_PROP'),\n"
+            "                   'server': os.environ.get('PULSE_SERVER'),\n"
             "                   'sink': os.environ.get('PULSE_SINK'), 'argv': sys.argv[1:]}, f)\n"
             "def event(kind):\n"
             "    with open(os.environ['PLAYER_LOG'], 'a') as f:\n"
@@ -165,6 +166,9 @@ class BgmPolicyTest(unittest.TestCase):
             "    if os.environ.get('IGNORE_TERM') != '1': sys.exit(0)\n"
             "signal.signal(signal.SIGTERM, stop)\n"
             "event('start')\n"
+            "if os.environ.get('PLAYER_EXIT'):\n"
+            "    print('PRIVATE_PLAYER_ERROR', file=sys.stderr)\n"
+            "    sys.exit(int(os.environ['PLAYER_EXIT']))\n"
             "while True: time.sleep(0.05)\n")
         player.chmod(0o700)
         self.player = player
@@ -271,7 +275,7 @@ class BgmPolicyTest(unittest.TestCase):
     def test_ordinary_corners_get_bgm_except_native_audio_and_exclusions(self):
         for game, expected in (
             ("weather-view", 0), ("paper-view", 0), ("tsuitate-view", 0),
-            ("nethack", 0), ("nsnake", 0), ("future-ordinary-view", 0),
+            ("nethack", 0), ("yosou-view", 0), ("nsnake", 0), ("future-ordinary-view", 0),
             ("hanjuku-hero", 1), ("external-video-view", 1),
             ("sorengame", 1), ("soren91", 1),
         ):
@@ -323,6 +327,7 @@ class BgmPolicyTest(unittest.TestCase):
             "PULSE_PROP": "module-stream-restore.id=other-player",
             "SOREN_BGM_SINK": "test_corner_sink",
             "SOREN_BGM_VOLUME": "0",  # An explicit operator silence is retained.
+            "PULSE_SERVER": "unix:/operator/audio/native",
         })
         self.canonical_state(game="weather-view")
         self.start_worker()
@@ -332,10 +337,88 @@ class BgmPolicyTest(unittest.TestCase):
                          "application.id=docich.corner-bgm "
                          "module-stream-restore.id=docich-corner-bgm")
         self.assertEqual(recorded["sink"], "test_corner_sink")
+        self.assertEqual(recorded["server"], "unix:/operator/audio/native")
         self.assertEqual(recorded["argv"], [
             "-nodisp", "-loop", "0", "-volume", "0", "-window_title",
             "soren-bgm-loop", str(self.bgm),
         ])
+
+    def test_system_service_without_session_env_uses_encoder_runtime_socket(self):
+        self.setup_player()
+        audio_env = self.root / 'audio-env.json'
+        self.env['PLAYER_AUDIO_ENV'] = str(audio_env)
+        self.env.pop('XDG_RUNTIME_DIR', None)
+        self.env.pop('PULSE_SERVER', None)
+        self.start_worker()
+        self.wait_for(lambda: len(self.player_events('start')) == 1)
+        recorded = json.loads(audio_env.read_text())
+        self.assertEqual(recorded['server'], f'unix:/run/user/{os.getuid()}/pulse/native')
+
+    def status(self):
+        try:
+            return json.loads((self.state / "bgm_worker.json").read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def test_policy_reasons_are_fixed_and_never_include_private_errors(self):
+        self.assertEqual(self.policy().stdout.strip(), b"eligible")
+        self.canonical_state(game="external-video-view")
+        self.assertEqual(self.policy().stdout.strip(), b"excluded_game")
+        self.canonical_state(phase="draining")
+        self.assertEqual(self.policy().stdout.strip(), b"switch_not_ready")
+        self.canonical_state()
+        self.stopped_handover(status="stopping")
+        self.assertEqual(self.policy().stdout.strip(), b"native_stop_unconfirmed")
+        self.stopped_handover()
+        (self.lifecycle / "request.json").write_text("PRIVATE_STATE_VALUE")
+        result = self.policy()
+        self.assertEqual(result.stdout.strip(), b"invalid_state")
+        self.assertNotIn(b"PRIVATE", result.stdout + result.stderr)
+        self.marker.unlink()
+        self.assertEqual(self.policy().stdout.strip(), b"pause_unreadable")
+
+    def test_snapshot_follows_blocked_running_and_shutdown_without_rewriting_pause(self):
+        self.setup_player()
+        self.canonical_state(game="sorengame")
+        worker = self.start_worker()
+        self.wait_for(lambda: self.status().get("state") == "blocked")
+        self.assertEqual(self.status()["reason"], "excluded_game")
+        before = self.marker.read_bytes()
+        self.canonical_state(game="paper-view")
+        self.wait_for(lambda: self.status().get("state") == "running")
+        status = self.status()
+        self.assertEqual(status["player_pid"], self.player_events("start")[0])
+        self.assertEqual(status["worker_pid"], worker.pid)
+        self.assertEqual((self.state / "bgm_worker.json").stat().st_mode & 0o777, 0o600)
+        self.cleanup_process(worker)
+        self.assertEqual(self.status()["state"], "stopped")
+        self.assertEqual(self.status()["player_pid"], 0)
+        self.assertEqual(self.marker.read_bytes(), before)
+
+    def test_player_exit_is_recorded_and_retried_without_releasing_worker_lock(self):
+        self.setup_player()
+        self.env["PLAYER_EXIT"] = "7"
+        worker = self.start_worker()
+        self.wait_for(lambda: self.status().get("last_exit") == 7)
+        self.assertGreaterEqual(self.status()["player_exits"], 1)
+        duplicate = self.start_worker()
+        self.assertNotEqual(duplicate.wait(timeout=5), 0)
+        self.assertEqual(self.status()["worker_pid"], worker.pid)
+        self.assertNotIn("PRIVATE", json.dumps(self.status()))
+
+    def test_repeated_failure_logging_is_bounded_and_drops_raw_player_stderr(self):
+        self.setup_player()
+        self.env["PLAYER_EXIT"] = "7"
+        with (self.root / "journal").open("w+") as journal:
+            worker = subprocess.Popen(["bash", str(ROOT / "bgm_worker.sh")], env=self.env,
+                                      stdout=journal, stderr=journal, start_new_session=True)
+            self.addCleanup(self.cleanup_process, worker)
+            self.wait_for(lambda: len(self.player_events("start")) >= 4)
+            self.cleanup_process(worker)
+            journal.seek(0)
+            output = journal.read()
+        self.assertEqual(output.count("state=restarting"), 1)
+        self.assertNotIn("PRIVATE_PLAYER_ERROR", output)
 
 
 if __name__ == "__main__":
