@@ -3135,7 +3135,7 @@ if "games_total" not in rs[h]:
 # 既存 entry が version を持っていても上書きしません (過去値の provenance を
 # 変えてはいけない)。version が違う/無い entry は lib.objective.mixed_versions()
 # で検出できます。
-if _OBJ_VER and not rs[h].get("objective_schema_version"):
+if _OBJ_VER and not rs[h].get("objective_schema_version") and not rs[h].get("scores") and not rs[h].get("games_total"):
     rs[h]["objective_schema_version"] = _OBJ_VER
 recent_archives = rs[h].get("_recent_archives", [])
 if not isinstance(recent_archives, list):

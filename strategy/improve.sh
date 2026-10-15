@@ -2490,7 +2490,7 @@ if run.get("hash") != strategy_hash:
 # 既存 run が version を持っていても上書きしません。seed された過去 scores は
 # 未知の version なので、_seed_current_strategy_run_from_rolling() 側で明示的に
 # 運ばない限り version は付きません (= mixed_versions() が検出できる)。
-if _OBJ_VER and not run.get("objective_schema_version"):
+if _OBJ_VER and not run.get("objective_schema_version") and not run.get("scores") and not run.get("games_total"):
     run["objective_schema_version"] = _OBJ_VER
 
 recent_archives = run.get("_recent_archives", [])

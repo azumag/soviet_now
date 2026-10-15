@@ -121,6 +121,24 @@ rs = json.load(open('$tmp/rolling_scores.json'))
 print(len(mixed_versions([rs['h1'], {'objective_schema_version': 'soviet-terminal-v1'}])))")" \
   "2"
 
+# Existing unversioned history must remain unknown when a new score is appended.
+python3 - "$tmp" <<'PYCODE'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+for name in ("rolling_scores.json", "current_strategy_run.json"):
+    path = root / name
+    data = json.loads(path.read_text())
+    entry = data["h1"] if name == "rolling_scores.json" else data
+    entry.pop("objective_schema_version", None)
+    path.write_text(json.dumps(data))
+PYCODE
+bash "$tmp/run1.sh" >/dev/null 2>&1
+t "version 不明の既存 rolling 履歴を新規 version と偽認しない" \
+  "$(python3 -c "import json;print(json.load(open('$tmp/rolling_scores.json'))['h1'].get('objective_schema_version'))")" "None"
+t "version 不明の既存 current run を新規 version と偽認しない" \
+  "$(python3 -c "import json;print(json.load(open('$tmp/current_strategy_run.json')).get('objective_schema_version'))")" "None"
+
 # ── 4. ab_report が version 混在を黙って隠さない ─────────────────────────
 games="$tmp/mixed_games.jsonl"
 python3 - "$games" <<'PY'

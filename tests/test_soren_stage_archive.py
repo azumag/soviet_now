@@ -16,6 +16,7 @@ class ArchiveWriterTests(unittest.TestCase):
         for name in ("lib", "history", "versions", "tmp/state"):
             root.joinpath(name).mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "lib/soren_stage_ledger.py", root / "lib/soren_stage_ledger.py")
+        shutil.copyfile(ROOT / "lib/objective.py", root / "lib/objective.py")
         for name, source, default in (("version.sh", version, "core/version.sh"),
                                       ("writer.sh", writer, "strategy/ab_interleave.sh")):
             root.joinpath(name).write_text(source if source is not None else (ROOT / default).read_text())
