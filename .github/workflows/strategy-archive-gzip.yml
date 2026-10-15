@@ -25,4 +25,8 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_strategy_archive_gzip tests.test_strategy_archive_backfill tests.test_instadeath_split
-      - run: bash -n lib/strategy_archive.sh eloop.sh eloop_lib.sh eloop_improve.sh strategy/improve.sh strategy/regression.sh tools/ab_ctl.sh
+      - name: Validate all affected shell sources
+        run: |
+          for source in lib/strategy_archive.sh eloop.sh eloop_lib.sh eloop_improve.sh strategy/improve.sh strategy/regression.sh tools/ab_ctl.sh; do
+            bash -n "$source"
+          done
