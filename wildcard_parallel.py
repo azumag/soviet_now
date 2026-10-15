@@ -2183,43 +2183,33 @@ def archive_candidate_game_result(workdir: Path, job_id: str, game_index: int, g
         "final_types": final_types,
         "state_snapshot": {"pieces": [{"type": t} for t in final_types]},
         "decision_reason": "wildcard_parallel_result_archive",
+        # issue #132 Phase 1: この row の `score` はどの evaluator で測ったものか。
+        # nation_progress()/update_rolling_scores() は過去の archive を読んで
+        # 同じ hash の標本に足すため、version が無いと旧 EVAL_SCORE と新目的値を
+        # 区別できません。
+        "objective_schema_version": OBJECTIVE_SCHEMA_VERSION,
     }
     out_path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     return out_path
 
 
-TYPE_BONUS = {
-    1: 0,
-    2: 0,
-    3: 1,
-    4: 3,
-    5: 7,
-    6: 15,
-    7: 32,
-    8: 67,
-    9: 141,
-    10: 296,
-    11: 622,
-    12: 1306,
-    13: 2743,
-    14: 5760,
-    15: 12096,
-    # type 16 = ソ連。表は隣接比 2.1 の等比なので 12096 × 2.1 = 25402。
-    # これが無いと「T15 を 2 個持ったまま終局」(2×12096=24192) より
-    # 「実際に建国」(raw +136、soviet ボーナス +800) のほうが 23,256 点低く評価され、
-    # 自動探索・回帰判定が最終目標を回避する向きに働く (issue #132 P0-0)。
-    16: 25402,
-}
+# issue #132 Phase 1: 評価表は lib/objective.py の単一定義から import する。
+# 以前はここに TYPE_BONUS の写しを持っていました。eloop.sh と
+# repair_current_run_from_history.sh にも同じ写しがあり、どれか 1 件だけが
+# 古いまま残ると試合中の評価と候補選抜が違う目的空間の値として同じ標本に
+# 混ざります。型ボーナスの意味は lib/objective.py の docstring にあります。
+from lib.objective import (  # noqa: E402
+    OBJECTIVE_SCHEMA_VERSION,
+    TYPE_BONUS,
+    eval_score as objective_eval_score,
+)
 
 
 def eval_score(game: dict) -> int:
     """Match eloop.sh's eval_score_history scoring for candidate selection."""
     raw_score = _int(game.get("score"), 0)
     final_types = [_int(v, 0) for v in (game.get("final_types") or [])]
-    bonus = sum(TYPE_BONUS.get(t, 0) for t in final_types)
-    if game.get("soviet_created"):
-        bonus += 800
-    return raw_score + bonus
+    return objective_eval_score(raw_score, final_types, bool(game.get("soviet_created")))
 
 
 def _score_timeout_board(workdir: Path) -> dict | None:

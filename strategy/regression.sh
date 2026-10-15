@@ -3081,6 +3081,18 @@ _ID_ON = os.environ.get("INSTADEATH_SPLIT_ENABLED") == "1"
 _ID_DEAD = os.environ.get("ID_DEAD") == "1"
 _ID_DIV = _ID_ON and os.environ.get("ID_DIVERT") == "1"
 
+# issue #132 Phase 1: この entry の `scores` はどの evaluator で測ったか。
+# 型ボーナス表 (T16=25402) が 2026-09 に追加される前の scores は同じ hash でも
+# 違う目的空間の値なので、version が無い entry と新しい entry は 1 つの標本に
+# まとめられません。import に失敗しても書き込みは続行します (観測の追加が
+# スコア記録を止めてはいけない)。
+try:
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, ".")
+    from lib.objective import OBJECTIVE_SCHEMA_VERSION as _OBJ_VER
+except Exception:
+    _OBJ_VER = None
+
 
 def _optint(name):
     v = (os.environ.get(name) or "").strip()
@@ -3119,6 +3131,12 @@ if h not in rs:
     rs[h] = {"scores": [], "prev_hash": "", "games_total": 0}
 if "games_total" not in rs[h]:
     rs[h]["games_total"] = len(rs[h].get("scores", []))
+# issue #132 Phase 1: 新規 score はこの version の evaluator で測られている。
+# 既存 entry が version を持っていても上書きしません (過去値の provenance を
+# 変えてはいけない)。version が違う/無い entry は lib.objective.mixed_versions()
+# で検出できます。
+if _OBJ_VER and not rs[h].get("objective_schema_version"):
+    rs[h]["objective_schema_version"] = _OBJ_VER
 recent_archives = rs[h].get("_recent_archives", [])
 if not isinstance(recent_archives, list):
     recent_archives = []
