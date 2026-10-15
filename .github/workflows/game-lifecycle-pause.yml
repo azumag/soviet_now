@@ -18,4 +18,5 @@ jobs:
       - run: bash tests/test_pid_settle.sh
       - run: bash tests/test_bridge_recovery_parked.sh
       - run: bash tests/test_bridge_recovery_stale_observation.sh
+      - run: bash tests/test_bridge_recovery_retention.sh
       - run: bash -n lib/game_lifecycle.sh lib/bridge_recovery.sh

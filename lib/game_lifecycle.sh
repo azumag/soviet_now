@@ -18,6 +18,10 @@ GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
 GAME_LIFECYCLE_PREDICTION_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/prediction_worker.paused"
 GAME_LIFECYCLE_PLAYER_STATE_FILE="$GAME_LIFECYCLE_DIR/player_state.json"
 GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE="$GAME_LIFECYCLE_DIR/watchdog_pause.json"
+# 同一盤面保持要求 (cancel/boundary待ち/prepared) の有効窓。この間は
+# bridge 自己復旧の game_state mtime 停滞判定を「盤面を維持する」側に解釈し、
+# kill/relaunch へ進まない (soviet_now#500)。
+GAME_LIFECYCLE_BOARD_RETENTION_SEC="${GAME_LIFECYCLE_BOARD_RETENTION_SEC:-1800}"
 GAME_LIFECYCLE_WATCHDOG_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/soviet_watchdog.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
@@ -269,6 +273,61 @@ if status in {"stop_requested", "resume_requested", "stopping"}:
         raise SystemExit(0)
     raise SystemExit(1)
 raise SystemExit(1)
+PY
+}
+
+# 同一盤面を保持すべきライフサイクル遷移の直後か (soviet_now#500)。
+# cancel で旧ゲームへ戻る / boundary 待ち / player_change prepared はいずれも
+# 「この盤面を続ける」要求。game_state.json は stateChanged のときだけ書き換わる
+# ため、MOVE を送っていない board は何分経っても mtime が動かない。復旧側が
+# mtime 停滞だけで kill/relaunch へ進むと score0 の新盤面になり、依頼と逆の
+# 結果になる (#500 の 20:54:31 事象)。
+# identity は全項目照合。保持は ack の遷移時刻から有限窓のみなので、古い要求が
+# 復旧を永久に抑止することはない。stopped/stopping 等の意図的停止は
+# game_lifecycle_bridge_parked 側の管轄でここには含めない。
+game_lifecycle_bridge_board_retention() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	python3 - "$GAME_LIFECYCLE_DIR/request.json" "$GAME_LIFECYCLE_DIR/ack.json" \
+		"${GAME_LIFECYCLE_BOARD_RETENTION_SEC:-1800}" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime
+
+try:
+    request = json.load(open(sys.argv[1], encoding="utf-8"))
+    ack = json.load(open(sys.argv[2], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(request, dict) or not isinstance(ack, dict):
+    raise SystemExit(1)
+if request.get("schema") != 1 or ack.get("schema") != 1:
+    raise SystemExit(1)
+for field in ("request_id", "game", "generation", "deadline_epoch", "deadline_at"):
+    if field not in request or ack.get(field) != request.get(field):
+        raise SystemExit(1)
+status = ack.get("status")
+# cancelled は「旧ゲームを継続する」明示の巻き戻し。残りは境界待ち/prepared で、
+# どれも現盤面がそのまま生きている。
+if status not in {"cancelled", "boundary", "accepted", "waiting", "prepared"}:
+    raise SystemExit(1)
+# 非終端 status は要求の期限まで。期限切れの要求で復旧を抑止しない。
+if status != "cancelled":
+    try:
+        deadline = float(request.get("deadline_epoch"))
+    except (TypeError, ValueError):
+        raise SystemExit(1)
+    if deadline <= time.time():
+        raise SystemExit(1)
+try:
+    window = max(0.0, float(sys.argv[3]))
+except (TypeError, ValueError):
+    window = 1800.0
+try:
+    updated = datetime.fromisoformat(str(ack.get("updated_at")).replace("Z", "+00:00")).timestamp()
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if (time.time() - updated) <= window else 1)
 PY
 }
 
