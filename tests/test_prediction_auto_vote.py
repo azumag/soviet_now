@@ -13,6 +13,12 @@ SOURCE = (ROOT / "twitch_predictions.sh").read_text(encoding="utf-8")
 
 
 def _extract_function(name):
+    # The auto-vote body embeds multiline Python with a top-level closing brace,
+    # so a naive Bash function regex would stop before the function actually ends.
+    if name == "_auto_vote_prediction":
+        start = SOURCE.index("_auto_vote_prediction() {")
+        end = SOURCE.index("\n# --- サブコマンド ---", start)
+        return SOURCE[start:end].rstrip()
     match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{.*?^\}}", SOURCE)
     if not match:
         raise AssertionError(f"function not found: {name}")
