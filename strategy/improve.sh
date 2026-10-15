@@ -2425,6 +2425,16 @@ _ID_ON = os.environ.get("INSTADEATH_SPLIT_ENABLED") == "1"
 _ID_DEAD = os.environ.get("ID_DEAD") == "1"
 _ID_DIV = _ID_ON and os.environ.get("ID_DIVERT") == "1"
 
+# issue #132 Phase 1: この run の `scores` はどの evaluator で測ったか。
+# strategy/regression.sh の update_rolling_scores() と同じ stamp。import 失敗は
+# 無視して書き込みを続行します。
+try:
+    if "" not in sys.path and "." not in sys.path:
+        sys.path.insert(0, ".")
+    from lib.objective import OBJECTIVE_SCHEMA_VERSION as _OBJ_VER
+except Exception:
+    _OBJ_VER = None
+
 
 def _optint(name):
     v = (os.environ.get(name) or "").strip()
@@ -2475,6 +2485,13 @@ if run.get("hash") != strategy_hash:
         "deadline_guard_counts": [],
         "deadline_guard_reason_tops": [],
     }
+
+# issue #132 Phase 1: 新規 run の scores はこの version の evaluator で測られている。
+# 既存 run が version を持っていても上書きしません。seed された過去 scores は
+# 未知の version なので、_seed_current_strategy_run_from_rolling() 側で明示的に
+# 運ばない限り version は付きません (= mixed_versions() が検出できる)。
+if _OBJ_VER and not run.get("objective_schema_version") and not run.get("scores") and not run.get("games_total"):
+    run["objective_schema_version"] = _OBJ_VER
 
 recent_archives = run.get("_recent_archives", [])
 if not isinstance(recent_archives, list):
