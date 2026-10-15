@@ -10,6 +10,12 @@
 
 ACKは終端のbookkeepingやゲーム入力を発生させない。資源解放には既存の明示stop controlが必要。例外ACKの証跡tokenはstop要求時・不可逆claim時に再照合し、MOVE/鮮度切れ/帰属変更はwaitingに戻す。bridgeはoverlay readinessの待機後、claim直前に実盤面を再観測する。claim後にMOVEや盤面変化が起きるTOCTOUに対して、ACKが保持する盤面と現在のSTOP盤面を不可逆なUnity Quitと同じbrowser task内で最終照合する。ここにawaitや入力を挟まない。拒否時はQuit・音声停止・browser close・ページ復元を行わず、既存fenceを維持したfailedとして明示的な回復を待つ。
 
+## bridge 復旧と実観測 (soviet_now#500)
+
+`_ensure_bridge_alive` は `game_state.json` の mtime 停滞だけを根拠に bridge を kill/relaunch しない。mtime は盤面が変化した時だけ進むため、休止・境界待ちで同じ盤面を保持している間も止まる (2026-09-23 は lifecycle cancel 後の再開直後にこれが 806s 停滞と見え、bridge を再起動して盤面を失った)。
+
+停滞を検知したら、まず `tmp/state/game_observation.json` (bridge が実観測から最長1秒ごとに更新する) を非破壊に再観測する。待機は `BRIDGE_OBSERVE_WAIT_SEC` (既定5s)、鮮度閾値は `BRIDGE_OBSERVE_FRESH_SEC` (既定15s)。実観測が生存していれば live page は生きており、凍結した `game_state.json` は保持対象の盤面と判定して保留し、kill/relaunch も RETRY/RELOAD も送らず盤面リセットへ自動で進まない。保留は `BRIDGE_STALE_NOTICE_SEC` (既定60s) ごとに理由と盤面をログする。実観測も途絶えている場合だけ従来どおり復旧する (プロセス消失・致命ログ署名の扱いは変えない)。
+
 ## 反映と依存
 
 旧runner/旧bridgeにはこの証跡がないため、古いmarker・静止ファイルだけで現在の稼働試合を終了させない。コードのcommit/pushやCI成功で進行中switchの復旧を保証しない。新コードを正規に配備し、次の自然なrunner/bridge起動から有効にする。既存試合の強制終了や確認用再起動はこの修正の範囲外。

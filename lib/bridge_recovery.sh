@@ -22,6 +22,16 @@ _BR_PROFILE="${SOREN_LOCAL_USER_DATA_DIR:-$_BR_ROOT/tmp/soviet_local_chromium_pr
 # every other recovery target (port/CDP/profile) is already env-scoped.
 _BR_TMUX_SESSION="${SOREN_BRIDGE_TMUX_SESSION:-soren_bridge}"
 _BR_STALE_SEC="${BRIDGE_STALE_SEC:-240}"
+# Issue #500: game_state.json の mtime 停滞は bridge 障害の証明にならない。
+# 稼働中の bridge は live page からの実観測 (tmp/state/game_observation.json) を
+# 盤面が静止していても最長1秒ごとに更新する (docs/founding-stop-boundary.md)。
+# 停滞を検知しても実観測で裏を取るまで kill/relaunch へ進まない。
+_BR_OBSERVATION="${BRIDGE_OBSERVATION_FILE:-$_BR_ROOT/tmp/state/game_observation.json}"
+_BR_OBSERVE_FRESH_SEC="${BRIDGE_OBSERVE_FRESH_SEC:-15}"
+_BR_OBSERVE_WAIT_SEC="${BRIDGE_OBSERVE_WAIT_SEC:-5}"
+# 同じ保留理由を毎周回ログしない。
+_BR_STALE_NOTICE_SEC="${BRIDGE_STALE_NOTICE_SEC:-60}"
+: "${_BR_STALE_HOLD_LOGGED_AT:=0}"
 _BR_BASE_GAP="${BRIDGE_RELAUNCH_BASE_GAP:-90}"
 _BR_MAX_GAP="${BRIDGE_RELAUNCH_MAX_GAP:-600}"
 _BR_AUDIO_HEALTH="${BRIDGE_AUDIO_HEALTH_FILE:-$_BR_ROOT/tmp/state/local_audio_health.json}"
@@ -380,6 +390,80 @@ _br_relaunch() {
 	return 1
 }
 
+# ---- Issue #500: 実観測による停滞の裏取り (kill/relaunch 前の非破壊確認) ----
+# game_state.json は盤面が変化した時だけ書かれる。休止・境界待ちで同じ盤面を
+# 保持している間は進捗が無いので mtime も止まる。したがって mtime 停滞だけでは
+# bridge 障害 (= 盤面喪失を伴う復旧が必要) と断定できない。稼働中の bridge は
+# live page の実観測 (tmp/state/game_observation.json) を静止中も最長1秒ごとに
+# 更新するので、こちらを非破壊な生存確認に使う。
+_br_observation_age() {
+	local f m n
+	f="${_BR_OBSERVATION:-$_BR_ROOT/tmp/state/game_observation.json}"
+	[ -f "$f" ] || return 1
+	m=$(stat -f %m "$f" 2>/dev/null) \
+		|| m=$(stat -c %Y "$f" 2>/dev/null) \
+		|| return 1
+	case "$m" in ''|0|*[!0-9]*) return 1 ;; esac
+	n=$(date +%s)
+	[ "$n" -ge "$m" ] || return 1
+	printf '%s\n' "$((n - m))"
+	return 0
+}
+
+# 最後の実観測が閾値以内か (実観測があるファイルの mtime のみを根拠にしない)。
+_br_live_observation_fresh() {
+	local age
+	age=$(_br_observation_age 2>/dev/null) || return 1
+	case "$age" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$age" -le "$_BR_OBSERVE_FRESH_SEC" ]
+}
+
+# mtime 停滞を検知した時の非破壊な再観測。live page を観測できている bridge は
+# 1秒以内に実観測を更新するので、有界の待機で生存を確認できる (休止解除直後の
+# 1周回で観測がまだ古い場合をここで吸収する)。kill も bridge への入力も送らない。
+_br_live_page_reobserved() {
+	_br_live_observation_fresh && return 0
+	local waited=0 wait_sec
+	wait_sec="${_BR_OBSERVE_WAIT_SEC:-5}"
+	case "$wait_sec" in ''|*[!0-9]*) wait_sec=5 ;; esac
+	while [ "$waited" -lt "$wait_sec" ]; do
+		sleep 1
+		waited=$((waited + 1))
+		_br_live_observation_fresh && return 0
+	done
+	return 1
+}
+
+# 実観測中の盤面 (ログ用)。取得できなければ空。
+_br_observation_board() {
+	python3 - "${_BR_OBSERVATION:-}" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    record = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+board = record.get("board") if isinstance(record, dict) else None
+if not isinstance(board, dict):
+    raise SystemExit(1)
+print("board=state:{} score:{} makeSorenCount:{}".format(
+    board.get("state"), board.get("score"), board.get("makeSorenCount")))
+PY
+}
+
+# 同じ保留理由を毎周回ログしない (周回は数秒間隔なので洪水になる)。
+_br_log_stale_hold() {
+	local stale_age="$1" obs_age="$2" board="$3" now
+	now=$(date +%s)
+	if [ "${_BR_STALE_HOLD_LOGGED_AT:-0}" -ne 0 ] &&
+		[ "$((now - _BR_STALE_HOLD_LOGGED_AT))" -lt "$_BR_STALE_NOTICE_SEC" ]; then
+		return 0
+	fi
+	_BR_STALE_HOLD_LOGGED_AT=$now
+	_br_log "game_state停滞(${stale_age}s) だが実観測は生存(age=${obs_age}s ${board}) → 保持中の盤面と判定し kill/relaunch を保留 (盤面リセットへ自動で進まない)"
+}
+
 # soren_loop メインループから毎周回呼ぶ。pause 後・play_one_game 前に配置。
 _ensure_bridge_alive() {
 	# 防御: 明示停止中は監視しない (pause 述語の主ガードは呼び出し位置で担保済 codex#5)
@@ -438,6 +522,14 @@ _ensure_bridge_alive() {
 		crash="プロセス消失"
 	else
 		[ "$m" -gt 0 ] && [ "$((n - m))" -ge "$_BR_STALE_SEC" ] && crash="game_state停滞($((n-m))s)"
+	fi
+	# Issue #500: mtime 停滞だけを根拠に bridge を kill/relaunch しない。実観測で
+	# live page の生存を非破壊に確認できたら、凍結した game_state.json は休止や
+	# 境界待ちで止まっている保持対象の盤面であり、bridge 障害ではない。復旧不能と
+	# 確認できるまで盤面リセット (kill/relaunch) へは自動で進めない。
+	if [[ "$crash" == game_state停滞* ]] && _br_live_page_reobserved; then
+		_br_log_stale_hold "$((n - m))" "$(_br_observation_age 2>/dev/null || echo NA)" "$(_br_observation_board 2>/dev/null || true)"
+		crash=""
 	fi
 	[ -z "$crash" ] && { [ "$_BR_CONSEC_FAIL" -ne 0 ] && { _br_log "ブリッジ正常化 → fail reset"; _BR_CONSEC_FAIL=0; }; return 0; }
 
