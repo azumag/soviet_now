@@ -1,0 +1,28 @@
+name: Strategy archive gzip
+on:
+  pull_request:
+    paths: &archive_paths
+      - 'lib/strategy_archive.*'
+      - 'extract_decide_hash.py'
+      - 'eloop*.sh'
+      - 'strategy/*.sh'
+      - 'show_status.sh'
+      - 'status_dashboard.py'
+      - 'tools/ab_ctl.sh'
+      - 'tests/test_strategy_archive*.py'
+      - '.github/workflows/strategy-archive-gzip.yml'
+  push:
+    branches: [main]
+    paths: *archive_paths
+permissions:
+  contents: read
+jobs:
+  archive-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_strategy_archive_gzip tests.test_strategy_archive_backfill tests.test_instadeath_split
+      - run: bash -n lib/strategy_archive.sh eloop.sh eloop_lib.sh eloop_improve.sh strategy/improve.sh strategy/regression.sh tools/ab_ctl.sh

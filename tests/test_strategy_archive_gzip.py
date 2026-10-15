@@ -49,6 +49,57 @@ UNSTABLE_SOURCE = "def decide(game_state, analysis):\n    return {'x': 1}\n"
 class ArchiveHelperUnitTest(unittest.TestCase):
     """Pure-python helper contract."""
 
+    def test_corrupt_gzip_preserves_plaintext_and_falls_back(self):
+        for data in (b"invalid gzip", gzip.compress(STRATEGY_SOURCE.encode())[:-6]):
+            with self.subTest(data_size=len(data)), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                plain = root / "h.py"
+                plain.write_text(STRATEGY_SOURCE)
+                (root / "h.py.gz").write_bytes(data)
+                self.assertEqual(resolve_plaintext("h", str(root)), str(plain))
+                self.assertEqual(plain.read_text(), STRATEGY_SOURCE)
+                self.assertEqual(sorted(p.name for p in root.iterdir()), ["h.py", "h.py.gz"])
+
+    def test_corrupt_gzip_alone_never_publishes_partial_plaintext(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "h.py.gz").write_bytes(gzip.compress(STRATEGY_SOURCE.encode())[:-6])
+            self.assertEqual(resolve_plaintext("h", str(root)), "")
+            self.assertEqual([p.name for p in root.iterdir()], ["h.py.gz"])
+
+    def test_shell_corrupt_gzip_preserves_plaintext_and_falls_back(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            plain = root / "h.py"
+            plain.write_text(STRATEGY_SOURCE)
+            (root / "h.py.gz").write_bytes(gzip.compress(STRATEGY_SOURCE.encode())[:-6])
+            script = "source lib/strategy_archive.sh; STRATEGY_HASH_ARCHIVE_DIR=$1; STRATEGY_HASH_PERMANENT_ARCHIVE_DIR=''; strategy_archive_resolve_plaintext h 0"
+            result = subprocess.run(["bash", "-c", script, "test", str(root)], cwd=REPO_ROOT, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str(plain))
+            self.assertEqual(plain.read_text(), STRATEGY_SOURCE)
+            self.assertEqual(sorted(p.name for p in root.iterdir()), ["h.py", "h.py.gz"])
+
+    def test_archive_restart_copy_failure_never_uses_stale_staging(self):
+        source = (REPO_ROOT / "eloop_improve.sh").read_text()
+        begin = source.index('\t\tif ! strategy_archive_copy "$archive_restart_path"')
+        end = source.index('\n\t\tif ! validate_strategy_with_helpers', begin)
+        block = source[begin:end]
+        script = "strategy_archive_copy() { return 1; }; log() { :; }; _improve_progress() { :; }; _ensure_strategy_runtime_params() { echo STALE_USED; }; archive_restart_path=bad;\n" + block
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("STALE_USED", result.stdout)
+
+    def test_failed_seed_copy_never_claims_apply_or_changes_strategy(self):
+        source = (REPO_ROOT / "eloop_improve.sh").read_text()
+        begin = source.index('\t\t\tif strategy_archive_copy "$escape_ai_seed_path"')
+        end = source.index('\n\t\telse', begin)
+        block = source[begin:end]
+        script = "strategy_archive_copy() { return 1; }; strategy_runtime_atomic_apply() { echo APPLIED; }; log() { :; }; _improve_progress() { :; }; escape_ai_seed_path=bad; ESCAPE_AI_SEED_APPLY_FILE=unused; STRATEGY_FILE=unused;\n" + block + '\nprintf "%s %s" "$ESCAPE_AI_SEED_APPLIED" "$IMPROVE_REASON"'
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "0 normal")
+
     def test_candidate_order_prefers_gz_then_plaintext(self):
         paths = list(candidate_paths("abc123", ["/by_hash", "/permanent"]))
         self.assertEqual(

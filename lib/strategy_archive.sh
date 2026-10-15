@@ -41,11 +41,18 @@ strategy_archive_read() {
 
 # src (.py.gz 可) を平文 dst へ複製する。
 strategy_archive_copy() {
-	local src="$1" dst="$2"
+	local src="$1" dst="$2" temporary
 	[ -n "$src" ] && [ -n "$dst" ] || return 1
 	[ -f "$src" ] || return 1
 	case "$src" in
-	*.gz) gzip -dc -- "$src" >"$dst" ;;
+	*.gz)
+		temporary=$(mktemp "${dst}.tmp.XXXXXX") || return 1
+		if gzip -dc -- "$src" >"$temporary" && chmod 644 "$temporary" && mv -f -- "$temporary" "$dst"; then
+			return 0
+		fi
+		rm -f -- "$temporary"
+		return 1
+		;;
 	*) cp -f -- "$src" "$dst" ;;
 	esac
 }
@@ -73,7 +80,6 @@ strategy_archive_resolve_plaintext() {
 			printf '%s\n' "$target"
 			return 0
 		fi
-		return 1
 	done < <(strategy_archive_candidates "$hash" "$include_permanent")
 	return 1
 }

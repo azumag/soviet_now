@@ -2122,7 +2122,11 @@ PY
 		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 		# Phase A: 選定候補が `.py.gz` なら平文へ展開してから staging へ置く。
-		strategy_archive_copy "$archive_restart_path" "strategy.py.staging" || log "[ARCHIVE-RESTART] candidate copy failed: ${archive_restart_path}"
+		if ! strategy_archive_copy "$archive_restart_path" "strategy.py.staging"; then
+			log "[ARCHIVE-RESTART] candidate copy failed: ${archive_restart_path}"
+			_improve_progress "archive_restart_fail" "100" "archive_copy_failed"
+			exit 1
+		fi
 		_ensure_strategy_runtime_params "strategy.py.staging"
 		if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[ARCHIVE-RESTART] validation failed → abort"
@@ -2437,9 +2441,8 @@ PY
 			cp "$STRATEGY_FILE" "$ESCAPE_AI_SEED_ORIGINAL_FILE"
 			# Phase A: seed が `.py.gz` なら平文へ展開してから適用する。
 			ESCAPE_AI_SEED_APPLY_FILE="tmp/escape_ai_seed_apply.py"
-			strategy_archive_copy "$escape_ai_seed_path" "$ESCAPE_AI_SEED_APPLY_FILE" \
-				&& strategy_runtime_atomic_apply "$ESCAPE_AI_SEED_APPLY_FILE" "$STRATEGY_FILE" \
-				|| log "[ESCAPE-AI] seed materialize failed: ${escape_ai_seed_path}"
+			if strategy_archive_copy "$escape_ai_seed_path" "$ESCAPE_AI_SEED_APPLY_FILE" \
+				&& strategy_runtime_atomic_apply "$ESCAPE_AI_SEED_APPLY_FILE" "$STRATEGY_FILE"; then
 			ESCAPE_AI_SEED_HASH=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			ESCAPE_AI_SEED_APPLIED=1
 			export ESCAPE_AI_SEED_JSON ESCAPE_AI_SEED_HASH
@@ -2451,6 +2454,13 @@ PY
 				"改善フロー: seeded escape_ai candidate exists? yes。WILDCARD seed=${escape_ai_seed_hash:0:8} から構造変異します。" \
 				"warn"
 			_improve_progress "escape_ai" "28" "seed_from_wildcard_${ESCAPE_AI_SEED_HASH:-unknown}"
+			else
+				ESCAPE_AI_SEED_APPLIED=0
+				IMPROVE_REASON="normal"
+				export IMPROVE_REASON
+				log "[ESCAPE-AI] seed materialize failed: ${escape_ai_seed_path}"
+				_improve_progress "normal" "30" "escape_ai_seed_copy_failed"
+			fi
 		else
 			log "[ESCAPE-AI] WILDCARD seed candidate invalid: ${ESCAPE_AI_SEED_JSON:-empty}"
 			_improve_flow_notify \
@@ -3230,7 +3240,8 @@ done
 for hf in $(ls -1t "$STRATEGY_HASH_ARCHIVE_DIR"/*.py "$STRATEGY_HASH_ARCHIVE_DIR"/*.py.gz 2>/dev/null | head -10); do
 	[ -f "$hf" ] || continue
 	if [ "${hf%.gz}" != "$hf" ]; then
-		strategy_archive_copy "$hf" "${hf%.gz}" && hf="${hf%.gz}"
+		strategy_archive_copy "$hf" "${hf%.gz}" || continue
+		hf="${hf%.gz}"
 	fi
 	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
 done

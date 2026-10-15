@@ -19,6 +19,7 @@ from __future__ import annotations
 import gzip
 import os
 import shutil
+import tempfile
 
 __all__ = [
     "candidate_paths",
@@ -87,16 +88,25 @@ def materialize_plaintext(src, dst):
     """src (.py.gz 可) を平文 dst へ書き出す。成功したら dst、失敗したら ""。"""
     if not src or not dst:
         return ""
+    temporary = None
     try:
         os.makedirs(os.path.dirname(str(dst)) or ".", exist_ok=True)
         if str(src).endswith(".gz"):
-            with open_archive(src, "rb") as rf, open(dst, "wb") as wf:
+            fd, temporary = tempfile.mkstemp(prefix=".archive-", dir=os.path.dirname(str(dst)) or ".")
+            with os.fdopen(fd, "wb") as wf, open_archive(src, "rb") as rf:
                 shutil.copyfileobj(rf, wf)
+                wf.flush()
+                os.fsync(wf.fileno())
+            os.chmod(temporary, 0o644)
+            os.replace(temporary, dst)
         else:
             shutil.copy2(src, dst)
         return dst
     except Exception:
         return ""
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def resolve_plaintext(hash_value, archive_dir="", permanent_archive_dir="", predicate=None):
@@ -106,10 +116,13 @@ def resolve_plaintext(hash_value, archive_dir="", permanent_archive_dir="", pred
     その平文パスを返す。下流の `cp` / `exec` / `validate_strategy` / sandbox 参照は
     平文を前提とするため、resolver は常に平文パスを返す契約にする。解決できなければ ""。
     """
-    path = find_path(hash_value, [archive_dir, permanent_archive_dir], predicate)
-    if not path:
-        return ""
-    if not str(path).endswith(".gz"):
-        return path
-    base = archive_dir or os.path.dirname(str(path))
-    return materialize_plaintext(path, os.path.join(str(base), f"{hash_value}.py"))
+    for path in candidate_paths(hash_value, [archive_dir, permanent_archive_dir]):
+        if not os.path.isfile(path) or (predicate is not None and not predicate(path)):
+            continue
+        if not str(path).endswith(".gz"):
+            return path
+        base = archive_dir or os.path.dirname(str(path))
+        resolved = materialize_plaintext(path, os.path.join(str(base), f"{hash_value}.py"))
+        if resolved:
+            return resolved
+    return ""

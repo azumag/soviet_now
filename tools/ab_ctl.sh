@@ -33,7 +33,11 @@ start)
 	[ -f "$ACTIVE_BRANCH_FILE" ] && { echo "active_branch.json があります。先に整理が必要。"; exit 1; }
 	bundle=$(mktemp -d "${TMP_STATE_DIR}/ab_bundle.XXXXXX")
 	# Phase A: src が .py.gz でも平文として bundle へ展開する。
-	strategy_archive_copy "$src" "$bundle/strategy.py"
+	strategy_archive_copy "$src" "$bundle/strategy.py" || {
+		rm -rf "$bundle"
+		echo "代替戦略を展開できません"
+		exit 1
+	}
 	if _ab_start_from_bundle "$bundle" "$pattern"; then
 		echo "A/B 開始: A=$(hash_of "$STRATEGY_FILE") (root) B=$(hash_of "$src") ($src) pattern=$pattern — 次の試合から有効。revert 先 tmp/revert_strategy.py=A"
 		grep -E "^(REGRESSION_DISABLED|SOREN_AB_ALT_STRATEGY|SOREN_AB_PATTERN)=" .env
