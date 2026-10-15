@@ -666,10 +666,37 @@ PY
 }
 
 # --- azumagdev 自動投票 (Twitch GQL API) ---
+# GQL は HTTP 200 でも GraphQL errors / mutation error を返し得る。
+# レスポンスの内容を検証した場合だけ「投票成功」と記録する。秘匿情報は出力しない。
+_auto_vote_response_accepted() {
+	python3 -c '
+import json
+import sys
+try:
+    payload = json.load(sys.stdin)
+except (ValueError, TypeError):
+    sys.exit(1)
+if not isinstance(payload, dict) or payload.get("errors"):
+    sys.exit(1)
+data = payload.get("data")
+result = data.get("makePrediction") if isinstance(data, dict) else None
+if not isinstance(result, dict) or result.get("error") is not None:
+    sys.exit(1)
+prediction = result.get("prediction")
+if not isinstance(prediction, dict):
+    sys.exit(1)
+prediction_id = prediction.get("id")
+sys.exit(0 if isinstance(prediction_id, str) and bool(prediction_id) else 1)
+'
+}
+
 _auto_vote_prediction() {
 	local state_json="$1"
 	local bot_token="${TWITCH_BOT_TOKEN:-}"
-	[ -n "$bot_token" ] || return 0
+	if [ -z "$bot_token" ]; then
+		_log "AUTO_VOTE: skipped (missing bot token)"
+		return 0
+	fi
 	bot_token="${bot_token#oauth:}"
 
 	# 少し待ってから投票（予想が確実に受付中になるのを待つ）
@@ -742,7 +769,9 @@ print(json.dumps({
 		-H "Content-Type: application/json" \
 		-d "$gql_payload" 2>/dev/null)
 
-	if [ $? -eq 0 ] && [ -n "$vote_resp" ]; then
+	local vote_rc=$?
+	if [ "$vote_rc" -eq 0 ] && [ "${#vote_resp}" -le 65536 ] && \
+		printf '%s' "$vote_resp" | _auto_vote_response_accepted; then
 		local voted_label
 		voted_label=$(echo "$state_json" | python3 -c "
 import json, sys
@@ -754,7 +783,7 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 " 2>/dev/null)
 		_log "AUTO_VOTE: azumagdev voted '${voted_label}' (${vote_points}pt)"
 	else
-		_log "AUTO_VOTE: failed (curl error or empty response)"
+		_log "AUTO_VOTE: failed (HTTP or GQL result not confirmed)"
 	fi
 }
 
