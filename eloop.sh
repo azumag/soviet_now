@@ -13,6 +13,14 @@
 #
 # 前提: eloop_lib.sh が source 済みであること
 
+# Phase A (docich#392): .py.gz → .py の透過 reader ヘルパー。通常は eloop_lib.sh が
+# 読み込むが、単体で source される経路でも archive 解決が壊れないようここでも補う。
+if ! command -v strategy_archive_resolve_plaintext >/dev/null 2>&1; then
+	_eloop_archive_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	[ -f "$_eloop_archive_lib_dir/lib/strategy_archive.sh" ] && source "$_eloop_archive_lib_dir/lib/strategy_archive.sh"
+	unset _eloop_archive_lib_dir
+fi
+
 PLAY_RECOVERED_RETRY_RC=75
 
 _follow_runner_output() {
@@ -136,19 +144,11 @@ _handle_decide_exception_recovery() {
 }
 
 _find_strategy_archive_for_hash() {
-	local expected_hash="$1" candidate actual_hash
+	local expected_hash="$1"
 	[ -n "$expected_hash" ] || return 1
-	for candidate in \
-		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py" \
-		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py"; do
-		[ -f "$candidate" ] || continue
-		actual_hash=$(python3 extract_decide_hash.py "$candidate" 2>/dev/null || echo "")
-		if [ "$actual_hash" = "$expected_hash" ]; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-	done
-	return 1
+	# Phase A: `<hash>.py.gz` → `<hash>.py` の順に候補を解決し、gz 一致候補なら
+	# 作業アーカイブへ平文展開してから返す（呼び出し側の cp/grep/validate は平文前提）。
+	strategy_archive_resolve_plaintext "$expected_hash"
 }
 
 _strategy_source_has_invalid_structural_wildcard() {
