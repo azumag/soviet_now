@@ -330,6 +330,10 @@ import os
 import sys
 import time
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
+
 rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, archive_dir, min_ratio_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw, min_russia_count_raw, min_russia_rate_raw, frontier_min_best_type_raw, objective_fail_permanent_raw = sys.argv[1:18]
 
 def load(path, default):
@@ -385,13 +389,6 @@ def metrics(scores):
         "comp": 0.55 * quantile(vals, 0.50) + 0.30 * quantile(vals, 0.25) + 0.15 * lcb,
     }
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 def boolish(value, default=True):
     if value is None:
         return default
@@ -401,13 +398,12 @@ include_permanent = boolish(include_permanent_raw, True)
 allow_origin_retry = boolish(allow_origin_retry_raw, True)
 
 def find_archive_path(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+    dirs = []
+    if archive_dir:
+        dirs.append(archive_dir)
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    for path in paths:
-        if os.path.exists(path) and archive_is_runtime_stable(path):
-            return path
-    return ""
+        dirs.append(permanent_archive_dir)
+    return _sa_find_path(h, dirs, archive_is_runtime_stable)
 
 def is_cooled_down(h):
     if h not in cooldown:
@@ -487,6 +483,10 @@ import json
 import os
 import sys
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
+
 origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]
 include_permanent = str(include_permanent_raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
@@ -505,13 +505,6 @@ def as_int(value, default=0):
     except Exception:
         return default
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 origin = load(origin_file)
 rolling = load(rolling_file)
 rejected = load(rejected_file)
@@ -528,10 +521,12 @@ for h, meta in (origin or {}).items():
     # ~16 entries), so a by_hash-only search makes escape_ai seed-starved and the
     # AI escape can never fire. Search both, gated by the same env archive_restart
     # already trusts.
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+    dirs = []
+    if archive_dir:
+        dirs.append(archive_dir)
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    path = next((p for p in paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+        dirs.append(permanent_archive_dir)
+    path = _sa_find_path(h, dirs, archive_is_runtime_stable)
     if not path:
         continue
     entry = rolling.get(h) or {}
