@@ -26,6 +26,7 @@ log() { :; }
 GAME_LIFECYCLE_DIR="$test_root/lifecycle"
 source "$repo_root/lib/game_lifecycle.sh"
 GAME_LIFECYCLE_DIR="$test_root/lifecycle"
+BRIDGE_OBSERVE_WAIT_SEC=0
 source "$repo_root/lib/bridge_recovery.sh"
 
 calls="$test_root/calls"
@@ -214,5 +215,16 @@ _br_target_pids() { :; }
 : >"$calls"
 reset_backoff; expect_rc 1 "process loss still recovers under retention" _ensure_bridge_alive
 grep -qx lease "$calls"
+
+# 13) A current live observation must resume play even after a retained cancel.
+# Returning 1 here would make play_one_game defer forever until retention expires.
+_br_target_pids() { echo 4242; }
+write_pair cancelled 30
+write_live_board 806
+_BR_OBSERVATION="$test_root/observed.json"
+printf '%s\n' '{"schema":1,"board":{"state":"MOVE","score":6111}}' >"$_BR_OBSERVATION"
+: >"$calls"
+reset_backoff; expect_rc 0 "fresh observation allows retained game to continue" _ensure_bridge_alive
+assert_no_destructive_call "fresh observation allows retained game to continue"
 
 echo "ok: bridge recovery honors same-board retention (soviet_now#500)"

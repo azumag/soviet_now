@@ -563,6 +563,13 @@ _ensure_bridge_alive() {
 	elif [ -z "$(_br_target_pids)" ]; then
 		crash="プロセス消失"
 	elif [ "$m" -gt 0 ] && [ "$((n - m))" -ge "$_BR_STALE_SEC" ]; then
+		# Live observation wins over retention: allow play_one_game to resume
+		# the existing board instead of deferring until the retention window ends.
+		if _br_live_page_reobserved; then
+			_br_log_stale_hold "$((n - m))" "$(_br_observation_age 2>/dev/null || echo NA)" "$(_br_observation_board 2>/dev/null || true)"
+			_BR_CONSEC_FAIL=0
+			return 0
+		fi
 		# mtime 停滞は「bridge が死んだ」意味ではない (soviet_now#500)。
 		# game_state.json は stateChanged のときだけ書き換わるので、MOVE を
 		# 送っていない生きた盤面は何分でも mtime が動かない。同一盤面保持要求
@@ -585,14 +592,6 @@ _ensure_bridge_alive() {
 			return 1
 		fi
 		crash="game_state停滞($((n-m))s)"
-	fi
-	# Issue #500: mtime 停滞だけを根拠に bridge を kill/relaunch しない。実観測で
-	# live page の生存を非破壊に確認できたら、凍結した game_state.json は休止や
-	# 境界待ちで止まっている保持対象の盤面であり、bridge 障害ではない。復旧不能と
-	# 確認できるまで盤面リセット (kill/relaunch) へは自動で進めない。
-	if [[ "$crash" == game_state停滞* ]] && _br_live_page_reobserved; then
-		_br_log_stale_hold "$((n - m))" "$(_br_observation_age 2>/dev/null || echo NA)" "$(_br_observation_board 2>/dev/null || true)"
-		crash=""
 	fi
 	[ -z "$crash" ] && { [ "$_BR_CONSEC_FAIL" -ne 0 ] && { _br_log "ブリッジ正常化 → fail reset"; _BR_CONSEC_FAIL=0; }; return 0; }
 
