@@ -27,6 +27,7 @@ from typing import Any, Iterator
 
 from game_terminal import is_terminal as is_terminal_game_state
 from game_founding_boundary import founding_boundary_token
+from founding_marker import founding_marker_is_current
 
 
 SCHEMA_VERSION = 1
@@ -148,7 +149,10 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         pass
     count = state.get("makeSorenCount")
     valid_count = (type(count) in (int, float) and abs(count) <= 2**53 - 1 and math.isfinite(count))
-    founding_seen = (root / "tmp/markers/.soviet_created").exists()
+    # A leftover founding marker from an earlier match must not keep this
+    # board from being reported terminal (docich#2345). Ownership is decided
+    # by the bridge's per-match game_id, with the board mtime as fallback.
+    founding_seen = founding_marker_is_current(root)
     founding_token = founding_boundary_token(root, state)
     stale_founding_stop = founding_token is not None
     return {
