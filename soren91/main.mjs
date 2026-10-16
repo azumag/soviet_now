@@ -1603,11 +1603,12 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.rank != null) lastKnownRank = boardState.rank;
       console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}, trans=${boardState.perception?.queueTransition ?? '?'}, gapMs=${Math.round(boardState.perception?.frameGapMs ?? -1)}`);
 
-      // soren91 では GAMEOVER を独立終了イベントにせず、
-      // WAITING/ランキング遷移として既存のラウンド終了ロジックに流す。
+      // #1221 S1: terminal state (GAMEOVER) は state=GAMEOVER のまま保持し報告する。
+      //   以前は WAITING へ変換していたが、terminal 状態検出漏れ（docich recovery /
+      //   diagnostics が GAMEOVER を観測できなかった）の原因になっていた。
+      //   ラウンド終了ロジックは WAITING/GAMEOVER の両方を WAITING 相当として扱う。
       if (boardState.state === 'GAMEOVER') {
-        console.log(`[game] GAMEOVER detected at turn ${turn}, treating as WAITING transition`);
-        boardState.state = 'WAITING';
+        console.log(`[game] GAMEOVER detected at turn ${turn} (kept as state=GAMEOVER for terminal reporting)`);
       }
 
       if (turn >= MIN_RANKING_DETECTION_TURNS && boardState.state === 'MOVE') {
@@ -1632,7 +1633,7 @@ async function gameLoop(page, calibration, gameNumber) {
       }
 
       // 待機画面 (ランキング/接続中/タイトル画面)
-      if (boardState.state === 'WAITING') {
+      if (boardState.state === 'WAITING' || boardState.state === 'GAMEOVER') {
         waitingCount++;
         if (awaitingFreshRoundAfterResult) {
           interRoundWaitingSeen = true;
