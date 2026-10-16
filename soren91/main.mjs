@@ -1619,6 +1619,7 @@ async function gameLoop(page, calibration, gameNumber) {
   while (true) {
     latency.begin(gameNumber, turn);
     let loopOutcome = 'observe';
+    let gameoverDetectedThisTurn = false;
     try {
       const spawnWait = DROP_OBSERVATION_DELAY_MS - (performance.now() - lastDropTime);
       if (spawnWait > 0) await latency.measure('cooldown', () => sleep(spawnWait));
@@ -1665,11 +1666,14 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.rank != null) lastKnownRank = boardState.rank;
       console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}, trans=${boardState.perception?.queueTransition ?? '?'}, gapMs=${Math.round(boardState.perception?.frameGapMs ?? -1)}`);
 
-      // soren91 では GAMEOVER を独立終了イベントにせず、
-      // WAITING/ランキング遷移として既存のラウンド終了ロジックに流す。
+      // soren91 では GAMEOVER を WAITING と同等に扱いながら、
+      // state は GAMEOVER のまま記録する (docich issue #2061 / S1)。
+      // lib/game_terminal.is_terminal が state == "GAMEOVER" を既に acceptance するため、
+      // ここで代入を WAITING に書き換えてしまうと terminal が indefinitely
+      // 止まってしまう。ラウンド終了ロジックだけ WAITING と等価にする。
       if (boardState.state === 'GAMEOVER') {
-        console.log(`[game] GAMEOVER detected at turn ${turn}, treating as WAITING transition`);
-        boardState.state = 'WAITING';
+        console.log(`[game] GAMEOVER detected at turn ${turn}, recording state=GAMEOVER`);
+        gameoverDetectedThisTurn = true;
       }
 
       if (turn >= MIN_RANKING_DETECTION_TURNS && boardState.state === 'MOVE') {
@@ -1694,10 +1698,13 @@ async function gameLoop(page, calibration, gameNumber) {
       }
 
       // 待機画面 (ランキング/接続中/タイトル画面)
-      if (boardState.state === 'WAITING') {
+      // S1: GAMEOVER も WAITING と等価に回る (state 自体は GAMEOVER のまま保持)。
+      if (boardState.state === 'WAITING'
+          || boardState.state === 'GAMEOVER'
+          || gameoverDetectedThisTurn) {
         holdEscape.observe('non-move', Date.now()); // READY/matchmaking breaks a consecutive recognition hold.
         waitingCount++;
-        if (awaitingFreshRoundAfterResult) {
+  if (awaitingFreshRoundAfterResult) {
           interRoundWaitingSeen = true;
         }
 
