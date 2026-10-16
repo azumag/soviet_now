@@ -3,7 +3,8 @@ node_modules/
 .DS_Store
 ._*
 tmp/
-sorengame/
+sorengame/*
+!sorengame/patches/
 .claude/
 .cocoindex_code/
 __pycache__/

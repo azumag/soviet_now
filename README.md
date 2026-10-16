@@ -884,6 +884,18 @@ ditto -x -k --sequesterRsrc soren-game-fixed.zip /tmp/soren-fixed/
 - `Assets/Plugins/WebGL/SorenBridge.jslib` — JS 側: `window.__sorenGameState` / `window.__sorenCommand` を介してブラウザとやり取り
 - `Assets/Editor/WebGLBuilder.cs` — ビルド時に `SorenBridge` コンポーネントを Main Manager に自動アタッチ
 
+#### ゲーム側パッチ（追跡対象）
+
+`Assets/SORENGAMEFIXED/Script/*.cs` は Git 管理外のため、ゲーム本体の恒久修正は
+`sorengame/patches/` のパッチとして追跡する。ソース展開・アセット補完のあと、ビルド前に必ず適用する:
+
+```bash
+patch -p1 -d sorengame/_extracted/soren-game-fixed \
+  < sorengame/patches/0001-report-gameover-terminal-state.patch
+```
+
+- `0001-report-gameover-terminal-state.patch` — GAME OVER 画面を表示したあとも `GameState.GAMEOVER` のまま報告する。`GameOverState()` が即座に `GameState.STOP` へ遷移していたため `GAMEOVER` が 1 フレームしか存在せず、0.1 秒間隔の JS Bridge (`SorenBridge.cs`) は `game_state.json` へ `STOP` しか書けなかった。`STOP` は建国演出・次試合の MOVE 待ちと同じ値なので、切替境界が終端を証明できず待ち続ける。回帰テスト: `tests/test_sorengame_gameover_state.py`
+
 #### ビルド実行
 
 **macOS NAS 上ではビルド不可**（`._*` リソースフォークファイルが il2cpp エラーを引き起こす）。必ずローカルディスクで作業:
