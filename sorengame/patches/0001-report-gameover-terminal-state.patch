@@ -1,0 +1,46 @@
+# ゲームオーバーを終端状態として報告させる (Soren 側 terminal 状態検出漏れの真因修正)
+#
+# 対象: sorengame/_extracted/soren-game-fixed/ (Unity 2022.3.62f3 WebGL プロジェクト)
+# 適用: プロジェクトルートで `patch -p1 < sorengame/patches/0001-report-gameover-terminal-state.patch`
+#
+# 背景: MainManager.GameOverState() が GAME OVER 画面を出した直後に state を STOP へ
+# 遷移させていたため、GAMEOVER は 1 フレームしか存在せず、0.1 秒間隔の JS Bridge
+# (SorenBridge.cs) は game_state.json へ STOP しか報告できなかった。外部の境界判定は
+# STOP を「建国演出/次試合の MOVE 待ち」と区別できないため、切替境界が待ち続ける。
+# GAMEOVER のまま維持することで docich の既存述語 (terminal=True) がそのまま成立する。
+#
+--- a/Assets/SORENGAMEFIXED/Script/MainManager.cs
++++ b/Assets/SORENGAMEFIXED/Script/MainManager.cs
+@@ -54,6 +54,8 @@
+     }
+     GameState gameState = GameState.MOVE;
+     GameState oldGameState;
++    // ゲームオーバー画面の初期化を1回だけ行うための番人 (Update は GAMEOVER 中も毎フレーム呼ばれる)
++    bool gameOverShown = false;
+ 
+     //鎌と槌の演出用
+     [SerializeField] EffectSonic effectSonic;
+@@ -167,6 +169,12 @@
+ 
+     void GameOverState()
+     {
++        // ゲームオーバー画面は RETRY (シーン再読込) まで表示し続ける。
++        // ここで STOP へ遷移すると GAMEOVER が 1 フレームしか存在せず、0.1 秒間隔の
++        // JS Bridge 観測が終端状態を取りこぼすため、GAMEOVER のまま維持する。
++        if(gameOverShown) return;
++        gameOverShown = true;
++
+         //時間停止
+         Time.timeScale = 0;
+ 
+@@ -176,8 +184,8 @@
+         //レコード更新処理
+         if(score > RecordManager.record)    RecordManager.record = score;
+ 
+-        //ステート遷移
+-        gameState = GameState.STOP;
++        //ステートは GameState.GAMEOVER のまま維持する (STOP は建国演出専用)。
++        //外部の境界判定は GAMEOVER を終端として受理できる。
+ 
+         //ハイスコアのオンラインランキング更新
+         //unityroom向けオンラインランキングの実装方法はこちらを参照してください
