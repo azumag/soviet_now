@@ -1,0 +1,19 @@
+name: Soren game terminal state
+on:
+  pull_request:
+    paths: ['sorengame/patches/**', 'tests/test_sorengame_gameover_state.py', '.github/workflows/sorengame-gameover-state.yml']
+  push:
+    branches: [main]
+    paths: ['sorengame/patches/**', 'tests/test_sorengame_gameover_state.py', '.github/workflows/sorengame-gameover-state.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      # The Unity project source is not tracked, so the source-level check skips
+      # here; the patch invariant and the shared terminal contract still run.
+      - run: python3 -m unittest -v tests.test_sorengame_gameover_state
