@@ -1,11 +1,15 @@
 """Regression for #605: do not bury an exposed same-type merge candidate.
 
-When an exposed piece A (same type as a future/next-next piece) is visible and a
-different-type piece B can be dropped directly on top of it, the placement must
-not be chosen while a safe alternative landing exists.  Exercises the policy
-hook (merge_opportunity_alternatives) through the runtime safety pass.
+When an exposed same-type pair A (a large-type merge lane that a future
+next/nextNext piece can still reach) is visible and a different-type piece B can
+be wedged on top of it, the placement must not be chosen while a safe
+alternative landing exists.  Exercises the policy hook
+(merge_opportunity_alternatives) through the runtime safety pass.
+
+The first test is the case named by the issue and fails without the burial
+loss term; the remaining tests pin the exception paths (no alternative landing,
+immediate merge on top) and the trace that records the evaluation reason.
 """
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -38,27 +42,36 @@ def analysis(results):
 
 
 class BuryExposedMergeCandidateTests(unittest.TestCase):
-    def choose(self, gs, results, x=0):
+    def choose(self, gs, results, x=0, reason='HEIGHT_CONTROL'):
         return runner.apply_strategy_final_decision(
-            strategy, {'x': x, 'reason': 'HEIGHT_CONTROL'}, analysis(results), gs)
+            strategy, {'x': x, 'reason': reason}, analysis(results), gs)
 
     def test_strategy_avoids_burying_exposed_merge_candidate(self):
-        # Exposed A (type 9) on the board; B (type 2) can land on top of it,
-        # but a safe side landing also exists -> must not bury A.
-        gs = state([piece(1, 9, 0)])
-        self.assertEqual(self.choose(gs, [candidate(0), candidate(2, -3.5)])['x'], 2)
-
-    def test_strategy_avoids_burying_exposed_pair_candidate(self):
-        # Two exposed A's forming a merge lane; dropping B on top of the lane
-        # (wedged at the gap entry) must redirect to the safe side.
+        # Two exposed type-9 pieces form a merge lane; the different-type piece
+        # (type 2) can be wedged on top of the lane, but a safe side landing
+        # also exists -> the lane must not be buried.
         gs = state([piece(1, 9, -0.8), piece(2, 9, 0.8)])
         self.assertEqual(self.choose(gs, [candidate(0), candidate(2, -3.5)])['x'], 2)
 
+    def test_single_exposed_candidate_keeps_existing_redirect(self):
+        # A lone exposed type-9 piece has no pair lane, so the pre-existing
+        # loss terms still decide: the safe side landing wins.
+        gs = state([piece(1, 9, 0)])
+        self.assertEqual(self.choose(gs, [candidate(0), candidate(2, -3.5)])['x'], 2)
+
     def test_no_safe_alternative_keeps_burying_choice(self):
+        # Only one landing exists: burying is accepted (game-over avoidance).
         gs = state([piece(1, 9, 0)])
         self.assertEqual(self.choose(gs, [candidate(0)])['x'], 0)
 
+    def test_immediate_merge_on_top_is_not_redirected(self):
+        # B itself merges immediately: the hook leaves the runtime choice alone.
+        gs = state([piece(1, 9, -0.8), piece(2, 9, 0.8)])
+        self.assertEqual(
+            self.choose(gs, [candidate(0, grade='DIRECT'), candidate(2, -3.5)])['x'], 0)
+
     def test_burial_redirect_carries_trace(self):
+        # The evaluation reason stays inspectable in the decision trace.
         gs = state([piece(1, 9, -0.8), piece(2, 9, 0.8)])
         out = self.choose(gs, [candidate(0), candidate(2, -3.5)])
         self.assertEqual(out['x'], 2)
