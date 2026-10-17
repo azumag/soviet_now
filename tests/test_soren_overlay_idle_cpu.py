@@ -73,6 +73,21 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertIn("def serve(interval, **kwargs)", module)
         self.assertIn("time.sleep(interval)", module)
 
+    def test_watch_stops_the_renderer_with_the_worker(self):
+        """#675 P1: the long-lived renderer must not outlive its shell worker."""
+        watch = GEN.read_text(encoding="utf-8").split("watch)", 1)[1].split("start)", 1)[0]
+        # Background the interpreter itself (no helper-function subshell) and
+        # record its PID so the trap can stop it.
+        self.assertIn("python3 lib/soren_overlay_render.py serve", watch)
+        self.assertIn("_overlay_render_pid=$!", watch)
+        self.assertIn("trap '_overlay_stop_renderer' TERM INT EXIT", watch)
+        self.assertIn('wait "$_overlay_render_pid"', watch)
+        self.assertNotIn("_overlay_render_env python3", watch)
+        # The renderer also exits on its own once reparented (SIGKILLed worker).
+        module = MODULE.read_text(encoding="utf-8")
+        self.assertIn("os.getppid() != parent", module)
+        self.assertIn("_overlay_stop_renderer() {", GEN.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

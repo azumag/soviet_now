@@ -142,6 +142,9 @@ def filter_stats_for_unified(raw: str) -> str:
 def render(ops_raw, out_file, width, height, event_events_file, event_html_file,
            event_keep, event_visible_sec, event_work_state_file) -> None:
     """Render one frame. Mirrors the previous heredoc body exactly."""
+    # The heredoc normalized the producer text before use; keep that so invalid
+    # UTF-8 (surrogates) becomes U+FFFD instead of failing the HTML write.
+    ops_raw = normalize_overlay_text(ops_raw or "")
     refresh_viewer_chat_monitor_if_changed(
         os.environ.get("VIEWER_CHAT_MONITOR_SOURCE", "tmp/.viewer_chat/comment_context_history.log"),
         os.environ.get("VIEWER_CHAT_MONITOR_FILE", "tmp/state/viewer_chat_monitor.json"),
@@ -369,6 +372,12 @@ def show_status_once() -> str:
     ``2>/dev/null || true`` in the shell becomes stderr suppression plus an
     empty string on any failure, so a broken producer degrades to the existing
     fallback card instead of stopping the overlay.
+
+    stdout is read as bytes and decoded with ``surrogateescape``: the previous
+    ``SOREN_OPS_RAW`` environment variable reached Python through the same
+    filesystem codec, so a producer that emits invalid UTF-8 kept rendering.
+    A strict ``text=True`` decode would instead raise and blank the overlay
+    (review of #675).
     """
     env = dict(os.environ)
     env["SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH"] = "1"
@@ -376,11 +385,11 @@ def show_status_once() -> str:
     try:
         proc = subprocess.run(
             ["./show_status.sh", "--once"],
-            capture_output=True, text=True, env=env,
+            capture_output=True, env=env,
         )
     except OSError:
         return ""
-    return proc.stdout or ""
+    return (proc.stdout or b"").decode("utf-8", "surrogateescape")
 
 
 def render_from_show_status(**kwargs) -> None:
@@ -389,16 +398,24 @@ def render_from_show_status(**kwargs) -> None:
 
 
 def serve(interval, **kwargs) -> None:
-    """Render every ``interval`` seconds until terminated.
+    """Render every ``interval`` seconds until the supervisor is gone.
 
     Fixed-delay cadence (render, then sleep) matches the shell loop, so the
     OBS self-refresh tag and the file mtime keep the reviewed period.
+
+    The loop also exits once it is reparented: the shell wrapper traps TERM and
+    kills this child, but a SIGKILLed wrapper cannot run its trap, and a
+    surviving renderer would keep drawing and spawning while a restart starts a
+    second one (review of #675).
     """
     try:
         interval = max(1, int(interval))
     except (TypeError, ValueError):
         interval = 2
+    parent = os.getppid()
     while True:
+        if os.getppid() != parent:
+            return
         try:
             render_from_show_status(**kwargs)
         except Exception:

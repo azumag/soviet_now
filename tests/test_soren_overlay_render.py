@@ -32,19 +32,31 @@ class SorenOverlayRenderTests(unittest.TestCase):
         calls = {}
 
         class Proc:
-            stdout = "OPS\n"
+            stdout = b"OPS\n"
 
         def fake_run(args, **kwargs):
             calls["args"] = args
-            calls["env"] = kwargs.get("env") or {}
+            calls["kwargs"] = kwargs
             return Proc()
 
         with mock.patch.object(self.module.subprocess, "run", side_effect=fake_run):
             out = self.module.show_status_once()
         self.assertEqual(out, "OPS\n")
         self.assertEqual(calls["args"], ["./show_status.sh", "--once"])
-        self.assertEqual(calls["env"]["SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH"], "1")
-        self.assertEqual(calls["env"]["SHOW_STATUS_NO_FLICKER"], "1")
+        self.assertEqual(calls["kwargs"]["env"]["SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH"], "1")
+        self.assertEqual(calls["kwargs"]["env"]["SHOW_STATUS_NO_FLICKER"], "1")
+        # Bytes mode: a strict text=True decode would break on invalid UTF-8.
+        self.assertNotIn("text", calls["kwargs"])
+
+    def test_show_status_once_survives_invalid_utf8_like_the_old_env_path(self):
+        class Proc:
+            stdout = b"OPS \xff\xfe bad tick\n"
+
+        with mock.patch.object(self.module.subprocess, "run", return_value=Proc()):
+            out = self.module.show_status_once()
+        # surrogateescape matches how SOREN_OPS_RAW used to reach Python.
+        self.assertIn("\udcff", out)
+        self.assertIn("bad tick", out)
 
     def test_show_status_once_is_fail_open(self):
         with mock.patch.object(self.module.subprocess, "run", side_effect=OSError("boom")):
@@ -87,6 +99,45 @@ class SorenOverlayRenderTests(unittest.TestCase):
                                   event_keep="1", event_visible_sec="1",
                                   event_work_state_file="w")
         self.assertEqual(len(calls), 2)
+
+    def test_serve_exits_when_the_worker_is_gone(self):
+        """#675 P1: a reparented renderer must not keep drawing/spawning."""
+        renders = []
+        ppids = iter([500, 500, 1])  # captured parent, still parent, reparented
+
+        def fake_render(**kwargs):
+            renders.append(kwargs)
+
+        with mock.patch.object(self.module, "render_from_show_status", side_effect=fake_render), \
+                mock.patch.object(self.module.time, "sleep", side_effect=lambda s: None), \
+                mock.patch.object(self.module.os, "getppid", side_effect=lambda: next(ppids)):
+            self.module.serve(2, out_file="o", width="1", height="1",
+                              event_events_file="e", event_html_file="h",
+                              event_keep="1", event_visible_sec="1",
+                              event_work_state_file="w")
+        # One render while the parent was alive, then the loop returns.
+        self.assertEqual(len(renders), 1)
+
+    def test_render_normalizes_invalid_utf8_instead_of_failing(self):
+        fake_dashboard = types.ModuleType("status_dashboard")
+        fake_dashboard.render_dashboard_text = lambda: "STATS"
+        fake_event = types.ModuleType("generate_event_overlay")
+        fake_event.render_event_overlay = lambda *a, **k: None
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            out = tmp / "unified.html"
+            with mock.patch.dict(sys.modules, {"status_dashboard": fake_dashboard,
+                                               "generate_event_overlay": fake_event}), \
+                    mock.patch.object(self.module, "refresh_viewer_chat_monitor_if_changed",
+                                      lambda *a, **k: None):
+                self.module.render(
+                    "OPS " + b"\xff\xfe".decode("utf-8", "surrogateescape") + " bad",
+                    str(out), "1120", "980", str(tmp / "ev.jsonl"), str(tmp / "event.html"),
+                    "180", "18", str(tmp / "work.json"),
+                )
+            html = out.read_text(encoding="utf-8")
+            self.assertIn("SOREN CONTROL DECK", html)
+            self.assertNotIn("\udcff", html)
 
     def test_render_writes_unified_and_legacy_files(self):
         fake_dashboard = types.ModuleType("status_dashboard")

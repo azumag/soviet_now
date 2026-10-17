@@ -84,6 +84,16 @@ render_once() {
 	printf 'generated:%s\n' "$out_file"
 }
 
+# The long-lived renderer is a child of this supervised worker. Killing the
+# worker (supervisor respawn, `stop`, TERM/INT) must stop the renderer too, or
+# it keeps drawing and spawning while a restart starts a second one (#675 review).
+_overlay_render_pid=""
+_overlay_stop_renderer() {
+	[ -n "${_overlay_render_pid:-}" ] || return 0
+	kill "$_overlay_render_pid" 2>/dev/null || true
+	_overlay_render_pid=""
+}
+
 render_event_overlay_indicators() { :; }
 
 case "$mode" in
@@ -94,10 +104,26 @@ watch)
 	# #970: a single interpreter renders every tick instead of spawning
 	# `python3 -` (and a `sleep` child) per interval. The shell process stays
 	# as the supervised worker, so the reviewed cmdline pattern, pid file and
-	# start/stop paths are unchanged.
+	# start/stop paths are unchanged. The renderer runs as a child (not exec)
+	# so that cmdline is preserved; the trap makes TERM/INT/EXIT stop it.
+	#
+	# The environment is set inline (not through a helper function) so the
+	# background job is the interpreter itself: `_helper ... &` would fork an
+	# intermediate subshell, and the renderer would then outlive the worker
+	# (review of #675).
 	_ensure_overlay_dirs
 	_overlay_render_args
-	_overlay_render_env python3 lib/soren_overlay_render.py serve "$interval" "${_OVERLAY_ARGS[@]}"
+	VIEWER_CHAT_MONITOR_SOURCE="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}" \
+	VIEWER_CHAT_MONITOR_FILE="${VIEWER_CHAT_MONITOR_FILE:-tmp/state/viewer_chat_monitor.json}" \
+	VIEWER_CHAT_MONITOR_LOOKBACK="${VIEWER_CHAT_MONITOR_LOOKBACK:-200}" \
+	EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
+	EVENT_OVERLAY_COMMENT_GEN_STATE="${COMMENT_GEN_STATE_FILE:-tmp/state/.comment_gen_state}" \
+	EVENT_OVERLAY_RADIO_STATE="${RADIO_STATE_FILE:-tmp/state/.radio_state}" \
+	HIDE_STATUS_DASHBOARD_OBSERVER_SECTION=0 \
+	python3 lib/soren_overlay_render.py serve "$interval" "${_OVERLAY_ARGS[@]}" &
+	_overlay_render_pid=$!
+	trap '_overlay_stop_renderer' TERM INT EXIT
+	wait "$_overlay_render_pid"
 	;;
 start)
 	mkdir -p "$(dirname "$pid_file")"
