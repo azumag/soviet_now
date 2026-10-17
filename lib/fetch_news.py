@@ -96,6 +96,7 @@ SOURCES = [
         "name": "Google News 日本社会",
         "license": "各配信元",
         "lang": "ja",
+        "scope": "domestic",
     },
     {
         "url": "https://news.google.com/rss/search?q=%E6%94%BF%E6%B2%BB+OR+%E5%9B%BD%E4%BC%9A+OR+%E9%A6%96%E7%9B%B8+OR+%E6%94%BF%E5%BA%9C+OR+%E9%81%B8%E6%8C%99&hl=ja&gl=JP&ceid=JP:ja",
@@ -103,6 +104,7 @@ SOURCES = [
         "name": "Google News 日本政治",
         "license": "各配信元",
         "lang": "ja",
+        "scope": "domestic",
     },
     {
         "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
@@ -110,6 +112,7 @@ SOURCES = [
         "name": "Google News 日本経済",
         "license": "各配信元",
         "lang": "ja",
+        "scope": "domestic",
     },
     {
         "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
@@ -117,6 +120,7 @@ SOURCES = [
         "name": "Google News 国際",
         "license": "各配信元",
         "lang": "ja",
+        "scope": "domestic",
     },
     # --- 日本の政治系ソース (国内政治の比率を上げるため) ---
     {
@@ -125,6 +129,75 @@ SOURCES = [
         "name": "NHK 政治",
         "license": "NHK",
         "lang": "ja",
+        "scope": "domestic",
+    },
+    # --- 海外ソース (国内ニュースへの偏重を是正するため、2026-10-17 追加) ---
+    # Google News の英語トピック面と、世界情勢・経済を継続配信している主要媒体。
+    # 見出しは英語のまま取り込み、生成側で日本語に翻訳して扱う。
+    # scope=overseas は選定時の domestic/overseas バランス (lib/news_priority.py) が使う。
+    {
+        "url": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en",
+        "key": "google_news_world_en",
+        "name": "Google News World(EN)",
+        "license": "各配信元",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=en-US&gl=US&ceid=US:en",
+        "key": "google_news_business_en",
+        "name": "Google News Business(EN)",
+        "license": "各配信元",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "key": "bbc_world",
+        "name": "BBC World",
+        "license": "BBC",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://www.theguardian.com/world/rss",
+        "key": "guardian_world",
+        "name": "The Guardian World",
+        "license": "Guardian News & Media",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "key": "nyt_world",
+        "name": "The New York Times World",
+        "license": "The New York Times",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://feeds.npr.org/1004/rss.xml",
+        "key": "npr_world",
+        "name": "NPR World",
+        "license": "NPR",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://www.france24.com/en/world/rss",
+        "key": "france24_world",
+        "name": "France 24 World",
+        "license": "France Médias Monde",
+        "lang": "en",
+        "scope": "overseas",
+    },
+    {
+        "url": "https://rss.dw.com/rdf/rss-en-world",
+        "key": "dw_world",
+        "name": "DW World",
+        "license": "Deutsche Welle",
+        "lang": "en",
+        "scope": "overseas",
     },
     # NOTE: Wikinews (ja/en/fr/ru/de/ar/cs/eo/fi/he/pl/uk/zh) は 2026-08-26 に削除した。
     # Special:NewPages の RSS も API (list=recentchanges&rctype=new) も全言語で 0 件を返し、
@@ -135,6 +208,7 @@ SOURCES = [
         "name": "Global Voices",
         "license": "CC BY 3.0",
         "lang": "ja",
+        "scope": "overseas",
     },
     {
         "url": "https://globalvoices.org/feed/",
@@ -142,6 +216,7 @@ SOURCES = [
         "name": "Global Voices(EN)",
         "license": "CC BY 3.0",
         "lang": "en",
+        "scope": "overseas",
     },
     {
         "url": "https://fr.globalvoices.org/feed/",
@@ -149,6 +224,7 @@ SOURCES = [
         "name": "Global Voices(FR)",
         "license": "CC BY 3.0",
         "lang": "fr",
+        "scope": "overseas",
     },
     {
         "url": "https://ru.globalvoices.org/feed/",
@@ -156,6 +232,7 @@ SOURCES = [
         "name": "Global Voices(RU)",
         "license": "CC BY 3.0",
         "lang": "ru",
+        "scope": "overseas",
     },
     {
         "url": "https://es.globalvoices.org/feed/",
@@ -163,6 +240,7 @@ SOURCES = [
         "name": "Global Voices(ES)",
         "license": "CC BY 3.0",
         "lang": "es",
+        "scope": "overseas",
     },
     {
         "url": "https://ar.globalvoices.org/feed/",
@@ -170,6 +248,7 @@ SOURCES = [
         "name": "Global Voices(AR)",
         "license": "CC BY 3.0",
         "lang": "ar",
+        "scope": "overseas",
     },
     {
         "url": "https://de.globalvoices.org/feed/",
@@ -177,6 +256,7 @@ SOURCES = [
         "name": "Global Voices(DE)",
         "license": "CC BY 3.0",
         "lang": "de",
+        "scope": "overseas",
     },
     {
         "url": "https://pt.globalvoices.org/feed/",
@@ -184,6 +264,7 @@ SOURCES = [
         "name": "Global Voices(PT)",
         "license": "CC BY 3.0",
         "lang": "pt",
+        "scope": "overseas",
     },
     {
         "url": "https://zhs.globalvoices.org/feed/",
@@ -191,6 +272,7 @@ SOURCES = [
         "name": "Global Voices(ZH)",
         "license": "CC BY 3.0",
         "lang": "zh",
+        "scope": "overseas",
     },
 ]
 
@@ -365,8 +447,11 @@ def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dic
         )
         and not is_sports_title(title)
         and not is_low_value_news_title(title)
+        # 日本語Google Newsは検索・トピック面の混入を抑えるため公開関心の
+        # ポジティブ判定を通す。英語のWORLD/BUSINESSトピック面はもともと
+        # 国際情勢・経済面なので、同じ日本語キーワード判定は適用しない。
         and (
-            not (item or {}).get("source_key", "").startswith("google_news_")
+            not (item or {}).get("source_key", "").startswith("google_news_jp_")
             or is_public_interest_news_title(title)
         )
     }
@@ -539,6 +624,7 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         "license": source["license"],
         "lang": source.get("lang", "ja"),
         "source_key": source["key"],
+        "scope": source.get("scope", ""),
         "published_ts": published_ts,
         "published_at": published_at,
     }
@@ -597,7 +683,7 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str
                 reason = "sports"
             elif is_low_value_news_title(item["title"]):
                 reason = "low_value_topic"
-            elif key.startswith("google_news_") and not is_public_interest_news_title(item["title"]):
+            elif key.startswith("google_news_jp_") and not is_public_interest_news_title(item["title"]):
                 reason = "outside_public_affairs"
             elif item_title_key in past_title_keys:
                 reason = "past_title"
@@ -673,6 +759,7 @@ def render_meta(selected: list[dict]) -> dict[str, dict]:
             "license": item["license"],
             "lang": item.get("lang", "ja"),
             "source_key": item.get("source_key", ""),
+            "scope": item.get("scope", ""),
             "published_ts": item.get("published_ts", 0),
             "published_at": item.get("published_at", ""),
         }

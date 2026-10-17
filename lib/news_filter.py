@@ -375,7 +375,9 @@ def cmd_filter_unread():
             continue
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_key = (item.get("source_key") or "").strip()
-        if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+        # 英語のWORLD/BUSINESS面は国際情勢・経済面のため、日本語見出し向けの
+        # 公開関心キーワード判定は適用しない (日本語Google Newsのみ)。
+        if source_key.startswith("google_news_jp_") and not is_public_interest_news_title(title):
             continue
         k = key(title)
         uh = url_hash(item.get("url", ""))
