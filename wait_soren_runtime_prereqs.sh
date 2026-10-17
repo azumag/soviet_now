@@ -36,9 +36,12 @@ case "$PULSE_SINK" in
 esac
 
 # A previous service generation can leave pidfiles for an overlay mode that is
-# no longer configured.  The reviewed helper is deliberately allowlisted and
-# fail-closed for live/foreign/symlink/hardlink/replaced files.  Housekeeping
-# itself is fail-open: stale metadata must not prevent the runtime from starting.
+# no longer configured, and the legacy "soren_loop.manual" auxiliary pidfile
+# has no producer in reviewed code (docich #416).  The reviewed helper is
+# deliberately allowlisted and fail-closed for live/foreign/symlink/hardlink/
+# replaced files, and an operator pause marker suspends the manual-loop entry.
+# Housekeeping itself is fail-open: stale metadata must not prevent the
+# runtime from starting.
 if [ -f "$SCRIPT_DIR/lib/cleanup_overlay_pidfiles.py" ]; then
 	python3 "$SCRIPT_DIR/lib/cleanup_overlay_pidfiles.py" >/dev/null 2>&1 || true
 fi

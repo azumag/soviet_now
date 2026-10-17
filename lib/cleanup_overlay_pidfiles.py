@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-"""Safely remove dead overlay watcher pidfiles before runtime start.
+"""Safely remove dead allowlisted pidfiles before runtime start.
 
-This helper is intentionally narrow: it only knows the three reviewed overlay
-watcher pidfiles. It never signals processes and refuses unsafe state-directory
-indirection, symlinks, hardlinks, foreign-owned files, malformed PIDs, or a PID
-that is still alive. It is called from the existing systemd ExecStartPre path,
-so old overlay-mode metadata can converge without reinstalling the unit.
+Two reviewed allowlists converge at the legitimate service-start boundary
+(systemd ExecStartPre -> wait_soren_runtime_prereqs.sh):
+
+* the three overlay watcher pidfiles, whose worker names can leave the
+  supervisor's managed set after a unified/legacy config switch (soviet_now
+  #435), and
+* the legacy ``soren_loop.manual`` auxiliary pidfile, which has no producer in
+  reviewed code and is only ever observed as dead stale metadata in read-only
+  diagnostics (docich #416).
+
+Both use the identical fail-closed envelope: the helper never signals
+processes and refuses unsafe state-directory indirection, symlinks,
+hardlinks, foreign-owned files, malformed PIDs, or a PID that is still alive
+(including a PID reused by another live process).  An operator pause marker
+for the auxiliary name suspends only its own convergence: that pidfile is then
+operator-owned state and is left untouched.
 """
 
 from __future__ import annotations
@@ -24,6 +35,14 @@ PIDFILE_NAMES: Final[tuple[str, ...]] = (
     "show_status_overlay_watch.pid",
     "soren_overlay_watch.pid",
 )
+# Legacy auxiliary pidfile with no producer in any reviewed code or history
+# (verified: no committed soviet_now/docich path writes this name).  Its
+# recorded PID has been dead in every observed read-only diagnostic, so it is
+# pure stale metadata (docich #416).
+MANUAL_LOOP_PIDFILE: Final[str] = "soren_loop.manual.pid"
+# An operator-owned pause marker for the same auxiliary name suspends
+# convergence; the pidfile pair is then deliberate operator state.
+MANUAL_LOOP_PAUSE_MARKER: Final[str] = "soren_loop.manual.paused"
 MAX_PIDFILE_BYTES: Final[int] = 64
 
 
@@ -192,6 +211,107 @@ def cleanup_overlay_pidfiles(root: Path, *, expected_uid: int | None = None) -> 
     return result
 
 
+def cleanup_manual_loop_pidfile(root: Path, *, expected_uid: int | None = None) -> dict[str, int]:
+    """Remove only the dead, owned, legacy manual-loop pidfile below *root*.
+
+    The auxiliary ``soren_loop.manual`` pid file has no producer in reviewed
+    code or history; its recorded PID has been dead in every observed
+    read-only diagnostic.  It converges at the same legitimate service-start
+    boundary as the overlay pidfiles, under the identical fail-closed checks.
+    An operator pause marker for the auxiliary name suspends convergence
+    entirely: the pidfile is then operator-owned state and neither file is
+    modified.
+
+    Returns fixed counters only; paths, PIDs and file contents are deliberately
+    excluded so callers can log the result without disclosing runtime details.
+    """
+
+    expected_uid = os.geteuid() if expected_uid is None else expected_uid
+    state_dir = root / "tmp" / "state"
+    result = {
+        "removed": 0,
+        "skipped_alive": 0,
+        "skipped_unsafe": 0,
+        "skipped_paused": 0,
+        "missing": 0,
+    }
+
+    dir_fd = _safe_open_state_dir(state_dir)
+    if dir_fd is None:
+        result["missing"] = 1
+        return result
+    if dir_fd < 0:
+        result["skipped_unsafe"] = 1
+        return result
+
+    try:
+        # Operator-owned state wins before any liveness or ownership check:
+        # a pause marker (of any file type) means the name slot is deliberate
+        # operator state and the pidfile must survive convergence.
+        try:
+            os.stat(MANUAL_LOOP_PAUSE_MARKER, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            result["skipped_unsafe"] = 1
+            return result
+        else:
+            result["skipped_paused"] = 1
+            return result
+
+        opened = _safe_open_pidfile(dir_fd, MANUAL_LOOP_PIDFILE, expected_uid)
+        if opened is None:
+            try:
+                os.stat(MANUAL_LOOP_PIDFILE, dir_fd=dir_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                result["missing"] += 1
+            else:
+                result["skipped_unsafe"] += 1
+            return result
+
+        fd, opened_info = opened
+        try:
+            pid = _read_pid(fd)
+        finally:
+            os.close(fd)
+        if pid is None:
+            result["skipped_unsafe"] += 1
+            return result
+        if _pid_is_alive(pid):
+            result["skipped_alive"] += 1
+            return result
+
+        # Re-stat the directory entry after checking liveness. If the file
+        # was replaced while we inspected it, leave the replacement alone.
+        try:
+            current = os.stat(MANUAL_LOOP_PIDFILE, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            result["missing"] += 1
+            return result
+        if not _same_inode(current, opened_info, expected_uid):
+            result["skipped_unsafe"] += 1
+            return result
+
+        try:
+            os.unlink(MANUAL_LOOP_PIDFILE, dir_fd=dir_fd)
+        except FileNotFoundError:
+            result["missing"] += 1
+        else:
+            result["removed"] += 1
+    finally:
+        os.close(dir_fd)
+
+    return result
+
+
+def _merged_counts(*results: dict[str, int]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for result in results:
+        for key, value in result.items():
+            merged[key] = merged.get(key, 0) + value
+    return merged
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -201,7 +321,11 @@ def main() -> int:
         help="Soren repository root (defaults to the parent of lib/)",
     )
     args = parser.parse_args()
-    result = cleanup_overlay_pidfiles(args.root.resolve())
+    root = args.root.resolve()
+    result = _merged_counts(
+        cleanup_overlay_pidfiles(root),
+        cleanup_manual_loop_pidfile(root),
+    )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
