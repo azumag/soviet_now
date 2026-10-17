@@ -275,10 +275,48 @@ _ensure_single_owner() {
 	fi
 	echo $$ >"$PID_FILE"
 }
+
+_radio_linux_identity() {
+	# /proc stat field 22 is starttime. comm can itself contain spaces or ')'.
+	local _rli_tail="${1##*) }"
+	local -a _rli_fields
+	[ "$_rli_tail" != "$1" ] || return 1
+	read -r -a _rli_fields <<<"$_rli_tail"
+	[ "${#_rli_fields[@]}" -ge 20 ] || return 1
+	case "${_rli_fields[0]}" in R|S|D|T|t|K|W|P|I) ;; *) return 1 ;; esac
+	case "${_rli_fields[19]}" in ''|*[!0-9]*) return 1 ;; esac
+	printf -v "$2" 'linux:%s' "${_rli_fields[19]}"
+}
+
+_radio_pid_identity() {
+	local _rpi_pid="${1:-}" _rpi_line=""
+	local -a _rpi_words
+	case "$_rpi_pid" in ''|0*|*[!0-9]*) return 1 ;; esac
+	if [ -d /proc ]; then
+		# No kill probe, argv or environment read; absence/unreadability is unknown.
+		IFS= read -r _rpi_line 2>/dev/null <"/proc/$_rpi_pid/stat" || return 1
+		_radio_linux_identity "$_rpi_line" "$2"
+		return $?
+	fi
+	# macOS has no /proc. ps exposes a second-resolution process birth time.
+	_rpi_line=$(LC_ALL=C ps -p "$_rpi_pid" -o lstart= -o stat= 2>/dev/null) || return 1
+	read -r -a _rpi_words <<<"$_rpi_line"
+	[ "${#_rpi_words[@]}" -eq 6 ] || return 1
+	case "${_rpi_words[5]}" in I*|R*|S*|T*|U*) ;; *) return 1 ;; esac
+	printf -v "$2" 'ps:%s %s %s %s %s' "${_rpi_words[0]}" "${_rpi_words[1]}" \
+		"${_rpi_words[2]}" "${_rpi_words[3]}" "${_rpi_words[4]}"
+}
+
 _start_pid_heartbeat() {
+	local _radio_owner_pid="$$" _radio_owner_identity=""
+	# Capture in the main shell, before forking: $$ is still the main PID in
+	# the heartbeat subshell. An orphan must not keep publishing that dead PID.
+	_radio_pid_identity "$_radio_owner_pid" _radio_owner_identity || return 1
 	(
-		while true; do
-			echo $$ >"$PID_FILE" 2>/dev/null || true
+		_radio_current_identity=""
+		while _radio_pid_identity "$_radio_owner_pid" _radio_current_identity \
+			&& [ "$_radio_current_identity" = "$_radio_owner_identity" ]; do
+			printf '%s\n' "$_radio_owner_pid" >"$PID_FILE" 2>/dev/null || true
 			# #970: forkless pid-file heartbeat (no per-interval `/bin/sleep`).
 			docich_poll_sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
 		done
@@ -304,7 +342,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
 echo $$ >"$PID_FILE"
-_start_pid_heartbeat
+_start_pid_heartbeat || _log "pid heartbeat disabled: parent identity unavailable"
 
 # 初期 game_num
 _read_first_line_into _LAST_GAME_NUM "$GAME_COUNT_FILE" 0
