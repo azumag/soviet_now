@@ -55,6 +55,7 @@ class SorenOverlayFailOpenTests(unittest.TestCase):
         # Copy no runtime state, .env, watcher, OBS, or network-facing scripts.
         for name in (
             "generate_soren_overlay.sh",
+            "lib/soren_overlay_render.py",
             "status_dashboard.py",
             "viewer_chat_monitor.sh",
             "extract_decide_hash.py",
