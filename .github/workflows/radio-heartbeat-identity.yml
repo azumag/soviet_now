@@ -1,0 +1,31 @@
+name: Radio heartbeat identity
+
+on:
+  pull_request:
+    paths:
+      - 'workers/radio_worker.sh'
+      - 'tests/test_radio_heartbeat_identity.py'
+      - '.github/workflows/radio-heartbeat-identity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'workers/radio_worker.sh'
+      - 'tests/test_radio_heartbeat_identity.py'
+      - '.github/workflows/radio-heartbeat-identity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_radio_heartbeat_identity -v
+      - run: bash -n workers/radio_worker.sh
