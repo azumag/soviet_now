@@ -1096,7 +1096,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   let state = null;
   let lastFeedGKey = '';
   const MONITOR_VIEW_MS = 45000;
-  const monitorMotion = { startedAt: null, lastTick: null, frame: null,
+  // #970: the monitor pan moves 4px/s and the health/observer view flips every
+  // MONITOR_VIEW_MS, yet the motion loop used to read and write layout on every
+  // native animation frame (about 100 Hz under Xvfb). Doing that work at a
+  // bounded rate is visually identical and removes most of the steady
+  // forced-layout cost. requestAnimationFrame is still the scheduler so a
+  // hidden page stops the loop by itself.
+  const MONITOR_ANIM_MIN_MS = 66;
+  const monitorMotion = { startedAt: null, lastTick: null, lastWork: null, frame: null,
     upper: { position: 0, direction: 1, waitUntil: 0 },
     observer: { position: 0, direction: 1, waitUntil: 0 } };
   let lastFeedSKey = '';
@@ -1401,7 +1408,15 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     motion.position = Math.min(limit, motion.position);
     viewport.scrollTop = motion.position;
   }
+  // overlay-monitor-animation:start
   function animateSorenMonitor(now = performance.now()) {
+    // #970: skip layout work between bounded animation slices; the pan keeps
+    // its 4px/s speed because advanceMonitorScroll uses elapsed wall time.
+    if (now - (monitorMotion.lastWork ?? 0) < MONITOR_ANIM_MIN_MS) {
+      monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
+      return;
+    }
+    monitorMotion.lastWork = now;
     const root = feedG.querySelector('.soren-monitor');
     const slot = document.getElementById('monitor-observer');
     const elapsed = Math.max(0, Math.min(1, (now - (monitorMotion.lastTick ?? now))/1000));
@@ -1418,6 +1433,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
   }
+  // overlay-monitor-animation:end
   function adaptSorenMonitor(container) {
     const root = container.querySelector('.soren-monitor');
     const slot = document.getElementById('monitor-observer');

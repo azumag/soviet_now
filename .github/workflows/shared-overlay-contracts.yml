@@ -13,6 +13,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_stream.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
@@ -42,6 +43,7 @@ on:
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_stream.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
@@ -89,6 +91,7 @@ jobs:
           tests/test_shared_overlay.mjs
           tests/test_direct_overlay.mjs
           tests/test_direct_broadcast_overlay.mjs
+          tests/test_overlay_monitor_animation_throttle.mjs
           tests/test_twica_overlay_layout.mjs
           tests/test_twica_overlay_proxy.mjs
           tests/test_twica_legacy_owner.mjs
