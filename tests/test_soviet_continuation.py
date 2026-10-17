@@ -28,21 +28,58 @@ class SovietContinuationTest(unittest.TestCase):
         self.assertFalse(is_terminal(stop, state_mtime=100, now=1000, founding_seen=True))
         self.assertFalse(is_terminal({**stop, "makeSorenCount": 1}, state_mtime=100, now=1000))
 
-    def test_old_founded_stop_new_marker_waits_for_move_in_real_runner_path(self):
-        stop = {"state": "STOP", "makeSorenCount": 1, "pieces": []}
+    def test_founding_marker_of_this_match_keeps_wait_for_move_state_observing(self):
+        # A quiet STOP (count 0) that this match's own founding marker explains
+        # must not be returned as terminal; wait_for_move_state has to keep
+        # observing until MOVE comes back. A stale marker does not get that
+        # protection (tests/test_founding_marker_identity.py).
+        stop = {"state": "STOP", "makeSorenCount": 0, "pieces": []}
         move = {**stop, "state": "MOVE"}
-        def observed(state):
-            self.assertFalse(is_terminal(state, state_mtime=100, now=401, founding_seen=True))
-        with mock.patch.object(strategy_runner, "load_game_state", side_effect=[stop, move]), mock.patch.object(
-            strategy_runner.os.path, "getmtime", return_value=100
-        ), mock.patch.object(strategy_runner.os.path, "exists", side_effect=lambda p: p.endswith(".soviet_created")), mock.patch.object(
-            strategy_runner.time, "time", return_value=401
-        ), mock.patch.object(strategy_runner.time, "sleep"), mock.patch.object(
-            strategy_runner, "is_board_settled", return_value=True
-        ), mock.patch.object(strategy_runner, "SETTLE_REQUIRED", 1):
-            state, is_move = strategy_runner.wait_for_move_state(False, on_state=observed)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tmp/markers").mkdir(parents=True)
+            (root / "tmp/state").mkdir(parents=True)
+            game_id = "11111111-1111-4111-8111-111111111111"
+            (root / "tmp/markers/.soviet_created").write_text(f"189|{game_id}\n")
+            (root / "tmp/state/game_observation.json").write_text(json.dumps({"game_id": game_id}))
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch.object(strategy_runner, "load_game_state", side_effect=[stop, move]), mock.patch.object(
+                    strategy_runner.os.path, "getmtime", return_value=100
+                ), mock.patch.object(strategy_runner.time, "time", return_value=401), mock.patch.object(
+                    strategy_runner.time, "sleep"
+                ), mock.patch.object(strategy_runner, "is_board_settled", return_value=True), mock.patch.object(
+                    strategy_runner, "SETTLE_REQUIRED", 1
+                ):
+                    state, is_move = strategy_runner.wait_for_move_state(False)
+            finally:
+                os.chdir(old_cwd)
         self.assertIs(state, move)
         self.assertTrue(is_move)
+
+    def test_stale_founding_marker_does_not_keep_wait_for_move_state_observing(self):
+        stop = {"state": "STOP", "score": 1976, "makeSorenCount": 0, "pieces": []}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tmp/markers").mkdir(parents=True)
+            (root / "tmp/state").mkdir(parents=True)
+            # Marker belongs to an earlier match; the bridge already sees this one.
+            (root / "tmp/markers/.soviet_created").write_text("189|11111111-1111-4111-8111-111111111111\n")
+            (root / "tmp/state/game_observation.json").write_text(
+                json.dumps({"game_id": "22222222-2222-4222-8222-222222222222"})
+            )
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with mock.patch.object(strategy_runner, "load_game_state", return_value=stop), mock.patch.object(
+                    strategy_runner.os.path, "getmtime", return_value=100
+                ), mock.patch.object(strategy_runner.time, "time", return_value=401):
+                    state, is_move = strategy_runner.wait_for_move_state(False)
+            finally:
+                os.chdir(old_cwd)
+        self.assertIs(state, stop)
+        self.assertFalse(is_move)
 
     def test_runner_ends_quiet_non_founding_stop(self):
         stop = {"state": "STOP", "score": 1470, "makeSorenCount": 0}

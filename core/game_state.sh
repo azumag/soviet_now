@@ -2,11 +2,12 @@
 
 
 is_game_over() {
-	python3 - "$GAME_STATE" "${TMP_MARKERS_DIR:-tmp/markers}/.soviet_created" <<'PY' 2>/dev/null
+	python3 - "$GAME_STATE" "${TMP_MARKERS_DIR:-tmp/markers}/.soviet_created" "${TMP_STATE_DIR:-tmp/state}/game_observation.json" <<'PY' 2>/dev/null
 import json
 import os
 import sys
 
+from lib.founding_marker import founding_marker_is_current
 from lib.game_terminal import is_terminal
 
 with open(sys.argv[1], encoding="utf-8") as stream:
@@ -14,7 +15,15 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 if not is_terminal(
     state,
     state_mtime=os.path.getmtime(sys.argv[1]),
-    founding_seen=os.path.exists(sys.argv[2]),
+    # Only the marker that belongs to this board may suppress a legacy STOP.
+    # A leftover marker from an earlier match used to hide the next match's
+    # real GAME OVER (docich#2345); the bridge's per-match game_id decides
+    # ownership, with the board mtime as the legacy fallback.
+    founding_seen=founding_marker_is_current(
+        marker_path=sys.argv[2],
+        state_path=sys.argv[1],
+        observation_path=sys.argv[3],
+    ),
 ):
     raise SystemExit(1)
 PY
