@@ -118,6 +118,31 @@ class SorenOverlayRenderTests(unittest.TestCase):
         # One render while the parent was alive, then the loop returns.
         self.assertEqual(len(renders), 1)
 
+    def test_serve_exits_immediately_when_already_reparented(self):
+        """#675 P2: a wrapper killed before the first tick must not orphan us.
+
+        The expected parent pid comes from the wrapper, so a child that was
+        reparented before ``serve`` even started still exits without rendering.
+        """
+        renders = []
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": "4242"}), \
+                mock.patch.object(self.module.os, "getppid", return_value=1), \
+                mock.patch.object(self.module, "render_from_show_status",
+                                  side_effect=lambda **k: renders.append(k)), \
+                mock.patch.object(self.module.time, "sleep", side_effect=lambda s: None):
+            self.module.serve(2, out_file="o", width="1", height="1",
+                              event_events_file="e", event_html_file="h",
+                              event_keep="1", event_visible_sec="1",
+                              event_work_state_file="w")
+        self.assertEqual(renders, [])
+
+    def test_expected_parent_pid_reads_the_wrapper_value(self):
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": "4242"}):
+            self.assertEqual(self.module._expected_parent_pid(), 4242)
+        for bad in ("", "abc", "0", "-3"):
+            with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": bad}):
+                self.assertIsNone(self.module._expected_parent_pid())
+
     def test_render_normalizes_invalid_utf8_instead_of_failing(self):
         fake_dashboard = types.ModuleType("status_dashboard")
         fake_dashboard.render_dashboard_text = lambda: "STATS"

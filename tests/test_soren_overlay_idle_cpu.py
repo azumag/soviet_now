@@ -83,9 +83,11 @@ class SorenOverlayIdleCpuContracts(unittest.TestCase):
         self.assertIn("trap '_overlay_stop_renderer' TERM INT EXIT", watch)
         self.assertIn('wait "$_overlay_render_pid"', watch)
         self.assertNotIn("_overlay_render_env python3", watch)
-        # The renderer also exits on its own once reparented (SIGKILLed worker).
+        # The renderer also exits on its own once reparented (SIGKILLed worker),
+        # using the pid the wrapper promised rather than a post-fork getppid().
         module = MODULE.read_text(encoding="utf-8")
         self.assertIn("os.getppid() != parent", module)
+        self.assertIn('SOREN_OVERLAY_PARENT_PID="$$"', GEN.read_text(encoding="utf-8"))
         self.assertIn("_overlay_stop_renderer() {", GEN.read_text(encoding="utf-8"))
 
 

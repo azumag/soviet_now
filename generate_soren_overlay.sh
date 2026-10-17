@@ -113,6 +113,7 @@ watch)
 	# (review of #675).
 	_ensure_overlay_dirs
 	_overlay_render_args
+	SOREN_OVERLAY_PARENT_PID="$$" \
 	VIEWER_CHAT_MONITOR_SOURCE="${VIEWER_CHAT_MONITOR_SOURCE:-tmp/.viewer_chat/comment_context_history.log}" \
 	VIEWER_CHAT_MONITOR_FILE="${VIEWER_CHAT_MONITOR_FILE:-tmp/state/viewer_chat_monitor.json}" \
 	VIEWER_CHAT_MONITOR_LOOKBACK="${VIEWER_CHAT_MONITOR_LOOKBACK:-200}" \

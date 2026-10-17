@@ -382,6 +382,8 @@ def show_status_once() -> str:
     env = dict(os.environ)
     env["SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH"] = "1"
     env["SHOW_STATUS_NO_FLICKER"] = "1"
+    # Wrapper-only bookkeeping must not leak into the producer's environment.
+    env.pop("SOREN_OVERLAY_PARENT_PID", None)
     try:
         proc = subprocess.run(
             ["./show_status.sh", "--once"],
@@ -397,6 +399,21 @@ def render_from_show_status(**kwargs) -> None:
     render(**kwargs)
 
 
+def _expected_parent_pid():
+    """Parent pid the wrapper promised, or None when not told.
+
+    The wrapper passes its own pid (``SOREN_OVERLAY_PARENT_PID``). Reading
+    ``os.getppid()`` here instead would race: a wrapper SIGKILLed between fork
+    and this call is already gone, so the child would record 1 as its parent and
+    never notice the loss (review of #675).
+    """
+    try:
+        value = int(os.environ.get("SOREN_OVERLAY_PARENT_PID", ""))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def serve(interval, **kwargs) -> None:
     """Render every ``interval`` seconds until the supervisor is gone.
 
@@ -406,13 +423,16 @@ def serve(interval, **kwargs) -> None:
     The loop also exits once it is reparented: the shell wrapper traps TERM and
     kills this child, but a SIGKILLed wrapper cannot run its trap, and a
     surviving renderer would keep drawing and spawning while a restart starts a
-    second one (review of #675).
+    second one (review of #675). The expected parent pid comes from the wrapper
+    so the check is correct even when the wrapper dies before the first tick.
     """
     try:
         interval = max(1, int(interval))
     except (TypeError, ValueError):
         interval = 2
-    parent = os.getppid()
+    parent = _expected_parent_pid()
+    if parent is None:
+        parent = os.getppid()
     while True:
         if os.getppid() != parent:
             return
