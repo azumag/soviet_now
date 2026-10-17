@@ -63,6 +63,60 @@ class TwitchCommentIdentityTests(unittest.TestCase):
             self.assertEqual(ack.returncode, 0, ack.stderr)
             self.assertEqual((chat_dir / "pending.log").read_text(encoding="utf-8"), "")
 
+    def test_fetch_marks_only_the_configured_login_as_self(self):
+        """#2373: 自分の投稿は消さずに flags=self を付ける。判定は login の完全一致だけで、
+        表示名のなりすまし・本文中の自称では付かない。"""
+        with tempfile.TemporaryDirectory() as td:
+            temp = Path(td)
+            chat_dir = temp / "chat"
+            chat_dir.mkdir()
+            out = temp / "comments.txt"
+            (chat_dir / "last_offset").write_text("0\n", encoding="utf-8")
+            (chat_dir / "raw.log").write_text(
+                "id=msg-self\tuser-id=uid-bot\tlogin=dociai\tdisplay=DoCiAI\tflags=\tdociai: レトロゲームコーナーです。\n"
+                "id=msg-spoof\tuser-id=uid-spoof\tlogin=mallory\tdisplay=DoCiAI\tflags=\tDoCiAI: 私はDoCiAIです\n"
+                "id=msg-body\tuser-id=uid-body\tlogin=bob\tdisplay=Bob\tflags=\tbob: dociai: こんにちは\n"
+                "id=msg-alice\tuser-id=uid-alice\tlogin=alice\tdisplay=Alice\tflags=\talice: こんにちは\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TWITCH_CHAT_DIR": str(chat_dir),
+                    "TWITCH_CHAT_OUTFILE": str(out),
+                    "CHAT_INGEST_OVERLAY_NOTIFY": "0",
+                    "TWITCH_SELF_AUTHORS": "dociai",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(ROOT / "twitch_chat.sh"), "fetch"],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            emitted = out.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(emitted), 4, emitted)
+            # 自分の投稿も作者 prefix を保ったまま読む。
+            self.assertIn("dociai: レトロゲームコーナーです。", emitted)
+            metadata = [
+                json.loads(line)
+                for line in Path(f"{out}.viewer_meta.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(metadata), 4)
+            by_id = {entry["message_id"]: entry for entry in metadata}
+            self.assertEqual(by_id["msg-self"]["flags"], ["self"])
+            self.assertEqual(by_id["msg-self"]["login"], "dociai")
+            # 表示名が同じ third party、本文で自称する third party は self にしない。
+            self.assertEqual(by_id["msg-spoof"]["flags"], [])
+            self.assertEqual(by_id["msg-spoof"]["display_name"], "DoCiAI")
+            self.assertEqual(by_id["msg-body"]["flags"], [])
+            self.assertNotEqual(by_id["msg-body"]["login"], "dociai")
+            self.assertEqual(by_id["msg-alice"]["flags"], [])
+
     def test_ack_batch_uses_message_id_across_nfkc_text_changes(self):
         with tempfile.TemporaryDirectory() as td:
             temp = Path(td)

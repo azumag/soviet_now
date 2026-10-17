@@ -175,24 +175,25 @@ _send_api() {
     return 1
 }
 
-_is_card_gacha_result_line() {
-    local line="$1"
-    local message="$line"
-    [ -n "$message" ] || return 1
-    case "$message" in
-        *": "*) message="${message#*: }" ;;
-    esac
-    printf '%s\n' "$message" | grep -Eq '[^[:space:]]+[[:space:]]*が[[:space:]]*.+[[:space:]]*を獲得しました'
+_self_author_logins() {
+    # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
+    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので含めない(2026-08-26 ユーザー指示)。
+    # 既存の TWITCH_IGNORE_AUTHORS は後方互換の入力元としてだけ読む (#2373)。
+    local raw="${TWITCH_SELF_AUTHORS:-${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}}"
+    local item
+    for item in $raw; do
+        printf '%s\n' "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+    done
 }
 
-_is_ignored_comment_author_line() {
-    local line="$1"
-    # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
-    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので無視しない(2026-08-26 ユーザー指示)。
-    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}"
-    local item
-    for item in $ignored; do
-        printf '%s\n' "$line" | grep -Fqi -- "${item}: " && return 0
+_is_self_author_login() {
+    # 投稿者 identity が自分自身か。IRC タグの login と設定値の完全一致だけで判定する。
+    # 表示名の一致や本文中の自己申告(「私はDoCiAI」等)は根拠にしない(なりすまし対策, #2373)。
+    local login item
+    login=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+    [ -n "$login" ] || return 1
+    for item in $(_self_author_logins); do
+        [ -n "$item" ] && [ "$login" = "$item" ] && return 0
     done
     return 1
 }
@@ -216,11 +217,10 @@ _sanitize_comment_line() {
 
     # Bot / broadcaster self-posts are outbound echoes. They are read like any
     # other chat line (the comment reply path is audio-only, so no echo loop),
-    # but drop the leading "user: " so the classified/spoken text is the body.
+    # and the "user: " prefix stays on the line so the poster identity is not
+    # lost before the prompt is built. Self-ness is decided by the IRC login in
+    # the fetch loop (flags=self), never by the text here (#2373).
     # (2026-09-11 owner request: read all dociai chat.)
-    if _is_ignored_comment_author_line "$line"; then
-        line="${line#*: }"
-    fi
 
     printf '%s' "$line"
     return 0
@@ -395,6 +395,15 @@ _fetch_nolock() {
 				author_login=$(printf '%s' "$author_login" | tr -cd '[:alnum:]_.:@-')
 				author_display=$(printf '%s' "$author_display" | tr -d '\t\r\n')
 				metadata_flags=$(printf '%s' "$metadata_flags" | tr -cd '[:alnum:]_.,:@-')
+
+				# 自分の投稿は作者 identity を保ったまま self として印を付ける。
+				# 表示名や本文の一致では判定しない(なりすまし対策, #2373)。
+				if _is_self_author_login "$author_login"; then
+					case ",${metadata_flags}," in
+					*,self,*) ;;
+					*) metadata_flags="${metadata_flags:+$metadata_flags,}self" ;;
+					esac
+				fi
 
                 local clean_line=""
                 clean_line=$(_sanitize_comment_line "$comment_line")

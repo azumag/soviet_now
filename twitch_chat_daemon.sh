@@ -114,17 +114,32 @@ _is_stream_start_request() {
     return 1
 }
 
-_is_ignored_author() {
-    local login="${1:-}" display="${2:-}"
+_self_author_logins() {
     # dociai=配信チャンネル兼 outbound bot(自分の投稿), azumagdev=旧 bot アカウント。
-    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので無視しない(2026-08-26 ユーザー指示)。
-    local ignored="${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}"
+    # azumagbanjo(表示名「あずまぐ」)は視聴者本人なので含めない(2026-08-26 ユーザー指示)。
+    # 既存の TWITCH_IGNORE_AUTHORS は後方互換の入力元としてだけ読む (#2373)。
+    local raw="${TWITCH_SELF_AUTHORS:-${TWITCH_IGNORE_AUTHORS:-dociai azumagdev}}"
     local item
-    for item in $ignored; do
-        [ "$login" = "$item" ] && return 0
-        [ "$display" = "$item" ] && return 0
+    for item in $raw; do
+        printf '%s\n' "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
+    done
+}
+
+_is_self_author_login() {
+    # 投稿者 identity が自分自身か。IRC タグの login と設定値の完全一致だけで判定する。
+    # 表示名の一致や本文中の自己申告(「私はDoCiAI」等)は根拠にしない(なりすまし対策, #2373)。
+    local login item
+    login=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+    [ -n "$login" ] || return 1
+    for item in $(_self_author_logins); do
+        [ -n "$item" ] && [ "$login" = "$item" ] && return 0
     done
     return 1
+}
+
+_is_ignored_author() {
+    # 互換用の別名。identity の判定は login 完全一致のみで、表示名は見ない (#2373)。
+    _is_self_author_login "${1:-}"
 }
 
 _extract_usernotice_message() {
@@ -380,12 +395,17 @@ while true; do
             fi
             clean_line="${bits_tag}${user}: ${msg}"
             metadata_flags=""
-            if _is_ignored_author "$login_user" "$user" && _is_card_gacha_result_message "$msg"; then
-                clean_line="${bits_tag}${msg}"
-                metadata_flags="trusted-card"
-            elif _is_ignored_author "$login_user" "$user" && _is_prediction_announce_message "$msg"; then
-                clean_line="${bits_tag}${msg}"
-                metadata_flags="trusted-prediction"
+            # 自分の投稿は作者 identity (IRC の login) を保ったまま self を立てる。
+            # カード/予想の通知だけは本文へ prefix を付けない既存整形を維持する。
+            if _is_self_author_login "$login_user"; then
+                metadata_flags="self"
+                if _is_card_gacha_result_message "$msg"; then
+                    clean_line="${bits_tag}${msg}"
+                    metadata_flags="self,trusted-card"
+                elif _is_prediction_announce_message "$msg"; then
+                    clean_line="${bits_tag}${msg}"
+                    metadata_flags="self,trusted-prediction"
+                fi
             fi
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）。
