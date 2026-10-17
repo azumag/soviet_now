@@ -100,6 +100,21 @@ def _json_object(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _marker_owner(path: Path) -> str:
+    """The lifecycle request a pause marker belongs to, or "" when it is not ours.
+
+    A marker another writer created (operator stop, legacy file) never carries
+    the ``lifecycle:<request_id>`` form, so it is reported as ownerless rather
+    than adopted by whichever request happens to read it.
+    """
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    prefix = "lifecycle:"
+    return value[len(prefix):] if value.startswith(prefix) else ""
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -1007,17 +1022,27 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
             (store.directory / "loop_pause.json", store.root / "tmp/state/soren_loop.paused"),
             (store.directory / "watchdog_pause.json", store.root / "tmp/state/soviet_watchdog.paused"),
         )
+        # A pause record is the only proof of which lifecycle request created
+        # its marker.  Deleting a record while its marker survives would leave
+        # the marker ownerless, and a later resume could never clear that pause
+        # (issue #2061: candidate cleanup archived the ownership record of the
+        # switch that parked the loop, so readiness and rollback timed out).
+        # Keep a foreign record exactly as long as the marker it proves.
+        keep_records: list[Path] = []
         for record_path, marker_path in pause_specs:
             record = _json_object(record_path)
-            if record and record.get("request_id") == request_id:
-                owned = bool(record.get("improvement_marker_created") or record.get("loop_marker_created"))
-                marker_value = ""
-                try:
-                    marker_value = marker_path.read_text(encoding="utf-8").strip()
-                except OSError:
-                    pass
-                if owned and marker_value == f"lifecycle:{request_id}":
-                    marker_path.unlink(missing_ok=True)
+            if not record:
+                continue
+            owner = record.get("request_id")
+            owns_marker = bool(
+                record.get("improvement_marker_created") or record.get("loop_marker_created")
+            ) and bool(owner) and _marker_owner(marker_path) == owner
+            if owner != request_id:
+                if owns_marker:
+                    keep_records.append(record_path)
+                continue
+            if owns_marker:
+                marker_path.unlink(missing_ok=True)
         if not resuming:
             prior = {
                 "schema": 1,
@@ -1033,7 +1058,7 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
         store.archive_current()
         for path in (
             store.ack_path, store.control_path, store.resource_path,
-            *(record for record, _marker in pause_specs),
+            *(record for record, _marker in pause_specs if record not in keep_records),
             # Delete request last.  The receipt remains a durable journal if
             # any earlier unlink fails, and a retry validates and resumes all
             # remaining cleanup before reporting success.

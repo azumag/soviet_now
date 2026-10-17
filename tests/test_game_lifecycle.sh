@@ -271,6 +271,36 @@ game_lifecycle_restore_improvements
 [ -f "$TMP_STATE_DIR/improve_daemon.paused" ]
 rm -f "$TMP_STATE_DIR/improve_daemon.paused"
 
+# Issue #2061: a request that did not create a pause must neither overwrite nor
+# release the owning request's proof.  Candidate cleanup used to rewrite
+# loop_pause.json for itself and fresh-start used to archive it, leaving
+# soren_loop.paused ownerless so readiness and rollback timed out.
+foreign_id="bbbbbbbb-1111-4222-8333-444444444444"
+printf '{"request_id":"%s","improvement_marker_created":false,"loop_marker_created":true}\n' "$foreign_id" >"$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
+printf 'lifecycle:%s\n' "$foreign_id" >"$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+_game_lifecycle_pause_loop "$request_id"
+[ "$(_game_lifecycle_json_field "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" request_id)" = "$foreign_id" ]
+[ "$(cat "$GAME_LIFECYCLE_LOOP_PAUSE_FILE")" = "lifecycle:$foreign_id" ]
+game_lifecycle_restore_loop "$request_id"
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+game_lifecycle_restore_loop "$foreign_id"
+[ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+[ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+
+# The same rule holds for the prediction gate: pausing for another request
+# keeps its record, and only the owning request's restore releases the marker.
+printf '{"request_id":"%s","improvement_marker_created":true,"loop_marker_created":false}\n' "$foreign_id" >"$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE"
+printf 'lifecycle:%s\n' "$foreign_id" >"$TMP_STATE_DIR/prediction_worker.paused"
+_game_lifecycle_pause_predictions "$request_id"
+[ "$(_game_lifecycle_json_field "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" request_id)" = "$foreign_id" ]
+game_lifecycle_restore_predictions "$request_id"
+[ -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
+game_lifecycle_restore_predictions "$foreign_id"
+[ ! -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ ! -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
+
 # Unsupported legacy mode cancels the request and restores a marker created by
 # this handover; it must not pause or terminate the old game.
 rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" "$events" "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE"
