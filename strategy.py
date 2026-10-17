@@ -3412,11 +3412,18 @@ def merge_opportunity_alternatives(game_state, analysis, decision):
                     continue
                 pairs.append((lo, hi, bottom, top))
 
+        _reason = str(decision.get('reason', ''))
+        _generic = not any(k in _reason for k in (
+            'RUSSIA', 'ANCHOR', 'CONTACT', 'OPEN_TWIN', 'DEADLINE_GUARD',
+            'DIRECT', 'PROBABLE', 'MERGE'))
+
         def losses(q):
             px, py = float(q['x']), float(q['landing_y'])
             placed = (nt, px, py, dh, py + dt, py - db)
             cap = int(bool(targets) and all(above(placed, p) for p in targets))
-            gaps = sum(lo < px < hi and placed[5] < top and placed[4] > bottom
+            gaps = sum(lo < px < hi and (placed[5] < top and placed[4] > bottom
+                                         or (_generic and nt < 8 and lo + 0.25 < px < hi - 0.25
+                                             and placed[5] >= top - 0.25))
                        for lo, hi, bottom, top in pairs)
             return gaps, cap
 
