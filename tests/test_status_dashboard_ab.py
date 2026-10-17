@@ -510,11 +510,15 @@ class TopPanelModeTest(unittest.TestCase):
         """
         legacy = (REPO_ROOT / "generate_status_overlay.sh").read_text()
         unified = (REPO_ROOT / "generate_soren_overlay.sh").read_text()
+        # #970: the unified renderer moved to a long-lived module; it must still
+        # render the dashboard in-process (no `python3 status_dashboard.py`).
+        renderer = (REPO_ROOT / "lib" / "soren_overlay_render.py").read_text()
         self.assertIn("python3 status_dashboard.py", legacy)
-        self.assertIn("from status_dashboard import render_dashboard_text", unified)
-        self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", unified)
+        self.assertIn("from status_dashboard import render_dashboard_text", renderer)
+        self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", renderer)
         self.assertNotIn("python3 status_dashboard.py", unified)
-        for script in (legacy, unified):
+        self.assertNotIn("python3 status_dashboard.py", renderer)
+        for script in (legacy, unified, renderer):
             self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff", script)
 
     def test_header_does_not_duplicate_the_ai_backoff_rows(self):
