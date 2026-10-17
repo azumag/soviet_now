@@ -4,6 +4,7 @@ import pathlib
 import tempfile
 import time
 import unittest
+from collections import Counter
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -13,7 +14,7 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(fetch_news)
 
 
-def item(title: str, published_ts: int) -> dict:
+def item(title: str, published_ts: int, scope: str = "") -> dict:
     return {
         "title": title,
         "url": f"https://example.test/{title}",
@@ -23,6 +24,7 @@ def item(title: str, published_ts: int) -> dict:
         "license": "test",
         "lang": "ja",
         "source_key": "source",
+        "scope": scope,
         "published_ts": published_ts,
         "published_at": "2026-08-29T00:00:00Z",
     }
@@ -54,7 +56,7 @@ class NewsFreshnessTest(unittest.TestCase):
         self.assertEqual(stats["overall"]["stale_published_at"], 1)
         self.assertEqual(stats["overall"]["missing_published_at"], 1)
 
-    def test_google_news_sources_are_available_as_verified_fallback(self):
+    def test_google_news_sources_include_japanese_and_english_feeds(self):
         google_sources = [source for source in fetch_news.SOURCES if source["key"].startswith("google_news_")]
         self.assertEqual(
             {source["key"] for source in google_sources},
@@ -63,9 +65,53 @@ class NewsFreshnessTest(unittest.TestCase):
                 "google_news_jp_politics",
                 "google_news_jp_business",
                 "google_news_jp_world",
+                "google_news_world_en",
+                "google_news_business_en",
             },
         )
         self.assertTrue(all("news.google.com/rss" in source["url"] for source in google_sources))
+        english = [source for source in google_sources if source["key"].endswith("_en")]
+        self.assertTrue(all(source["scope"] == "overseas" for source in english))
+
+    def test_sources_have_unique_keys_urls_and_explicit_scope(self):
+        keys = [source["key"] for source in fetch_news.SOURCES]
+        urls = [source["url"] for source in fetch_news.SOURCES]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(len(urls), len(set(urls)))
+        for source in fetch_news.SOURCES:
+            self.assertIn(source.get("scope"), {"domestic", "overseas"}, source["key"])
+            self.assertTrue(source.get("lang"), source["key"])
+
+    def test_overseas_sources_outnumber_domestic_sources(self):
+        counts = Counter(source["scope"] for source in fetch_news.SOURCES)
+        self.assertGreater(counts["overseas"], counts["domestic"])
+        keys = {source["key"] for source in fetch_news.SOURCES}
+        self.assertTrue(
+            {
+                "bbc_world",
+                "guardian_world",
+                "nyt_world",
+                "npr_world",
+                "france24_world",
+                "dw_world",
+            }
+            <= keys
+        )
+
+    def test_render_meta_keeps_source_scope(self):
+        meta = fetch_news.render_meta([item("overseas story", int(time.time()), scope="overseas")])
+        self.assertEqual(meta["overseas story"]["scope"], "overseas")
+
+    def test_english_google_topic_feed_bypasses_the_japanese_public_interest_gate(self):
+        now = int(time.time())
+        title = "Houthi strikes show the Yemeni rebels' growing strength"
+        world_key = "google_news_world_en"
+        world_candidates, _ = fetch_news.dedupe_candidates({world_key: [item(title, now)]})
+        self.assertEqual([entry["title"] for entry in world_candidates[world_key]], [title])
+
+        jp_key = "google_news_jp_world"
+        jp_candidates, _ = fetch_news.dedupe_candidates({jp_key: [item(title, now)]})
+        self.assertNotIn(jp_key, jp_candidates)
 
     def test_rejects_low_value_entertainment_and_product_titles(self):
         now = int(time.time())

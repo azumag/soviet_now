@@ -356,7 +356,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
 - Unity ブラウザ音声は `soviet_local.mjs` が `tmp/state/local_audio_health.json` に WebAudio 状態を書き出す。`suspended` / `interrupted` を検出した場合はゲームページだけを前面化して AudioContext resume を試み、macOS の既定音声出力は変更しない。
-- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。NHK・新聞社・Global Voicesに加えてGoogle Newsの日本・政治・経済・国際・科学RSSを使い、公開日時が確認できる`NEWS_MAX_AGE_HOURS`（既定48時間）以内の記事だけを候補にする。全RSSで未読がない場合や取得失敗時だけスキップし、モデルの記憶による自主探索は行わない（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
+- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。NHK・新聞社・Global Voicesに加えてGoogle Newsの日本・政治・経済・国際RSS、およびBBC World / The Guardian World / The New York Times World / NPR World / France 24 / DWの英語海外RSSを使い、公開日時が確認できる`NEWS_MAX_AGE_HOURS`（既定48時間）以内の記事だけを候補にする。選定は政治・政策・外交・安全保障を約2/3優先（`NEWS_POLITICAL_SHARE`、既定0.67）したうえで、国内ソースと海外ソースが偏らないよう `NEWS_OVERSEAS_SHARE`（既定0.5）で分散する。全RSSで未読がない場合や取得失敗時だけスキップし、モデルの記憶による自主探索は行わない（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
 - 自分の投稿（配信アカウントのチャット投稿）は読み取り対象のまま保持し、IRC の login が `TWITCH_SELF_AUTHORS`（既定 `dociai azumagdev`。未設定時は従来の `TWITCH_IGNORE_AUTHORS` を読む）と完全一致した行だけを自分の投稿として扱う。表示名の一致や本文中の自己申告（「私はDoCiAI」等）では判定しない。生成プロンプトでは第三者のコメント一覧へ混ぜず、`self_chat_context` として自分の既発言に分離して渡す（2026-10-17 #2373。ack は従来どおり全行対象）

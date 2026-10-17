@@ -328,7 +328,9 @@ for b in blocks:
         continue
     item = meta.get(title, {}) if isinstance(meta, dict) else {}
     source_key = (item.get("source_key") or "").strip()
-    if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+    # 日本語Google Newsだけ公開関心のポジティブ判定を通す。英語WORLD/BUSINESS面は
+    # もともと国際情勢・経済面のため、日本語キーワード判定で落とさない。
+    if source_key.startswith("google_news_jp_") and not is_public_interest_news_title(title):
         continue
     k = key(title)
     tk = topic_key(title)

@@ -17,6 +17,13 @@ cat >"$TMP/tmp/news_meta.json" <<'JSON'
     "source": "Google News 日本経済",
     "source_key": "google_news_jp_business",
     "published_at": "2026-09-14T10:00:00Z"
+  },
+  "Government signals new sanctions on Russia": {
+    "source": "BBC World",
+    "source_key": "bbc_world",
+    "lang": "en",
+    "scope": "overseas",
+    "published_at": "2026-09-14T10:00:00Z"
   }
 }
 JSON
@@ -49,6 +56,19 @@ weather_blocks=$'■ 台風17号上陸、沖縄で住宅浸水と避難指示\n�
 result=$(NEWS_POLITICAL_SHARE=0 _random_pick_news_block "$weather_blocks")
 if [ "$result" != $'■ 大手メーカーが新工場を稼働\n経済本文' ]; then
   echo "recent weather family was not cooled down when another topic existed" >&2
+  exit 1
+fi
+
+overseas_blocks=$'■ 国会で来年度予算案を審議\n政治本文\n\n■ Government signals new sanctions on Russia\nDiplomacy body'
+result=$(NEWS_POLITICAL_SHARE=1 NEWS_OVERSEAS_SHARE=1 _random_pick_news_block "$overseas_blocks")
+if [ "$result" != $'■ Government signals new sanctions on Russia\nDiplomacy body' ]; then
+  echo "overseas lane was not selected with NEWS_OVERSEAS_SHARE=1" >&2
+  exit 1
+fi
+
+result=$(NEWS_POLITICAL_SHARE=1 NEWS_OVERSEAS_SHARE=0 _random_pick_news_block "$overseas_blocks")
+if [ "$result" != $'■ 国会で来年度予算案を審議\n政治本文' ]; then
+  echo "domestic lane was not selected with NEWS_OVERSEAS_SHARE=0" >&2
   exit 1
 fi
 

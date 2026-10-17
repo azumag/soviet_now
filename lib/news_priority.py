@@ -5,6 +5,12 @@ The caller already supplies an unread/public-interest pool. This module only
 chooses one block: when both political and non-political blocks are available,
 it chooses the political lane with a configurable share (67% by default), then
 keeps the existing recency/source-diversity weighting inside that lane.
+
+The selected lane is then balanced between domestic and overseas sources with
+NEWS_OVERSEAS_SHARE (50% by default). Source scope comes from
+tmp/news_meta.json ("scope": "domestic" / "overseas", written by fetch_news.py);
+older metadata is inferred from the source key or language. When either scope
+is missing from a lane, the balance step fails open and keeps the whole lane.
 """
 from __future__ import annotations
 
@@ -33,6 +39,20 @@ except Exception:
 from news_topic_filter import is_uncontextualized_tragedy
 
 DEFAULT_POLITICAL_SHARE = 0.67
+DEFAULT_OVERSEAS_SHARE = 0.5
+
+_DOMESTIC_SOURCE_PREFIXES = ("google_news_jp_",)
+_DOMESTIC_SOURCE_KEYS = {"nhk_politics"}
+_OVERSEAS_SOURCE_PREFIXES = (
+    "google_news_world_en",
+    "google_news_business_en",
+    "bbc_",
+    "guardian_",
+    "nyt_",
+    "npr_",
+    "france24_",
+    "dw_",
+)
 
 _POLITICAL_SOURCE_KEYS = {
     "google_news_jp_politics",
@@ -84,6 +104,40 @@ def political_share_from_env() -> float:
     except (TypeError, ValueError):
         share = DEFAULT_POLITICAL_SHARE
     return min(1.0, max(0.0, share))
+
+
+def overseas_share_from_env() -> float:
+    """Read NEWS_OVERSEAS_SHARE, falling back safely to the 50% policy."""
+    raw = os.environ.get("NEWS_OVERSEAS_SHARE", str(DEFAULT_OVERSEAS_SHARE))
+    try:
+        share = float(raw)
+    except (TypeError, ValueError):
+        share = DEFAULT_OVERSEAS_SHARE
+    return min(1.0, max(0.0, share))
+
+
+def source_scope(item: dict[str, Any] | None) -> str:
+    """Return 'domestic', 'overseas' or 'unknown' for one news metadata item.
+
+    fetch_news.py writes an explicit "scope" for every configured source. Older
+    metadata (or hand-built fixtures) falls back to the source key and language
+    so the balance step still works without rewriting history.
+    """
+    if not isinstance(item, dict):
+        return "unknown"
+    explicit = (item.get("scope") or "").strip().lower()
+    if explicit in {"domestic", "overseas"}:
+        return explicit
+
+    key = (item.get("source_key") or "").strip().lower()
+    if key in _DOMESTIC_SOURCE_KEYS or key.startswith(_DOMESTIC_SOURCE_PREFIXES):
+        return "domestic"
+    if key.startswith("globalvoices") or key.startswith(_OVERSEAS_SOURCE_PREFIXES):
+        return "overseas"
+    language = (item.get("lang") or "").strip().lower()
+    if language and language != "ja":
+        return "overseas"
+    return "unknown"
 
 
 def _parse_blocks(text: str) -> list[list[str]]:
@@ -236,10 +290,15 @@ def choose_news_block(
     meta: dict[str, Any] | None = None,
     source_counts: dict[str, int] | None = None,
     political_share: float = DEFAULT_POLITICAL_SHARE,
+    overseas_share: float | None = DEFAULT_OVERSEAS_SHARE,
     rng: Any = random,
     recent_titles: list[str] | None = None,
 ) -> str:
-    """Choose one news block while preserving legacy within-lane weighting."""
+    """Choose one news block while preserving legacy within-lane weighting.
+
+    ``overseas_share=None`` disables the domestic/overseas balance step (used by
+    callers that need the raw legacy picker, such as weight regression tests).
+    """
     blocks = [
         block for block in _parse_blocks(blocks_text)
         if not is_uncontextualized_tragedy(_block_title(block), "\n".join(block[1:]))
@@ -252,11 +311,13 @@ def choose_news_block(
     share = min(1.0, max(0.0, float(political_share)))
 
     political_flags: list[bool] = []
+    scopes: list[str] = []
     for block in blocks:
         title = _block_title(block)
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_key = (item.get("source_key") or "").strip()
         political_flags.append(is_political_title(title, source_key))
+        scopes.append(source_scope(item))
 
     # Compute weights across the complete unread pool exactly as the legacy
     # picker did. Topic rotation and lane selection only restrict which
@@ -277,6 +338,19 @@ def choose_news_block(
     else:
         candidate_indexes = political_indexes or other_indexes
 
+    # Balance domestic and overseas sources inside the selected lane. Fail open
+    # when any block in the lane has no known scope, or when one side is empty,
+    # so a temporarily narrow feed never produces an empty selection.
+    if overseas_share is not None and candidate_indexes:
+        region_share = min(1.0, max(0.0, float(overseas_share)))
+        domestic_indexes = [idx for idx in candidate_indexes if scopes[idx] == "domestic"]
+        overseas_indexes = [idx for idx in candidate_indexes if scopes[idx] == "overseas"]
+        all_scoped = len(domestic_indexes) + len(overseas_indexes) == len(candidate_indexes)
+        if all_scoped and domestic_indexes and overseas_indexes:
+            candidate_indexes = (
+                overseas_indexes if rng.random() < region_share else domestic_indexes
+            )
+
     candidate_weights = [weights[idx] for idx in candidate_indexes]
     chosen_index = rng.choices(candidate_indexes, weights=candidate_weights, k=1)[0]
     return "\n".join(blocks[chosen_index])
@@ -296,6 +370,7 @@ def main(argv: list[str]) -> int:
         meta=_load_meta(),
         source_counts=_read_source_counts(history_file),
         political_share=political_share_from_env(),
+        overseas_share=overseas_share_from_env(),
         recent_titles=recent_titles,
     )
     if chosen:
