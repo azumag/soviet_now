@@ -80,6 +80,37 @@ class BuryExposedMergeCandidateTests(unittest.TestCase):
         self.assertEqual(trace.get('outcome'), 'selected')
         self.assertTrue(trace.get('attempts'))
 
+    def scorer_decision(self):
+        """Real scorer output for the two-type-9 board, reason included."""
+        from analyze_board import analyze_drops, calc_reactor_state
+        gs = state([piece(1, 9, -0.8), piece(2, 9, 0.8)])
+        results, same_type = analyze_drops(gs['pieces'], gs['next']['type'], gs['next']['r'], {})
+        analysis = {'results': results, 'same_type': same_type,
+                    'reactor': calc_reactor_state(gs['pieces'])}
+        return gs, analysis, strategy.decide(gs, analysis)
+
+    def test_real_scorer_reason_does_not_suppress_burial_redirect(self):
+        # P2 review regression: the scorer labels ordinary non-merge candidates
+        # with ..._NO_MERGE_PENALTY. That reason only *contains* the substring
+        # MERGE, so it must not disable burial avoidance; before the fix the hook
+        # kept the runtime choice (x=0) for exactly this reason.
+        gs, analysis, decision = self.scorer_decision()
+        reason = str(decision.get('reason', ''))
+        self.assertIn('NO_MERGE', reason)
+        out = runner.apply_strategy_final_decision(
+            strategy, {'x': 0, 'reason': reason}, analysis, gs)
+        self.assertNotEqual(out['x'], 0)
+        # the redirect keeps the lane entry open (the pair sits at x=-0.8 / 0.8)
+        self.assertFalse(-0.55 < float(out['x']) < 0.55)
+        self.assertEqual(out.get('merge_opportunity_trace', {}).get('from_reason'), reason)
+
+    def test_no_merge_penalty_reason_is_not_treated_as_a_merge_decision(self):
+        # Pinned copy of the scorer reason above, on the synthetic candidate set.
+        reason = 'AVOID_BLOCK_REACTIVE_PAIR_SEAT_LANE_REACTIVE_PAIRS_NO_MERGE_PENALTY'
+        gs = state([piece(1, 9, -0.8), piece(2, 9, 0.8)])
+        self.assertEqual(
+            self.choose(gs, [candidate(0), candidate(2, -3.5)], reason=reason)['x'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

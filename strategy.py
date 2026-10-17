@@ -3413,9 +3413,15 @@ def merge_opportunity_alternatives(game_state, analysis, decision):
                 pairs.append((lo, hi, bottom, top))
 
         _reason = str(decision.get('reason', ''))
-        _generic = not any(k in _reason for k in (
+        # "NO_MERGE" contains "MERGE" but marks an ordinary non-merge candidate,
+        # which is exactly where the burial loss has to apply. Only a genuine
+        # merge reason (a MERGE occurrence that is not part of NO_MERGE) keeps
+        # the hook away from the runtime choice.
+        _upper_reason = _reason.upper()
+        _merge_decision = (_upper_reason.count('MERGE') - _upper_reason.count('NO_MERGE')) > 0
+        _generic = not (_merge_decision or any(k in _reason for k in (
             'RUSSIA', 'ANCHOR', 'CONTACT', 'OPEN_TWIN', 'DEADLINE_GUARD',
-            'DIRECT', 'PROBABLE', 'MERGE'))
+            'DIRECT', 'PROBABLE')))
 
         def losses(q):
             px, py = float(q['x']), float(q['landing_y'])
