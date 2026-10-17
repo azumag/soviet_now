@@ -206,6 +206,56 @@ function boardStructure(pieces, columns) {
   return { meanHeight, roughness, pocketPenalty, maxTop, highMass, uncertain, pairPotential, splitPenalty };
 }
 
+// #605: an exposed same-type pair that a future same-type piece can still reach
+// is a merge lane. Wedging a *different* type over the gap entry leaves both
+// pieces on the board while closing that lane, so such a move must lose to an
+// equal-risk move that keeps the entry open.
+function exposedPairLanes(pieces) {
+  const exposed = exposedPieces(pieces);
+  const byType = new Map();
+  for (const p of exposed) {
+    if (p.type >= 15) continue;
+    if (!byType.has(p.type)) byType.set(p.type, []);
+    byType.get(p.type).push(p);
+  }
+  const lanes = [];
+  for (const [type, group] of byType) {
+    if (group.length < 2) continue;
+    const reach = TYPE_RADII[type] * 2 + 1.0;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i];
+        const b = group[j];
+        const lo = Math.min(a.x, b.x);
+        const hi = Math.max(a.x, b.x);
+        if (hi - lo <= 0 || hi - lo > reach) continue;
+        const top = Math.min(a.y + a.r, b.y + b.r);
+        const bottom = Math.max(a.y - a.r, b.y - b.r);
+        if (bottom >= top) continue;
+        lanes.push({ type, lo, hi, top, bottom });
+      }
+    }
+  }
+  return lanes;
+}
+
+// A move buries a lane when the piece lands inside the gap and its top reaches
+// the pair's top: the entry is covered from above instead of left open. A piece
+// of the lane's own type is never a burial — that is the merge the lane waits
+// for, so those lanes are skipped.
+function laneBurialCount(move, lanes) {
+  if (lanes.length === 0) return 0;
+  const type = move.placed?.type;
+  let buried = 0;
+  for (const lane of lanes) {
+    if (lane.type === type) continue;
+    if (!(lane.lo + 0.25 < move.x && move.x < lane.hi - 0.25)) continue;
+    if (move.peak < lane.top - 0.25) continue;
+    buried++;
+  }
+  return buried;
+}
+
 function evaluate(pieces, piece, x, garbage) {
   const sim = simulateDrop(pieces, piece, x, garbage.columns);
   const structure = boardStructure(sim.pieces, garbage.columns);
@@ -318,12 +368,14 @@ function compareRootAdmission(a, b) {
   return a.risk - b.risk
     || (a.risk === 2 ? b.clearance - a.clearance : 0)
     || a.reservationRank - b.reservationRank
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || compareMove(a, b);
 }
 
 function comparePath(a, b) {
   return a.pathRisk - b.pathRisk
     || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || b.totalValue - a.totalValue
     || b.minClearance - a.minClearance
     || compareMove(a.root, b.root);
@@ -337,6 +389,7 @@ function compareReservedPath(a, b) {
   return a.pathRisk - b.pathRisk
     || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
     || a.reservationRank - b.reservationRank
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || b.totalValue - a.totalValue
     || b.minClearance - a.minClearance
     || compareMove(a.root, b.root);
@@ -344,8 +397,17 @@ function compareReservedPath(a, b) {
 
 function search(board, piece, queue, garbage) {
   const reservation = knownFutureMergeReservation(board, queue, garbage.columns);
+  const lanes = exposedPairLanes(board);
   const roots = candidates(board, piece, garbage.columns)
-    .map(x => annotateReservation(evaluate(board, piece, x, garbage), reservation, garbage.columns))
+    .map(x => {
+      const move = evaluate(board, piece, x, garbage);
+      const buried = laneBurialCount(move, lanes);
+      return {
+        ...annotateReservation(move, reservation, garbage.columns),
+        pairLaneBurials: buried,
+        pairLaneBurialRank: buried > 0 ? 1 : 0,
+      };
+    })
     .sort(compareRootAdmission);
   const bestRootRisk = roots[0].risk;
   let beam = roots.filter(r => r.risk === bestRootRisk).slice(0, ROOT_BEAM).map(root => ({
@@ -357,6 +419,7 @@ function search(board, piece, queue, garbage) {
     reservationRank: root.reservationRank,
     reservationStatus: root.reservationStatus,
     reservationFulfilled: root.reservationStatus === 'consumed',
+    pairLaneBurialRank: root.pairLaneBurialRank,
     nodes: 1,
   }));
   let expanded = beam.length;
@@ -394,6 +457,7 @@ function search(board, piece, queue, garbage) {
           reservationRank: beforeTarget && !state.reservationFulfilled ? move.reservationRank : state.reservationRank,
           reservationStatus: beforeTarget && !state.reservationFulfilled ? move.reservationStatus : state.reservationStatus,
           reservationFulfilled: fulfilled,
+          pairLaneBurialRank: state.pairLaneBurialRank,
           nodes: state.nodes + 1,
         });
       }
@@ -419,6 +483,9 @@ function search(board, piece, queue, garbage) {
     reservationDepth: reservation?.depth ?? 0,
     reservationType: reservation?.type ?? null,
     reservationBeforeMergeValue: reservation?.mergeValue ?? 0,
+    pairLaneBurials: winner.root.pairLaneBurials,
+    pairLaneBurialAvoided: winner.root.pairLaneBurials === 0
+      && roots.some(r => r.pairLaneBurials > 0),
   };
 }
 
@@ -580,6 +647,8 @@ export function decide(boardState) {
       reservationDepth: chosen.reservationDepth ?? 0,
       reservationType: chosen.reservationType ?? null,
       reservationBeforeMergeValue: chosen.reservationBeforeMergeValue ?? 0,
+      pairLaneBurials: chosen.pairLaneBurials ?? 0,
+      pairLaneBurialAvoided: Boolean(chosen.pairLaneBurialAvoided),
       ignoredUnsupportedHigh,
     },
   };
