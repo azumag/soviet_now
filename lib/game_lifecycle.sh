@@ -467,6 +467,44 @@ _game_lifecycle_marker_owned_by() {
 	[ "$(cat "$path" 2>/dev/null || true)" = "lifecycle:$request_id" ]
 }
 
+# The lifecycle request a pause marker names, or nothing when another writer
+# (operator stop, legacy file) created it.  Reading never adopts the marker.
+_game_lifecycle_marker_owner() {
+	local path="$1" value
+	value=$(cat "$path" 2>/dev/null || true)
+	case "$value" in
+	lifecycle:?*) printf '%s\n' "${value#lifecycle:}" ;;
+	*) return 1 ;;
+	esac
+}
+
+# Whether an existing pause record proves that a *different* lifecycle request
+# created this marker.  Such a record is the only proof that lets that request
+# (or the fixed owner-only recovery operator) clear the marker later, so it
+# must never be overwritten or deleted by this request (issue #2061: candidate
+# cleanup erased the ownership record of the switch that parked the loop and
+# readiness/rollback timed out).
+_game_lifecycle_pause_record_proves_foreign_owner() {
+	local record="$1" field="$2" marker="$3" request_id="$4" owner=""
+	[ -f "$record" ] || return 1
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	[ -n "$owner" ] || return 1
+	[ "$owner" != "$request_id" ] || return 1
+	[ "$(_game_lifecycle_json_field "$record" "$field" 2>/dev/null || true)" = "true" ] || return 1
+	[ "$(_game_lifecycle_marker_owner "$marker" 2>/dev/null || true)" = "$owner" ]
+}
+
+# The request whose gates a restore may release.  An explicit argument wins;
+# otherwise fall back to the request on disk.  An empty result releases
+# nothing, so a caller that has no identity can never clear a foreign pause
+# (issue #2061).
+_game_lifecycle_restore_request_id() {
+	local request_id="${1:-}"
+	[ -n "$request_id" ] || request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || request_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/ack.json" request_id 2>/dev/null || true)
+	printf '%s\n' "$request_id"
+}
+
 _game_lifecycle_pause_improvements() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
@@ -488,10 +526,15 @@ _game_lifecycle_pause_improvements_locked() {
 		return 1
 	fi
 
-	local marker_created=0
+	local marker_created=0 foreign_owner=0
 	if [ -e "$TMP_STATE_DIR/improve_daemon.paused" ]; then
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" improvement_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" improvement_marker_created "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
+			# Another lifecycle request parked the daemon.  Still drain the
+			# improve work this stop owns, but never rewrite that request's
+			# ownership record (issue #2061).
+			foreign_owner=1
 		fi
 	else
 		if ! _game_lifecycle_create_owned_marker "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
@@ -591,6 +634,12 @@ _game_lifecycle_pause_improvements_locked() {
 		fi
 	done
 
+	if [ "$foreign_owner" -eq 1 ]; then
+		# The existing record still proves another request's marker.  Leaving
+		# it intact is what keeps that pause recoverable; this stop is already
+		# satisfied because the daemon is parked.
+		return 0
+	fi
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" "$request_id" "$marker_created" "$daemon_pid" "$child_pid" 0 || {
 		[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 		return 1
@@ -599,11 +648,17 @@ _game_lifecycle_pause_improvements_locked() {
 }
 
 game_lifecycle_restore_improvements() {
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
 	local record="$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created request_id
+	local marker_created owner
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns; its record
+	# is the only proof that lets that request (or the fixed recovery operator)
+	# clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
 		rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 	fi
@@ -662,12 +717,17 @@ _game_lifecycle_pause_predictions() {
 }
 
 _game_lifecycle_pause_predictions_locked() {
-	local request_id="${1:-}" marker_created=0 pid="" pid_started="" pid_started_now=""
+	local request_id="${1:-}" marker_created=0 foreign_owner=0 pid="" pid_started="" pid_started_now=""
 	[ -n "$request_id" ] || return 1
 	mkdir -p "$GAME_LIFECYCLE_DIR" "$TMP_STATE_DIR" 2>/dev/null || return 1
 	if [ -e "$GAME_LIFECYCLE_PREDICTION_MARKER" ]; then
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" improvement_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" improvement_marker_created "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id"; then
+			# Another lifecycle request parked the prediction worker.  Stop the
+			# worker this handover owns, but never rewrite or release that
+			# request's ownership proof (issue #2061).
+			foreign_owner=1
 		fi
 	else
 		# noclobber makes marker creation atomic.  A concurrent operator-created
@@ -676,12 +736,14 @@ _game_lifecycle_pause_predictions_locked() {
 		marker_created=1
 	fi
 	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/prediction_worker.pid" 2>/dev/null || true)
-	# Persist ownership before sending TERM.  A crash after this point can only
-	# remove a marker positively tied to this request.
-	_game_lifecycle_write_record "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || {
-		[ "$marker_created" -eq 1 ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
-		return 1
-	}
+	if [ "$foreign_owner" -eq 0 ]; then
+		# Persist ownership before sending TERM.  A crash after this point can
+		# only remove a marker positively tied to this request.
+		_game_lifecycle_write_record "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || {
+			[ "$marker_created" -eq 1 ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+			return 1
+		}
+	fi
 	if [ -n "$pid" ]; then
 		if ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
 			# Gone-or-zombie is the stop this pause asked for: the marker
@@ -689,7 +751,7 @@ _game_lifecycle_pause_predictions_locked() {
 			# shell stays a zombie until its supervisor reaps it.  Only a live
 			# PID owned by an unrelated command (reuse) refuses the pause.
 			if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
-				_game_lifecycle_restore_predictions_locked
+				_game_lifecycle_restore_predictions_locked "$request_id"
 				return 1
 			fi
 		else
@@ -700,7 +762,7 @@ _game_lifecycle_pause_predictions_locked() {
 				# an empty lstart must not be read as a broken PID file.
 				:
 			elif [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
-				_game_lifecycle_restore_predictions_locked
+				_game_lifecycle_restore_predictions_locked "$request_id"
 				return 1
 			else
 				kill -TERM "$pid" 2>/dev/null || true
@@ -710,7 +772,7 @@ _game_lifecycle_pause_predictions_locked() {
 				# that must count as stopped rather than burn the whole budget.
 				while ! _game_lifecycle_pid_gone_or_zombie "$pid" && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
 				if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
-					_game_lifecycle_restore_predictions_locked
+					_game_lifecycle_restore_predictions_locked "$request_id"
 					return 1
 				fi
 			fi
@@ -720,10 +782,16 @@ _game_lifecycle_pause_predictions_locked() {
 }
 
 _game_lifecycle_restore_predictions_locked() {
-	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created request_id
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
+	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created owner
 	[ -f "$record" ] || return 0
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker that another lifecycle request still owns; its
+	# record is the only proof that lets that request (or the fixed recovery
+	# operator) clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
 	fi
@@ -731,8 +799,9 @@ _game_lifecycle_restore_predictions_locked() {
 }
 
 game_lifecycle_restore_predictions() {
+	local request_id="${1:-}"
 	_game_lifecycle_lock_acquire "$GAME_LIFECYCLE_DIR/broker.lock" || return 1
-	_game_lifecycle_restore_predictions_locked
+	_game_lifecycle_restore_predictions_locked "$request_id"
 	local rc=$?
 	_game_lifecycle_lock_release
 	return $rc
@@ -747,11 +816,18 @@ _game_lifecycle_is_watchdog_pid() {
 }
 
 _game_lifecycle_pause_watchdog() {
-	local request_id="${1:-}" marker_created=0 pid="" waited=0 wait_sec="${GAME_LIFECYCLE_WATCHDOG_STOP_WAIT_SEC:-30}"
+	local request_id="${1:-}" marker_created=0 foreign_owner=0 pid="" waited=0 wait_sec="${GAME_LIFECYCLE_WATCHDOG_STOP_WAIT_SEC:-30}"
 	[ -n "$request_id" ] || return 1
 	case "$wait_sec" in ''|*[!0-9]*) wait_sec=30 ;; esac
 	if [ -e "$GAME_LIFECYCLE_WATCHDOG_MARKER" ]; then
-		_game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id" && marker_created=1
+		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id"; then
+			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id"; then
+			# Another lifecycle request parked the watchdog.  Keep the record
+			# that proves it; overwriting it would lose the only ownership
+			# proof (issue #2061).
+			foreign_owner=1
+		fi
 	else
 		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id" || return 1
 		marker_created=1
@@ -760,7 +836,9 @@ _game_lifecycle_pause_watchdog() {
 	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
 		pid=$(pgrep -f '[/]soviet_watchdog[.]sh([[:space:]]|$)' 2>/dev/null | head -n 1 || true)
 	fi
-	_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
+	if [ "$foreign_owner" -eq 0 ]; then
+		_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
+	fi
 	if [ -n "$pid" ]; then
 		# A dead PID left in the pidfile is already a successful stopped state.
 		# Refuse only when that numeric PID is live but no longer belongs to the
@@ -784,10 +862,14 @@ _game_lifecycle_pause_watchdog() {
 }
 
 game_lifecycle_restore_watchdog() {
-	local record="$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" marker_created request_id
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
+	local record="$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" marker_created owner
 	[ -f "$record" ] || return 0
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_WATCHDOG_MARKER" 2>/dev/null || true
 	fi
@@ -804,6 +886,12 @@ _game_lifecycle_pause_loop() {
 		# pre-existing, or game_lifecycle_restore_loop would leak the park.
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" loop_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" loop_marker_created "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id"; then
+			# Another lifecycle request parked this loop.  It is already
+			# paused, which is all this stop needs; rewriting the record for
+			# this request would erase the only proof of that ownership and
+			# make the marker impossible to clear later (#2061).
+			return 0
 		fi
 	else
 		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id" || return 1
@@ -813,11 +901,17 @@ _game_lifecycle_pause_loop() {
 }
 
 game_lifecycle_restore_loop() {
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
 	local record="$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created request_id
+	local marker_created owner
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns; its record
+	# is the only proof that lets that request (or the fixed recovery operator)
+	# clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" loop_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" 2>/dev/null || true
 	fi
@@ -874,19 +968,19 @@ _game_lifecycle_stop_from_boundary() {
 		if ! _game_lifecycle_pause_improvements "$request_id"; then
 			_game_lifecycle_log "改善プロセスの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-			game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			return 1
 		fi
 		if ! _game_lifecycle_pause_predictions "$request_id"; then
 			_game_lifecycle_log "予想ワーカーの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-			game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			return 1
 		fi
 		if ! _game_lifecycle_pause_watchdog "$request_id"; then
@@ -902,10 +996,10 @@ _game_lifecycle_stop_from_boundary() {
 	0) ;;
 	2)
 		_game_lifecycle_log "停止要求の期限切れ。旧ゲームを継続 (request=$request_id)"
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 1
 		;;
 	*)
@@ -926,10 +1020,10 @@ _game_lifecycle_stop_from_boundary() {
 			# game alive.  Cancel this exact request and let normal play continue;
 			# do not turn an unsupported capability into a stop.
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			_game_lifecycle_log "共有表示未準備/legacy bridge のため handover をキャンセルし、旧ゲームを継続 (request=$request_id)"
 			return 1
 		fi
@@ -1059,9 +1153,9 @@ game_lifecycle_commit_player() {
 	rc=$?
 	[ "$rc" -eq 0 ] || return "$rc"
 	# Restore only gates created by this request; operator-owned pauses remain.
-	game_lifecycle_restore_predictions || return 2
-	game_lifecycle_restore_improvements || return 2
-	game_lifecycle_restore_loop || return 2
+	game_lifecycle_restore_predictions "$request_id" || return 2
+	game_lifecycle_restore_improvements "$request_id" || return 2
+	game_lifecycle_restore_loop "$request_id" || return 2
 	printf '%s\n' "$output"
 	return 0
 }
@@ -1094,6 +1188,10 @@ game_lifecycle_resume_pending() {
 	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
 	local status request_id
 	status=$(game_lifecycle_ack_status 2>/dev/null || true)
+	# Recovery restores only the records that carry this request's identity, so
+	# the id must be known before any branch releases a marker.
+	request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || request_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/ack.json" request_id 2>/dev/null || true)
 	case "$status" in
 	accepted|waiting)
 		game_lifecycle_after_game
@@ -1103,19 +1201,19 @@ game_lifecycle_resume_pending() {
 		# The request was explicitly rolled back (or the live bridge completed an
 		# in-process resume).  Remove only markers created by this handover; an
 		# operator's pre-existing pause remains untouched.
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 1
 		;;
 	resume_requested)
 		# A live bridge may still be clearing its page/audio flags.  Restore the
 		# shell gates now, but never start a fresh game from this recovery path.
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 3
 		;;
 	boundary)

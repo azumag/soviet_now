@@ -69,10 +69,10 @@ cancel)
 	# game-only teardown.  The game loop/watchdog may already be gone, so the
 	# fixed control surface itself must remove only this request's owned gates;
 	# relying on a stopped worker to observe the cancel cannot recover.
-	game_lifecycle_restore_watchdog
-	game_lifecycle_restore_predictions
-	game_lifecycle_restore_improvements
-	game_lifecycle_restore_loop
+	game_lifecycle_restore_watchdog "$request_id"
+	game_lifecycle_restore_predictions "$request_id"
+	game_lifecycle_restore_improvements "$request_id"
+	game_lifecycle_restore_loop "$request_id"
 	python3 ./lib/game_lifecycle.py --root "$ROOT" status
 	;;
 status)

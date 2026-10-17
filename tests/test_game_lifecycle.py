@@ -732,6 +732,44 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(again.returncode, 0)
             self.assertEqual(again_payload["status"], "starting")
 
+    def test_fresh_start_keeps_a_foreign_requests_pause_ownership(self) -> None:
+        # Issue #2061: candidate cleanup runs fresh-start with its own request
+        # while the marker of the switch that parked the loop is still present.
+        # Archiving that foreign loop_pause.json would leave soren_loop.paused
+        # ownerless, so no later resume could ever clear the pause.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request_id = str(uuid.uuid4())
+            foreign_id = str(uuid.uuid4())
+            self.request(root, request_id)
+            lifecycle = root / "tmp/state/game_lifecycle"
+            state = root / "tmp/state"
+            request = json.loads((lifecycle / "request.json").read_text())
+            (lifecycle / "ack.json").write_text(json.dumps({**request, "status": "stopped"}))
+            (lifecycle / "game_resource.json").write_text(json.dumps({**request, "status": "stopped"}))
+            (lifecycle / "loop_pause.json").write_text(json.dumps({
+                "request_id": foreign_id,
+                "improvement_marker_created": False,
+                "loop_marker_created": True,
+            }))
+            (state / "soren_loop.paused").write_text(f"lifecycle:{foreign_id}\n")
+            # An inert record that owns no marker is still archived with this
+            # request, so only the proof that a marker survives is kept.
+            (lifecycle / "watchdog_pause.json").write_text(json.dumps({
+                "request_id": request_id,
+                "improvement_marker_created": False,
+                "loop_marker_created": False,
+            }))
+            result, payload = self.run_broker(root, "fresh-start", "--request-id", request_id)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(payload["status"], "starting")
+            self.assertTrue((state / "soren_loop.paused").exists())
+            kept = json.loads((lifecycle / "loop_pause.json").read_text())
+            self.assertEqual(kept["request_id"], foreign_id)
+            self.assertTrue(kept["loop_marker_created"])
+            self.assertFalse((lifecycle / "watchdog_pause.json").exists())
+            self.assertFalse((lifecycle / "request.json").exists())
+
     def test_fresh_start_rejects_non_stopped_request(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
