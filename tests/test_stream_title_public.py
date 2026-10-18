@@ -139,15 +139,98 @@ class StreamTitlePublicTest(unittest.TestCase):
             "viewer_title: タイトルのみ\n",
             "viewer_title: タイトル\nstatus: shipped\n",
             "viewer_title: タイトル\nstatus: deployed\n",
-            f"viewer_title: タイトル\nstatus: deployed\ngenerated_at: not-a-date\n",
+            "viewer_title: タイトル\nstatus: deployed\ngenerated_at: not-a-date\n",
             f"viewer_title: タイトル\nstatus: unknown\ngenerated_at: {now_iso()}\n",
+            # 根拠（rationale）は最低限必要な契約情報。空欄は採用しない。
+            f"viewer_title: タイトル\nstatus: deployed\ngenerated_at: {now_iso()}\nrationale: \n",
         ]
         for body in cases:
             with self.subTest(body=body):
                 with tempfile.TemporaryDirectory() as d:
                     path = self.candidate_file(Path(d), body)
-                    self.assertIsNone(parse_viewer_candidate(path))
+                    # いずれのケースも採用されない（parse まで失敗する場合と、
+                    # parse は通るが採用契約で落ちる場合がある）。
                     self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_rationale_is_required_for_adoption(self):
+        with tempfile.TemporaryDirectory() as d:
+            no_rationale = self.candidate_file(
+                Path(d), candidate_text(rationale=None)
+            )
+            self.assertIsNone(adoptable_candidate(no_rationale, None))
+            self.assertEqual(
+                choose_body(
+                    current="[day190] NetHackで長期攻略に挑戦",
+                    candidate_file=no_rationale,
+                    fallback=None,
+                ),
+                "NetHackで長期攻略に挑戦",
+            )
+
+    def test_rationale_text_is_never_published(self):
+        rationale = "内部向けの根拠テキスト PR #999をmainへマージ"
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(
+                Path(d), candidate_text(rationale=rationale)
+            )
+            title = compose_title(
+                day="249",
+                activity=None,
+                strategy="",
+                candidate_file=path,
+                fallback=None,
+            )
+            self.assertNotIn(rationale, title)
+            self.assertNotIn("999", title)
+
+    def test_rejected_candidate_text_is_not_readopted_via_current_body(self):
+        # 期限切れ候補の本文が現タイトルと同じでも、再採用せず fallback へ移る。
+        same_text = "NetHackでAIが長期攻略に挑戦"
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(
+                Path(d), candidate_text(title=same_text, generated_at=iso_days_ago(8))
+            )
+            self.assertEqual(
+                choose_body(
+                    current=f"[day190] {same_text}",
+                    candidate_file=path,
+                    fallback=None,
+                ),
+                DEFAULT_FALLBACK,
+            )
+
+    def test_scope_mismatched_candidate_text_is_not_readopted_via_current_body(self):
+        # category-only で別カテゴリへ移動した後も、scope不一致の本文を維持しない。
+        same_text = "NetHackでAIが長期攻略に挑戦"
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(
+                Path(d), candidate_text(title=same_text, valid_scope="NetHack")
+            )
+            self.assertEqual(
+                choose_body(
+                    current=f"[day190] {same_text}",
+                    candidate_file=path,
+                    fallback=None,
+                    current_scope="Puyo Puyo",
+                ),
+                DEFAULT_FALLBACK,
+            )
+
+    def test_different_safe_current_body_is_still_preserved(self):
+        # 候補が不適格でも、候補本文と異なる安全な現タイトルは維持する（既存挙動）。
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(
+                Path(d),
+                candidate_text(title="別の候補文面", generated_at=iso_days_ago(8)),
+            )
+            self.assertEqual(
+                choose_body(
+                    current="[day190] 現在の一般向けタイトル",
+                    candidate_file=path,
+                    fallback=None,
+                ),
+                "現在の一般向けタイトル",
+            )
 
     def test_scope_contract(self):
         scoped = candidate_text(valid_scope="NetHack")

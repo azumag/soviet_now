@@ -227,6 +227,11 @@ def adoptable_candidate(
         return None
     if not candidate.is_publishable_stage:
         return None
+    if not candidate.rationale.strip():
+        # docich#789 §1: the stated rationale ("何の変更かを説明する根拠") is part
+        # of the minimum candidate contract.  A rationale-free candidate cannot
+        # be audited, so it is never adopted.
+        return None
     if not candidate.is_fresh():
         return None
     if not candidate.scope_matches(current_scope):
@@ -255,9 +260,18 @@ def choose_body(
     fallback: str | None,
     current_scope: str | None = None,
 ) -> str:
-    candidate = read_candidate(candidate_file, current_scope)
-    if candidate:
-        return candidate
+    candidate = parse_viewer_candidate(candidate_file)
+    if candidate is not None:
+        if adoptable_candidate(candidate_file, current_scope) is not None:
+            return public_text(candidate.viewer_title)
+        # The file carries a well-formed candidate that fails the contract
+        # (unconfirmed stage, expired, or out-of-scope).  If the current body is
+        # literally that same text, preserving it would re-adopt known-
+        # disqualified content through the back door; move to the neutral
+        # fallback.  A *different* safe current body is still preserved
+        # (docich#789 review: distinguish the two behaviors).
+        if public_text(candidate.viewer_title) == public_text(strip_title_prefix(current)):
+            return safe_fallback(fallback)
 
     current_body = public_text(strip_title_prefix(current))
     if current_body:

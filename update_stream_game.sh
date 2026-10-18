@@ -275,31 +275,6 @@ PY
 )" || { _log "ERROR: failed to compute day N (epoch=$EPOCH today=$TODAY)"; exit 1; }
 fi
 
-# --- 視聴者向けタイトル本文を組成。ops_brief は公開タイトルの入力にしない。 ---
-TITLE_HELPER="${STREAM_TITLE_HELPER:-lib/stream_title_public.py}"
-VIEWER_TITLE_FILE="${STREAM_VIEWER_TITLE_FILE:-prompts/viewer_title.md}"
-PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュース・会話に挑戦する実験配信}"
-[ -f "$TITLE_HELPER" ] || { _log "ERROR: public title helper not found: $TITLE_HELPER"; exit 1; }
-
-STRATEGY="${STRATEGY_ARG:-${STREAM_GAME_STRATEGY:-}}"
-compose_args=(
-    compose
-    --day "$N"
-    --candidate-file "$VIEWER_TITLE_FILE"
-    --fallback "$PUBLIC_FALLBACK"
-    --strategy "$STRATEGY"
-    # 候補の valid_scope は切替先カテゴリ名と照合する。不一致の候補は公開しない。
-    --current-scope "$CAT_NAME"
-)
-if [ -n "${ACTIVITY_ARG+x}" ]; then
-    compose_args+=(--activity "$ACTIVITY_ARG")
-fi
-NEW_TITLE="$(python3 "$TITLE_HELPER" "${compose_args[@]}")" || {
-    _log "ERROR: failed to compose public title"
-    exit 1
-}
-_log "desired title: $NEW_TITLE"
-
 # Reuse existing credentials only. Per-platform failure must never stop a game
 # switch or a successful Twitch update. The helper emits fixed status enums.
 _record_title_sync_skip() {
@@ -345,6 +320,44 @@ if [ -z "$CUR_TITLE" ]; then
 	_log "ERROR: failed to fetch current channel (resp: $(printf '%s' "$CH_JSON" | head -c 200))"; exit 4
 fi
 _log "current: game_id=$CUR_GAME_ID game_name=${CUR_GAME_NAME:-?} title=$CUR_TITLE"
+
+# --- 視聴者向けタイトル本文を組成。ops_brief は公開タイトルの入力にしない。 ---
+# 候補の valid_scope 照合に使うカテゴリ名は、通常切替では切替先 (--game の
+# カテゴリ)、--title-only では変化しない実カテゴリ (live) を使う。
+# docich#789 review: title-only で live と別の scope 候補を採用させない。
+if [ "$TITLE_ONLY" = "1" ]; then
+	CANDIDATE_SCOPE="$CUR_GAME_NAME"
+else
+	CANDIDATE_SCOPE="$CAT_NAME"
+fi
+TITLE_HELPER="${STREAM_TITLE_HELPER:-lib/stream_title_public.py}"
+VIEWER_TITLE_FILE="${STREAM_VIEWER_TITLE_FILE:-prompts/viewer_title.md}"
+PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュース・会話に挑戦する実験配信}"
+
+if [ "$CATEGORY_ONLY" = "1" ]; then
+	# --category-only は現在のタイトルを保持する契約のため、候補の組成にも
+	# helper の存在にも依存しない（NEW_TITLE は後段で CUR_TITLE を設定する）。
+	_log "category-only: keeping current title"
+else
+	[ -f "$TITLE_HELPER" ] || { _log "ERROR: public title helper not found: $TITLE_HELPER"; exit 1; }
+	STRATEGY="${STRATEGY_ARG:-${STREAM_GAME_STRATEGY:-}}"
+	compose_args=(
+		compose
+		--day "$N"
+		--candidate-file "$VIEWER_TITLE_FILE"
+		--fallback "$PUBLIC_FALLBACK"
+		--strategy "$STRATEGY"
+		--current-scope "$CANDIDATE_SCOPE"
+	)
+	if [ -n "${ACTIVITY_ARG+x}" ]; then
+		compose_args+=(--activity "$ACTIVITY_ARG")
+	fi
+	NEW_TITLE="$(python3 "$TITLE_HELPER" "${compose_args[@]}")" || {
+		_log "ERROR: failed to compose public title"
+		exit 1
+	}
+	_log "desired title: $NEW_TITLE"
+fi
 
 # Automatic category synchronisation must not rewrite the title.  Keep this
 # separate from --title-only: the latter intentionally changes the title while

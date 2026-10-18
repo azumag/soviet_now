@@ -25,8 +25,9 @@ def viewer_candidate(
     status="deployed",
     generated_at=None,
     valid_scope=None,
+    rationale="画面復帰を運用で確認",
 ) -> str:
-    lines = [f"viewer_title: {title}", f"status: {status}"]
+    lines = [f"viewer_title: {title}", f"rationale: {rationale}", f"status: {status}"]
     lines.append(f"generated_at: {generated_at if generated_at is not None else now_iso()}")
     if valid_scope is not None:
         lines.append(f"valid_scope: {valid_scope}")
@@ -164,6 +165,32 @@ esac
         r = self.run_script(viewer=viewer_candidate(valid_scope="NetHack"))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
+
+    def test_rejected_candidate_same_text_falls_back(self):
+        # 期限切れ候補の本文が現タイトル本文と同じなら、再採用せずfallbackへ。
+        same_text = "NetHackでAIが長期攻略に挑戦"
+        r = self.run_script(
+            viewer=viewer_candidate(title=same_text, generated_at=iso_days_ago(8)),
+            title=f"[day190] {same_text}",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(
+            r.stdout,
+            r"^\[day\d+\] AIたちがゲーム・ニュース・会話に挑戦する実験配信\n$",
+        )
+
+    def test_scope_mismatched_candidate_same_text_falls_back(self):
+        # category-only で別カテゴリへ移った後の、scope不一致本文の維持を防ぐ。
+        same_text = "NetHackでAIが長期攻略に挑戦"
+        r = self.run_script(
+            viewer=viewer_candidate(title=same_text, valid_scope="NetHack"),
+            title=f"[day190] {same_text}",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(
+            r.stdout,
+            r"^\[day\d+\] AIたちがゲーム・ニュース・会話に挑戦する実験配信\n$",
+        )
 
     def test_ops_brief_is_not_a_title_source(self):
         r = self.run_script(

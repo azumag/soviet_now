@@ -93,7 +93,12 @@ candidate メタデータを明示する。PR/Issue番号、SHA、main/VM/CI、m
 - `根拠` は内部メタデータで、公開文字列には出ない。
 
 `tools/build_ops_brief.sh` はこの明示行だけを `prompts/viewer_title.md` へ
-構造化して生成し、内部見出しから公開文面を推測しない。
+構造化して生成する**ローカル検証用 builder** であり、配布経路ではない
+（スクリプト冒頭のとおり VM では生成しない）。`prompts/viewer_title.md` の
+正規配布は親 docich の projection gateway 経路に揃える必要があり、その拡張
+（ops_brief と同一 deploy transaction での viewer_title 投影）は docich 側の
+必須 follow-up。拡張が入るまでこのファイルは header のみで、selector は
+安全な現タイトルまたは fallback を使う（fail-closed、動作不変）。
 
 PRまたは既存の引き継ぎ先へ目的、対象コミット、実行したコマンドと結果、未確認事項、次の一手を残す。不具合・退行・安全性・CI破壊を必須指摘、可読性等を任意改善として分ける。最新HEADの必須チェック、マージ、VM同期、再起動、実測による復旧を別々の状態として報告し、未実施の検証を成功扱いしない。
 

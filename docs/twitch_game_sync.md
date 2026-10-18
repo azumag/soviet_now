@@ -60,7 +60,12 @@ Twitch のカテゴリーは IGDB が正本。`--resolve` で候補を引き、
 - `dayN`: `update_stream_title_day.sh` と同じ基準日
   (`STREAM_DAY_EPOCH`、既定 2026-03-14) で算出する。
 - `viewer activity` の既定: `prompts/viewer_title.md` の明示候補。
-  このファイルは `tools/build_ops_brief.sh` がdocichの正本handoff最新節から生成する。
+  候補メタデータはdocichの正本handoff最新節に明示し、`prompts/viewer_title.md` への
+  投影は親docichの projection gateway 経路で配布する（ops_brief と同一の
+  deploy transaction。gateway拡張はdocich側の必須follow-up）。
+  `tools/build_ops_brief.sh` はローカル検証用 builder であり配布経路ではない
+  （スクリプト冒頭のとおり VM では生成しない）。gateway拡張が入るまでこの
+  ファイルは header のみで、selector は安全な現タイトルまたはfallbackを使う。
   handoffには、候補のメタデータを次のように明示する。
 
   ```markdown
