@@ -109,6 +109,64 @@ test('replay counting works against stub decisions', () => {
   assert.equal(disabled.replay.attempted, 0);
 });
 
+test('replay uses its own occupied HOLD choice instead of the recorded piece', () => {
+  const pieces = [piece(1, -0.5), piece(1, 0.5)];
+  const observed = state(pieces, piece(1), { hold: piece(2), canHold: true });
+  const s = analyzeRecords([{ turn: 0, state: observed, decision: decision(0) }], {
+    replayDecide: () => ({ x: 0, hold: true }),
+  });
+  assert.equal(s.recorded.burialTurns, 0);
+  assert.equal(s.replay.burialTurns, 1);
+  assert.equal(s.replay.avoidedRecordedBurials, 0);
+  assert.equal(s.replay.changedX, 0, 'a HOLD-only change can alter burial at the same x');
+  assert.equal(s.examples.find(e => e.kind === 'replay-burial').type, 2);
+});
+
+test('replay can avoid a recorded HOLD burial by keeping the current piece', () => {
+  const pieces = [piece(1, -0.5), piece(1, 0.5)];
+  const observed = state(pieces, piece(1), { hold: piece(2), canHold: true });
+  const s = analyzeRecords([{ turn: 0, state: observed, decision: decision(0, { hold: true }) }], {
+    replayDecide: () => ({ x: 0, hold: false }),
+  });
+  assert.equal(s.recorded.burialTurns, 1);
+  assert.equal(s.replay.burialTurns, 0);
+  assert.equal(s.replay.avoidedRecordedBurials, 1);
+});
+
+test('replay HOLD into a known-empty slot uses the first preview piece', () => {
+  const pieces = [piece(1, -0.5), piece(1, 0.5)];
+  const observed = state(pieces, piece(1), {
+    holdKnownEmpty: true, canHold: true, nextPieces: [piece(1), piece(2)],
+  });
+  const s = analyzeRecords([{ turn: 0, state: observed, decision: decision(0) }], {
+    replayDecide: () => ({ x: 0, hold: true }),
+  });
+  assert.equal(s.recorded.burialTurns, 0);
+  assert.equal(s.replay.burialTurns, 1);
+  assert.equal(s.examples.find(e => e.kind === 'replay-burial').type, 2);
+});
+
+test('replay with an unknown HOLD source is skipped without claiming an avoidance', () => {
+  const rows = [{ turn: 0, state: state(laneBoard(), piece(5)), decision: decision(0) }];
+  const s = analyzeRecords(rows, { replayDecide: () => ({ x: 2.5, hold: true }) });
+  assert.equal(s.recorded.burialTurns, 1);
+  assert.equal(s.replay.attempted, 1);
+  assert.equal(s.replay.skipReasons['unusable-drop-piece'], 1);
+  assert.equal(s.replay.burialTurns, 0);
+  assert.equal(s.replay.avoidedRecordedBurials, 0);
+  assert.equal(s.replay.changedX, 0);
+});
+
+test('unchanged HOLD decisions preserve the recorded burial result', () => {
+  const observed = state(laneBoard(), piece(5), { hold: piece(7), canHold: true });
+  const s = analyzeRecords([{ turn: 0, state: observed, decision: decision(0, { hold: true }) }], {
+    replayDecide: () => ({ x: 0, hold: true }),
+  });
+  assert.equal(s.recorded.burialTurns, 1);
+  assert.equal(s.replay.burialTurns, 1);
+  assert.equal(s.replay.avoidedRecordedBurials, 0);
+});
+
 test('the current strategy keeps the #605 no-burial guarantee on the fixture board', () => {
   const s = analyzeRecords([{ turn: 0, file: 'g.jsonl', state: state(laneBoard(), piece(5)), decision: decision(0) }]);
   assert.equal(s.replay.attempted, 1);
