@@ -218,39 +218,104 @@ def _parse_timestamp(raw: str) -> datetime | None:
     return parsed
 
 
-def adoptable_candidate(
-    candidate_file: str | None, current_scope: str | None
-) -> ViewerCandidate | None:
-    """Return the candidate only when the whole contract holds."""
-    candidate = parse_viewer_candidate(candidate_file)
+def candidate_meets_contract(
+    candidate: ViewerCandidate | None, current_scope: str | None
+) -> bool:
+    """Pure contract check on an *already parsed* candidate object.
+
+    Callers must parse once and evaluate the same object; re-reading the file
+    between parse and validation lets a file swap publish a candidate that was
+    never validated (docich#789 review 5563821023).
+    """
     if candidate is None:
-        return None
+        return False
     if not candidate.is_publishable_stage:
-        return None
+        return False
     if not candidate.rationale.strip():
         # docich#789 §1: the stated rationale ("何の変更かを説明する根拠") is part
         # of the minimum candidate contract.  A rationale-free candidate cannot
         # be audited, so it is never adopted.
-        return None
+        return False
     if not candidate.is_fresh():
-        return None
+        return False
     if not candidate.scope_matches(current_scope):
-        return None
-    if not public_text(candidate.viewer_title):
-        return None
-    return candidate
+        return False
+    return bool(public_text(candidate.viewer_title))
+
+
+def adoptable_candidate(
+    path: str | None, current_scope: str | None = None
+) -> ViewerCandidate | None:
+    """Parse once and return the candidate only when the whole contract holds."""
+    candidate = parse_viewer_candidate(path)
+    return candidate if candidate_meets_contract(candidate, current_scope) else None
 
 
 def read_candidate(path: str | None, current_scope: str | None = None) -> str:
-    candidate = adoptable_candidate(path, current_scope)
-    if candidate is None:
+    candidate = parse_viewer_candidate(path)
+    if not candidate_meets_contract(candidate, current_scope):
         return ""
     return public_text(candidate.viewer_title)
+
+
+def _body_reuses_candidate_text(body: str, title: str) -> bool:
+    """True when the live body is a composed form of the candidate text.
+
+    ``compose_title`` may append the strategy part and/or truncate the activity
+    at 140 chars, so the published body rarely equals the raw candidate text.
+    Plain equality alone would let a rejected (expired / out-of-scope)
+    candidate's content persist through the current-body path
+    (docich#789 review 5563821023).  Strategy-appended and ``…``-truncated
+    forms of the same text are treated as the candidate's content.  The
+    direction is fail-closed: an unrelated live title that merely happens to
+    start with the candidate text also falls back, which self-heals on the
+    next authoritative update.
+    """
+    body = public_text(body)
+    title = public_text(title)
+    if not body or not title:
+        return False
+    if body == title:
+        return True
+    if body.startswith(title + " "):
+        return True
+    cut = body.find("…")
+    if cut >= 0:
+        head = body[:cut].rstrip()
+        return bool(head) and title.startswith(head)
+    return False
 
 
 def safe_fallback(value: str | None) -> str:
     candidate = public_text(value or "")
     return candidate or DEFAULT_FALLBACK
+
+
+def select_public_body(
+    *,
+    candidate: ViewerCandidate | None,
+    current: str,
+    current_scope: str | None,
+    fallback: str | None,
+) -> str:
+    """Choose the public body from an already parsed candidate (single read)."""
+    if candidate is not None:
+        if candidate_meets_contract(candidate, current_scope):
+            return public_text(candidate.viewer_title)
+        # The file carries a well-formed candidate that fails the contract
+        # (unconfirmed stage, expired, or out-of-scope).  If the live body is a
+        # composed form of that same text, preserving it would re-adopt known-
+        # disqualified content through the back door; move to the neutral
+        # fallback.  A *different* safe current body is still preserved
+        # (docich#789 review: distinguish the two behaviors).
+        if _body_reuses_candidate_text(strip_title_prefix(current), candidate.viewer_title):
+            return safe_fallback(fallback)
+
+    current_body = public_text(strip_title_prefix(current))
+    if current_body:
+        return current_body
+
+    return safe_fallback(fallback)
 
 
 def choose_body(
@@ -260,24 +325,14 @@ def choose_body(
     fallback: str | None,
     current_scope: str | None = None,
 ) -> str:
+    # Parse the candidate file exactly once and decide on that same object.
     candidate = parse_viewer_candidate(candidate_file)
-    if candidate is not None:
-        if adoptable_candidate(candidate_file, current_scope) is not None:
-            return public_text(candidate.viewer_title)
-        # The file carries a well-formed candidate that fails the contract
-        # (unconfirmed stage, expired, or out-of-scope).  If the current body is
-        # literally that same text, preserving it would re-adopt known-
-        # disqualified content through the back door; move to the neutral
-        # fallback.  A *different* safe current body is still preserved
-        # (docich#789 review: distinguish the two behaviors).
-        if public_text(candidate.viewer_title) == public_text(strip_title_prefix(current)):
-            return safe_fallback(fallback)
-
-    current_body = public_text(strip_title_prefix(current))
-    if current_body:
-        return current_body
-
-    return safe_fallback(fallback)
+    return select_public_body(
+        candidate=candidate,
+        current=current,
+        current_scope=current_scope,
+        fallback=fallback,
+    )
 
 
 def shorten(text: str, limit: int) -> str:

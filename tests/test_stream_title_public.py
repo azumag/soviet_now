@@ -232,6 +232,108 @@ class StreamTitlePublicTest(unittest.TestCase):
                 "現在の一般向けタイトル",
             )
 
+    def test_strategy_appended_body_is_not_readopted_after_expiry(self):
+        # compose が strategy を連結した実際の現タイトルは候補本文と完全一致しない。
+        # 期限切れ後も strategy 連結本文が維持されないことを固定する
+        # （docich#789 review 5563821023 指摘1）。
+        title = "NetHackでAIが長期攻略に挑戦"
+        with tempfile.TemporaryDirectory() as d:
+            fresh_path = self.candidate_file(Path(d), candidate_text(title=title))
+            composed = compose_title(
+                day="190",
+                activity=None,
+                strategy="決めていきます",
+                candidate_file=fresh_path,
+                fallback=None,
+            )
+            self.assertEqual(composed, f"[day190] {title} 決めていきます")
+            expired_path = self.candidate_file(
+                Path(d), candidate_text(title=title, generated_at=iso_days_ago(8))
+            )
+            self.assertEqual(
+                choose_body(current=composed, candidate_file=expired_path, fallback=None),
+                DEFAULT_FALLBACK,
+            )
+
+    def test_truncated_body_is_not_readopted_after_expiry(self):
+        # 140字短縮（…）で変形した本文も、期限切れ候補の内容として再採用しない。
+        long_title = "NetHackでAIが長期攻略に挑戦しながら視聴者のコメントに応えていく配信です" * 4
+        with tempfile.TemporaryDirectory() as d:
+            fresh_path = self.candidate_file(Path(d), candidate_text(title=long_title))
+            composed = compose_title(
+                day="190",
+                activity=None,
+                strategy="決めていきます",
+                candidate_file=fresh_path,
+                fallback=None,
+            )
+            self.assertEqual(len(composed), 140)
+            self.assertIn("…", composed)
+            expired_path = self.candidate_file(
+                Path(d), candidate_text(title=long_title, generated_at=iso_days_ago(8))
+            )
+            self.assertEqual(
+                choose_body(current=composed, candidate_file=expired_path, fallback=None),
+                DEFAULT_FALLBACK,
+            )
+
+    def test_scope_mismatched_body_with_strategy_is_not_readopted(self):
+        # category-only で別カテゴリへ移った後、strategy 連結済みの本文も維持しない。
+        title = "NetHackでAIが長期攻略に挑戦"
+        with tempfile.TemporaryDirectory() as d:
+            fresh_path = self.candidate_file(
+                Path(d), candidate_text(title=title, valid_scope="NetHack")
+            )
+            composed = compose_title(
+                day="190",
+                activity=None,
+                strategy="決めていきます",
+                candidate_file=fresh_path,
+                fallback=None,
+                current_scope="NetHack",
+            )
+            self.assertEqual(composed, f"[day190] {title} 決めていきます")
+            self.assertEqual(
+                choose_body(
+                    current=composed,
+                    candidate_file=fresh_path,
+                    fallback=None,
+                    current_scope="Puyo Puyo",
+                ),
+                DEFAULT_FALLBACK,
+            )
+
+    def test_candidate_file_is_parsed_once_and_decision_uses_that_object(self):
+        # 読取間の差し替え（不適格A → 適格B）でも、検証対象と返却対象は同一オブジェクト。
+        # parse を2回呼ぶ実装では、B適格を根拠に不適格Aの本文を公開できてしまう
+        # （docich#789 review 5563821023 指摘2）。
+        unqualified = candidate_text(title="実装中の文面A", status="implemented")
+        qualified = candidate_text(title="確認済みの文面B")
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), unqualified)
+
+            def parse_side_effect(_path=None):
+                if parse_side_effect.calls == 0:
+                    parse_side_effect.calls += 1
+                    return parse_viewer_candidate(self.candidate_file(Path(d), unqualified))
+                parse_side_effect.calls += 1
+                return parse_viewer_candidate(self.candidate_file(Path(d), qualified))
+
+            parse_side_effect.calls = 0
+            with mock.patch(
+                "lib.stream_title_public.parse_viewer_candidate",
+                side_effect=parse_side_effect,
+            ):
+                result = choose_body(
+                    current="[day190] Keep Title intact",
+                    candidate_file=path,
+                    fallback=None,
+                )
+            self.assertLessEqual(parse_side_effect.calls, 1)
+            self.assertNotIn("実装中の文面A", result)
+            self.assertNotIn("確認済みの文面B", result)
+            self.assertEqual(result, "Keep Title intact")
+
     def test_scope_contract(self):
         scoped = candidate_text(valid_scope="NetHack")
         with tempfile.TemporaryDirectory() as d:
