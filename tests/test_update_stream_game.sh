@@ -9,6 +9,7 @@ TEST_ROOT="$TMP/soren"
 mkdir -p "$TMP/bin" "$TMP/games" "$TEST_ROOT/lib"
 cp "$ROOT/update_stream_game.sh" "$TEST_ROOT/update_stream_game.sh"
 cp "$ROOT/lib/stream_title_sync.py" "$TEST_ROOT/lib/stream_title_sync.py"
+cp "$ROOT/lib/stream_title_public.py" "$TEST_ROOT/lib/stream_title_public.py"
 chmod +x "$TEST_ROOT/update_stream_game.sh"
 (
   cd "$TEST_ROOT"
@@ -68,7 +69,7 @@ SH
 chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
 
-# --- fake game toml / ops_brief ---
+# --- fake game toml / viewer-facing title ---
 cat >"$TMP/games/robots.toml" <<'TOML'
 [game]
 name = "robots"
@@ -95,12 +96,12 @@ category_id = "abc"
 category_name = "X"
 title_prefix = "[X]"
 TOML
-printf '# brief\n- 直近の作業メモ\n- 古いメモ\n' >"$TMP/ops_brief.md"
+printf '# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n' >"$TMP/viewer_title.md"
 
 export TWITCH_CLIENT_ID=test-client TWITCH_BROADCASTER_ID=test-bid
 export TWITCH_GAME_TOKEN=test-token
 export STREAM_GAME_LOG_FILE="$TMP/game.log"
-export OPS_BRIEF_FILE="$TMP/ops_brief.md"
+export STREAM_VIEWER_TITLE_FILE="$TMP/viewer_title.md"
 export STREAM_DAY_EPOCH=2026-03-14 STREAM_DAY_TZ=Asia/Tokyo
 export STUB_PATCH_OUT="$TMP/patch_body" STUB_PATCH_COUNT="$TMP/patch_count"
 rm -f "$STUB_PATCH_OUT" "$STUB_PATCH_COUNT"
@@ -112,7 +113,7 @@ not_ok() { fail=$((fail + 1)); printf 'not ok - %s\n' "$1"; }
 # 1. dry-run: [dayN] + activity + strategy の組成。ゲーム prefix は無視する。
 export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'
 out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" --dry-run 2>"$TMP/e1")"
-echo "$out" | grep -q '^\[day[0-9]*\] 直近の作業メモ root継続$' && ok "compose title" || not_ok "compose title: $out"
+echo "$out" | grep -q '^\[day[0-9]*\] AIの取引コーナーからゲームへ、画面切替を改善 root継続$' && ok "compose public title" || not_ok "compose public title: $out"
 echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
 [ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
 
@@ -205,6 +206,7 @@ assert d["game_id"] == "11585", d
 assert d["title"] == "[Soren] keep this title", d
 PY
 
+# 12b. category-only の skip診断はこの呼び出しの直後に記録される（後続のdry-runで上書きされる前に検証する）
 python3 - "$TEST_ROOT/tmp/state/stream_title_sync/events.jsonl" <<'PY' 2>/dev/null && ok "category-only condition is recorded safely" || not_ok "category-only diagnostic condition"
 import json, re, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -218,6 +220,15 @@ assert re.fullmatch(r"[0-9a-f]{64}", row["update_stream_game_sha256"])
 assert re.fullmatch(r"[0-9a-f]{64}", row["stream_title_sync_sha256"])
 assert "title" not in row and "soviet_sha" not in row
 PY
+
+# 13. 内部作業ログや戦略バージョンは公開タイトルへ出さず、一般向けfallbackへ落とす
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'PR770をmainへマージ' --strategy 'root v763 継続' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] AIたちがゲーム・ニュース・会話に挑戦する実験配信$' && ok "internal activity filtered" || not_ok "internal activity leaked: $out"
+echo "$out" | grep -q 'PR770\|v763\|main' && not_ok "internal identifiers leaked: $out" || ok "internal identifiers omitted"
+
+# 14. 視聴者に意味のあるゲーム名・説明は保持する
+out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'NetHackでAIが長期攻略に挑戦' --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] NetHackでAIが長期攻略に挑戦$' && ok "public activity kept" || not_ok "public activity changed: $out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ]

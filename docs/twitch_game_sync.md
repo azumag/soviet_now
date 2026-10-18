@@ -53,18 +53,35 @@ Twitch のカテゴリーは IGDB が正本。`--resolve` で候補を引き、
 
 ## タイトル形式
 
-`{prefix} day{N} {activity} {strategy}` (Twitch 上限 140字、超過分は末尾から `…` 短縮)。
+公開タイトルは `[dayN] {viewer activity} {viewer strategy?}` とする
+(Twitch 上限140字)。PR番号やmain/VM/CI、コミットSHAなどの内部運用ログは
+タイトル本文の情報源にしない。
 
-- `day{N>`: 既存 `update_stream_title_day.sh` と同じ基準日 (`STREAM_DAY_EPOCH`
-  既定 2026-03-14) で算出。ゲームが変わっても通算を維持する。
-- `activity` 既定: `prompts/ops_brief.md` の1件目 (= handoff 最新節の要約。
-  handoff 更新 → `tools/build_ops_brief.sh` → 配布の流れに準じる)。
-  `--activity ""` で省略可。
-- `strategy` 既定: `$STREAM_GAME_STRATEGY` / `--strategy`。戦略の進捗
-  (例: `root v763 継続`) を短文で乗せる。省略可。
-- 取得済み title+game_id と同一なら PATCH しない (冪等)。`--force` で強制。
-- `--title-only` はカテゴリーを触らずタイトルだけ更新
-  (handoff 更新に伴う文言リフレッシュ用)。
+- `dayN`: `update_stream_title_day.sh` と同じ基準日
+  (`STREAM_DAY_EPOCH`、既定 2026-03-14) で算出する。
+- `viewer activity` の既定: `prompts/viewer_title.md` の明示候補。
+  このファイルは `tools/build_ops_brief.sh` がdocichの正本handoff最新節から生成する。
+  handoffには、変更内容と確認段階に合った一般向け文面を次のように明示する。
+
+  ```markdown
+  ## 2026-09-20 ... — 内部向けの作業見出し
+  - 視聴者向けタイトル: AIの取引コーナーからゲームへ、画面切替を改善
+  ```
+
+  `viewer_title:` も同義で使える。最新節に明示が無ければ古い節の候補を再利用しない。
+- `prompts/ops_brief.md` はコメント返し等の内部運用メモとして残すが、
+  Twitchタイトルの入力には使わない。
+- 日次更新では、明示候補が無ければ現在のタイトル本文が一般向けかを確認して維持する。
+  現タイトルもPR/Issue番号、main/VM/CI、SHA、merge/deploy等の内部ログなら、
+  `STREAM_TITLE_PUBLIC_FALLBACK`（既定:
+  `AIたちがゲーム・ニュース・会話に挑戦する実験配信`）へ置き換える。
+- ゲーム切替等でタイトル本文を新規組成するときは、明示候補が無ければ同じfallbackを使う。
+  `--activity` / `--strategy` も視聴者向け文面として検証し、内部識別子主体なら公開しない。
+- 視聴者に意味のある固有名詞（例: NetHack、Jev）は保持する。
+  「PR770をマージ」のような内部識別子だけから変更内容を推測してタイトルを捏造しない。
+- `--category-only` はカテゴリーだけを同期し、現在のタイトルをそのまま保持する。
+- 取得済みtitle+game_idと同一ならPATCHしない（冪等）。`--force` で強制。
+- `--title-only` はカテゴリーを触らず、同じ公開タイトル契約で本文だけ更新する。
 
 ## トークン
 
