@@ -301,6 +301,35 @@ class RenderHeaderAbRowTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_active_ab_row_identifies_the_current_arm(self):
+        """A/B 行に、試合中の snapshot から実測した現在腕を明示する。"""
+        from unittest import mock
+
+        def _test():
+            kwargs = self._base_kwargs()
+            Path("strategy.py.game_snapshot").write_text("# snap\n", encoding="utf-8")
+            ab_status = {
+                "active": True,
+                "a_hash": "3a9bd96b76a0",
+                "b_hash": "d0188f418f58",
+                "pattern": "ABBA",
+                "n": 53,
+                "n_a": 27,
+                "n_b": 26,
+                "mean_a": 1000.0,
+                "mean_b": 1120.0,
+                "diff": 120.0,
+                "tainted": 0,
+                "candidate": None,
+            }
+            with mock.patch.object(sd, "compute_decide_hash", return_value="d0188f418f58"):
+                lines = sd.render_header(russia_rate=None, ab_status=ab_status, **kwargs)
+            joined = self._plain(lines)
+            self.assertIn("A/B: now=B A 3a9bd96b vs B d0188f41", joined)
+            self._assert_all_lines_fit(lines)
+
+        self._run_in_tempdir(_test)
+
     def test_no_ab_status_renders_no_ab_row(self):
         def _test():
             kwargs = self._base_kwargs()
@@ -479,9 +508,17 @@ class TopPanelModeTest(unittest.TestCase):
         オーバーレイ生成が ai_backoff を opt-in するとヘッダーごと消え、
         配信画面から A/B が消える (2026-09-10 の指摘)。
         """
-        for name in ("generate_status_overlay.sh", "generate_soren_overlay.sh"):
-            script = (REPO_ROOT / name).read_text()
-            self.assertIn("python3 status_dashboard.py", script)
+        legacy = (REPO_ROOT / "generate_status_overlay.sh").read_text()
+        unified = (REPO_ROOT / "generate_soren_overlay.sh").read_text()
+        # #970: the unified renderer moved to a long-lived module; it must still
+        # render the dashboard in-process (no `python3 status_dashboard.py`).
+        renderer = (REPO_ROOT / "lib" / "soren_overlay_render.py").read_text()
+        self.assertIn("python3 status_dashboard.py", legacy)
+        self.assertIn("from status_dashboard import render_dashboard_text", renderer)
+        self.assertIn("stats_raw = normalize_overlay_text(render_dashboard_text())", renderer)
+        self.assertNotIn("python3 status_dashboard.py", unified)
+        self.assertNotIn("python3 status_dashboard.py", renderer)
+        for script in (legacy, unified, renderer):
             self.assertNotIn("STATUS_DASHBOARD_TOP_PANEL=ai_backoff", script)
 
     def test_header_does_not_duplicate_the_ai_backoff_rows(self):
@@ -494,11 +531,14 @@ class TopPanelModeTest(unittest.TestCase):
     def test_main_always_emits_the_ai_backoff_panel(self):
         """モードに関係なく AI backoff の枠は出る (分離の要)。"""
         source = (REPO_ROOT / "status_dashboard.py").read_text()
-        main_start = source.index("def main():")
-        main_body = source[main_start:]
-        panel = main_body.index("output += render_ai_backoff_header()")
-        branch = main_body.index('if top_panel_mode() != "ai_backoff":')
+        render_start = source.index("def render_dashboard_text():")
+        render_end = source.index("\ndef main():", render_start)
+        render_body = source[render_start:render_end]
+        panel = render_body.index("output += render_ai_backoff_header()")
+        branch = render_body.index('if top_panel_mode() != "ai_backoff":')
         self.assertLess(panel, branch, "AI backoff の枠は分岐より前で無条件に出すこと")
+        main_body = source[render_end:]
+        self.assertIn("print(render_dashboard_text())", main_body)
 
 
 class AbRemainingGamesTest(unittest.TestCase):
@@ -690,6 +730,72 @@ class AbRemainingGamesTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_versioned_state_uses_frozen_rule_instead_of_env(self):
+        """v2 display follows state.decision_rule even if live .env drifts."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=2,3\nAB_GATE_MAX_BLOCKS=4\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": 2,
+                "decision_rule": {"version": 2, "looks": [10, 20], "max_blocks": 20},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], (10, 20))
+            self.assertEqual(ab["max_blocks"], 20)
+            self.assertEqual(ab["next_look"], 10)
+            self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_versioned_invalid_fields_use_defaults_not_env(self):
+        """Broken v2 frozen fields use code defaults, never mutable .env."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=2,3\nAB_GATE_MAX_BLOCKS=4\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": 2,
+                "decision_rule": {"version": 2, "looks": ["bad"]},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], tuple(sd.AB_DEFAULT_LOOKS))
+            self.assertEqual(ab["max_blocks"], sd.AB_DEFAULT_MAX_BLOCKS)
+            self.assertEqual(ab["next_look"], 19)
+            self.assertEqual(ab["games_to_next_look"], (19 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (37 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
+    def test_malformed_version_falls_back_to_env_schedule(self):
+        """Unparseable rule version keeps the legacy .env behavior (#298)."""
+        def _test():
+            state, games, meta, env = self._write_ab(
+                self._complete_blocks(4),
+                env_text="AB_GATE_LOOKS=10,20\nAB_GATE_MAX_BLOCKS=20\n",
+            )
+            payload = json.loads(Path(state).read_text(encoding="utf-8"))
+            payload.update({
+                "decision_rule_version": "not-a-version",
+                "decision_rule": {"version": "not-a-version"},
+            })
+            Path(state).write_text(json.dumps(payload), encoding="utf-8")
+            ab = sd.load_ab_progress(state, games, meta, env_path=env)
+            self.assertEqual(ab["looks"], (10, 20))
+            self.assertEqual(ab["max_blocks"], 20)
+            self.assertEqual(ab["next_look"], 10)
+            self.assertEqual(ab["games_to_next_look"], (10 - 4) * 4)
+            self.assertEqual(ab["games_to_max"], (20 - 4) * 4)
+
+        self._run_in_tempdir(_test)
+
     def test_env_last_match_wins_and_quotes_stripped(self):
         def _test():
             state, games, meta, env = self._write_ab(
@@ -818,6 +924,26 @@ class StrategyComparisonAbTest(unittest.TestCase):
 
     def _plain(self, lines):
         return sd.ANSI_RE.sub("", "\n".join(lines))
+
+    def test_now_line_shows_snapshot_arm(self):
+        """ヘッダーを省く show_status_g でも、現在腕を独立行で示す。"""
+        from unittest import mock
+
+        def _test():
+            Path("strategy.py.game_snapshot").write_text("# snap\n", encoding="utf-8")
+            ab_status = {
+                "active": True,
+                "a_hash": self.A,
+                "b_hash": self.B,
+            }
+            with mock.patch.object(sd, "compute_decide_hash", return_value=self.B):
+                lines = sd.render_strategy_comparison({}, self.A, ab_status=ab_status)
+            joined = self._plain(lines)
+            self.assertIn(f"NOW: A/B arm=B hash={self.B[:8]}", joined)
+            for line in lines:
+                self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+
+        self._run_in_tempdir(_test)
 
     def test_current_row_falls_back_to_rolling_when_run_file_holds_other_arm(self):
         """current_strategy_run.json が B 腕で上書きされても現行 A を 0/0 にしない。"""

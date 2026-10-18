@@ -1,0 +1,390 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHoldEscapePolicy, gateObservation, holdEscapeFrames, holdEscapeIntervalMs,
+  holdEscapeLimit, markDropSent, queueAdvanceEvidence } from '../soren91/observation_guard.mjs';
+
+const calibration = () => ({
+  coordinateSchema: 2,
+  screen: { width: 1280, height: 720 },
+  confidence: 0.82,
+  method: 'deadline-floor',
+  board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 },
+  arena: { left: 450, right: 800, top: 130, bottom: 636, width: 350, height: 506 },
+  hud: { top: 0, bottom: 130 },
+});
+const preview = (type, extra = {}) => ({ type, r: 0.207, confidence: 0.9, ...extra });
+const queue = types => types.map(type => type == null ? null : preview(type));
+const observation = (types = [1, 1, 1], x = 0, extra = {}) => {
+  const nextPieces = queue(types);
+  return {
+    state: 'MOVE',
+    pieces: [{ type: 1, x, y: -4, r: 0.207, confidence: 0.9 }],
+    next: nextPieces[0],
+    nextPieces,
+    hold: null,
+    holdObservedEmpty: false,
+    garbage: { columns: [] },
+    ...extra,
+  };
+};
+
+// Make every motion case eligible for the remote fast path. A false advance
+// must not hide behind a disabled path, a short gap, or an unchanged board.
+function withRemoteCadence(fn) {
+  const values = {
+    SOREN91_REMOTE_CDP_URL: 'http://remote-cdp.invalid:9222',
+    SOREN91_SINGLE_FRAME_ADVANCE: '1',
+    SOREN91_SINGLE_FRAME_ADVANCE_MS: '1200',
+    SOREN91_ADVANCE_SINGLE_EVIDENCE: '1',
+    SOREN91_OBSERVATION_MAX_STALE_MS: '15000',
+  };
+  const saved = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]));
+  Object.assign(process.env, values);
+  try { return fn(); }
+  finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function assertBlocked(result, reason) {
+  assert.equal(result.state, 'DROP');
+  assert.equal(result.perception.ready, false);
+  assert.equal(result.perception.reason, reason);
+}
+
+for (const [label, types] of [
+  ['unchanged future previews', [null, 2, 3]],
+  ['advanced future previews', [null, 3, 4]],
+]) {
+  test(`a missing current piece stays unknown with ${label}`, () => withRemoteCadence(() => {
+    const cal = calibration();
+    gateObservation(observation([1, 2, 3]), cal, 1000);
+    const missing = gateObservation(observation(types, 1), cal, 4000);
+    assertBlocked(missing, 'unknown-current');
+    assert.equal(missing.next, null);
+    assert.equal(missing.nextPieces[0], null);
+  }));
+}
+
+test('unchanged observed slots provide no queue-advance evidence', () => {
+  for (const types of [[1, 1, 1], [1, 1, 2], [1, 2, 3], [1, null, null]]) {
+    assert.equal(queueAdvanceEvidence(queue(types), queue(types)).evidence, 0, JSON.stringify(types));
+  }
+});
+
+test('repeated identical previews cannot bypass motion, then a still board becomes ready', () => withRemoteCadence(() => {
+  const cal = calibration();
+  assertBlocked(gateObservation(observation([1, 1, 1], 0), cal, 1000), 'confirm-frame');
+  const moving = gateObservation(observation([1, 1, 1], 1), cal, 4000);
+  assertBlocked(moving, 'board-moving');
+  assert.equal(moving.perception.queueTransition, 'same');
+  const settled = gateObservation(observation([1, 1, 1], 1), cal, 7000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('a sent drop can use a settled first post-drop board delta instead of a second remote capture', () => withRemoteCadence(() => {
+  const cal = calibration();
+  assertBlocked(gateObservation(observation([1, 1, 1], 0), cal, 1000), 'confirm-frame');
+  assert.equal(markDropSent(cal, 1500), false);
+  assert.equal(gateObservation(observation([1, 1, 1], 0), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  const advanced = gateObservation(observation([1, 1, 1], 1), cal, 6000);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+}));
+
+const board = entries => entries.map(([type, x, y]) =>
+  ({ type, x, y, r: 0.207, confidence: 0.9 }));
+
+test('an unrecognised first post-drop frame still reaches the advance path on the next frame', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0, { pieces: board([[1, 0, -4]]) }), cal, 1000);
+  assert.equal(gateObservation(observation([1, 2, 3], 0, { pieces: board([[1, 0, -4]]) }), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  // Measured live sequence: the placed piece is still falling and the new
+  // controllable piece is not identified yet, so the first post-click frame
+  // cannot act. It must still leave a valid continuity baseline.
+  const missed = gateObservation(observation([null, 3, 4], 1,
+    { pieces: board([[1, 1, -3.4], [2, 0, -4]]) }), cal, 3700);
+  assertBlocked(missed, 'unknown-current');
+  // The next frame identifies the new piece while the board is still settling:
+  // the bounded post-drop window accepts it instead of spending two more frames
+  // on settle + confirmation (which cost ~2.4s per drop on the remote cadence).
+  const advanced = gateObservation(observation([4, 5, 6], 1,
+    { pieces: board([[1, 1, -3.0], [2, 0, -4]]) }), cal, 4900);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+}));
+
+test('the post-drop window is bounded so an expired boundary cannot reopen the path', () => withRemoteCadence(() => {
+  const saved = process.env.SOREN91_POSTDROP_WINDOW_MS;
+  process.env.SOREN91_POSTDROP_WINDOW_MS = '1500';
+  try {
+    const cal = calibration();
+    gateObservation(observation([1, 2, 3], 0), cal, 1000);
+    assert.equal(gateObservation(observation([1, 2, 3], 0), cal, 2200).state, 'MOVE');
+    assert.equal(markDropSent(cal, 2500), true);
+    assertBlocked(gateObservation(observation([4, 5, 6], 1), cal, 4200), 'preview-changed');
+  } finally {
+    if (saved === undefined) delete process.env.SOREN91_POSTDROP_WINDOW_MS;
+    else process.env.SOREN91_POSTDROP_WINDOW_MS = saved;
+  }
+}));
+
+test('post-drop board delta still waits when the first frame arrives before the conservative settle floor', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 1, 1], 0), cal, 1000);
+  assert.equal(gateObservation(observation([1, 1, 1], 0), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  assertBlocked(gateObservation(observation([1, 1, 1], 1), cal, 4500), 'board-moving');
+  const settled = gateObservation(observation([1, 1, 1], 1), cal, 6000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('a sent drop can accept a changed current after the normal time floor even when noisy future slots conflict', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0), cal, 1000);
+  assert.equal(gateObservation(observation([1, 2, 3], 0), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  const advanced = gateObservation(observation([4, 9, 8], 1), cal, 4000);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance-postdrop');
+  assert.notEqual(advanced.perception.queueTransition, 'advanced');
+}));
+
+test('a changed current without a physical board delta is still treated as unconfirmed', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3], 0), cal, 1000);
+  assert.equal(gateObservation(observation([1, 2, 3], 0), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  assertBlocked(gateObservation(observation([4, 9, 8], 0), cal, 6000), 'preview-changed');
+}));
+
+test('post-drop fast path is one-shot and never bypasses same-type vertical motion', () => withRemoteCadence(() => {
+  const cal = calibration();
+  const positioned = (types, y, x = 0) => {
+    const state = observation(types, x);
+    state.next.y = y;
+    return state;
+  };
+  gateObservation(positioned([1, 1, 2], 4.32), cal, 1000);
+  assert.equal(gateObservation(positioned([1, 1, 2], 4.32), cal, 2200).state, 'MOVE');
+  assert.equal(markDropSent(cal, 2500), true);
+  assertBlocked(gateObservation(positioned([1, 2, 3], 4.02, 1), cal, 6000), 'board-moving');
+  const settled = gateObservation(positioned([1, 2, 3], 4.02, 1), cal, 9000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('post-drop single-frame optimization has an explicit kill switch', () => withRemoteCadence(() => {
+  const saved = process.env.SOREN91_POSTDROP_SINGLE_FRAME;
+  process.env.SOREN91_POSTDROP_SINGLE_FRAME = '0';
+  try {
+    const cal = calibration();
+    gateObservation(observation([1, 1, 1], 0), cal, 1000);
+    assert.equal(gateObservation(observation([1, 1, 1], 0), cal, 2200).state, 'MOVE');
+    assert.equal(markDropSent(cal, 2500), true);
+    assertBlocked(gateObservation(observation([1, 1, 1], 1), cal, 6000), 'board-moving');
+  } finally {
+    if (saved === undefined) delete process.env.SOREN91_POSTDROP_SINGLE_FRAME;
+    else process.env.SOREN91_POSTDROP_SINGLE_FRAME = saved;
+  }
+}));
+
+test('fresh future-slot changes can prove an advance even when the current type repeats', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 1, 2], 0), cal, 1000);
+  const advanced = gateObservation(observation([1, 2, 3], 1), cal, 4000);
+  assert.equal(advanced.state, 'MOVE');
+  assert.equal(advanced.perception.queueTransition, 'advanced');
+  assert.equal(advanced.perception.reason, 'stable-slow-advance');
+}));
+
+test('temporally filled future slots cannot become raw advance evidence on the next frame', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 1, 2], 0), cal, 1000);
+  const filled = gateObservation(observation([1, null, null], 0), cal, 4000);
+  assert.equal(filled.state, 'MOVE');
+  assert.deepEqual(filled.nextPieces.map(piece => piece?.type ?? null), [1, 1, 2]);
+  assert.deepEqual(filled.nextPieces.slice(1).map(piece => piece.temporalSource), ['same-turn', 'same-turn']);
+
+  const changed = gateObservation(observation([1, 2, 3], 1), cal, 7000);
+  assertBlocked(changed, 'board-moving');
+  assert.notEqual(changed.perception.queueTransition, 'advanced');
+  const settled = gateObservation(observation([1, 2, 3], 1), cal, 10000);
+  assert.equal(settled.state, 'MOVE');
+  assert.equal(settled.perception.reason, 'stable');
+}));
+
+test('a current piece returning after a miss needs a fresh confirmation before MOVE', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 2, 3]), cal, 1000);
+  assertBlocked(gateObservation(observation([null, 2, 3]), cal, 4000), 'unknown-current');
+  assertBlocked(gateObservation(observation([2, 3, 4], 1), cal, 7000), 'confirm-frame');
+  const confirmed = gateObservation(observation([2, 3, 4], 1), cal, 10000);
+  assert.equal(confirmed.state, 'MOVE');
+  assert.equal(confirmed.perception.reason, 'stable');
+}));
+
+for (const [label, invalid] of [
+  ['type zero', preview(0)],
+  ['type above the terminal type', preview(16)],
+  ['fractional type', preview(1.5)],
+  ['string type', preview('1')],
+  ['low confidence', preview(1, { confidence: 0.57 })],
+  ['fallback recognition', preview(1, { fallback: true })],
+]) {
+  test(`an invalid current (${label}) is never restored from a previous observation`, () => withRemoteCadence(() => {
+    const cal = calibration();
+    gateObservation(observation([1, 1, 1]), cal, 1000);
+    const result = gateObservation(observation([1, 1, 1], 1, {
+      next: invalid, nextPieces: [invalid, preview(1), preview(1)],
+    }), cal, 4000);
+    assertBlocked(result, 'unknown-current');
+    assert.equal(result.next, null);
+    assert.equal(result.nextPieces[0], null);
+  }));
+}
+
+for (const target of ['input queue', 'returned stabilized queue']) {
+  test(`mutating the ${target} cannot rewrite the prior raw observation`, () => withRemoteCadence(() => {
+    const cal = calibration();
+    const input = observation([1, 1, 2], 0);
+    const first = gateObservation(input, cal, 1000);
+    const mutated = target === 'input queue' ? input.nextPieces : first.nextPieces;
+    mutated[1].type = 2;
+    mutated[2].type = 3;
+
+    const advanced = gateObservation(observation([1, 2, 3], 1), cal, 4000);
+    assert.equal(advanced.state, 'MOVE');
+    assert.equal(advanced.perception.queueTransition, 'advanced');
+    assert.equal(advanced.perception.reason, 'stable-slow-advance');
+  }));
+}
+
+test('mutating a caller-owned board piece cannot hide later motion', () => withRemoteCadence(() => {
+  const cal = calibration();
+  const input = observation([1, 1, 1], 0);
+  gateObservation(input, cal, 1000);
+  input.pieces[0].x = 1;
+  assertBlocked(gateObservation(observation([1, 1, 1], 1), cal, 4000), 'board-moving');
+}));
+
+for (const [label, change] of [
+  ['arena and matching HUD boundary', cal => {
+    cal.arena.top = 140;
+    cal.arena.height = 496;
+    cal.hud.bottom = 140;
+  }],
+  ['HUD top alone', cal => { cal.hud.top = 10; }],
+]) {
+  test(`changing the ${label} requires fresh geometry confirmation`, () => withRemoteCadence(() => {
+    const cal = calibration();
+    gateObservation(observation([1, 1, 2], 0), cal, 1000);
+    change(cal);
+    // A genuine raw advance must not bypass a changed coordinate contract.
+    assertBlocked(gateObservation(observation([1, 2, 3], 1), cal, 4000), 'confirm-frame');
+    assert.equal(gateObservation(observation([1, 2, 3], 1), cal, 7000).state, 'MOVE');
+  }));
+}
+
+test('unobserved HOLD never becomes known-empty across otherwise stable frames', () => withRemoteCadence(() => {
+  const cal = calibration();
+  for (const now of [1000, 4000, 7000]) {
+    const result = gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: false }), cal, now);
+    assert.equal(result.holdKnownEmpty, false);
+    assert.equal(result.hold, null);
+  }
+}));
+
+test('two explicit empty HOLD observations preserve the existing known-empty behavior', () => withRemoteCadence(() => {
+  const cal = calibration();
+  const first = gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: true }), cal, 1000);
+  assert.equal(first.holdKnownEmpty, false);
+  const second = gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: true }), cal, 4000);
+  assert.equal(second.state, 'MOVE');
+  assert.equal(second.holdKnownEmpty, true);
+  assert.equal(second.perception.reason, 'stable-hold-empty');
+}));
+
+test('an unknown HOLD observation interrupts consecutive empty evidence', () => withRemoteCadence(() => {
+  const cal = calibration();
+  gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: true }), cal, 1000);
+  assert.equal(gateObservation(observation(), cal, 4000).holdKnownEmpty, false);
+  assert.equal(gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: true }), cal, 7000).holdKnownEmpty, false);
+  assert.equal(gateObservation(observation([1, 1, 1], 0, { holdObservedEmpty: true }), cal, 10000).holdKnownEmpty, true);
+}));
+
+test('a same-type candidate falling through the spawn band cannot bypass vertical-motion confirmation', () => withRemoteCadence(() => {
+  const cal = calibration();
+  const positioned = (types, y) => {
+    const state = observation(types);
+    state.next.y = y;
+    return state;
+  };
+  gateObservation(positioned([1, 1, 2], 4.32), cal, 1000);
+  // Future slots shifted, but the same-type candidate moved vertically. Its
+  // position cannot be discarded merely because the physical stack is still.
+  assertBlocked(gateObservation(positioned([1, 2, 3], 4.02), cal, 4000), 'board-moving');
+  assert.equal(gateObservation(positioned([1, 2, 3], 4.02), cal, 7000).state, 'MOVE');
+}));
+
+test('the recognition-hold escape counts uninterrupted holds and stays bounded', () => {
+  const policy = createHoldEscapePolicy({ SOREN91_HOLD_ESCAPE_FRAMES: '3',
+    SOREN91_HOLD_ESCAPE_INTERVAL_MS: '1000', SOREN91_HOLD_ESCAPE_LIMIT: '2' });
+  assert.equal(policy.observe('unknown-current', 0), false);
+  assert.equal(policy.observe('unknown-current', 100), false);
+  assert.equal(policy.observe('board-moving', 200), false); // any other reason resets the run
+  assert.equal(policy.observe('unknown-current', 300), false);
+  assert.equal(policy.observe('unknown-current', 400), false);
+  assert.equal(policy.observe('unknown-current', 500), true);
+  assert.equal(policy.observe('unknown-current', 600), false); // interval has not elapsed
+  assert.equal(policy.observe('unknown-current', 700), false);
+  assert.equal(policy.observe('unknown-current', 1600), true);
+  assert.deepEqual(policy.snapshot(), { holds: 0, escapes: 2 });
+  for (const now of [9000, 10000, 11000]) {
+    assert.equal(policy.observe('unknown-current', now), false); // stretch limit reached
+  }
+  policy.noteDrop(); // a real decision ends the stretch
+  assert.equal(policy.observe('unknown-current', 20000), false);
+  assert.equal(policy.observe('unknown-current', 20100), false);
+  assert.equal(policy.observe('unknown-current', 20200), true);
+  policy.reset(); // a new round starts fresh
+  assert.equal(policy.snapshot().escapes, 0);
+  assert.equal(policy.observe('unknown-current', 999999), false);
+});
+
+test('the recognition-hold escape is kill-switchable and bounded by configuration', () => {
+  for (const env of [{ SOREN91_HOLD_ESCAPE_FRAMES: '0' }, { SOREN91_HOLD_ESCAPE_LIMIT: '0' }]) {
+    const policy = createHoldEscapePolicy(env);
+    for (let i = 0; i < 50; i++) {
+      assert.equal(policy.observe('unknown-current', i * 5000), false, JSON.stringify(env));
+    }
+  }
+  assert.equal(holdEscapeFrames({}), 6);
+  assert.equal(holdEscapeFrames({ SOREN91_HOLD_ESCAPE_FRAMES: 'lots' }), 6);
+  assert.equal(holdEscapeFrames({ SOREN91_HOLD_ESCAPE_FRAMES: '-1' }), 6);
+  assert.equal(holdEscapeIntervalMs({}), 4000);
+  assert.equal(holdEscapeIntervalMs({ SOREN91_HOLD_ESCAPE_INTERVAL_MS: '0' }), 0);
+  assert.equal(holdEscapeLimit({}), 3);
+  assert.equal(holdEscapeLimit({ SOREN91_HOLD_ESCAPE_LIMIT: '2.5' }), 3);
+});
+
+test('only a healthy frame may report unknown-current, so the escape cannot fire blind', () => {
+  // The bounded fallback drop keys off `unknown-current` alone. That label must
+  // therefore never hide a broken calibration or a corrupt board reading.
+  const corruptBoard = calibration();
+  const corrupted = observation([null, 2, 3], 0, {
+    pieces: [{ type: 1, x: NaN, y: -4, r: 0.207, confidence: 0.9 }],
+  });
+  assertBlocked(gateObservation(corrupted, corruptBoard, 1000), 'invalid-board');
+
+  const unusable = calibration();
+  unusable.confidence = 0.4;
+  assertBlocked(gateObservation(observation([null, 2, 3]), unusable, 1000), 'uncalibrated');
+});

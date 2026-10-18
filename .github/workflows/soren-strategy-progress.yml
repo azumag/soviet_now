@@ -1,0 +1,46 @@
+name: Soren strategy progress audit
+on:
+  pull_request:
+    paths:
+      - tools/soren_strategy_progress.py
+      - lib/soren_stage_ledger.py
+      - strategy/ab_interleave.sh
+      - core/version.sh
+      - eloop.sh
+      - tests/test_soren_strategy_progress.py
+      - tests/test_soren_stage_ledger.py
+      - tests/test_soren_stage_io.py
+      - tests/test_soren_stage_archive.py
+      - .github/workflows/soren-strategy-progress.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/soren_strategy_progress.py
+      - lib/soren_stage_ledger.py
+      - strategy/ab_interleave.sh
+      - core/version.sh
+      - eloop.sh
+      - tests/test_soren_strategy_progress.py
+      - tests/test_soren_stage_ledger.py
+      - tests/test_soren_stage_io.py
+      - tests/test_soren_stage_archive.py
+      - .github/workflows/soren-strategy-progress.yml
+permissions:
+  contents: read
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Run read-only evidence and producer contracts
+        run: |
+          for source in strategy/ab_interleave.sh core/version.sh eloop.sh; do bash -n "$source"; done
+          python3 -m py_compile tools/soren_strategy_progress.py lib/soren_stage_ledger.py
+          python3 -m unittest discover -s tests -p 'test_soren_strategy_progress.py' -v
+          python3 -m unittest discover -s tests -p 'test_soren_stage_*.py' -v
+          bash tests/test_ab_ledger_fields.sh

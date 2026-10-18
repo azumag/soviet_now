@@ -1,0 +1,24 @@
+{
+  "state": "MOVE",
+  "score": 42,
+  "makeSorenCount": 0,
+  "next": {"id": 17, "type": 3, "r": 0.316, "rx": 0.316, "ry": 0.316},
+  "nextNext": {"type": 4, "r": 0.38},
+  "pieces": [
+    {"id": 7, "type": 3, "x": -1.0, "y": -3.2, "r": 0.316, "redLineTime": 0},
+    {"id": 8, "type": 5, "x": 1.2, "y": -3.4, "r": 0.414, "angle": 0}
+  ],
+  "board_bounds": {
+    "drop_x_min": -3.0,
+    "drop_x_max": 3.0,
+    "wall_left": -3.5,
+    "wall_right": 3.5,
+    "floor_y": -5.0,
+    "deadline_y": 3.38
+  },
+  "hold": {"type": 99},
+  "garbage": {"ratio": 1},
+  "persona": "do not forward",
+  "strategy_score": 999,
+  "reason": "do not forward"
+}

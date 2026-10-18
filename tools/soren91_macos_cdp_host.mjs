@@ -32,6 +32,8 @@ import { chromium } from 'playwright';
 import {
   attachPipeGuards,
   buildCaptureArgs,
+  createSessionDeadline,
+  createStderrTail,
   isTailscaleIpv4Hostname,
   parseCaptureHelperStatus,
   startCaptureHelper,
@@ -41,6 +43,7 @@ import {
 import {
   buildAudioFfmpegInputArgs,
   buildFfmpegStdio,
+  resolveSessionEnd,
   resolveTapPids,
   startAudioTap,
   stopAudioTap,
@@ -53,6 +56,25 @@ import {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const here = path.dirname(fileURLToPath(import.meta.url));
+
+// Bounded wait for ffmpeg's exit after a capture racer wins the session race
+// (mirrors the legacy session's default): long enough for the stderr tail to
+// flush the receiver-close signature, short enough to stay fail-fast.
+export const FFMPEG_EXIT_WAIT_MS = 5000;
+
+// Resolves with {kind, value:{code,signal}} when `child` exits. A child that
+// already exited before the session race was armed resolves immediately, so a
+// dead capture helper can never be missed and leave the host waiting for the
+// session deadline (Issue #486). `event` defaults to 'exit'; ffmpeg's racer
+// uses 'close' so its stderr tail is complete before classification.
+export function childExitOutcome(child, kind, event = 'exit') {
+  if (child.exitCode != null || child.signalCode != null) {
+    return Promise.resolve({ kind, value: { code: child.exitCode, signal: child.signalCode } });
+  }
+  return new Promise((resolve) => {
+    child.once(event, (code, signal) => resolve({ kind, value: { code, signal } }));
+  });
+}
 
 function envFlag(env, name, defaultValue) {
   const raw = env?.[name];
@@ -427,6 +449,14 @@ export function resolveCanvasCropFrame({ outerWidth, outerHeight, chromeLeft, ch
 export const OFFSCREEN_WATCH_MS = 2000;
 export const OFFSCREEN_WATCH_MAX_REASSERTS = 3;
 
+// Bounded consecutive observation failures before the watchdog stops the
+// stream (Issue #319). A single transient CDP/spawn hiccup retries; a
+// persistently blind watchdog can no longer prove the window is offscreen,
+// so reaching this budget fails closed. Kept separate from the re-assert
+// budget above: that one counts successful observations of a drifted window,
+// this one counts observations that never completed.
+export const OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES = 3;
+
 // Decide what to do when the live geometry drifts from the calibrated state.
 // Pure (no live WindowServer/CDP) so the Mission Control behaviour is unit
 // testable:
@@ -465,6 +495,116 @@ export function evaluateGeometryDrift({
     || Math.abs(Number(content.ih) - Number(calibratedContent.ih)) > epsilon;
   if (contentChanged) return { action: 'fail', reason: 'content-size-drift' };
   return { action: 'ok', reason: null };
+}
+
+// One runtime geometry-watchdog tick with every failure path fail-closed
+// (Issue #319). `state` ({ reasserts, observeFailures }) is mutated in place
+// so the interval caller keeps the consecutive counters across ticks.
+//
+// Fail-closed paths (each reaches `failClosed`, never a best-effort continue):
+//   - getWindowBounds / getContentGeometry / listDisplays reject: counted as
+//     consecutive observation failures. Below
+//     OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES the tick only logs and retries;
+//     reaching the budget stops the stream — a blind watchdog cannot prove
+//     the window is still offscreen. Values that resolve but are unusable
+//     (or a display list that parses but excludes the virtual display) throw
+//     inside the drift decision below and stop immediately.
+//   - the drift decision itself throws (e.g. the virtual display vanished
+//     from the list): stops immediately; there is nothing transient here.
+//   - setWindowBounds rejects after a reassert decision: stops immediately.
+//     The window is known-drifted and the repair failed, so retrying the
+//     same move while streaming would risk an on-screen frame.
+//   - reasserts reach OFFSCREEN_WATCH_MAX_REASSERTS: stops, as before.
+//
+// Privacy: failClosed reasons carry only fixed tokens (kind + counters).
+// Raw window titles, URLs, other-window info, and secrets are never
+// interpolated — observability detail stays on the log line only.
+export async function runGeometryWatchTick({
+  getWindowBounds,
+  getContentGeometry,
+  listDisplays,
+  setWindowBounds,
+  decide = evaluateGeometryDrift,
+  calibratedRect,
+  calibratedContent,
+  virtualDisplayId,
+  maxReasserts = OFFSCREEN_WATCH_MAX_REASSERTS,
+  maxObserveFailures = OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES,
+  state,
+  failClosed,
+  log = () => {},
+} = {}) {
+  if (!state || typeof state !== 'object') {
+    throw new Error('geometry watchdog tick requires a state object (fail-closed)');
+  }
+  if (typeof failClosed !== 'function') {
+    throw new Error('geometry watchdog tick requires failClosed (fail-closed)');
+  }
+  const observeFailed = (kind) => {
+    state.observeFailures = Number(state.observeFailures || 0) + 1;
+    if (state.observeFailures >= maxObserveFailures) {
+      failClosed(
+        `geometry watchdog observation failed (fail-closed): ${kind} (${state.observeFailures}/${maxObserveFailures})`,
+      );
+      return 'fail-closed';
+    }
+    log(`[cdp-host] geometry watchdog observation failed (${kind}); retrying (${state.observeFailures}/${maxObserveFailures})`);
+    return 'retrying';
+  };
+  let liveRect;
+  try {
+    liveRect = await getWindowBounds();
+  } catch {
+    return observeFailed('window-bounds');
+  }
+  let liveContent;
+  try {
+    liveContent = await getContentGeometry();
+  } catch {
+    return observeFailed('content-geometry');
+  }
+  let displays;
+  try {
+    displays = await listDisplays();
+  } catch {
+    return observeFailed('display-list');
+  }
+  state.observeFailures = 0;
+  let decision;
+  try {
+    decision = decide({
+      windowRect: liveRect,
+      displays,
+      virtualDisplayId,
+      calibratedRect,
+      content: liveContent,
+      calibratedContent,
+    });
+  } catch {
+    failClosed('geometry watchdog drift check failed (fail-closed)');
+    return 'fail-closed';
+  }
+  if (decision?.action === 'reassert') {
+    state.reasserts = Number(state.reasserts || 0) + 1;
+    log(`[cdp-host] geometry watchdog: ${decision.reason}; re-asserting offscreen window bounds (${state.reasserts}/${maxReasserts})`);
+    try {
+      await setWindowBounds();
+    } catch {
+      failClosed(`geometry watchdog re-assert failed (fail-closed): ${decision.reason}`);
+      return 'fail-closed';
+    }
+    if (state.reasserts >= maxReasserts) {
+      failClosed(`offscreen window kept drifting (${decision.reason})`);
+      return 'fail-closed';
+    }
+    return 'reasserted';
+  }
+  if (decision?.action === 'fail') {
+    failClosed(`geometry watchdog: ${decision.reason}`);
+    return 'fail-closed';
+  }
+  state.reasserts = 0;
+  return 'ok';
 }
 
 // Canvas crop -> 960x540 output filter: crop the game canvas, scale to fit
@@ -561,6 +701,11 @@ export function startCdpProxy({ bindIp, proxyPort, cdpPort, allowedPeerIp }) {
     const destroy = () => { try { client.destroy(); } catch {} try { upstream.destroy(); } catch {} };
     client.on('error', destroy);
     upstream.on('error', destroy);
+    // An abrupt close (destroy/RST) emits 'close' without 'end', so pipe()
+    // never ends the other side; tear both down so no half-open DevTools
+    // socket is left behind after the bot disconnects.
+    client.on('close', destroy);
+    upstream.on('close', destroy);
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -677,8 +822,26 @@ export async function startAudioTapWithRetry({
   throw new Error(`audio tap attach failed after ${budgetMs}ms (fail-closed): ${lastError?.message || lastError}`);
 }
 
-export async function main(argv = process.argv.slice(2), { platform = process.platform } = {}) {
+export async function main(argv = process.argv.slice(2), { platform = process.platform, deps = {} } = {}) {
   const options = validateOptions(parseArgs(argv), platform);
+  // Dependency seams for the main() smoke test (Issue #358): every
+  // process/CDP/hardware touchpoint behind an injectable default so tests
+  // can run driver ready -> streaming/watch setup -> full-session wait with
+  // stub children and no Chrome/ffmpeg/SRT/Tailscale.
+  const {
+    startVirtualDisplay: startVirtualDisplayImpl = startVirtualDisplay,
+    reapStaleProfileDirs: reapStaleProfileDirsImpl = reapStaleProfileDirs,
+    spawn: spawnImpl = spawn,
+    spawnSync: spawnSyncImpl = spawnSync,
+    fetch: fetchImpl = fetch,
+    fetchJsonList: fetchJsonListImpl = fetchJsonList,
+    startCdpProxy: startCdpProxyImpl = startCdpProxy,
+    connectOverCDP = (url) => chromium.connectOverCDP(url),
+    waitForStableCanvasGeometry: waitForStableCanvasGeometryImpl = waitForStableCanvasGeometry,
+    startCaptureHelper: startCaptureHelperImpl = startCaptureHelper,
+    startAudioTapWithRetry: startAudioTapWithRetryImpl = startAudioTapWithRetry,
+    createSessionDeadline: createSessionDeadlineImpl = createSessionDeadline,
+  } = deps;
   const allowedPeerIp = options.srtUrl ? new URL(options.srtUrl).hostname : '';
   const plan = {
     backend: 'macos-cdp-host', tier: -1, execute: options.execute,
@@ -708,7 +871,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // orphaned (and audible) if this host is SIGKILLed mid-cleanup. Kill
     // every process still bound to OUR temp profile dir so nothing leaks.
     if (profileDir) {
-      try { spawnSync('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
+      try { spawnSyncImpl('pkill', ['-f', profileDir], { stdio: 'ignore' }); } catch {}
       // Best-effort, same as the pkill above: Chrome may still hold files in
       // profileDir open for a moment, but unlinking underneath it is safe on
       // POSIX and this is our only chance to reclaim it on a signal-driven
@@ -731,17 +894,17 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
   process.once('SIGTERM', onSigterm);
   const startedAt = Date.now();
   try {
-    const held = await startVirtualDisplay(options.virtualDisplayBin, { timeoutMs: 30_000 });
+    const held = await startVirtualDisplayImpl(options.virtualDisplayBin, { timeoutMs: 30_000 });
     vdisplay = held.child;
     console.log(`SOREN91_CDP_HOST_VDISPLAY_READY=${JSON.stringify(held.status)}`);
     const { placementFor: place } = { placementFor };
     const placement = place(held.status.bounds);
-    reapStaleProfileDirs();
+    reapStaleProfileDirsImpl();
     profileDir = path.join(os.tmpdir(), `${PROFILE_DIR_PREFIX}${Date.now()}`);
     fs.mkdirSync(profileDir, { recursive: true });
     // `--remote-allow-origins=*` is safe only behind the source-locked Tailscale
     // proxy above; Chrome itself remains bound to 127.0.0.1.
-    chrome = spawn(options.chromeBin, buildChromeArgs(options, placement, profileDir), {
+    chrome = spawnImpl(options.chromeBin, buildChromeArgs(options, placement, profileDir), {
       stdio: ['ignore', 'ignore', 'inherit'],
     });
     console.log(`SOREN91_CDP_HOST_CHROME_PID=${chrome.pid}`);
@@ -750,14 +913,14 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     for (let i = 0; i < 60 && !ready; i += 1) {
       if (chrome.exitCode != null) throw new Error(`chrome exited early (code=${chrome.exitCode})`);
       try {
-        const res = await fetch(`http://127.0.0.1:${options.cdpPort}/json/version`);
+        const res = await fetchImpl(`http://127.0.0.1:${options.cdpPort}/json/version`);
         ready = res.ok;
       } catch {}
       if (!ready) await sleep(500);
     }
     if (!ready) throw new Error('chrome DevTools endpoint did not come up');
     console.log(`SOREN91_CDP_HOST_CDP_READY=http://127.0.0.1:${options.cdpPort}`);
-    proxy = await startCdpProxy({
+    proxy = await startCdpProxyImpl({
       bindIp: options.bindIp,
       proxyPort: options.proxyPort,
       cdpPort: options.cdpPort,
@@ -779,7 +942,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     while (Date.now() < driverDeadline) {
       if (chrome.exitCode != null) throw new Error(`chrome exited while waiting (code=${chrome.exitCode})`);
       let targets = [];
-      try { targets = await fetchJsonList(options.cdpPort); } catch (e) {
+      try { targets = await fetchJsonListImpl(options.cdpPort); } catch (e) {
         console.error(`[cdp-host] /json/list poll failed: ${e?.message || e}`);
       }
       const pageCount = targets.filter((t) => t?.type === 'page').length;
@@ -799,7 +962,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // 1280x720 when the 960x540 calibration does not stick) and is NEVER a
     // failure condition: the crop below is computed from measured geometry
     // and scaled/padded to the fixed 960x540 output.
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
+    browser = await connectOverCDP(`http://127.0.0.1:${options.cdpPort}`);
     const context = browser.contexts()[0];
     if (!context) throw new Error('remote chrome has no browser context');
     const page = context.pages().find((p) => isExactGameTargetUrl(p.url() || ''));
@@ -845,7 +1008,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
       x: bounds.bounds.left, y: bounds.bounds.top,
       width: bounds.bounds.width, height: bounds.bounds.height,
     };
-    const listResult = spawnSync(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+    const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
     if (listResult.error) throw listResult.error;
     const line = String(listResult.stderr || '').trim().split('\n').pop()
       || String(listResult.stdout || '').trim().split('\n').pop();
@@ -913,7 +1076,7 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
         chromeTop: options.chromeTop,
       };
     };
-    const stable = await waitForStableCanvasGeometry(sampleGeometry);
+    const stable = await waitForStableCanvasGeometryImpl(sampleGeometry);
     const canvasGeom = stable.canvas;
     const captureInfo = {
       bundleId: 'com.google.Chrome',
@@ -952,13 +1115,13 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     } catch {}
 
     const captureArgs = buildCaptureArgs({ captureHelperBin: options.captureHelperBin }, captureInfo);
-    const started = await startCaptureHelper(options.captureHelperBin, captureArgs, 30_000);
+    const started = await startCaptureHelperImpl(options.captureHelperBin, captureArgs, 30_000);
     capture = started.child;
     console.log(`SOREN91_CDP_HOST_CAPTURE_READY=${JSON.stringify(started.status)}`);
 
     if (options.audioTap) {
       // Retry until the AudioService process exists (see helper above).
-      const tapStarted = await startAudioTapWithRetry({
+      const tapStarted = await startAudioTapWithRetryImpl({
         audioTapBin: options.audioTapBin,
         rootPid: chrome.pid,
         budgetMs: options.audioTapWaitSec * 1000,
@@ -977,17 +1140,29 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     };
     const ffmpegStdio = buildFfmpegStdio(options.audioTap);
     ffmpegStdio[2] = 'pipe';
-    ffmpeg = spawn(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
-    ffmpeg.stderr?.on('data', (chunk) => { try { process.stderr.write(chunk); } catch {} });
+    ffmpeg = spawnImpl(options.ffmpegBin, buildCanvasFfmpegArgs(ffmpegOpts, captureInfo, canvasCrop), { stdio: ffmpegStdio });
+    // Bounded ffmpeg stderr tail: the session-end classifier needs the
+    // receiver-close signature; the live stream still goes to process.stderr.
+    const ffmpegStderr = createStderrTail();
+    ffmpeg.stderr?.on('data', (chunk) => {
+      try { process.stderr.write(chunk); } catch {}
+      ffmpegStderr.push(chunk);
+    });
     // Pipe guards (Issue #303): when the OCI listener goes away, ffmpeg
     // exits and in-flight frame/PCM writes fail with EPIPE. Without guards
     // the unhandled 'error' event crashes this host (observed 2026-09-13:
     // listener pkill -> ffmpeg SRT I/O error -> EPIPE throw -> orphaned
-    // Chrome/proxy/capture/tap/holder). Guarded errors are benign: the host
-    // stays up until its deadline/SIGTERM and still cleans up.
-    attachPipeGuards({ capture, audiotap, ffmpeg });
-    ffmpeg.on('exit', (code, signal) => {
-      console.error(`[cdp-host] ffmpeg exited code=${code} signal=${signal} (listener may have closed; host continues until deadline/SIGTERM)`);
+    // Chrome/proxy/capture/tap/holder). Guarded errors are benign; the
+    // session race below decides whether the end was a normal consumer close
+    // or a failure to fail closed on.
+    const pipeTracker = attachPipeGuards({ capture, audiotap, ffmpeg });
+    // Latest observed ffmpeg close state for the session-end classifier.
+    // 'close' (not 'exit') fires after the stderr pipe is flushed, so the
+    // marker tail is complete when it is classified (Issue #486).
+    let ffmpegExit = null;
+    ffmpeg.on('close', (code, signal) => {
+      ffmpegExit = { code, signal };
+      console.error(`[cdp-host] ffmpeg closed code=${code} signal=${signal}`);
     });
     capture.stdout.pipe(ffmpeg.stdin);
     if (audiotap) {
@@ -1004,51 +1179,88 @@ export async function main(argv = process.argv.slice(2), { platform = process.pl
     // re-assert the calibrated offscreen position when the window drifts, and
     // fail closed (stop streaming) if it lands on a physical display or the
     // content size changes (the fixed crop would then misframe the stream).
+    // Every observation/re-assert failure path is fail-closed (Issue #319):
+    // runGeometryWatchTick owns the bounded-retry budgets and reaches
+    // failClosed() instead of logging best-effort and streaming on blind.
     let watchBusy = false;
-    let watchReasserts = 0;
+    const watchState = { reasserts: 0, observeFailures: 0 };
     geometryWatch = setInterval(async () => {
       if (watchBusy) return;
       watchBusy = true;
       try {
-        const live = await cdp.send('Browser.getWindowBounds', { windowId });
-        const liveRect = {
-          x: live.bounds.left, y: live.bounds.top,
-          width: live.bounds.width, height: live.bounds.height,
-        };
-        const liveContent = await page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight }));
-        const listResult = spawnSync(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
-        const listLine = String(listResult.stderr || '').trim().split('\n').pop()
-          || String(listResult.stdout || '').trim().split('\n').pop();
-        const decision = evaluateGeometryDrift({
-          windowRect: liveRect,
-          displays: parseVDisplayList(listLine),
-          virtualDisplayId: held.status.displayID,
+        await runGeometryWatchTick({
+          getWindowBounds: async () => {
+            const live = await cdp.send('Browser.getWindowBounds', { windowId });
+            return {
+              x: live.bounds.left, y: live.bounds.top,
+              width: live.bounds.width, height: live.bounds.height,
+            };
+          },
+          getContentGeometry: () => page.evaluate(() => ({ iw: window.innerWidth, ih: window.innerHeight })),
+          listDisplays: () => {
+            const listResult = spawnSyncImpl(options.virtualDisplayBin, ['--list'], { encoding: 'utf8', timeout: 20_000 });
+            if (listResult.error) throw listResult.error;
+            const listLine = String(listResult.stderr || '').trim().split('\n').pop()
+              || String(listResult.stdout || '').trim().split('\n').pop();
+            return parseVDisplayList(listLine);
+          },
+          setWindowBounds: () => cdp.send('Browser.setWindowBounds', { windowId, bounds: calibratedBounds }),
           calibratedRect,
-          content: liveContent,
           calibratedContent: { iw: captureInfo.contentWidth, ih: captureInfo.contentHeight },
+          virtualDisplayId: held.status.displayID,
+          state: watchState,
+          failClosed,
+          log: (message) => console.error(message),
         });
-        if (decision.action === 'reassert') {
-          watchReasserts += 1;
-          console.error(`[cdp-host] geometry watchdog: ${decision.reason}; re-asserting offscreen window bounds (${watchReasserts}/${OFFSCREEN_WATCH_MAX_REASSERTS})`);
-          await cdp.send('Browser.setWindowBounds', { windowId, bounds: calibratedBounds });
-          if (watchReasserts >= OFFSCREEN_WATCH_MAX_REASSERTS) {
-            failClosed(`offscreen window kept drifting (${decision.reason})`);
-          }
-        } else if (decision.action === 'fail') {
-          failClosed(`geometry watchdog: ${decision.reason}`);
-        } else {
-          watchReasserts = 0;
-        }
       } catch (error) {
-        console.error(`[cdp-host] geometry watchdog error (best-effort): ${error?.message || error}`);
+        // Defensive: runGeometryWatchTick converts every expected failure
+        // into failClosed/log above. Anything escaping here is a bug, and a
+        // possibly-moved window must never keep streaming because of it.
+        failClosed(`geometry watchdog unexpected error (fail-closed): ${error?.message || error}`);
       } finally {
         watchBusy = false;
       }
     }, OFFSCREEN_WATCH_MS);
     geometryWatch.unref?.();
-    await sleep(Math.max(0, sessionDeadline - Date.now()));
-    console.log('SOREN91_CDP_HOST_END=deadline');
-    return { ok: true };
+    // Session end is a race between the deadline, ffmpeg's close, and the
+    // capture helper's exit (Issue #486). A capture-side failure (e.g. the
+    // ScreenCaptureKit window disappearing with SCStreamErrorDomain -3815)
+    // must fail the session closed instead of leaving the broadcast stream
+    // frozen on the last frame until the session deadline: ending the session
+    // lets the corner restore the previous game instead of lingering.
+    // Classification reuses the reviewed legacy-session contract
+    // (resolveSessionEnd): only an explicit receiver-close signature in
+    // ffmpeg stderr counts as a normal consumer close; an unexplained or
+    // unobserved exit fails closed.
+    const deadline = createSessionDeadlineImpl(Math.max(0, sessionDeadline - Date.now()));
+    const outcome = await Promise.race([
+      deadline.promise,
+      childExitOutcome(ffmpeg, 'ffmpeg-exit', 'close'),
+      childExitOutcome(capture, 'capture-exit'),
+    ]);
+    try {
+      const verdict = await resolveSessionEnd({
+        kind: outcome.kind,
+        value: outcome.value,
+        getStderr: () => ffmpegStderr.text(),
+        getSinkClosed: () => pipeTracker.sinkClosed,
+        getFfmpegExit: () => ffmpegExit,
+        ffmpegWaitMs: FFMPEG_EXIT_WAIT_MS,
+      });
+      if (verdict === 'deadline' || verdict === 'consumer-closed') {
+        console.log(`SOREN91_CDP_HOST_END=${verdict}`);
+        return { ok: true };
+      }
+      throw new Error(
+        `session ended without a consumer close (fail-closed): ${outcome.kind}=${JSON.stringify(outcome.value)}`
+        + (ffmpegExit && outcome.kind !== 'ffmpeg-exit' ? ` ffmpeg-exit=${JSON.stringify(ffmpegExit)}` : ''),
+      );
+    } finally {
+      // Never leave the deadline timer pending: it would hold the event loop
+      // open for the rest of the session after a fail-closed exit (the
+      // Issue #303 hang class the legacy session fixed the same way).
+      deadline.cancel();
+    }
   } finally {
     if (geometryWatch) { clearInterval(geometryWatch); geometryWatch = null; }
     cleanup();

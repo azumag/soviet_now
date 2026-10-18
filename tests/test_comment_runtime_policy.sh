@@ -126,9 +126,125 @@ COMMENT_DEBOUNCE_SEC=1 COMMENT_CARD_DEBOUNCE_SEC=2 COMMENT_DEBOUNCE_MAX_SEC=6 \
 
 # Wrapper still invokes the original generator exactly once after debounce.
 _comment_debounce_wait() { return 0; }
+: >"$YOUTUBE_CHAT_OUTFILE"
 : >"$TMP/generated"
 generate_comment_response youtube
 [ "$(cat "$TMP/generated")" = 'base:youtube' ] && pass 'debounced wrapper calls base generator once' || not_ok 'generator wrapper did not preserve base call'
+
+# Card detection must accept Twica's live ASCII "[tier]" format and the
+# "N連ガチャ" summary, not just the legacy fullwidth "【tier】" form.
+_gacha_ascii="$TMP/gacha_ascii.txt"
+printf '%s\n' '@もやしちゃん が [コモン] 一ルーブル札 を獲得しました. Lv.2 - 83 種類中 20 種類所持 素材: X / Public Domain 出典・権利確認:  シリーズ: 同志の心得' >"$_gacha_ascii"
+_comment_debounce_is_card_batch "$_gacha_ascii" && pass 'ascii-bracket card notification is detected' || not_ok 'ascii-bracket card notification was missed'
+_gacha_multi="$TMP/gacha_multi.txt"
+printf '%s\n' '@ふぉくし_ が12連ガチャで エピックx1、レアx1、コモンx10 を獲得しました!一ドル札、クレジットカード' >"$_gacha_multi"
+_comment_debounce_is_card_batch "$_gacha_multi" && pass 'multi-draw summary is detected as a card batch' || not_ok 'multi-draw summary was missed'
+
+# macOS BSD grep fails any repetition bound above 255 (rc=2
+# "maximum repetition exceeds 255"); the call-site stderr redirect used to
+# turn that into a silent non-match, losing the card quiet window (#417).
+# Pin the portability contract without weakening detection: every shell grep
+# bound fits the 255 cap, the patterns compile under the system grep, and a
+# long production-length card line is still detected.
+_portable_ok=1
+: >"$TMP/grep_portable_err.txt"
+for _re_name in _COMMENT_CARD_ACQUIRED_RE _COMMENT_CARD_MULTI_RE; do
+	_re="${!_re_name}"
+	while IFS= read -r _bound; do
+		[ "$_bound" -le 255 ] || _portable_ok=0
+	done < <(printf '%s' "$_re" | grep -o -E '\{[0-9]+,[0-9]+\}' | sed -E 's/^\{[0-9]+,([0-9]+)\}$/\1/')
+	_grep_rc=0
+	printf 'probe\n' | grep -Eq "$_re" 2>"$TMP/grep_portable_err.txt" || _grep_rc=$?
+	[ "$_grep_rc" -le 1 ] || _portable_ok=0
+	if [ -s "$TMP/grep_portable_err.txt" ]; then
+		_portable_ok=0
+	fi
+done
+[ "$_portable_ok" -eq 1 ] && pass 'card grep patterns fit the macOS 255 repetition cap' || not_ok 'card grep pattern exceeds the macOS repetition cap'
+_long_gap="$(python3 -c 'print("あ" * 230)')"
+printf '%s\n' "alice が [コモン] カードA${_long_gap}を獲得しました" >"$TMP/gacha_long.txt"
+_comment_debounce_is_card_batch "$TMP/gacha_long.txt" && pass 'long card line is still detected within portable bounds' || not_ok 'long card line was missed'
+
+# Consolidation key: card-only same viewer yields a key; mixed content or
+# multiple viewers must not consolidate.
+_gacha_batch="$TMP/gacha_batch.txt"
+printf '%s\n' '@alice が [コモン] カードA を獲得しました. Lv.1' '@alice が [レア] カードB を獲得しました. Lv.2' >"$_gacha_batch"
+[ "$(_comment_debounce_card_consolidation_key "$_gacha_batch")" = "alice" ] && pass 'same-viewer card-only batch yields a consolidation key' || not_ok 'same-viewer card batch key missing'
+printf '%s\n' '@alice が [コモン] カードA を獲得しました. Lv.1' 'bob: こんにちは' >"$_gacha_batch"
+[ -z "$(_comment_debounce_card_consolidation_key "$_gacha_batch")" ] && pass 'mixed batch yields no consolidation key' || not_ok 'mixed batch wrongly consolidated'
+printf '%s\n' '@alice が [コモン] カードA を獲得しました. Lv.1' '@bob が [レア] カードB を獲得しました. Lv.2' >"$_gacha_batch"
+[ -z "$(_comment_debounce_card_consolidation_key "$_gacha_batch")" ] && pass 'multi-viewer card batch yields no consolidation key' || not_ok 'multi-viewer batch wrongly consolidated'
+printf '%s\n' '@ふぉくし_ が12連ガチャで エピックx1、レアx1、コモンx10 を獲得しました!一ドル札' '@ふぉくし_ が [コモン] 人民食堂 を獲得しました. Lv.1' >"$_gacha_batch"
+[ "$(_comment_debounce_card_consolidation_key "$_gacha_batch")" = "ふぉくし_" ] && pass 'multi-draw summary and single draw share the recipient key' || not_ok 'recipient key mismatch for mixed card forms'
+
+# Carry-over gate is non-blocking: it holds across worker ticks while the same
+# viewer keeps drawing, then releases once the viewer stops, and it never
+# blocks the worker loop (the wrapper returns and the next tick retries).
+export COMMENT_CARD_HOLD_STATE_DIR="$TMP/holdstate"
+COMMENT_CARD_CONSOLIDATE_QUIET_SEC=20
+COMMENT_CARD_CONSOLIDATE_MAX_SEC=180
+_gate_file="$TMP/gate_comments.txt"
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+_comment_debounce_outfile() { printf '%s' "$_gate_file"; }
+_gate_clock="$TMP/gate_clock"
+printf '1000\n' >"$_gate_clock"
+_comment_debounce_now() { cat "$_gate_clock"; }
+if _comment_card_consolidation_gate twitch; then
+	not_ok 'first card batch was not held'
+else
+	pass 'first card batch is held (no immediate reply)'
+fi
+printf '1050\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [レア] カードB を獲得しました. Lv.2' >>"$_gate_file"
+if _comment_card_consolidation_gate twitch; then
+	not_ok 'continued draw did not reset the hold'
+else
+	pass 'a new draw from the same viewer keeps the batch held'
+fi
+printf '1080\n' >"$_gate_clock"
+if _comment_card_consolidation_gate twitch; then
+	pass 'batch is released after the viewer stops drawing'
+else
+	not_ok 'batch was held past the quiet window'
+fi
+[ ! -f "$COMMENT_CARD_HOLD_STATE_DIR/comment_card_hold_twitch" ] && pass 'hold state is cleared before generation' || not_ok 'hold state was not cleared'
+# A hard ceiling still releases even while draws keep arriving.
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+printf '2000\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch >/dev/null 2>&1 || true
+printf '2300\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [レア] カードB を獲得しました. Lv.2' >>"$_gate_file"
+if _comment_card_consolidation_gate twitch; then
+	pass 'hard ceiling releases a batch even while draws continue'
+else
+	not_ok 'hard ceiling did not release the batch'
+fi
+
+# Defaults match production: draws by one viewer ~2 minutes apart (observed
+# 2026-09-28 08:48 -> 08:50) must still be answered as one paragraph.
+unset COMMENT_CARD_CONSOLIDATE_QUIET_SEC COMMENT_CARD_CONSOLIDATE_MAX_SEC
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+printf '3000\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default window released the first draw at once' || pass 'default window holds the first draw'
+printf '3120\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [レア] カードB を獲得しました. Lv.2' >>"$_gate_file"
+_comment_card_consolidation_gate twitch && not_ok 'default window released before a draw 2 minutes later' || pass 'a draw 2 minutes later joins the held batch'
+printf '3269\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default window released before 150s of quiet' || pass 'default window keeps holding under 150s of quiet'
+printf '3270\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && pass 'default window releases after 150s of quiet' || not_ok 'default window held past 150s of quiet'
+# Default ceiling: continuous draws are released after 420s at the latest.
+printf '%s\n' 'dociai: @alice が [コモン] カードA を獲得しました. Lv.1' >"$_gate_file"
+printf '4000\n' >"$_gate_clock"
+_comment_card_consolidation_gate twitch && not_ok 'default ceiling released the first draw at once' || pass 'default ceiling starts holding'
+for _t in 4100 4200 4300 4400 4419; do
+	printf '%s\n' "$_t" >"$_gate_clock"
+	printf '%s\n' "dociai: @alice が [コモン] カード$_t を獲得しました. Lv.1" >>"$_gate_file"
+	_comment_card_consolidation_gate twitch && not_ok "default ceiling released early at $_t" || :
+done
+printf '4420\n' >"$_gate_clock"
+printf '%s\n' 'dociai: @alice が [コモン] カード4420 を獲得しました. Lv.1' >>"$_gate_file"
+_comment_card_consolidation_gate twitch && pass 'default ceiling releases continuous draws at 420s' || not_ok 'default ceiling held past 420s'
 
 # Static integration: eloop_lib must source the policy after comment.sh.
 comment_line=$(grep -n 'broadcast/comment.sh' eloop_lib.sh | head -1 | cut -d: -f1)

@@ -3,39 +3,79 @@ on:
   pull_request:
     paths:
       - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
       - 'direct_stream_soak.sh'
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
       - 'tests/test_direct_soak.py'
       - 'status_dashboard.py'
+      - 'lib/docich_corner_stats.py'
       - 'lib/ai_backoff_status.py'
       - 'tools/ab_report.py'
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'tests/test_event_overlay_renderer.py'
+      - 'generate_event_overlay.py'
+      - 'viewer_chat_monitor.sh'
+      - 'lib/viewer_chat_cache.py'
+      - 'tests/test_soren_overlay_cache.py'
+      - 'tests/test_soren_overlay_fail_open.py'
+      - 'tests/test_soren_overlay_viewer_refresh.sh'
+      - 'tests/test_soren_overlay_idle_cpu.py'
+      - 'tests/test_soren_overlay_render.py'
+      - 'lib/soren_overlay_render.py'
+      - 'tests/test_show_status_builtin_read.py'
+      - 'lib/status_snapshot.py'
+      - 'tests/test_status_snapshot.py'
+      - 'generate_show_status_overlay.sh'
+      - 'lib/overlay_dashboard_cards.py'
+      - 'tests/test_overlay_dashboard_cards.py'
       - 'tests/test_status_dashboard_ab.py'
       - 'tests/test_status_dashboard_founding_rate.py'
       - 'tests/test_country_stage_names.py'
       - 'tests/test_score_timeline.py'
+      - 'tests/test_docich_corner_stats.py'
       - '.github/workflows/stream-status.yml'
   push:
     branches: [main]
     paths:
       - 'show_status.sh'
+      - 'lib/status_ai_output_filter.pl'
+      - 'tests/test_cpu_idle_paths.py'
       - 'direct_stream_soak.sh'
       - 'lib/direct_soak.py'
       - 'tests/test_stream_backend_status.py'
       - 'tests/test_direct_soak.py'
       - 'status_dashboard.py'
+      - 'lib/docich_corner_stats.py'
       - 'lib/ai_backoff_status.py'
       - 'tools/ab_report.py'
       - 'show_status_g.sh'
       - 'generate_status_overlay.sh'
       - 'generate_soren_overlay.sh'
+      - 'tests/test_event_overlay_renderer.py'
+      - 'generate_event_overlay.py'
+      - 'viewer_chat_monitor.sh'
+      - 'lib/viewer_chat_cache.py'
+      - 'tests/test_soren_overlay_cache.py'
+      - 'tests/test_soren_overlay_fail_open.py'
+      - 'tests/test_soren_overlay_viewer_refresh.sh'
+      - 'tests/test_soren_overlay_idle_cpu.py'
+      - 'tests/test_soren_overlay_render.py'
+      - 'lib/soren_overlay_render.py'
+      - 'tests/test_show_status_builtin_read.py'
+      - 'lib/status_snapshot.py'
+      - 'tests/test_status_snapshot.py'
+      - 'generate_show_status_overlay.sh'
+      - 'lib/overlay_dashboard_cards.py'
+      - 'tests/test_overlay_dashboard_cards.py'
       - 'tests/test_status_dashboard_ab.py'
       - 'tests/test_status_dashboard_founding_rate.py'
       - 'tests/test_country_stage_names.py'
       - 'tests/test_score_timeline.py'
+      - 'tests/test_docich_corner_stats.py'
       - '.github/workflows/stream-status.yml'
 permissions:
   contents: read
@@ -58,11 +98,21 @@ jobs:
           python3 -m unittest
           tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
           tests.test_country_stage_names tests.test_score_timeline
-      - run: python3 -m py_compile status_dashboard.py
+          tests.test_docich_corner_stats tests.test_overlay_dashboard_cards
+          tests.test_soren_overlay_idle_cpu
+          tests.test_soren_overlay_render
+          tests.test_soren_overlay_cache tests.test_soren_overlay_fail_open
+          tests.test_event_overlay_renderer tests.test_show_status_builtin_read tests.test_status_snapshot
+      - run: python3 -m unittest tests.test_cpu_idle_paths
+      - run: perl -c lib/status_ai_output_filter.pl
+      - run: python3 -m py_compile status_dashboard.py generate_event_overlay.py lib/viewer_chat_cache.py lib/status_snapshot.py lib/soren_overlay_render.py
       # zsh -n / bash -n は第2引数以降を $1.. として扱い構文検査しないので、
       # 1 ファイル 1 ステップにする。
       - run: zsh -n show_status.sh
       - run: zsh -n show_status_g.sh
       - run: bash -n direct_stream_soak.sh
       - run: bash -n generate_status_overlay.sh
+      - run: bash -n generate_show_status_overlay.sh
+      - run: bash tests/test_soren_overlay_viewer_refresh.sh
       - run: bash -n generate_soren_overlay.sh
+      - run: bash -n tests/test_soren_overlay_viewer_refresh.sh

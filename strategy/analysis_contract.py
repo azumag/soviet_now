@@ -170,6 +170,32 @@ def validate(text,evidence):
             'analysis_sha256':hashlib.sha256(text.encode()).hexdigest(),
             'limitation':'Checks evidence/shape/reachable declared inputs, not causal correctness of free text or candidate code.'}
 
+def retry_feedback(result):
+    """Fixed host guidance for one recoverable plan-notation failure only.
+
+    Never interpolate model output or relax validation. The worker must generate
+    and validate a new document within its original retry and time budgets.
+    """
+    if (not isinstance(result,dict) or result.get('ok') is not False or
+            result.get('decision')!='reject' or
+            result.get('errors')!=['unreachable_plan_condition']):
+        return None
+    return ("# Host analysis validation feedback\n"
+            "The previous analysis was rejected: unreachable_plan_condition.\n"
+            "Reconsider the analysis using the original host evidence, then write a complete new "
+            "tmp/analysis_result.md including exactly one analysis_contract block.\n"
+            "Implementation Plan must contain only the adopted plan. Do not repeat impossible "
+            "direct-input comparisons even as prohibited examples, quotations, comments, or rejected ideas. "
+            "Describe those constraints in words without reproducing the expression.\n"
+            "For a valid input-range exclusion guard, use membership in the intended allowed types "
+            "instead of an upper-bound comparison. Do not change the intended range or invent observations. "
+            "Composite board pieces are not direct inputs.\n"
+            "If the mechanism actually depends on unavailable direct inputs, reconsider it from evidence "
+            "or declare hold; do not merely hide the condition. Keep the evidence digest, counts, references, "
+            "and target restrictions intact. Do not edit strategy code during analysis.\n"
+            "This feedback is not approval: the new document must pass the full host validation.\n").encode('utf-8')
+
+
 def save(path,raw):
     path=Path(path)
     if path.is_symlink():raise ValueError('symlink output')
@@ -185,8 +211,17 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='action',required=True)
     ev=sub.add_parser('evidence');ev.add_argument('--root',required=True);ev.add_argument('--output',required=True);ev.add_argument('files',nargs='+')
     check=sub.add_parser('validate');check.add_argument('--evidence',required=True);check.add_argument('--analysis',required=True);check.add_argument('--result',required=True)
+    feedback=sub.add_parser('retry-feedback');feedback.add_argument('--result',required=True);feedback.add_argument('--output',required=True)
     args=parser.parse_args()
     try:
+        if args.action=='retry-feedback':
+            path=Path(args.result)
+            if path.is_symlink() or not path.is_file() or path.stat().st_size>16384:
+                raise ValueError('invalid validation result')
+            raw=retry_feedback(decode(path.read_bytes()))
+            if raw is None:return 82
+            save(args.output,raw)
+            return 0
         if args.action=='evidence':
             raw=encode(build_evidence(args.root,args.files));save(args.output,raw);print(hashlib.sha256(raw).hexdigest());return 0
         path=Path(args.analysis)

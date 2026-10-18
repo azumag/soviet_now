@@ -924,7 +924,7 @@ def has_horizontal_obstruction(from_x, from_y, from_r, target, pieces, deadline_
     return False
 
 
-def analyze_drops(pieces, next_type, next_r, shapes=None):
+def analyze_drops(pieces, next_type, next_r, shapes=None, *, sample_xs_override=None):
     """全サンプルXについて着地Y・併合可否を計算。
     物理挙動（ドリフト・爆発衝撃波）を考慮した拡張版。
 
@@ -939,7 +939,20 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     deadline_eff_radii = build_deadline_radii(shapes)
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
-    sample_xs = build_sample_xs(pieces, next_type, deadline_eff_radii)
+    if sample_xs_override is None:
+        sample_xs = build_sample_xs(pieces, next_type, deadline_eff_radii)
+    else:
+        if not isinstance(sample_xs_override, (list, tuple)):
+            raise ValueError("sample_xs_override must be a list or tuple")
+        normalized_xs = set()
+        for raw_x in sample_xs_override:
+            if type(raw_x) not in (int, float) or not math.isfinite(float(raw_x)):
+                raise ValueError("sample_xs_override contains a non-finite value")
+            x = round(float(raw_x), 2)
+            if x < DROP_X_MIN or x > DROP_X_MAX:
+                raise ValueError("sample_xs_override is outside the legal X range")
+            normalized_xs.add(x)
+        sample_xs = sorted(normalized_xs)
     # ドロップピースの上端高さ（ポリゴン実効値）
     if deadline_eff_radii and next_type in deadline_eff_radii:
         next_top_r = deadline_eff_radii[next_type]["top"]

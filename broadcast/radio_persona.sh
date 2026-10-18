@@ -495,4 +495,13 @@ PY
 )
 	fi
 	echo "${past_topics:-まだ過去のトークはありません。自由に話してください。}"
+	# Do not return generated payloads to prompts. Resolve selection history only
+	# against the public catalog, and omit the current requested topic/family.
+	if [ -n "${ELOOP_LIB_DIR:-}" ] && [ -f "$ELOOP_LIB_DIR/lib/radio_theme_history.py" ]; then
+		python3 "$ELOOP_LIB_DIR/lib/radio_theme_history.py" recent \
+			--catalog "$ELOOP_LIB_DIR/data/radio_themes.txt" \
+			--bodies "${PAST_RADIO_THEME_BODIES:-${TMP_HISTORY_DIR:-}/past_radio_theme_bodies.txt}" \
+			--keys "${PAST_RADIO_THEME_KEYS:-${TMP_HISTORY_DIR:-}/.past_radio_themes.txt}" \
+			--keep "${PAST_RADIO_THEME_HISTORY_KEEP:-400}" --limit "$limit" --exclude "${1:-}"
+	fi
 }

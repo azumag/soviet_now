@@ -17,10 +17,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # --- 環境変数読み込み ---
+# The supervisor may be older than the projected worker file and can retain
+# classifier variables from its launch environment.  The .env file is the
+# source of truth for this worker: clear the managed names before sourcing it,
+# then re-exec once so /proc and future children carry the effective values.
+unset \
+	COMMENT_CLASSIFIER_BACKEND \
+	COMMENT_CLASSIFIER_JEV_MODEL \
+	COMMENT_CLASSIFIER_JEV_TIMEOUT_MS \
+	COMMENT_CLASSIFIER_JEV_MIN_CONFIDENCE \
+	COMMENT_CLASSIFIER_JEV_LOG_ENABLED \
+	DOCICH_SEMANTIC_BACKEND \
+	DOCICH_JEV_ROUTE \
+	DOCICH_JEV_VERCEL_API_KEY \
+	TYPESAFE_API_KEY
 [ -f .env ] && set -a && . ./.env && set +a
+if [ "${CHAT_WORKER_ENV_REEXEC:-0}" != "1" ]; then
+	export CHAT_WORKER_ENV_REEXEC=1
+	exec /bin/bash "$SCRIPT_DIR/workers/chat_worker.sh" "$@"
+fi
+unset CHAT_WORKER_ENV_REEXEC
 
 # --- 共通ライブラリ ---
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 CHANNEL="${1:-azumagbanjo}"
 WORKER_NAME="chat_worker"
@@ -136,7 +156,8 @@ echo $$ > "$PID_FILE"
 (
 	while true; do
 		echo $$ >"$PID_FILE" 2>/dev/null || true
-		sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
+		# #970: forkless pid-file heartbeat (no per-interval `/bin/sleep`).
+		docich_poll_sleep "${WORKER_PID_HEARTBEAT_INTERVAL:-5}"
 	done
 ) &
 _HEARTBEAT_PID=$!
@@ -193,56 +214,8 @@ _consume_outbound_queue() {
 	return 0
 }
 
-# --- Clip queue 消化 ---
-_process_clip_queue() {
-	local queue_file
-	for queue_file in "$CLIP_QUEUE_DIR"/*.json; do
-		[ -f "$queue_file" ] || continue
-
-		# JSON パース
-		local event_msg game_id delay
-		eval "$(python3 -c "
-import json, sys, shlex
-d = json.load(open(sys.argv[1]))
-print(f'event_msg={shlex.quote(d.get(\"event_msg\",\"\"))}')
-print(f'game_id={shlex.quote(d.get(\"game_id\",\"\"))}')
-print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
-" "$queue_file" 2>/dev/null)" || {
-			_log "WARN: clip parse failed: $(basename "$queue_file") → skip"
-			mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
-			continue
-		}
-
-		# 同一ゲームのデデュプ (marker ベース)
-		if [ -n "$game_id" ]; then
-			local clip_marker="$TMP_MARKERS_DIR/.twitch_clip_game_${game_id}"
-			if ! mkdir "$clip_marker" 2>/dev/null; then
-				_log "clip skip: already claimed for game $game_id"
-				mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
-				continue
-			fi
-		fi
-
-		# delay 待機 (1秒単位で stop チェック)
-		if [ "${delay:-0}" -gt 0 ] 2>/dev/null; then
-			_log "clip waiting ${delay}s (game=${game_id:-?})"
-			local waited=0
-			while [ "$waited" -lt "$delay" ]; do
-				[ -f tmp/stop ] && return 0
-				sleep 1
-				waited=$((waited + 1))
-			done
-		fi
-
-		_log "clip creating: ${event_msg} (game=${game_id:-?})"
-		./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
-
-		mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
-	done
-
-	# done/ クリーンアップ (1時間超)
-	find "$CLIP_QUEUE_DONE_DIR" -name '*.json' -mmin +60 -delete 2>/dev/null || true
-}
+# Clip delivery is refreshed by eloop_lib.sh on each chat tick.
+source "$SCRIPT_DIR/lib/chat_clip_queue.sh"
 
 # --- IRC daemon の死活監視 ---
 _ensure_irc_daemon() {
@@ -325,7 +298,7 @@ while true; do
 	_sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
-		sleep 1
+		docich_poll_sleep 1
 		_sleep_remaining=$((_sleep_remaining - 1))
 	done
 done

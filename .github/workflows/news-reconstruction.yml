@@ -5,12 +5,35 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'broadcast/radio_engine.sh'
       - 'broadcast/radio_news.sh'
+      - 'broadcast/radio_news_priority.sh'
       - 'broadcast/radio_quality.sh'
       - 'broadcast/radio_state.sh'
+      - 'core/config.sh'
       - 'core/phyrogenetic.sh'
+      - 'lib/news_topic_filter.py'
+      - 'lib/fetch_google_headlines.py'
+      - 'lib/fetch_news.py'
+      - 'tests/test_jiji_headline_selection.py'
+      - 'tests/test_news_freshness.py'
+      - 'lib/news_filter.py'
+      - 'lib/news_priority.py'
+      - 'lib/radio_mixed_language.py'
+      - 'lib/radio_parser.py'
       - 'prompts/radio_news.md'
+      - 'prompts/radio_jiji.md'
+      - 'prompts/radio_jiji_research.md'
+      - 'tests/test_news_tragedy_policy.py'
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
+      - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_shared_history.py'
+      - 'tests/test_news_lane_event_dedup.sh'
+      - 'tests/test_news_political_priority.py'
+      - 'tests/test_news_political_priority.sh'
+      - 'tests/test_radio_mixed_language.py'
+      - 'tests/test_radio_mixed_language_repair.sh'
+      - 'tests/test_radio_parser.py'
+      - 'tests/test_docich_radio_native_consumer.sh'
       - 'tests/test_news_reconstruction_policy.sh'
       - '.github/workflows/news-reconstruction.yml'
   push:
@@ -19,12 +42,35 @@ on:
       - 'broadcast/radio_corners.sh'
       - 'broadcast/radio_engine.sh'
       - 'broadcast/radio_news.sh'
+      - 'broadcast/radio_news_priority.sh'
       - 'broadcast/radio_quality.sh'
       - 'broadcast/radio_state.sh'
+      - 'core/config.sh'
       - 'core/phyrogenetic.sh'
+      - 'lib/news_topic_filter.py'
+      - 'lib/fetch_google_headlines.py'
+      - 'lib/fetch_news.py'
+      - 'tests/test_jiji_headline_selection.py'
+      - 'tests/test_news_freshness.py'
+      - 'lib/news_filter.py'
+      - 'lib/news_priority.py'
+      - 'lib/radio_mixed_language.py'
+      - 'lib/radio_parser.py'
       - 'prompts/radio_news.md'
+      - 'prompts/radio_jiji.md'
+      - 'prompts/radio_jiji_research.md'
+      - 'tests/test_news_tragedy_policy.py'
       - 'tests/test_news_attribution_policy.sh'
       - 'tests/test_news_body_reconstruction.py'
+      - 'tests/test_news_event_dedup.py'
+      - 'tests/test_news_shared_history.py'
+      - 'tests/test_news_lane_event_dedup.sh'
+      - 'tests/test_news_political_priority.py'
+      - 'tests/test_news_political_priority.sh'
+      - 'tests/test_radio_mixed_language.py'
+      - 'tests/test_radio_mixed_language_repair.sh'
+      - 'tests/test_radio_parser.py'
+      - 'tests/test_docich_radio_native_consumer.sh'
       - 'tests/test_news_reconstruction_policy.sh'
       - '.github/workflows/news-reconstruction.yml'
 permissions:
@@ -36,7 +82,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
-      - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/phyrogenetic.sh
-      - run: python3 -m unittest -v tests.test_news_body_reconstruction
+      - run: bash -n broadcast/radio_corners.sh broadcast/radio_engine.sh broadcast/radio_news.sh broadcast/radio_news_priority.sh broadcast/radio_quality.sh broadcast/radio_state.sh core/config.sh core/phyrogenetic.sh tests/test_news_lane_event_dedup.sh tests/test_news_political_priority.sh tests/test_radio_mixed_language_repair.sh tests/test_docich_radio_native_consumer.sh
+      - run: python3 -m unittest -v tests.test_news_tragedy_policy tests.test_news_topic_filter tests.test_jiji_headline_selection tests.test_news_body_reconstruction tests.test_news_event_dedup tests.test_news_freshness tests.test_news_political_priority tests.test_news_shared_history
+      - run: python3 -m unittest -v tests.test_radio_mixed_language
+      - run: python3 -m unittest -v tests.test_radio_parser
+      - run: bash tests/test_news_lane_event_dedup.sh
+      - run: bash tests/test_news_political_priority.sh
       - run: bash tests/test_news_attribution_policy.sh
       - run: bash tests/test_news_reconstruction_policy.sh
+      - run: bash tests/test_radio_mixed_language_repair.sh
+      - run: bash tests/test_docich_radio_native_consumer.sh

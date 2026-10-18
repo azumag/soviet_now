@@ -6,14 +6,25 @@ import {
   readdirSync,
   rmSync,
   writeFileSync,
+  utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import {
   archiveCriticalTurnScreenshots,
   selectCriticalSnapshotNames,
 } from '../soren91/critical_turn_screenshots.mjs';
+
+// Match the runtime lifecycle: each game snapshots its strategy before capture.
+function makeGameBoundary(root, outputDir) {
+  const dir = join(root, 'strategy_snapshots');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${basename(outputDir)}_strategy.mjs`);
+  writeFileSync(path, '// fixed game strategy\n');
+  const beforeCapture = (Date.now() - 60_000) / 1000;
+  utimesSync(path, beforeCapture, beforeCapture);
+}
 
 function makeTurnNames(lastTurn) {
   return Array.from({ length: lastTurn + 1 }, (_, turn) => `turn_${String(turn).padStart(4, '0')}.png`);
@@ -36,6 +47,13 @@ function historyRecord(turn, { confidence = 0.9, risk = 0, clearance = 1 } = {})
   };
 }
 
+test('critical screenshot selection accepts JPEG turn evidence', () => {
+  assert.deepEqual(
+    selectCriticalSnapshotNames(['turn_0000.jpg', 'turn_0001.jpeg', 'turn_0002.png'], 3, []),
+    ['turn_0000.jpg', 'turn_0001.jpeg', 'turn_0002.png'],
+  );
+});
+
 test('critical turns take priority over the old early/middle/late sample', () => {
   assert.deepEqual(
     selectCriticalSnapshotNames(makeTurnNames(9), 3, [8, 2, 6]),
@@ -54,6 +72,7 @@ test('completed-game archive copies frames nearest the critical history turns', 
     const outputDir = join(root, 'game_0001');
     const historyFile = join(root, 'latest_0001.jsonl');
     mkdirSync(screenshotDir, { recursive: true });
+    makeGameBoundary(root, outputDir);
     for (const name of makeTurnNames(7)) writeFileSync(join(screenshotDir, name), name);
 
     const history = [
@@ -92,6 +111,7 @@ test('turn reset, skip, or duplicate suppresses ambiguous cross-session screensh
       const outputDir = join(root, 'game_0007');
       const historyFile = join(root, 'latest_0007.jsonl');
       mkdirSync(screenshotDir, { recursive: true });
+      makeGameBoundary(root, outputDir);
       for (const name of makeTurnNames(7)) writeFileSync(join(screenshotDir, name), name);
 
       const history = turns.map(turn => historyRecord(turn));
@@ -115,6 +135,7 @@ test('malformed history keeps bounded legacy sampling instead of dropping eviden
     const outputDir = join(root, 'game_0002');
     const historyFile = join(root, 'latest_0002.jsonl');
     mkdirSync(screenshotDir, { recursive: true });
+    makeGameBoundary(root, outputDir);
     for (const name of makeTurnNames(5)) writeFileSync(join(screenshotDir, name), name);
     writeFileSync(historyFile, '{not-json}\n');
 

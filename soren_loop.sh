@@ -111,6 +111,13 @@ rm -f tmp/stop
 # --- 共通ライブラリ読み込み ---
 source ./eloop_lib.sh
 
+# A committed same-game player snapshot is the only source that may override
+# the legacy existing policy for this process. Invalid/missing state remains
+# existing and never becomes an implicit JEV start.
+if command -v game_lifecycle_load_player_policy >/dev/null 2>&1; then
+	game_lifecycle_load_player_policy || true
+fi
+
 # --- グローバル状態 ---
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0
@@ -824,6 +831,9 @@ if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
 	_game_lifecycle_startup_rc=0
 	game_lifecycle_resume_pending || _game_lifecycle_startup_rc=$?
 	case "$_game_lifecycle_startup_rc" in
+	4)
+		log "[GAME-LIFECYCLE] startup 試合終了待ち → retryを送らず同じ盤面の操作を再開"
+		;;
 	0)
 		STOP_REQUESTED=1
 		trap - EXIT
@@ -846,17 +856,21 @@ if command -v game_lifecycle_resume_pending >/dev/null 2>&1; then
 fi
 
 # MOVE状態待ち
-# 起動直後に前回試合の STOP/GAMEOVER が残っている場合は、ただ MOVE を待つと
+# 起動直後に前回試合の GAMEOVER が残っている場合は、ただ MOVE を待つと
 # retry が送られず停止したように見えるため、明示的に次ゲームへ進める。
-if is_game_over; then
-	log "[STARTUP] GAMEOVER/STOP 検出 → retry送信"
+if [ "${_game_lifecycle_startup_rc:-1}" -eq 4 ]; then
+	# Boundary waiting is not a completed game. The player observes the live
+	# board again, even if its transient STOP state outlasts wait_for_move.
+	wait_rc=0
+elif is_game_over; then
+	log "[STARTUP] GAMEOVER 検出 → retry送信"
 	send_retry
 	wait_rc=$?
 else
 	wait_for_move
 	wait_rc=$?
 	if [ "$wait_rc" -ne 0 ] && is_game_over; then
-		log "[STARTUP] MOVE待機中に GAMEOVER/STOP 検出 → retry送信"
+		log "[STARTUP] MOVE待機中に GAMEOVER 検出 → retry送信"
 		send_retry
 		wait_rc=$?
 	fi
@@ -891,6 +905,14 @@ while true; do
 	if ! source ./eloop_lib.sh 2>/dev/null; then
 		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で継続)"
 	fi
+
+	# committed player snapshot も毎試合再読込する。JEV corner の player 切替は
+	# 試合境界で commit されるが、長命 loop は起動時にしか snapshot を読まない。
+	# ここで読むことで loop を再起動せずに次の試合から policy を反映する
+	# （snapshot 不正/欠損は関数内で existing へ fail-closed）。
+	if command -v game_lifecycle_load_player_policy >/dev/null 2>&1; then
+		game_lifecycle_load_player_policy || true
+	fi
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
@@ -907,7 +929,8 @@ while true; do
 	check_and_harvest_improvement
 	queue_early_escape_lock_if_needed || true
 
-	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
+	# 明示的な運用停止フラグがある場合だけ strategy を止め、コメント系を維持する。
+	# ソ連建国そのものでは自動停止しない。
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] strategy停止中: コメント返し/読み上げのみ継続"
 		sleep 5
@@ -1093,6 +1116,21 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 	post_game_bookkeeping
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
+	if [ "${LAST_PLAYER_POLICY:-existing}" = "jev" ]; then
+		rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
+		case "$post_rc" in
+		2|3)
+			log "[JEV] 試合境界後の lifecycle が未完了 (rc=$post_rc)。通常の次ゲーム/回帰を開始せず停止"
+			STOP_REQUESTED=1
+			trap - EXIT
+			exit 75
+			;;
+		esac
+		log "[JEV] 実験試合を終了。通常の改善・回帰・次ゲームを開始しない"
+		STOP_REQUESTED=1
+		trap - EXIT
+		exit 0
+	fi
 	_evolution_flow_notify \
 		"game_finished" \
 		"game finished" \
@@ -1112,7 +1150,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		cleanup_tmp_files
 	fi
 
-	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
+	# 明示的な運用停止フラグがある場合だけ retry/次ゲーム操作を止める。
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 		log "[HALT] retry・次ゲーム操作を停止"

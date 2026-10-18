@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 [ -f .env ] && set -a && . ./.env && set +a
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 WORKER_NAME="poll_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
@@ -372,7 +373,7 @@ while true; do
 	_sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
-		sleep 1
+		docich_poll_sleep 1
 		_sleep_remaining=$((_sleep_remaining - 1))
 	done
 done

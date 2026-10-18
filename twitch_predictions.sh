@@ -66,6 +66,10 @@ if [ "${EXPLORE_MODE:-0}" = "1" ]; then
 fi
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
+# docich 予想王 (#933): resolve した Helix row を bounded に引き渡すファイル。
+# 台帳の所有者は docich 側で、ここは追記のみ。形式は tools/prediction_resolved.py と
+# docich src/docich/soren_predictions.py が同じ契約を読む。
+PREDICTION_RESOLVED_HANDOFF_FILE="${TMP_STATE_DIR}/prediction_resolved.jsonl"
 # MIN_GAMES_BEFORE_IMPROVE 解決: 環境変数 (soren_loop の hot-reload export) を
 # 最優先、次に .env のリテラル、次に config.sh、最後に 12。
 # set_toggle.sh によるサイクル変更に予想チャットも追従させる。
@@ -74,6 +78,83 @@ _cfg_min_games=$(sed -n 's/^[[:space:]]*MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1
 _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-48}"
 case "$PREDICTION_MAX_GAMES" in ''|*[!0-9]*|0) PREDICTION_MAX_GAMES=48 ;; esac
+
+_prediction_create_context_allowed() {
+	[ "$_cfg_min_games" = "48" ] || {
+		_log "SKIP: prediction create requires the 48-game improvement cycle"
+		return 1
+	}
+	[ "$PREDICTION_MAX_GAMES" = "48" ] || {
+		_log "SKIP: prediction create requires a 48-game prediction window"
+		return 1
+	}
+	local improve_state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR}/improve_state.json}"
+	local improve_status=""
+	if [ -f "$improve_state_file" ]; then
+		improve_status=$(python3 - "$improve_state_file" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        state = json.load(handle) or {}
+    print(state.get("status", "") or "")
+except Exception:
+    print("invalid")
+PY
+)
+		case "$improve_status" in
+		running)
+			_log "SKIP: prediction create blocked while improvement is running"
+			return 1
+			;;
+		invalid)
+			_log "SKIP: prediction create blocked by invalid improvement state"
+			return 1
+			;;
+		esac
+	fi
+	local improve_lock_file="${IMPROVE_LOCK_FILE:-tmp/improve.lock}"
+	[ ! -f "$improve_lock_file" ] || {
+		_log "SKIP: prediction create blocked while improvement lock exists"
+		return 1
+	}
+	local hot_streak_pending_file="${HOT_STREAK_PREDICTION_PENDING_FILE:-${TMP_STATE_DIR}/hot_streak_prediction_pending}"
+	[ ! -f "$hot_streak_pending_file" ] || {
+		_log "SKIP: prediction create blocked while hot-streak prediction is pending"
+		return 1
+	}
+	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
+	[ ! -f "$state_file" ] || {
+		_log "SKIP: prediction create blocked while A/B test state exists"
+		return 1
+	}
+	[ -z "${SOREN_AB_ALT_STRATEGY:-}" ] || {
+		_log "SKIP: prediction create blocked while A/B runtime toggle exists"
+		return 1
+	}
+	local acc_file="${ACCUMULATED_GAMES_FILE:-${TMP_STATE_DIR}/accumulated_games.json}"
+	local acc_count
+	acc_count=$(python3 - "$acc_file" <<'PY' 2>/dev/null
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.exists():
+    print(0)
+    raise SystemExit(0)
+try:
+    print(int((json.loads(path.read_text(encoding="utf-8")) or {}).get("count", 0) or 0))
+except Exception:
+    print("invalid")
+PY
+)
+	case "$acc_count" in
+	0) return 0 ;;
+	*)
+		_log "SKIP: prediction create requires an empty improvement accumulator (count=${acc_count:-unknown})"
+		return 1
+		;;
+	esac
+}
+
 # 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
 # Twitch Predictions API の上限は1800秒。改善サイクルが45試合を超える場合も、
 # 受付時間だけはAPIの上限内へ丸め、予想の解決stateはサイクル完了まで保持する。
@@ -203,16 +284,28 @@ _recover_remote_active_prediction() {
 	remote_json=$(cat "$response_file" 2>/dev/null || true)
 	rm -f "$response_file"
 	prediction_id=$(python3 - "$remote_json" <<'PY' 2>/dev/null
-import json, sys
+import json, re, sys
 try:
     data = json.loads(sys.argv[1])
 except Exception:
     raise SystemExit(1)
-for pred in data.get("data", []):
-    if pred.get("status") not in {"ACTIVE", "LOCKED"}:
+# SOREN_REMOTE_PREDICTION_OWNERSHIP_V1: never adopt another corner's wager.
+if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+    raise SystemExit(1)
+expected = ["建国なし", "ロシア建国(ソ連不成立)", "ソ連建国", "粛清"]
+for pred in data["data"]:
+    if not isinstance(pred, dict) or pred.get("status") not in {"ACTIVE", "LOCKED"}:
         continue
-    outcomes = [str(item.get("id", "")) for item in pred.get("outcomes", []) if item.get("id")]
-    if len(outcomes) < 2 or not pred.get("id"):
+    title, items = pred.get("title"), pred.get("outcomes")
+    if (not isinstance(title, str) or not re.fullmatch(r"次の[1-9][0-9]{0,3}試合で建国できる？", title)
+            or not isinstance(items, list) or len(items) != 4
+            or not all(isinstance(item, dict) for item in items)
+            or [item.get("title") for item in items] != expected):
+        continue
+    outcomes = [item.get("id") for item in items]
+    if (not isinstance(pred.get("id"), str) or not 1 <= len(pred["id"]) <= 128
+            or not all(isinstance(value, str) and 1 <= len(value) <= 128 for value in outcomes)
+            or len(set(outcomes)) != 4):
         continue
     print(json.dumps({"prediction_id": pred["id"], "outcome_ids": outcomes,
                       "game_num": 0, "created_at": 0, "recovered": True}, ensure_ascii=False))
@@ -278,6 +371,18 @@ if reasons:
 PY
 }
 
+_record_resolved_prediction_handoff() {
+	# 予想王 (#933): resolve の PATCH 応答 row を docich の台帳記録用に引き渡す。
+	# 失敗しても resolve 自体は成功のまま扱う（警告のみ）。docich 側が台帳を書く。
+	local response_file="$1"
+	[ -s "$response_file" ] || return 0
+	if python3 tools/prediction_resolved.py "$response_file" --target "$PREDICTION_RESOLVED_HANDOFF_FILE" >/dev/null 2>&1; then
+		return 0
+	fi
+	_log "WARN: prediction resolved handoff unavailable"
+	return 0
+}
+
 _resolve_prediction_with_best_outcome() {
 	# stale な予想を best_outcome で resolve する (未記録なら「建国なし」= index 0)
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
@@ -326,6 +431,7 @@ print(json.dumps({
 		rm -f "$response_file"
 		return 1
 	fi
+	_record_resolved_prediction_handoff "$response_file"
 	rm -f "$response_file"
 	_prediction_retry_clear resolve
 	python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
@@ -420,6 +526,67 @@ for item in data.get("data", []):
 
 raise SystemExit(1)
 PY
+}
+
+# 賭けが入った選択肢 (users / channel_points が正の outcome) の数を stdout に返す。
+# リモート取得または件数判定に失敗したら終了ステータス 1 を返し、呼び出し側は
+# 現行どおり resolve する (settle を新しい理由で止めない)。
+_contested_outcome_count() {
+	local prediction_id="$1"
+	local remote_json=""
+	remote_json=$(_fetch_remote_prediction_json "$prediction_id") || return 1
+	python3 - "$remote_json" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    row = json.loads(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+outcomes = row.get("outcomes")
+if not isinstance(outcomes, list) or not outcomes:
+    raise SystemExit(1)
+counted = 0
+known = 0
+for outcome in outcomes:
+    if not isinstance(outcome, dict):
+        raise SystemExit(1)
+    for key in ("users", "channel_points"):
+        value = outcome.get(key)
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        known += 1
+        if value > 0:
+            counted += 1
+            break
+if known == 0:
+    raise SystemExit(1)
+print(counted)
+PY
+}
+
+# リモート予想を CANCELED にして投票済みのチャンネルポイントを返却する。
+# 成功時 0、失敗時 1 (状態の後始末は呼び出し側が行う)。
+_patch_prediction_cancel() {
+	local prediction_id="$1"
+	[ -n "$prediction_id" ] || return 1
+	local payload=""
+	payload=$(
+		python3 - "$BROADCASTER_ID" "$prediction_id" <<'PY'
+import json
+import sys
+
+bid, pid = sys.argv[1], sys.argv[2]
+print(json.dumps({"broadcaster_id": bid, "id": pid, "status": "CANCELED"}))
+PY
+	) || return 1
+	curl -sf --max-time 15 -X PATCH \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		-H "Content-Type: application/json" \
+		-d "$payload" >/dev/null 2>&1 || return 1
+	return 0
 }
 
 _sync_prediction_state_with_remote() {
@@ -595,6 +762,9 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
+	if ! _prediction_create_context_allowed; then
+		exit 0
+	fi
 	if _prediction_retry_active create; then
 		_log "SKIP: prediction create retry backoff active ($(_prediction_retry_remaining create)s)"
 		exit 0
@@ -704,7 +874,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。A/B共通で数えます。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。A/B候補の不採用は粛清に含みません。" "predictions"
+	enqueue_chat_message "チャネルポイント予想スタート！「次の${PREDICTION_MAX_GAMES}試合で建国できる？」投票受付中（${_window_display}）。${_prediction_display}。募集前から進行中の試合は対象外です。 ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}試合終了時にソ連不成立なら的中。" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
@@ -740,6 +910,33 @@ PY
 		_log "WARN: invalid state file"
 		rm -f "$PREDICTION_STATE_FILE"
 		exit 1
+	fi
+
+	# 賭けが成立していない予想 (賭けが入った選択肢が1つ以下) は勝者を出さず、
+	# CANCEL にして投票済みのチャンネルポイントを全額返却する。
+	# 判定不能・リモート取得失敗のときは現行どおり resolve する (settle を止めない)。
+	contested=""
+	if contested=$(_contested_outcome_count "$PREDICTION_ID"); then
+		case "$contested" in '' | *[!0-9]*) contested="" ;; esac
+	else
+		contested=""
+	fi
+	if [ -z "$contested" ]; then
+		_log "WARN: prediction outcome counts unavailable; resolving as before"
+	elif [ "$contested" -le 1 ]; then
+		if _patch_prediction_cancel "$PREDICTION_ID"; then
+			_log "prediction canceled: no contest (outcomes_with_bets=${contested})"
+			rm -f "$PREDICTION_STATE_FILE"
+			_prediction_retry_clear resolve
+			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
+			exit 0
+		fi
+		if _sync_prediction_state_with_remote; then
+			_log "WARN: no-contest cancel failed, but remote sync cleared local state"
+			_prediction_retry_clear resolve
+			exit 0
+		fi
+		_log "WARN: no-contest cancel failed; resolving as before"
 	fi
 
 	payload=$(
@@ -782,6 +979,7 @@ PY
 		rm -f "$response_file"
 		exit 1
 	fi
+	_record_resolved_prediction_handoff "$response_file"
 	rm -f "$response_file"
 	_prediction_retry_clear resolve
 
@@ -832,26 +1030,7 @@ cancel)
 		exit 1
 	fi
 
-	payload=$(
-		python3 - "$BROADCASTER_ID" "$PREDICTION_ID" <<'PY'
-import json, sys
-bid, pid = sys.argv[1], sys.argv[2]
-print(json.dumps({
-    "broadcaster_id": bid,
-    "id": pid,
-    "status": "CANCELED"
-}))
-PY
-	)
-
-	curl -sf --max-time 15 -X PATCH \
-		"https://api.twitch.tv/helix/predictions" \
-		-H "Authorization: Bearer ${TOKEN}" \
-		-H "Client-Id: ${CLIENT_ID}" \
-		-H "Content-Type: application/json" \
-		-d "$payload" >/dev/null 2>&1
-
-	if [ $? -ne 0 ]; then
+	if ! _patch_prediction_cancel "$PREDICTION_ID"; then
 		if _sync_prediction_state_with_remote; then
 			_log "WARN: prediction cancel failed, but remote sync cleared local state"
 			exit 0

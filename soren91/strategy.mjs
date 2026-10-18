@@ -206,6 +206,56 @@ function boardStructure(pieces, columns) {
   return { meanHeight, roughness, pocketPenalty, maxTop, highMass, uncertain, pairPotential, splitPenalty };
 }
 
+// #605: an exposed same-type pair that a future same-type piece can still reach
+// is a merge lane. Wedging a *different* type over the gap entry leaves both
+// pieces on the board while closing that lane, so such a move must lose to an
+// equal-risk move that keeps the entry open.
+function exposedPairLanes(pieces) {
+  const exposed = exposedPieces(pieces);
+  const byType = new Map();
+  for (const p of exposed) {
+    if (p.type >= 15) continue;
+    if (!byType.has(p.type)) byType.set(p.type, []);
+    byType.get(p.type).push(p);
+  }
+  const lanes = [];
+  for (const [type, group] of byType) {
+    if (group.length < 2) continue;
+    const reach = TYPE_RADII[type] * 2 + 1.0;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i];
+        const b = group[j];
+        const lo = Math.min(a.x, b.x);
+        const hi = Math.max(a.x, b.x);
+        if (hi - lo <= 0 || hi - lo > reach) continue;
+        const top = Math.min(a.y + a.r, b.y + b.r);
+        const bottom = Math.max(a.y - a.r, b.y - b.r);
+        if (bottom >= top) continue;
+        lanes.push({ type, lo, hi, top, bottom });
+      }
+    }
+  }
+  return lanes;
+}
+
+// A move buries a lane when the piece lands inside the gap and its top reaches
+// the pair's top: the entry is covered from above instead of left open. A piece
+// of the lane's own type is never a burial — that is the merge the lane waits
+// for, so those lanes are skipped.
+function laneBurialCount(move, lanes) {
+  if (lanes.length === 0) return 0;
+  const type = move.placed?.type;
+  let buried = 0;
+  for (const lane of lanes) {
+    if (lane.type === type) continue;
+    if (!(lane.lo + 0.25 < move.x && move.x < lane.hi - 0.25)) continue;
+    if (move.peak < lane.top - 0.25) continue;
+    buried++;
+  }
+  return buried;
+}
+
 function evaluate(pieces, piece, x, garbage) {
   const sim = simulateDrop(pieces, piece, x, garbage.columns);
   const structure = boardStructure(sim.pieces, garbage.columns);
@@ -318,12 +368,14 @@ function compareRootAdmission(a, b) {
   return a.risk - b.risk
     || (a.risk === 2 ? b.clearance - a.clearance : 0)
     || a.reservationRank - b.reservationRank
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || compareMove(a, b);
 }
 
 function comparePath(a, b) {
   return a.pathRisk - b.pathRisk
     || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || b.totalValue - a.totalValue
     || b.minClearance - a.minClearance
     || compareMove(a.root, b.root);
@@ -337,6 +389,7 @@ function compareReservedPath(a, b) {
   return a.pathRisk - b.pathRisk
     || (a.pathRisk === 2 ? b.minClearance - a.minClearance : 0)
     || a.reservationRank - b.reservationRank
+    || a.pairLaneBurialRank - b.pairLaneBurialRank
     || b.totalValue - a.totalValue
     || b.minClearance - a.minClearance
     || compareMove(a.root, b.root);
@@ -344,8 +397,17 @@ function compareReservedPath(a, b) {
 
 function search(board, piece, queue, garbage) {
   const reservation = knownFutureMergeReservation(board, queue, garbage.columns);
+  const lanes = exposedPairLanes(board);
   const roots = candidates(board, piece, garbage.columns)
-    .map(x => annotateReservation(evaluate(board, piece, x, garbage), reservation, garbage.columns))
+    .map(x => {
+      const move = evaluate(board, piece, x, garbage);
+      const buried = laneBurialCount(move, lanes);
+      return {
+        ...annotateReservation(move, reservation, garbage.columns),
+        pairLaneBurials: buried,
+        pairLaneBurialRank: buried > 0 ? 1 : 0,
+      };
+    })
     .sort(compareRootAdmission);
   const bestRootRisk = roots[0].risk;
   let beam = roots.filter(r => r.risk === bestRootRisk).slice(0, ROOT_BEAM).map(root => ({
@@ -357,6 +419,7 @@ function search(board, piece, queue, garbage) {
     reservationRank: root.reservationRank,
     reservationStatus: root.reservationStatus,
     reservationFulfilled: root.reservationStatus === 'consumed',
+    pairLaneBurialRank: root.pairLaneBurialRank,
     nodes: 1,
   }));
   let expanded = beam.length;
@@ -394,6 +457,7 @@ function search(board, piece, queue, garbage) {
           reservationRank: beforeTarget && !state.reservationFulfilled ? move.reservationRank : state.reservationRank,
           reservationStatus: beforeTarget && !state.reservationFulfilled ? move.reservationStatus : state.reservationStatus,
           reservationFulfilled: fulfilled,
+          pairLaneBurialRank: state.pairLaneBurialRank,
           nodes: state.nodes + 1,
         });
       }
@@ -419,7 +483,88 @@ function search(board, piece, queue, garbage) {
     reservationDepth: reservation?.depth ?? 0,
     reservationType: reservation?.type ?? null,
     reservationBeforeMergeValue: reservation?.mergeValue ?? 0,
+    pairLaneBurials: winner.root.pairLaneBurials,
+    pairLaneBurialAvoided: winner.root.pairLaneBurials === 0
+      && roots.some(r => r.pairLaneBurials > 0),
   };
+}
+
+const UNSUPPORTED_HIGH_MIN_TOP = DEADLINE - WARNING_MARGIN * 2;
+const SUPPORT_GAP = TYPE_RADII[1] + 0.015;
+const IMPOSSIBLE_HIGH_OVERLAP_MARGIN = 0.04;
+
+/**
+ * Ignore a low-certainty member of a detached high pair only when it contains
+ * positive evidence that it cannot be a settled board state. In particular,
+ * a same-type pair that penetrates substantially while one member is below
+ * the normal certainty threshold is consistent with a duplicated cursor/
+ * transient detector observation. Mere lack of an observed support chain is
+ * not enough: a single isolated high piece stays risk-bearing. Impossible
+ * overlap proves that the pair is inconsistent, not that both pieces are
+ * ghosts, so the certain member must remain in geometry and risk evaluation.
+ */
+function filterUnsupportedHighObservations(pieces, columns = []) {
+  const supported = new Set();
+  const supportedBySurface = p => {
+    const bottom = p.y - p.r;
+    if (bottom <= FLOOR + SUPPORT_GAP) return true;
+    for (const c of columns) {
+      if (![c?.left, c?.right, c?.top].every(Number.isFinite) || c.left > c.right) continue;
+      if (p.x + p.r < c.left - SUPPORT_GAP || p.x - p.r > c.right + SUPPORT_GAP) continue;
+      if (Math.abs(bottom - c.top) <= SUPPORT_GAP) return true;
+    }
+    return false;
+  };
+
+  for (let i = 0; i < pieces.length; i++) {
+    if (supportedBySurface(pieces[i])) supported.add(i);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < pieces.length; i++) {
+      if (supported.has(i)) continue;
+      const p = pieces[i];
+      for (const j of supported) {
+        const q = pieces[j];
+        if (q.y > p.y + SUPPORT_GAP) continue;
+        if (Math.hypot(p.x - q.x, p.y - q.y) <= p.r + q.r + SUPPORT_GAP) {
+          supported.add(i);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  const unsupportedHigh = [];
+  for (let i = 0; i < pieces.length; i++) {
+    if (pieces[i].y + pieces[i].r >= UNSUPPORTED_HIGH_MIN_TOP && !supported.has(i)) {
+      unsupportedHigh.push(i);
+    }
+  }
+  if (supported.size === 0 || unsupportedHigh.length < 2 || unsupportedHigh.length > 3) {
+    return pieces;
+  }
+
+  const ignored = new Set();
+  for (let a = 0; a < unsupportedHigh.length; a++) {
+    const i = unsupportedHigh[a];
+    const p = pieces[i];
+    for (let b = a + 1; b < unsupportedHigh.length; b++) {
+      const j = unsupportedHigh[b];
+      const q = pieces[j];
+      if (p.type <= 0 || p.type !== q.type) continue;
+      const penetration = p.r + q.r - Math.hypot(p.x - q.x, p.y - q.y);
+      if (penetration < IMPOSSIBLE_HIGH_OVERLAP_MARGIN) continue;
+      const lowConfidence = Math.min(certainty(p), certainty(q));
+      const highConfidence = Math.max(certainty(p), certainty(q));
+      if (!(lowConfidence < 0.6 && highConfidence >= 0.6)) continue;
+      ignored.add(certainty(p) < 0.6 ? i : j);
+    }
+  }
+  if (ignored.size === 0) return pieces;
+  return pieces.filter((_p, i) => !ignored.has(i));
 }
 
 function reserveValue(piece, board) {
@@ -434,7 +579,7 @@ export function decide(boardState) {
   if (!boardState || !Array.isArray(boardState.pieces) || boardState.pieces.length > 256) {
     throw new TypeError('Unusable Soren91 board observation');
   }
-  const pieces = boardState.pieces.map(p => normalizePiece(p, true));
+  const observedPieces = boardState.pieces.map(p => normalizePiece(p, true));
   const current = normalizePiece(boardState.next);
   if (certainty(current) < 0.5) throw new TypeError('Uncertain Soren91 current piece');
 
@@ -443,6 +588,8 @@ export function decide(boardState) {
     gauge: Number.isFinite(boardState.garbage?.gauge) ? boardState.garbage.gauge : 0,
     columns: Array.isArray(boardState.garbage?.columns) ? boardState.garbage.columns.slice(0, 64) : [],
   };
+  const pieces = filterUnsupportedHighObservations(observedPieces, garbage.columns);
+  const ignoredUnsupportedHigh = observedPieces.length - pieces.length;
 
   const normal = search(pieces, current, knownQueue(boardState.nextPieces, 1), garbage);
   let chosen = normal;
@@ -500,6 +647,9 @@ export function decide(boardState) {
       reservationDepth: chosen.reservationDepth ?? 0,
       reservationType: chosen.reservationType ?? null,
       reservationBeforeMergeValue: chosen.reservationBeforeMergeValue ?? 0,
+      pairLaneBurials: chosen.pairLaneBurials ?? 0,
+      pairLaneBurialAvoided: Boolean(chosen.pairLaneBurialAvoided),
+      ignoredUnsupportedHigh,
     },
   };
 }

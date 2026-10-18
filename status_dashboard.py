@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import statistics
 from datetime import datetime, timezone, timedelta
 from collections import Counter
 from glob import glob
@@ -24,6 +25,12 @@ from lib.country_names import (
     country_name,
     country_named_reason,
     last_drop_turn_country_label,
+)
+from lib.docich_corner_stats import load_active_corner
+from lib.strategy_archive import (
+    candidate_paths as _sa_candidates,
+    find_path as _sa_find_path,
+    is_runtime_stable as _sa_is_runtime_stable,
 )
 
 W = 57
@@ -154,7 +161,14 @@ def truncate_ansi_display(text, max_width):
 
 
 def fit_dashboard_lines(lines, width=W):
-    return [truncate_ansi_display(line, width) for line in lines]
+    # Bounded, sanitized projection records are machine-readable data for the
+    # dedicated large-type cards, not terminal rows. Never truncate their names.
+    prefixes = (
+        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃意図:', '  余白交戦HP:',
+        '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+        '  出撃意図:',
+    )
+    return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
 
 def gradient_color(val, lo, hi):
@@ -431,14 +445,29 @@ def played_ab_arm(ab, snapshot_path=None):
     return "", ""
 
 
+def displayed_ab_arm(ab):
+    """Return the already-resolved A/B arm when the caller has cached it.
+
+    ``status_dashboard.py`` renders several panels in one pass.  The live arm
+    is resolved from the game snapshot once in ``render_dashboard_text`` and shared with those
+    panels so a slow or failing hash subprocess cannot make the panels disagree.
+    Direct callers (including tests) still resolve it through ``played_ab_arm``.
+    """
+    if isinstance(ab, dict) and "_played_hash" in ab and "_played_arm" in ab:
+        return str(ab.get("_played_hash") or ""), str(ab.get("_played_arm") or "")
+    return played_ab_arm(ab)
+
+
 def load_restorable_hashes():
     restorable = set()
 
     for archive_dir in (STRATEGY_HASH_ARCHIVE_DIR, STRATEGY_HASH_PERMANENT_ARCHIVE_DIR):
         by_hash_dir = Path(archive_dir)
         if by_hash_dir.exists():
-            for f in by_hash_dir.glob("*.py"):
-                restorable.add(f.stem)
+            # Phase A: `.py` と `.py.gz` の両方を復元可能 hash として数える。
+            for f in list(by_hash_dir.glob("*.py")) + list(by_hash_dir.glob("*.py.gz")):
+                name = f.name[:-3] if f.name.endswith(".gz") else f.name
+                restorable.add(Path(name).stem)
     return restorable
 
 
@@ -561,6 +590,50 @@ def ab_gate_schedule(env_path=None):
             max_blocks = int(raw)
         except ValueError:
             pass
+    return tuple(sorted(looks)), max_blocks
+
+
+def ab_gate_schedule_from_state(state, env_path=None):
+    """Resolve the dashboard schedule from the same frozen contract as the gate.
+
+    Versioned experiments freeze their decision rule in ab_state.json. Once a
+    state declares rule version >= 2, live .env changes must not alter the
+    dashboard's remaining-games display. Legacy states intentionally keep the
+    historical .env behavior.
+    """
+    if not isinstance(state, dict):
+        return ab_gate_schedule(env_path)
+    rule = state.get("decision_rule")
+    try:
+        version = int(
+            state.get("decision_rule_version")
+            or ((rule or {}).get("version") if isinstance(rule, dict) else 0)
+            or 0
+        )
+    except (TypeError, ValueError):
+        version = 0
+    if version < 2:
+        return ab_gate_schedule(env_path)
+
+    # A versioned state is fail-closed against live config drift: missing or
+    # malformed frozen fields fall back to code defaults, never to .env.
+    looks = AB_DEFAULT_LOOKS
+    max_blocks = AB_DEFAULT_MAX_BLOCKS
+    if isinstance(rule, dict):
+        raw_looks = rule.get("looks")
+        if raw_looks is not None:
+            try:
+                parsed = tuple(int(x) for x in raw_looks)
+            except (TypeError, ValueError):
+                parsed = ()
+            if parsed:
+                looks = parsed
+        raw_max = rule.get("max_blocks")
+        if raw_max is not None:
+            try:
+                max_blocks = int(raw_max)
+            except (TypeError, ValueError):
+                pass
     return tuple(sorted(looks)), max_blocks
 
 
@@ -805,7 +878,7 @@ def load_ab_progress(state_path=AB_STATE_FILE, games_path=AB_GAMES_FILE,
     # 残り試合数。ADOPT は look でしか出ないので「次の採用判定まで」と、
     # 強制決着 (最終 look = max_blocks) までの「最長」を出す。害/無益による
     # 早期打ち切りは毎試合判定されるため、これは上限であって確定値ではない。
-    looks, max_blocks = ab_gate_schedule(env_path)
+    looks, max_blocks = ab_gate_schedule_from_state(state, env_path)
     done_blocks = ab_complete_blocks(rows, pattern, primary)
     if done_blocks is None:
         next_look = None
@@ -1785,33 +1858,24 @@ def load_archive_restart_candidate():
     allow_origin_retry = os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}
 
     def find_archive_path(hash_value):
-        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        dirs = [STRATEGY_HASH_ARCHIVE_DIR]
         if include_permanent:
-            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
-        for path in candidates:
-            if path.exists():
-                try:
-                    if "BEGIN DEADLINE GUARD" not in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
-                        continue
-                except Exception:
-                    continue
-                return path
-        return None
+            dirs.append(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR)
+        # Phase A: `.py.gz` → `.py` を透過的に解決する。
+        found = _sa_find_path(hash_value, dirs, _sa_is_runtime_stable)
+        return Path(found) if found else None
 
     def archive_path_blocker(hash_value):
-        candidates = [Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_value}.py")]
+        dirs = [STRATEGY_HASH_ARCHIVE_DIR]
         if include_permanent:
-            candidates.append(Path(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR, f"{hash_value}.py"))
+            dirs.append(STRATEGY_HASH_PERMANENT_ARCHIVE_DIR)
         saw_file = False
-        for path in candidates:
-            if not path.exists():
+        for path in _sa_candidates(hash_value, dirs):
+            if not os.path.exists(path):
                 continue
             saw_file = True
-            try:
-                if "BEGIN DEADLINE GUARD" in path.read_text(encoding="utf-8", errors="ignore")[:200000]:
-                    return ""
-            except Exception:
-                continue
+            if _sa_is_runtime_stable(path):
+                return ""
         return "unstable" if saw_file else "miss"
 
     def is_cooled_down(hash_value):
@@ -2129,7 +2193,7 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
     # A/B 中は root (strategy.py) が B 腕の試合でも書き換わらないので、そのまま
     # 出すと「ずっと A のハッシュ」に見えて実際に打っている戦略と食い違う。
     # 実測できた場合だけ、打っている腕のハッシュと [A]/[B] を出す。
-    played_hash, played_arm = played_ab_arm(ab)
+    played_hash, played_arm = displayed_ab_arm(ab)
     hash_short = (played_hash or strat_hash)[:8] if (played_hash or strat_hash) else "?"
     ver_num = ""
     if strat_ver and strat_ver != "?":
@@ -2211,8 +2275,13 @@ def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
             ab_n_b = int(ab.get("n_b") or 0)
         except (TypeError, ValueError):
             ab_n_b = 0
-        ab_raw = f" A/B: A {a8} vs B {b8} n={ab_n}"
-        ab_disp = ab_raw
+        now_raw = f" now={played_arm}" if played_arm else ""
+        now_disp = ""
+        if played_arm:
+            arm_color = C_GREEN if played_arm == "B" else C_CYAN
+            now_disp = f" now={arm_color}{played_arm}{RST}"
+        ab_raw = f" A/B:{now_raw} A {a8} vs B {b8} n={ab_n}"
+        ab_disp = f" A/B:{now_disp} A {a8} vs B {b8} n={ab_n}"
         counts_raw = f"(A{ab_n_a}/B{ab_n_b})"
         if len(ab_raw) + len(counts_raw) <= inner:
             ab_raw += counts_raw
@@ -2427,7 +2496,7 @@ def _colorize_plot_row(chars, colors):
     return "".join(out)
 
 
-def _render_timeline_grid(samples, width, height, lo, hi):
+def _render_timeline_grid(samples, width, height, lo, hi, *, lower_is_better=False):
     """Render ordered samples as a readable polyline colored by score value."""
     grid = [[" "] * width for _ in range(height)]
     color_grid = [[None] * width for _ in range(height)]
@@ -2442,11 +2511,15 @@ def _render_timeline_grid(samples, width, height, lo, hi):
     for index, value in enumerate(samples):
         x = round(index * (width - 1) / max(len(samples) - 1, 1))
         normalized = min(max((value - lo) / score_range, 0), 1)
+        if lower_is_better:
+            normalized = 1 - normalized
         y = height - 1 - round(normalized * (height - 1))
         points.append((x, y))
 
     for index, ((x0, y0), (x1, y1)) in enumerate(zip(points, points[1:])):
         seg_val = (samples[index] + samples[index + 1]) / 2
+        if lower_is_better:
+            seg_val = hi + lo - seg_val
         seg_color = gradient_color(seg_val, lo, hi)
         _draw_timeline_segment(grid, x0, y0, x1, y1, seg_color, color_grid)
     marker_step = max(len(points) // 8, 1)
@@ -2455,24 +2528,26 @@ def _render_timeline_grid(samples, width, height, lo, hi):
             continue
         if 0 <= y < height and 0 <= x < width:
             grid[y][x] = "*"
-            color_grid[y][x] = gradient_color(samples[index], lo, hi)
+            value = hi + lo - samples[index] if lower_is_better else samples[index]
+            color_grid[y][x] = gradient_color(value, lo, hi)
     return ["".join(row) for row in grid], color_grid
 
 
-def render_score_timeline(scores, chart_w=42, chart_h=7):
+def render_score_timeline(scores, chart_w=42, chart_h=7, *, min_samples=3, lower_is_better=False):
     """Render the score history as a browser-safe text timeline.
 
     The graph keeps a y-scale and an explicit left-to-right ``old -> now``
     direction while avoiding Braille glyphs, which become dense blocks in the
     tiny OBS/browser feed.
     """
-    label_w = 5  # "XXXXX"
+    label_w = max(5, max((len(str(s)) for s in scores[-100:]), default=0))
     width = max(int(chart_w), 1)
     height = max(int(chart_h), 3)
     sep = "│"
     heading = f"  {BOLD}Score Timeline{RST}"
 
-    if len(scores) < 3:
+    width = min(width, max(1, W - label_w - 1))
+    if len(scores) < min_samples:
         placeholder = f"{'':>{label_w}}{sep} {'(not enough data)':^{width}}"
         return [heading, placeholder, f"{'':>{label_w}}{sep}{' ' * width}"]
 
@@ -2480,14 +2555,14 @@ def render_score_timeline(scores, chart_w=42, chart_h=7):
     lo = min(window)
     hi = max(window)
     samples = _bucket_score_window(window, width)
-    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi)
+    plot, color_rows = _render_timeline_grid(samples, width, height, lo, hi, lower_is_better=lower_is_better)
     n = len(window)
     lines = [f"{heading} {DIM}(last {n} games; old -> now){RST}"]
     for row, (plot_row, color_row) in enumerate(zip(plot, color_rows)):
         if row == 0:
-            label = f"{hi:>{label_w}}"
+            label = f"{lo if lower_is_better else hi:>{label_w}}"
         elif row == height - 1:
-            label = f"{lo:>{label_w}}"
+            label = f"{hi if lower_is_better else lo:>{label_w}}"
         else:
             label = " " * label_w
         lines.append(f"{C_GREY}{label}{RST}{sep}{_colorize_plot_row(plot_row, color_row)}")
@@ -2601,8 +2676,15 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     for idx, e in enumerate(combined_entries, start=1):
         e["overall_rank"] = idx
 
+    played_hash, played_arm = displayed_ab_arm(ab_status)
+    live_arm_line = ""
+    if played_arm:
+        live_arm_line = f"  NOW: A/B arm={played_arm} hash={played_hash[:8]}"
+
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
+        if live_arm_line:
+            lines.append(live_arm_line)
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -2649,6 +2731,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
+    if live_arm_line:
+        lines.append(live_arm_line)
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
@@ -3033,9 +3117,828 @@ def render_decision_patterns(reasons, max_rows=8, bar_w=30):
     return lines
 
 
-# ── Main ──────────────────────────────────────────────────────
-def main():
+# ── docich corner stats ──────────────────────────────────────
+
+
+def _corner_status_label(status):
+    return {
+        "preparing": "準備中",
+        "starting": "切替中",
+        "active": "進行中",
+        "restoring": "復元中",
+        "recovery_required": "回復待ち",
+    }.get(str(status or ""), str(status or "不明"))
+
+
+def _corner_short(value, fallback="--", limit=28):
+    text = str(value if value not in (None, "") else fallback)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)] + "…"
+
+
+def _corner_int(value, fallback="--"):
+    if isinstance(value, bool):
+        return fallback
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _corner_recent(scores):
+    values = []
+    for item in list(scores or [])[-8:]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            values.append(str(int(item["score"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return " ".join(values) if values else "score data waiting"
+
+
+def _corner_fill_line(fill):
+    if not isinstance(fill, dict):
+        return None
+    symbol = _corner_short(fill.get("symbol"), "?", 12)
+    side = {"buy": "BUY", "sell": "SELL"}.get(str(fill.get("side") or "").lower(), "TRADE")
+    notional = fill.get("quote_notional")
+    if notional in (None, ""):
+        notional = fill.get("price")
+    return f"{symbol} {side} {_corner_short(notional, "?", 12)}"
+
+
+def _corner_number(value):
+    return f"{value:.1f}".removesuffix(".0") if abs(value) < 1_000_000 else f"{value:.3g}"
+
+
+def _paper_number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _paper_amount(value, fallback="?"):
+    number = _paper_number(value)
+    if number is None:
+        return fallback
+    if abs(number) >= 1_000_000:
+        return f"{number:.3g}"
+    if float(number).is_integer():
+        return str(int(number))
+    return f"{number:.6f}".rstrip("0").rstrip(".")
+
+
+def _paper_signed_amount(value, fallback="--"):
+    number = _paper_number(value)
+    if number is None:
+        return fallback
+    rendered = _paper_amount(number, fallback=fallback)
+    return f"+{rendered}" if number > 0 else rendered
+
+
+def _paper_age(value):
+    try:
+        seconds = max(0, int(value))
+    except (TypeError, ValueError):
+        return "--"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+def _paper_worker_label(value):
+    return {
+        "paper_worker_running": "running",
+        "paper_worker_degraded": "degraded",
+        "paper_worker_idle": "idle",
+    }.get(str(value or ""), _corner_short(value, "unknown", 14))
+
+
+def _paper_count(mapping, key):
+    if not isinstance(mapping, dict):
+        return "--"
+    return _corner_int(mapping.get(key))
+
+
+def render_corner_distribution(scores, *, rank=False):
+    """Integer bins covering this game's actual range, including negatives."""
+    title = "Rank Distribution" if rank else "Score Distribution"
+    lines = [f"  {BOLD}{title}{RST} (last {len(scores)})"]
+    if not scores:
+        return lines + ["  No completed results yet"]
+    lo, hi = min(scores), max(scores)
+    step = max(1, (hi - lo + 6) // 6)
+    bands = [(start, min(start + step - 1, hi)) for start in range(lo, hi + 1, step)]
+    counts = [sum(start <= score <= end for score in scores) for start, end in bands]
+    labels = [str(start) if start == end else f"{start}..{end}" for start, end in bands]
+    label_w = max(map(len, labels))
+    bar_w = max(1, min(30, W - label_w - 9))
+    for label, count in zip(labels, counts):
+        lines.append(f" {label:>{label_w}}│{block_bar(count, max(counts), bar_w, C_CYAN)} {count:>5}")
+    return lines
+
+
+def _corner_score_panels(values, *, rank=False, reports=False, compact=False):
+    scores = [value for value in values if type(value) is int]
+    noun = "reports" if reports else "results"
+    if not scores:
+        return [f"Stats: no completed {noun} yet", "  History will appear after a result is recorded."]
+
+    best = min(scores) if rank else max(scores)
+    recent = scores[-30:]
+    recent_mean = statistics.mean(recent)
+
+    if compact:
+        # The right-hand broadcast rail is narrow.  Corner-owned Soren91/JEV
+        # status should answer "how is this run doing?" before spending rows on
+        # history.  Keep the timeline and Last8 trace, but omit the redundant
+        # distribution panel that made the live view difficult to scan.
+        lines = [
+            f"Stats: {len(scores)} {noun} / best={_corner_number(best)}"
+            f" / Recent30={_corner_number(recent_mean)}",
+        ]
+        if len(scores) > 30:
+            previous = scores[-60:-30]
+            delta = recent_mean - statistics.mean(previous)
+            if abs(delta) < 0.05:
+                trend = "flat"
+            else:
+                better = delta < 0 if rank else delta > 0
+                trend = "better" if better else "worse"
+            lines.append(f"  Trend: {delta:+.1f} vs previous {len(previous)} / {trend}")
+        if rank:
+            lines.append(f"  wins={scores.count(1)} / lower rank is better")
+        if reports:
+            # Older JEV reports finalize on errors too and do not distinguish
+            # them from game-over. Do not present these as completed matches.
+            lines.append("  Reported scores; may include interrupted runs")
+        lines.append("")
+        timeline = render_score_timeline(
+            scores,
+            chart_h=5,
+            min_samples=1,
+            lower_is_better=rank,
+        )
+        timeline[0] = timeline[0].replace(
+            "Score Timeline",
+            "Rank Timeline" if rank else "Score Timeline",
+        )
+        if reports:
+            timeline[0] = timeline[0].replace("games", "reports")
+        lines += timeline
+        lines.append("Last8: " + " ".join(_corner_number(s) for s in scores[-8:]))
+        return fit_dashboard_lines(lines)
+
+    lines = [
+        f"Stats: {len(scores)} {noun} / best={_corner_number(best)}",
+        f"  mean={_corner_number(statistics.mean(scores))} median={_corner_number(statistics.median(scores))}",
+    ]
+    lines.append(f"Recent30: n={len(recent)} mean={_corner_number(recent_mean)}")
+    if len(scores) > 30:
+        previous = scores[-60:-30]
+        delta = recent_mean - statistics.mean(previous)
+        lines.append(f"  vs previous {len(previous)}: {delta:+.1f}")
+    if rank:
+        lines.append(f"  wins={scores.count(1)} / lower rank is better")
+    if reports:
+        # Older JEV reports finalize on errors too and do not distinguish
+        # them from game-over. Do not present these as completed matches.
+        lines.append("  Reported scores; may include interrupted runs")
+    lines.append("")
+    timeline = render_score_timeline(scores, min_samples=1, lower_is_better=rank)
+    timeline[0] = timeline[0].replace("Score Timeline", "Rank Timeline" if rank else "Score Timeline")
+    if reports:
+        timeline[0] = timeline[0].replace("games", "reports")
+    lines += timeline
+    lines.append("")
+    lines += render_corner_distribution(scores[-100:], rank=rank)
+    lines.append("Last8: " + " ".join(_corner_number(s) for s in scores[-8:]))
+    return fit_dashboard_lines(lines)
+
+
+# Whole ANSI/OSC escape sequences and C0/C1 control runs from cached game
+# metadata.  isprintable() alone rejects the ESC but keeps the printable
+# "[31m" behind it, which would put a broken escape fragment on the card.
+# The headless form only matches an escape that already lost its ESC and still
+# starts with a CSI parameter byte, so a literal name like "array[0]" stays.
+_CORNER_CONTROL_RE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[@-Z\\-_]"
+    r"|\[[0-?]{1,4}[ -/]*[@-~]|[\x00-\x1f\x7f-\x9f]")
+
+
+def _hanjuku_join(names, fallback="未確認", limit=3):
+    """Join cached names, dropping escape runs: the renderer trusts no caller."""
+    items = []
+    for name in names or []:
+        if not isinstance(name, str):
+            continue
+        clean = _corner_short(_CORNER_CONTROL_RE.sub("", name), "", 10)
+        if clean and clean not in items:
+            items.append(clean)
+        if len(items) >= limit:
+            break
+    return "/".join(items) if items else fallback
+
+
+def render_hanjuku_status(value):
+    value = value if isinstance(value, dict) else {}
+    if value.get("availability") != "fresh":
+        reason = "更新待ち（観測が古い）" if value.get("availability") == "stale" else "未確認"
+        return ["半熟英雄 / ゲーム状況", f"  状態: {reason}"]
+    def num(key):
+        v = value.get(key)
+        return str(v) if type(v) is int and v >= 0 else "不明"
+    def label(key):
+        v = value.get(key)
+        # No raw ANSI/control characters from cached game metadata.  A
+        # per-character isprintable() check would keep the printable "[31m"
+        # that follows an ESC, so drop whole escape runs first.
+        if not isinstance(v, str):
+            return "不明"
+        return _corner_short(_CORNER_CONTROL_RE.sub("", v), "不明", 24)
+    def row(key):
+        v = value.get(key)
+        return v if isinstance(v, list) else []
+    def text(value, fallback="不明", limit=10):
+        # Nested cached names go through the same escape-run removal as
+        # label(): the renderer must not trust a hand-built snapshot dict.
+        if not isinstance(value, str):
+            return fallback
+        return _corner_short(_CORNER_CONTROL_RE.sub("", value), fallback, limit)
+
+    lines = [
+        "半熟英雄 / 最終観測・記録",
+        f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
+        f"  ゲーム内: {num('year')}年{num('month')}月（最終観測）",
+        f"  兵力: {num('soldiers')}名 / 停滞 {num('unchanged_seconds')}秒",
+        f"  占領記録 {num('captured')}城（現在の城数ではない）",
+        f"  保有: {_hanjuku_join(value.get('captured_names'))}",
+    ]
+    gap = value.get('gap')
+    if isinstance(gap, dict):
+        lines.append(f"  投影余白: side={gap.get('side', 'right')} x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
+        names = gap.get('captured_names') or []
+        if names:
+            lines.append("  余白占領記録: " + " / ".join(names))
+        for g in gap.get('garrison') or []:
+            lines.append(f"  余白駐留: until={g['until']:.3f} " + g['castle'] + "=" + "/".join(g['generals']))
+        for m in gap.get('marching') or []:
+            lines.append("  余白行軍: " + m['general'] + "→" + (m['target'] or '未確認'))
+        active_order = gap.get('active_order')
+        if isinstance(active_order, dict):
+            purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
+            parts = []
+            general = text(active_order.get('general'), '', 24)
+            source = text(active_order.get('source'), '', 24)
+            target = text(active_order.get('target'), '', 24)
+            purpose = text(active_order.get('purpose'), '', 16)
+            status = text(active_order.get('status'), '', 20)
+            step = text(active_order.get('step'), '', 24)
+            if general:
+                parts.append(general)
+            if source or target:
+                parts.append((source or '未確認') + '→' + (target or '未確認'))
+            if purpose:
+                parts.append(purpose_labels.get(purpose, purpose))
+            if status:
+                parts.append('状態 ' + status)
+            if step:
+                parts.append('段階 ' + step)
+            if parts:
+                lines.append("  余白出撃意図: " + " / ".join(parts))
+        hp = gap.get('hp')
+        if hp and hp.get('enemy') and hp.get('ally'):
+            lines.append(f"  余白交戦HP: until={hp['until']:.3f} {hp['enemy']} {hp['enemy_hp']} / {hp['ally']} {hp['ally_hp']}")
+        detail = gap.get('battle')
+        if isinstance(detail, dict):
+            deadline = detail.get('until')
+            valid_deadline = (type(deadline) in (int, float) and not isinstance(deadline, bool)
+                              and math.isfinite(deadline))
+            if valid_deadline:
+                enemy_soldiers, ally_soldiers = detail.get('enemy_soldiers'), detail.get('ally_soldiers')
+                if (type(enemy_soldiers) is int and type(ally_soldiers) is int
+                        and 0 <= enemy_soldiers <= 1000000 and 0 <= ally_soldiers <= 1000000):
+                    lines.append(
+                        f"  余白交戦兵数: until={deadline:.3f} 敵 {enemy_soldiers} / 我 {ally_soldiers}"
+                    )
+
+                plan_parts = []
+                side = detail.get('side')
+                castle = text(detail.get('castle'), '', 24)
+                if side in {'attack', 'defense'}:
+                    side_label = '攻撃' if side == 'attack' else '防衛'
+                    plan_parts.append(side_label + (f" {castle}" if castle else ''))
+                elif castle:
+                    plan_parts.append(f"城 {castle}")
+                step = text(detail.get('step'), '', 24)
+                variant = text(detail.get('variant'), '', 24)
+                if step:
+                    plan_parts.append(f"段階 {step}")
+                if variant:
+                    plan_parts.append(f"方針 {variant}")
+                if plan_parts:
+                    lines.append(
+                        f"  余白戦闘計画: until={deadline:.3f} " + " / ".join(plan_parts)
+                    )
+
+                planned = [text(card, '', 16) for card in detail.get('planned_cards') or []]
+                used = [text(card, '', 16) for card in detail.get('used_cards') or []]
+                selected = [text(card, '', 16) for card in detail.get('selected_cards') or []]
+                planned = [card for card in planned if card]
+                used = [card for card in used if card]
+                selected = [card for card in selected if card]
+                card = text(detail.get('card'), '', 16)
+                stage = text(detail.get('card_stage'), '', 16)
+                card_parts = []
+                if planned:
+                    card_parts.append("予定 " + "・".join(planned))
+                if used:
+                    card_parts.append("使用 " + "・".join(used))
+                if selected:
+                    card_parts.append("選択 " + "・".join(selected))
+                if card:
+                    card_parts.append("現在 " + card + (f"({stage})" if stage else ""))
+                if card_parts:
+                    lines.append(
+                        f"  余白切り札: until={deadline:.3f} " + " / ".join(card_parts)
+                    )
+
+                deviation = text(detail.get('deviation'), '', 96)
+                if deviation:
+                    lines.append(f"  余白戦闘判断: until={deadline:.3f} {deviation}")
+
+                egg_parts = []
+                if detail.get('egg_battle') is True:
+                    egg_parts.append("敵召喚を確認")
+                guard_stage = detail.get('egg_guard_stage')
+                guard_labels = {
+                    'opening': '奥の手を開く',
+                    'menu': '奥の手メニュー',
+                    'selected': '奥の手選択済み',
+                    'completed': '奥の手処理完了',
+                }
+                if guard_stage in guard_labels:
+                    egg_parts.append(guard_labels[guard_stage])
+                if detail.get('egg_guard_exhausted') is True:
+                    egg_parts.append("奥の手確認上限")
+                if egg_parts:
+                    lines.append(
+                        f"  余白卵対策: until={deadline:.3f} " + " / ".join(egg_parts)
+                    )
+    if value.get("home_lost") is True:
+        lines.append("  本拠: 失陥（記録）")
+    lost = row("lost_names")
+    if lost:
+        lines.append(f"  失った城: {_hanjuku_join(lost)}")
+    # 戦闘結果 counts only battles whose final HP panel was decisive, so it can
+    # read "0敗" while castles are visibly falling. Always show the judged
+    # subset next to the started total, and the separately observed castle
+    # losses, instead of letting the subset stand in for the whole run.
+    unjudged = value.get("battles_unjudged")
+    account = f"（判定 {num('battles_judged')}"
+    if unjudged:
+        account += f" / 未判定 {num('battles_unjudged')}"
+    account += "）"
+    lines += [
+        f"  戦闘結果: {num('wins')}勝 / {num('losses')}敗 / 未分類 {num('unclassified')}{account}",
+        f"  戦闘: 開始 {num('battles_started')} / 終了 {num('battles_finished')}"
+        f" / 切り札確定 {num('cards_confirmed')}",
+    ]
+    castle_losses = value.get("castle_losses")
+    if type(castle_losses) is int and castle_losses > 0:
+        lines.append(f"  城失陥: {castle_losses}件（全体マップで旗が敵色になった実測）")
+    enemy_hp, ally_hp = value.get("enemy_hp"), value.get("ally_hp")
+    enemy_name, ally_name = label("enemy"), label("ally")
+    if (type(enemy_hp) is int and type(ally_hp) is int
+            and enemy_name != "不明" and ally_name != "不明"):
+        lines.append(f"  交戦HP: 敵 {enemy_hp}（{enemy_name}） / 我 {ally_hp}（{ally_name}）")
+    else:
+        lines.append("  交戦HP: 戦闘記録なし")
+    garrison = [g for g in row("garrison") if isinstance(g, dict)]
+    if garrison:
+        lines.append("  駐留: " + " / ".join(
+            f"{text(g.get('castle'), '?')}={_hanjuku_join([text(n, '?') for n in g.get('generals') or []], '?')}"
+            for g in garrison))
+    marching = [s for s in row("marching") if isinstance(s, dict)]
+    if marching:
+        lines.append("  行軍中: " + " / ".join(
+            f"{text(s.get('general'), '?')}→{text(s.get('target'), '未確定')}"
+            for s in marching))
+    active_order = value.get("active_order")
+    if isinstance(active_order, dict):
+        purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
+        intent = []
+        general = text(active_order.get('general'), '', 24)
+        source = text(active_order.get('source'), '', 24)
+        target = text(active_order.get('target'), '', 24)
+        purpose = text(active_order.get('purpose'), '', 16)
+        status = text(active_order.get('status'), '', 20)
+        step = text(active_order.get('step'), '', 24)
+        if general:
+            intent.append(general)
+        if source or target:
+            intent.append((source or '未確認') + '→' + (target or '未確認'))
+        if purpose:
+            intent.append(purpose_labels.get(purpose, purpose))
+        if status:
+            intent.append('状態 ' + status)
+        if step:
+            intent.append('段階 ' + step)
+        if intent:
+            lines.append("  出撃意図: " + " / ".join(intent))
+    eggs = [e for e in row("eggs") if isinstance(e, dict) and type(e.get("uses")) is int]
+    if eggs:
+        lines.append("  卵: " + " / ".join(
+            f"{text(e.get('general'), '?')} {e['uses']}回" for e in eggs))
+    lines += [
+        f"  出撃: 成立 {num('orders_launched')} / 失敗 {num('orders_failed')}",
+        f"  画面: {label('screen')} / {label('phase')}"
+        + (f" / 方針 {label('variant')}" if label("variant") != "不明" else ""),
+        f"  計画段階: {label('chart_step')}（完了未確認）",
+        f"  保留計画: {label('pending_plan')}",
+        f"  実入力: {num('actions')}回 / 観測 {num('age')}秒前（{num('observations')}回）",
+    ]
+    return lines
+
+
+def render_console_progress(value):
+    """Four short record/plan lines for the terminal and common overlay."""
+    if not isinstance(value, dict):
+        return []
+    n = _corner_int(value.get("session_count"))
+    mean, best = value.get("session_mean"), value.get("session_best")
+    result = f"Session: n={n} / best={_corner_number(best) if best is not None else '--'}"
+    result += f" / mean={_corner_number(mean) if mean is not None else '--'}"
+    if value.get("history_status") != "readable":
+        result += " (history unavailable)"
+    latest = value.get("latest")
+    if isinstance(latest, dict):
+        at = datetime.fromtimestamp(latest["at"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        observed = f"Result: {latest['score']} @ {at} / {latest['age']}s ago"
+    else:
+        observed = "Result: no timestamped result in this session"
+    steps = {"switch-wait": "switch completion pending", "restore-wait": "restoration pending",
+             "recovery-wait": "recovery required", "unverified": "runtime unverified",
+             "target-recorded": "target recorded; corner completion pending",
+             "deadline-passed": "limit passed; completion unconfirmed",
+             "collect-results": "collect results"}
+    planned = "Plan: " + steps.get(value.get("next"), "unverified")
+    left = value.get("remaining")
+    secs = value.get("remaining_seconds")
+    if value.get("next") == "collect-results":
+        if left is not None:
+            planned += f" / {left} matches left"
+        if secs is not None:
+            planned += f" / limit {secs//60}:{secs%60:02}"
+    # Records, plans and current observation have deliberately different labels.
+    reason = value.get("reason")
+    evidence = "Evidence: completed results / live score unobserved"
+    if reason:
+        reasons = {"game_over": "game over", "screen_stalled": "screen stalled",
+                   "manual_saved_stop": "saved stop", "manual_forced_stop": "forced stop",
+                   "switch-terminal-before-corner-active": "switch stopped",
+                   "recovery_required": "recovery needed", "quiesce_failed": "quiesce failed",
+                   "readiness_timeout": "ready timeout", "deadline_exceeded": "deadline passed"}
+        evidence = f"Reason: {reasons.get(reason, 'unknown')} (record) / live score unobserved"
+    return [result, observed, planned, evidence]
+
+
+def render_docich_corner_stats(corner):
+    """Render a corner-owned stats feed without consulting Soren score history."""
+    if not isinstance(corner, dict):
+        return []
+
+    kind = str(corner.get("kind") or "")
+    if kind == "conflict":
+        return [
+            "SOREN/CORNER: STATE CONFLICT",
+            "Live: multiple active corners; stats locked",
+            "Score Timeline",
+            "  corner data unavailable until one state is active",
+        ]
+    if kind == "invalid":
+        return [
+            "SOREN/CORNER: STATE INVALID",
+            "Live: corner state cannot be trusted; stats locked",
+            "Score Timeline",
+            "  corner data unavailable until state recovery",
+        ]
+
+    label = _corner_short(corner.get("label"), "CORNER", 16)
+    status = _corner_status_label(corner.get("status"))
+    lines = []
+
+    if kind == "retro":
+        game = _corner_short(corner.get("game"), "unknown", 22)
+        scores = corner.get("scores") if isinstance(corner.get("scores"), list) else []
+        score_values = [
+            int(item["score"])
+            for item in scores
+            if isinstance(item, dict) and isinstance(item.get("score"), int)
+        ]
+        target = _corner_int(corner.get("target_matches"))
+        matches = _corner_int(corner.get("session_matches"))
+        progress = f"{matches}/{target}" if target != "--" else matches
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            f"{'Record' if corner.get('console') else 'Live'}: this corner matches {progress}",
+        ]
+        lines += render_console_progress(corner.get("console"))
+        if corner.get("game") == "hanjuku-hero":
+            lines += render_hanjuku_status(corner.get("hanjuku"))
+        # Hanjuku is a scripted corner: it never appends to scores/<game>.jsonl
+        # (docich retro_corner waits for game over, not a scorelog target), so
+        # the score timeline/distribution panels stay empty forever.  The card
+        # above already carries this run's observed progress, so skip the empty
+        # panels instead of printing "no completed results yet" every refresh.
+        else:
+            lines += _corner_score_panels(score_values)
+        ranking = corner.get("strategy_ranking") if isinstance(corner.get("strategy_ranking"), list) else []
+        if ranking:
+            top = ranking[:3]
+            lines.append(
+                "Strategy: "
+                + " / ".join(
+                    f"#{index} {str(row.get('key') or '')[:8]} avg={int(float(row.get('best') or 0))}"
+                    for index, row in enumerate(top, 1)
+                    if isinstance(row, dict)
+                )
+            )
+        elif corner.get("game") != "hanjuku-hero":
+            lines.append("Strategy: no corner ranking data")
+        return lines
+
+    if kind == "nethack":
+        run = corner.get("run") if isinstance(corner.get("run"), dict) else {}
+        scores = corner.get("scores") if isinstance(corner.get("scores"), list) else []
+        expedition = _corner_int(run.get("expedition"))
+        run_status = _corner_short(run.get("status"), "waiting", 16)
+        score = _corner_int(run.get("score"))
+        turns = _corner_int(run.get("turns"))
+        depth = _corner_int(run.get("max_depth"))
+        lines += [
+            f"SOREN/CORNER: {label} / expedition {expedition} / {status}",
+            f"Live: run={run_status} score={score} turns={turns} depth={depth}",
+        ]
+        lines += _corner_score_panels(scores)
+        return lines
+
+    if kind == "paper":
+        paper = corner.get("paper") if isinstance(corner.get("paper"), dict) else {}
+        fills = paper.get("fills") if isinstance(paper.get("fills"), list) else []
+        positions = paper.get("positions") if isinstance(paper.get("positions"), dict) else {}
+        signal = paper.get("signal") if isinstance(paper.get("signal"), dict) else {}
+        symbol_states = (
+            paper.get("symbol_states") if isinstance(paper.get("symbol_states"), list) else []
+        )
+        skipped = paper.get("skipped") if isinstance(paper.get("skipped"), list) else []
+        worker_summary = paper.get("worker") if isinstance(paper.get("worker"), dict) else {}
+        freshness = paper.get("freshness") if isinstance(paper.get("freshness"), dict) else {}
+        fresh_counts = freshness.get("counts") if isinstance(freshness.get("counts"), dict) else {}
+        fresh_issues = freshness.get("issues") if isinstance(freshness.get("issues"), list) else []
+        coverage = paper.get("coverage") if isinstance(paper.get("coverage"), dict) else {}
+        performance = paper.get("performance") if isinstance(paper.get("performance"), dict) else {}
+
+        fill_lines = [_corner_fill_line(fill) for fill in reversed(fills[-4:])]
+        fill_lines = [line for line in fill_lines if line]
+        worker = _paper_worker_label(paper.get("status"))
+        capital = _corner_short(paper.get("capital"), "?", 14)
+        deployed = _corner_short(paper.get("deployed"), "?", 14)
+        capital_number = _paper_number(paper.get("capital"))
+        deployed_number = _paper_number(paper.get("deployed"))
+        free = (
+            _paper_amount(max(0.0, capital_number - deployed_number))
+            if capital_number is not None and deployed_number is not None
+            else "?"
+        )
+
+        lines += [
+            f"SOREN/CORNER: {label} / PAPER / {status}",
+            "  ASSET / PAPER ONLY",
+            "Funds: " + _corner_short(f"capital={capital} free={free}", limit=49),
+            "  Deployed: " + _corner_short(deployed, "?", 43),
+            f"Positions: {len(positions)} / markets={_corner_int(paper.get('market_count'))}",
+        ]
+        for symbol, amount in list(sorted(positions.items()))[:3]:
+            lines.append("  Pos: " + _corner_short(f"{symbol} {amount}", limit=48))
+        if len(positions) > 3:
+            lines.append(f"  Pos: +{len(positions) - 3} more")
+        if performance:
+            lines.append(
+                "P/L: "
+                + _corner_short(
+                    "cum="
+                    + _paper_signed_amount(performance.get("cumulative_pnl_jpy"))
+                    + " unreal="
+                    + _paper_signed_amount(performance.get("unrealized_pnl_jpy")),
+                    limit=49,
+                )
+            )
+            lines.append(
+                "  Realized: "
+                + _corner_short(
+                    "today="
+                    + _paper_signed_amount(performance.get("today_realized_pnl_jpy"))
+                    + " all="
+                    + _paper_signed_amount(performance.get("realized_total_jpy")),
+                    limit=43,
+                )
+            )
+            valuation = (
+                _corner_int(performance.get("valued_positions"))
+                + "/"
+                + _corner_int(performance.get("position_count"))
+            )
+            lines.append(
+                "  Equity: "
+                + _corner_short(
+                    _paper_amount(performance.get("equity_jpy"), fallback="--")
+                    + f" / valued={valuation} / age={_paper_age(performance.get('age'))}",
+                    limit=45,
+                )
+            )
+            if performance.get("complete") is False:
+                lines.append("  Valuation: incomplete / P/L may be partial")
+
+        lines += [
+            "  BOT DECISION",
+            (
+                "Signals: candidate="
+                + _paper_count(signal, "candidate_count")
+                + " selected="
+                + _paper_count(signal, "selected_count")
+                + " rejected="
+                + _paper_count(signal, "rejected_count")
+            ),
+        ]
+        state_labels = {
+            "no_signal": "no signal",
+            "candidate": "candidate",
+            "selected": "SELECTED",
+            "rejected_after_signal": "REJECTED",
+        }
+        for item in symbol_states[:4]:
+            if not isinstance(item, dict):
+                continue
+            symbol = _corner_short(item.get("symbol"), "?", 12)
+            state_key = str(item.get("state") or "unknown")
+            state_text = state_labels.get(state_key, _corner_short(state_key, "unknown", 12))
+            reason = _corner_short(item.get("reason_code"), "", 20)
+            detail = f"{state_text}:{reason}" if reason else state_text
+            lines.append("  " + _corner_short(f"{symbol} -> {detail}", limit=49))
+        if len(symbol_states) > 4:
+            lines.append(f"  +{len(symbol_states) - 4} markets")
+
+        strategies = signal.get("strategy_ids") if isinstance(signal.get("strategy_ids"), list) else []
+        if strategies:
+            lines.append("  Strategy: " + _corner_short(" / ".join(strategies), limit=43))
+        reasons = (
+            signal.get("candidate_reason_codes")
+            if isinstance(signal.get("candidate_reason_codes"), list)
+            else []
+        )
+        if reasons:
+            lines.append("  Candidate: " + _corner_short(" / ".join(reasons), limit=42))
+        if skipped:
+            skip_parts = []
+            for item in skipped[:2]:
+                if not isinstance(item, dict):
+                    continue
+                symbol = _corner_short(item.get("symbol"), "", 12)
+                reason = _corner_short(item.get("reason_code"), "unknown", 24)
+                skip_parts.append(f"{symbol}:{reason}" if symbol else reason)
+            if skip_parts:
+                lines.append("  Rejected: " + _corner_short(" / ".join(skip_parts), limit=43))
+
+        lines += [
+            "  OPS / DATA",
+            f"Worker: {worker} cycle={_paper_count(worker_summary, 'cycle_index')}",
+            (
+                f"Age: data={_paper_age(paper.get('snapshot_age'))} "
+                f"hb={_paper_age(paper.get('heartbeat_age'))} "
+                f"next={_paper_age(worker_summary.get('next_cycle_in'))}"
+            ),
+        ]
+        freshness_total = sum(
+            int(fresh_counts.get(key) or 0)
+            for key in ("fresh", "stale", "missing", "invalid", "unknown")
+            if not isinstance(fresh_counts.get(key), bool)
+        )
+        market_total = freshness_total or _corner_int(paper.get("market_count"))
+        lines.append(
+            "Markets: fresh="
+            + _corner_int(fresh_counts.get("fresh"))
+            + "/"
+            + str(market_total)
+            + " frame_err="
+            + _paper_count(worker_summary, "frame_error_count")
+        )
+        cycle_activity = []
+        for key, name in (
+            ("arbitrage_candidate_count", "arb"),
+            ("new_fill_count", "fills"),
+            ("new_settlement_count", "settlements"),
+        ):
+            if key in worker_summary:
+                cycle_activity.append(f"{name}={_paper_count(worker_summary, key)}")
+        if cycle_activity:
+            lines.append("  Cycle: " + _corner_short(" ".join(cycle_activity), limit=43))
+
+        experiment_parts = []
+        experiment_status = worker_summary.get("experiment_status")
+        if experiment_status:
+            experiment_parts.append("status=" + _corner_short(experiment_status, limit=16))
+        entries_allowed = worker_summary.get("experiment_entries_allowed")
+        if type(entries_allowed) is bool:
+            experiment_parts.append("entries=" + ("on" if entries_allowed else "off"))
+        experiment_reason = worker_summary.get("experiment_reason_code")
+        if experiment_reason:
+            experiment_parts.append("reason=" + _corner_short(experiment_reason, limit=18))
+        if experiment_parts:
+            lines.append("  Experiment: " + _corner_short(" ".join(experiment_parts), limit=40))
+        attempted = _corner_int(coverage.get("attempted"))
+        total = _corner_int(coverage.get("total"))
+        if attempted != "--" or total != "--" or coverage.get("budget_exceeded"):
+            lines.append(
+                f"  Coverage: {attempted}/{total}"
+                + (" / budget exceeded" if coverage.get("budget_exceeded") else "")
+            )
+        if fresh_issues:
+            issue_parts = []
+            for item in fresh_issues[:2]:
+                if not isinstance(item, dict):
+                    continue
+                symbol = _corner_short(item.get("symbol"), "?", 12)
+                reason = _corner_short(item.get("reason_code"), "unknown", 22)
+                issue_parts.append(f"{symbol}:{reason}")
+            if issue_parts:
+                lines.append("  Market issue: " + _corner_short(" / ".join(issue_parts), limit=38))
+        errors = (
+            worker_summary.get("error_codes")
+            if isinstance(worker_summary.get("error_codes"), list)
+            else []
+        )
+        if errors:
+            lines.append("  Errors: " + _corner_short(" / ".join(errors), limit=45))
+
+        lines += [
+            f"Recent: fills={len(fills)} positions={len(positions)}",
+            "  PAPER FILL HISTORY (newest)",
+        ]
+        lines += [f"  {line}" for line in fill_lines] or ["  (no fills yet)"]
+        return lines
+
+    if kind == "soren91":
+        game = _corner_short(corner.get("game"), "soren91", 20)
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            f"Live: this corner results {_corner_int(corner.get('session_matches'))}",
+        ]
+        scores = corner.get("scores") or []
+        lines += _corner_score_panels([item["score"] for item in scores], rank=True, compact=True)
+        return lines
+
+    if kind == "jev":
+        game = _corner_short(corner.get("game"), "sorengame", 20)
+        policy = _corner_short(corner.get("policy"), "unknown", 12)
+        generation = _corner_int(corner.get("player_generation"))
+        lines += [
+            f"SOREN/CORNER: {label} / {game} / {status}",
+            f"Live: player policy={policy} generation={generation}",
+        ]
+        scores = corner.get("scores") or []
+        lines += _corner_score_panels([item["score"] for item in scores], reports=True, compact=True)
+        return lines
+
+    return [
+        "SOREN/CORNER: UNKNOWN",
+        "Live: corner kind is not supported; stats locked",
+    ]
+
+
+# ── Main / reusable renderer ──────────────────────────────────
+def render_dashboard_text():
+    """Render the same dashboard text as the CLI without a second Python process."""
+
     os.chdir(os.path.dirname(os.path.abspath(__file__)) or ".")
+
+    corner = load_active_corner()
+    if corner is not None:
+        output = render_ai_backoff_header()
+        output.append("")
+        output += render_docich_corner_stats(corner)
+        return "\n".join(fit_dashboard_lines(output))
 
     scores = load_scores()
     rolling = load_rolling()
@@ -3067,6 +3970,13 @@ def main():
     # (jsonl 1 本で軽い。重いのは russia_rate 側の archive 走査なのでそれは従来どおり
     # ai_backoff モードでは走らせない)。
     ab_status = load_ab_progress()
+    if isinstance(ab_status, dict) and ab_status.get("active"):
+        # A/B の現在腕は試合中の game_snapshot から一度だけ実測し、
+        # ヘッダーと Strategy Comparison の両方で同じ値を表示する。
+        played_hash, played_arm = played_ab_arm(ab_status)
+        ab_status = dict(ab_status)
+        ab_status["_played_hash"] = played_hash
+        ab_status["_played_arm"] = played_arm
     if top_panel_mode() != "ai_backoff":
         # render_header 専用の集計。ai_backoff 側では使わないので、その時は
         # archive 走査や jsonl 読み込みを走らせない。
@@ -3094,7 +4004,13 @@ def main():
         output += _archive
     if _wc or _archive:
         output.append("")
-    print("\n".join(fit_dashboard_lines(output)))
+    return "\n".join(fit_dashboard_lines(output))
+
+
+
+
+def main():
+    print(render_dashboard_text())
 
 
 if __name__ == "__main__":

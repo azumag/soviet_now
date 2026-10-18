@@ -89,7 +89,14 @@ _game_lifecycle_cli() {
 	local command="${1:-}"
 	printf '%s\n' "$command" >>"$events"
 	case "$command" in
-	boundary) set_ack boundary; return 0 ;;
+	boundary)
+		if [ "${mock_boundary_waiting:-0}" -eq 1 ]; then
+			set_ack waiting
+			return 1
+		fi
+		set_ack boundary
+		return 0
+		;;
 	stop) set_ack stop_requested; return 0 ;;
 	finish) set_ack stopped; return 0 ;;
 	cancel) set_ack cancelled; return 0 ;;
@@ -98,6 +105,96 @@ _game_lifecycle_cli() {
 }
 _game_lifecycle_wait_resource() { printf '%s\n' stopped >"$resource_status_file"; return 0; }
 
+# A runner exit is not itself a game boundary. A founding animation can leave
+# the same board alive, and waiting for its actual end must keep the player
+# running. Neither the normal preparation nor startup may send retry/reset.
+source "$repo_root/eloop.sh"
+STRATEGY_FILE="$test_root/strategy.py"
+printf 'same-strategy\n' >"${STRATEGY_FILE}.game_snapshot"
+printf '{"state":"STOP","score":6111,"pieces":[{"type":16}]}\n' >"$test_root/game_state.json"
+cp "$test_root/game_state.json" "$test_root/original_game_state.json"
+is_game_over() { printf 'is_game_over\n' >>"$events"; return 0; }
+wait_for_move() { printf 'wait_for_move\n' >>"$events"; return 1; }
+send_retry() { printf 'retry\n' >>"$events"; return 0; }
+mock_boundary_waiting=1
+for live_status in accepted waiting; do
+	write_lifecycle_pair "$live_status"
+	: >"$events"
+	live_rc=0
+	game_lifecycle_after_game || live_rc=$?
+	[ "$live_rc" -eq 4 ]
+	[ "$(game_lifecycle_ack_status)" = "waiting" ]
+	[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+	[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+	[ ! -e "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" ]
+	prepare_next_game
+	[ "$(wc -l <"$events" | tr -d ' ')" -eq 2 ]
+	[ "$(grep -cx boundary "$events")" -eq 2 ]
+	[ "$(cat "${STRATEGY_FILE}.game_snapshot")" = same-strategy ]
+	cmp "$test_root/game_state.json" "$test_root/original_game_state.json"
+done
+
+# Run the real startup recovery/wait block without starting the supervisor or
+# any worker. A lingering transient STOP must go straight to the same-board
+# runner, even if the normal MOVE wait would have timed out.
+python3 - "$repo_root/soren_loop.sh" "$test_root/startup.sh" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+start = source.index("# Controller crash recovery must run")
+end = source.index('_abort_if_interrupted "$wait_rc"', start)
+Path(sys.argv[2]).write_text(source[start:end])
+PY
+: >"$events"
+(
+	source "$test_root/startup.sh"
+	[ "$wait_rc" -eq 0 ]
+)
+[ "$(cat "$events")" = boundary ]
+[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+cmp "$test_root/game_state.json" "$test_root/original_game_state.json"
+
+# Waiting also leaves an operator's existing pause exactly as it was.
+printf 'operator\n' >"$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+live_rc=0
+game_lifecycle_after_game || live_rc=$?
+[ "$live_rc" -eq 4 ]
+[ "$(cat "$GAME_LIFECYCLE_LOOP_PAUSE_FILE")" = operator ]
+[ ! -e "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+unset mock_boundary_waiting
+
+# The normal path, with no lifecycle request, must also preserve a transient
+# STOP (or a MOVE timeout) instead of treating the timeout as permission to
+# reset. An actual GAMEOVER remains eligible for retry; interruption propagates.
+(
+	source "$repo_root/core/game_state.sh"
+	GAME_STATE="$test_root/game_state.json"
+	GAME_LIFECYCLE_ENABLED=0
+	wait_for_move() { printf 'wait_for_move\n' >>"$events"; return "${mock_move_rc:-1}"; }
+	send_retry() { printf 'retry\n' >>"$events"; return 0; }
+	for live_state in STOP MOVE; do
+		printf '{"state":"%s","score":6111,"pieces":[{"type":16}]}\n' "$live_state" >"$GAME_STATE"
+		! is_game_over
+		: >"$events"
+		prepare_next_game
+		[ "$(cat "$events")" = wait_for_move ]
+	done
+	printf '{"state":"GAMEOVER"}\n' >"$GAME_STATE"
+	is_game_over
+	: >"$events"
+	prepare_next_game
+	[ "$(cat "$events")" = retry ]
+	printf '{"state":"STOP"}\n' >"$GAME_STATE"
+	mock_move_rc=130
+	: >"$events"
+	interrupt_rc=0
+	prepare_next_game || interrupt_rc=$?
+	[ "$interrupt_rc" -eq 130 ]
+	[ "$(cat "$events")" = wait_for_move ]
+)
+: >"$events"
 write_lifecycle_pair accepted
 
 # A successful boundary waits for the resource stop and then pauses only the
@@ -173,6 +270,36 @@ _game_lifecycle_pause_improvements "$request_id"
 game_lifecycle_restore_improvements
 [ -f "$TMP_STATE_DIR/improve_daemon.paused" ]
 rm -f "$TMP_STATE_DIR/improve_daemon.paused"
+
+# Issue #2061: a request that did not create a pause must neither overwrite nor
+# release the owning request's proof.  Candidate cleanup used to rewrite
+# loop_pause.json for itself and fresh-start used to archive it, leaving
+# soren_loop.paused ownerless so readiness and rollback timed out.
+foreign_id="bbbbbbbb-1111-4222-8333-444444444444"
+printf '{"request_id":"%s","improvement_marker_created":false,"loop_marker_created":true}\n' "$foreign_id" >"$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
+printf 'lifecycle:%s\n' "$foreign_id" >"$GAME_LIFECYCLE_LOOP_PAUSE_FILE"
+_game_lifecycle_pause_loop "$request_id"
+[ "$(_game_lifecycle_json_field "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" request_id)" = "$foreign_id" ]
+[ "$(cat "$GAME_LIFECYCLE_LOOP_PAUSE_FILE")" = "lifecycle:$foreign_id" ]
+game_lifecycle_restore_loop "$request_id"
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+game_lifecycle_restore_loop "$foreign_id"
+[ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+[ ! -f "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" ]
+
+# The same rule holds for the prediction gate: pausing for another request
+# keeps its record, and only the owning request's restore releases the marker.
+printf '{"request_id":"%s","improvement_marker_created":true,"loop_marker_created":false}\n' "$foreign_id" >"$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE"
+printf 'lifecycle:%s\n' "$foreign_id" >"$TMP_STATE_DIR/prediction_worker.paused"
+_game_lifecycle_pause_predictions "$request_id"
+[ "$(_game_lifecycle_json_field "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" request_id)" = "$foreign_id" ]
+game_lifecycle_restore_predictions "$request_id"
+[ -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
+game_lifecycle_restore_predictions "$foreign_id"
+[ ! -f "$TMP_STATE_DIR/prediction_worker.paused" ]
+[ ! -f "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" ]
 
 # Unsupported legacy mode cancels the request and restores a marker created by
 # this handover; it must not pause or terminate the old game.
@@ -377,7 +504,7 @@ game_lifecycle_restore_loop
 watchdog_root="$test_root/watchdog"
 mkdir -p "$watchdog_root/lib" "$watchdog_root/tmp/state/game_lifecycle"
 cp "$repo_root/soviet_watchdog.sh" "$watchdog_root/"
-cp "$repo_root/lib/game_lifecycle.sh" "$repo_root/lib/game_lifecycle.py" "$watchdog_root/lib/"
+cp "$repo_root/lib/game_lifecycle.sh" "$repo_root/lib/game_lifecycle.py" "$repo_root/lib/game_terminal.py" "$watchdog_root/lib/"
 python3 - "$watchdog_root/tmp/state/game_lifecycle/request.json" "$watchdog_root/tmp/state/game_lifecycle/ack.json" <<'PY'
 import json
 import sys
@@ -422,5 +549,105 @@ fi
 wait "$watchdog_launcher_pid" 2>/dev/null || true
 unset watchdog_pid
 unset watchdog_launcher_pid
+
+# The committed player snapshot is re-read every game by soren_loop.sh (see the
+# main-loop reload), so a player_change committed at a game boundary must apply
+# to the next game without restarting the long-lived loop.  The reload has to be
+# idempotent inside one process and fail closed to existing on a corrupt or
+# missing snapshot.
+player_state_path="$GAME_LIFECYCLE_DIR/player_state.json"
+GAME_LIFECYCLE_PLAYER_STATE_FILE="$player_state_path"
+write_player_state() {
+	local policy="$1" generation="$2" game_generation="$3" run_id="$4"
+	python3 - "$player_state_path" "$policy" "$generation" "$game_generation" "$run_id" <<'PY'
+import json
+import sys
+
+path, policy, generation, game_generation, run_id = sys.argv[1:6]
+value = {
+    "schema": 1,
+    "game": "sorengame",
+    "policy": policy,
+    "player_generation": int(generation),
+    "game_generation": int(game_generation) if game_generation else None,
+    "run_id": run_id,
+    "config_hash": "a" * 64,
+    "source_request_id": run_id,
+    "updated_at": "2030-01-01T00:00:00.000Z",
+}
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+    stream.write("\n")
+PY
+}
+
+unset SOREN_PLAYER_POLICY SOREN_JEV_RUN_ID SOREN_JEV_PLAYER_GENERATION SOREN_JEV_GAME_GENERATION JEV_PLAYER_ENABLED
+write_player_state existing 2 "" ""
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+
+jev_run_id="ca834b7a-d0f7-4b74-9d9a-f3182855f2a7"
+write_player_state jev 3 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "jev" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "1" ]
+[ "${SOREN_JEV_RUN_ID:-}" = "$jev_run_id" ]
+[ "${SOREN_JEV_PLAYER_GENERATION:-}" = "3" ]
+[ "${SOREN_JEV_GAME_GENERATION:-}" = "1" ]
+[ "${JEV_MAX_REQUESTS_PER_RUN:-}" = "500" ]
+
+# The same process must switch back to existing without leaking JEV identity.
+write_player_state existing 4 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+[ -z "${SOREN_JEV_GAME_GENERATION:-}" ]
+
+# A corrupt snapshot fails closed even when JEV was active a moment ago.
+write_player_state jev 5 1 "$jev_run_id"
+game_lifecycle_load_player_policy
+printf '%s\n' '{"schema":1,"game":"sorengame","policy":"bogus"}' >"$player_state_path"
+game_lifecycle_load_player_policy || true
+[ "${SOREN_PLAYER_POLICY:-}" = "existing" ]
+[ "${JEV_PLAYER_ENABLED:-}" = "0" ]
+[ -z "${SOREN_JEV_RUN_ID:-}" ]
+rm -f "$player_state_path"
+
+# A one-game JEV park that is not yet stable must be retried rather than
+# silently skipped: skipping it let the supervisor respawn and start a second
+# JEV game under the same explicit start.  The mark helper runs in a command
+# substitution, so count calls in a file rather than a shell variable.
+_jev_mark_calls_file="$test_root/jev_mark_calls"
+: >"$_jev_mark_calls_file"
+rm -f "$GAME_LIFECYCLE_DIR/request.json" "$GAME_LIFECYCLE_DIR/ack.json"
+rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
+GAME_LIFECYCLE_JEV_ONE_GAME_FILE="$GAME_LIFECYCLE_DIR/jev_one_game.json"
+game_lifecycle_mark_jev_one_game() {
+	echo x >>"$_jev_mark_calls_file"
+	printf '%s\n' '{"schema":1,"game":"sorengame","policy":"jev","run_id":"22222222-2222-4222-8222-222222222222"}' >"$GAME_LIFECYCLE_JEV_ONE_GAME_FILE"
+	[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ] && return 0
+	return 1
+}
+game_lifecycle_jev_complete
+[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -ge 2 ]
+# A long-lived supervisor that predates the dedicated predicate must still be
+# suppressed, so the one-game park also creates the generic loop pause marker.
+[ -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" ]
+
+# A terminal failure is not retried forever.
+: >"$_jev_mark_calls_file"
+game_lifecycle_mark_jev_one_game() {
+	echo x >>"$_jev_mark_calls_file"
+	return 3
+}
+set +e
+game_lifecycle_jev_complete
+jev_terminal_rc=$?
+set -e
+[ "$jev_terminal_rc" -eq 3 ]
+[ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -eq 1 ]
 
 echo "game lifecycle shell tests passed"

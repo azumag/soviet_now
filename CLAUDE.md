@@ -122,7 +122,8 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 | ファイル | 役割 |
 |---------|------|
-| `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
+| `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿（ソ連建国時は公開確認後にBluesky告知） |
+| `tools/bluesky_post.py` | AT Protocol投稿。Twitchクリップは`--clip-id`で冪等記録 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
 | `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel/autovote/cleanup, azumagdev自動投票) |
@@ -211,6 +212,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 - 12ゲームサイクルの開始時に「建国できる？」予想を作成 - 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
 - ソ連建国・粛清は即 resolve、ロシア建国は12ゲーム後に判定
+- **賭けが成立していない予想は resolve せず CANCEL にして全額返却する**（2026-10-15 オーナー判断）。`resolve` の直前に `GET /helix/predictions` の `outcomes[].users` / `channel_points` を見て、賭けが入った選択肢が1つ以下（0件を含む）なら PATCH `CANCELED` に切り替える。判定不能・リモート取得失敗のときは現行どおり resolve する（settle を新しい理由で止めない）
 - azumagdev ボットが GQL API でランダムに1票自動投票。`TWITCH_BOT_GQL_TOKEN` 設定時は残高の10%を賭ける。未設定時は固定 `TWITCH_AUTO_VOTE_POINTS`（デフォルト10pt）
 - `cleanup` サブコマンドで `PREDICTION_MAX_GAMES`（デフォルト12）超過等の古い予想状態を自動クリア
 - `TWITCH_PREDICTIONS_ENABLED=1` と `TWITCH_PREDICTIONS_TOKEN` が必要（チャネルオーナートークン）
@@ -233,6 +235,8 @@ TWITCH_BROADCASTER_ID=<Helix /users APIで取得>
 - `!clip` コマンド: デーモン再起動が必要 (`./twitch_chat.sh stop && ./twitch_chat.sh start`)
 - 同一ゲーム内で複数イベント発火時はデデュプ（最初の1クリップのみ）
 - 配信オフライン時やAPI失敗時はサイレントにスキップ
+- ソ連建国クリップのBluesky告知は `SOVIET_CELEBRATION_BLUESKY_ENABLED=1`（既定値）で有効。認証は `BLUESKY_HANDLE` / `BLUESKY_APP_PASSWORD` または `~/.config/soren/bluesky.json`
+- BlueskyはTwitchの公開URL確認後だけ投稿し、`tmp/state/bluesky_clips/<clip-id>.json`で同じクリップの二重投稿を防ぐ。Bluesky失敗でもTwitchクリップ・チャットは継続
 
 ## 作業表示・報告
 このリポジトリで が調査・修正・テスト・検証を行う間は、OBS の eventOverlay 内の常設作業表示を使ってください。

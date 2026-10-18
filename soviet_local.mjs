@@ -31,6 +31,11 @@ import {
   createStaticFileServer,
   resolveStaticBindAddress,
 } from './lib/static_file_server.mjs';
+import { JevDropGuard } from './lib/jev_guarded_drop.mjs';
+import { browserIdFromWebSocketUrl, decideMuteAction } from './lib/mute_flag_reader.mjs';
+import { nextGameInstanceId } from './lib/jev_game_nonce.mjs';
+import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
+import { GameObservationWriter } from './lib/game_observation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,6 +67,7 @@ process.on('exit', (code) => bridgeLogExit(`exit code=${code}`));
 for (const signal of ['SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
     bridgeLogExit(`signal ${signal}`);
+    removePlayerCapability();
     process.exit(signal === 'SIGTERM' ? 143 : 129);
   });
 }
@@ -69,7 +75,16 @@ for (const signal of ['SIGTERM', 'SIGHUP']) {
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
+const gameObservation = new GameObservationWriter('tmp/state/game_observation.json');
+const JEV_ACK_ROOT = path.join('tmp', 'state', 'jev_player', 'acks');
+const PLAYER_STATE_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_state.json');
+const PLAYER_CAPABILITY_PATH = path.join(GAME_LIFECYCLE_DIR, 'player_capabilities.json');
 const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
+// The flag is an ownership record managed by lib/mute_flag.py (see that module
+// for the fail-closed release contract).  The reader shells out to it, so the
+// re-evaluation is throttled; the cheap fs.existsSync stays per-iteration.
+const MUTE_FLAG_HELPER = path.join(__dirname, 'lib', 'mute_flag.py');
+const MUTE_FLAG_RECHECK_MS = 2000;
 // Stray-tab guard cadence. soren91 runs as a GUEST tab in this same Chrome
 // (SOREN91_SHARED_BROWSER) and can orphan an about:blank tab over the local
 // game, turning the OBS window-capture white. While the local game is active
@@ -149,6 +164,217 @@ function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(data));
   fs.renameSync(tmpPath, filePath);
+}
+
+const JEV_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function failClosedPlayerState() {
+  process.env.SOREN_PLAYER_POLICY = 'existing';
+  delete process.env.SOREN_JEV_PLAYER_GENERATION;
+  delete process.env.SOREN_JEV_GAME_GENERATION;
+  delete process.env.SOREN_JEV_RUN_ID;
+}
+
+function loadCommittedPlayerState() {
+  try {
+    const value = JSON.parse(fs.readFileSync(PLAYER_STATE_PATH, 'utf8'));
+    if (!value || value.schema !== 1 || value.game !== 'sorengame') {
+      failClosedPlayerState();
+      return;
+    }
+    if (!['existing', 'jev'].includes(value.policy)) {
+      failClosedPlayerState();
+      return;
+    }
+    if (!Number.isInteger(value.player_generation) || value.player_generation < 0) {
+      failClosedPlayerState();
+      return;
+    }
+    if (value.policy === 'jev' && !JEV_UUID_RE.test(String(value.run_id || ''))) {
+      failClosedPlayerState();
+      return;
+    }
+    process.env.SOREN_PLAYER_POLICY = value.policy;
+    process.env.SOREN_JEV_PLAYER_GENERATION = String(value.player_generation);
+    if (Number.isInteger(value.game_generation) && value.game_generation >= 1) {
+      process.env.SOREN_JEV_GAME_GENERATION = String(value.game_generation);
+    }
+    if (value.policy === 'jev') {
+      process.env.SOREN_JEV_RUN_ID = value.run_id;
+    } else {
+      delete process.env.SOREN_JEV_RUN_ID;
+      delete process.env.SOREN_JEV_GAME_GENERATION;
+    }
+  } catch (error) {
+    // A missing snapshot is also a fail-closed existing policy. This matters
+    // when an operator finishes a JEV corner while this long-lived bridge is
+    // still running: stale JEV environment must never survive a state-file
+    // replacement or removal.
+    failClosedPlayerState();
+  }
+}
+
+function removePlayerCapability() {
+  try { fs.unlinkSync(PLAYER_CAPABILITY_PATH); } catch {}
+}
+
+function advertisePlayerCapability() {
+  try {
+    fs.mkdirSync(path.dirname(PLAYER_CAPABILITY_PATH), { recursive: true, mode: 0o700 });
+    writeJsonAtomic(PLAYER_CAPABILITY_PATH, {
+      schema: 1,
+      game: 'sorengame',
+      pid: process.pid,
+      capabilities: ['player_policy_v1'],
+      policies: ['existing', 'jev'],
+      active_policy: process.env.SOREN_PLAYER_POLICY || 'existing',
+      player_generation: Number.parseInt(process.env.SOREN_JEV_PLAYER_GENERATION || '0', 10) || 0,
+      game_generation: Number.parseInt(process.env.SOREN_JEV_GAME_GENERATION || '', 10) || null,
+      started_at: new Date().toISOString(),
+    });
+    try { fs.chmodSync(PLAYER_CAPABILITY_PATH, 0o600); } catch {}
+  } catch (error) {
+    console.warn(`[GAME-LIFECYCLE] player capability write failed: ${error.message}`);
+  }
+}
+
+loadCommittedPlayerState();
+function playerPolicyFingerprint() {
+  return JSON.stringify([
+    process.env.SOREN_PLAYER_POLICY || 'existing',
+    process.env.SOREN_JEV_RUN_ID || '',
+    process.env.SOREN_JEV_PLAYER_GENERATION || '',
+    process.env.SOREN_JEV_GAME_GENERATION || '',
+  ]);
+}
+let lastAdvertisedPlayerFingerprint = playerPolicyFingerprint();
+function refreshCommittedPlayerState() {
+  const before = playerPolicyFingerprint();
+  loadCommittedPlayerState();
+  const after = playerPolicyFingerprint();
+  if (after !== before) {
+    jevFrameSeq = 0;
+    jevOpportunitySeq = 0;
+    jevLastGameInstanceId = '';
+    jevLastDropPieceId = null;
+    jevGameInstanceId = null;
+    jevLastPhase = null;
+  }
+  if (after !== lastAdvertisedPlayerFingerprint) {
+    advertisePlayerCapability();
+    lastAdvertisedPlayerFingerprint = after;
+  }
+}
+let jevFrameSeq = 0;
+let jevOpportunitySeq = 0;
+let jevLastGameInstanceId = '';
+let jevLastDropPieceId = null;
+// Per-game identity nonce owned by this bridge (Issue #771 section 5.1). The
+// sorengame build does not push one, so it starts fresh per bridge process and
+// rotates on the observed terminal -> MOVE transition, never on score alone.
+let jevGameInstanceId = null;
+let jevLastPhase = null;
+
+function jevIntegerEnv(name) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function annotateJevState(state) {
+  if (!state || process.env.SOREN_PLAYER_POLICY !== 'jev') return state;
+  const existing = state.jev_identity && typeof state.jev_identity === 'object'
+    ? state.jev_identity
+    : {};
+  const next = state.next && typeof state.next === 'object' ? state.next : {};
+  const runId = existing.run_id || process.env.SOREN_JEV_RUN_ID || null;
+  const currentPhase = typeof state.state === 'string' ? state.state : null;
+  const resolvedNonce = nextGameInstanceId({
+    providedId: existing.game_instance_id || process.env.SOREN_JEV_GAME_INSTANCE_ID || null,
+    previousPhase: jevLastPhase,
+    currentPhase,
+    currentId: jevGameInstanceId,
+    generate: () => crypto.randomUUID(),
+  });
+  jevGameInstanceId = resolvedNonce.gameInstanceId;
+  jevLastPhase = resolvedNonce.phase;
+  const gameInstanceId = resolvedNonce.gameInstanceId;
+  const gameGeneration = existing.game_generation ?? jevIntegerEnv('SOREN_JEV_GAME_GENERATION');
+  const playerGeneration = existing.player_generation ?? jevIntegerEnv('SOREN_JEV_PLAYER_GENERATION');
+  const dropPieceId = resolveDropPieceId({
+    providedId: existing.drop_piece_id,
+    nextId: next.id,
+    pieces: state.pieces,
+  });
+  if (gameInstanceId !== jevLastGameInstanceId) {
+    jevLastGameInstanceId = gameInstanceId;
+    jevOpportunitySeq = 0;
+    jevLastDropPieceId = null;
+  }
+  // A new bridge-provided current-piece id is an actual drop opportunity;
+  // polling the same frame never increments it.  If the bridge cannot expose
+  // the id, leave the opportunity absent and let the JEV runner fail closed.
+  if (state.state === 'MOVE' && Number.isInteger(dropPieceId) && dropPieceId !== jevLastDropPieceId) {
+    jevLastDropPieceId = dropPieceId;
+    jevOpportunitySeq += 1;
+  }
+  const opportunitySeq = existing.opportunity_seq
+    ?? state.opportunity_seq
+    ?? state.opportunitySeq
+    ?? (jevOpportunitySeq > 0 ? jevOpportunitySeq : null);
+  jevFrameSeq += 1;
+  return {
+    ...state,
+    jev_identity: {
+      ...existing,
+      ...(runId ? { run_id: runId } : {}),
+      ...(gameInstanceId ? { game_instance_id: gameInstanceId } : {}),
+      ...(gameGeneration != null ? { game_generation: gameGeneration } : {}),
+      ...(playerGeneration != null ? { player_generation: playerGeneration } : {}),
+      ...(opportunitySeq != null ? { opportunity_seq: opportunitySeq } : {}),
+      ...(dropPieceId != null ? { drop_piece_id: dropPieceId } : {}),
+      frame_seq: jevFrameSeq,
+      observed_at: new Date().toISOString(),
+      board_bounds: state.board_bounds || existing.board_bounds || { drop_x_min: -3, drop_x_max: 3 },
+    },
+  };
+}
+
+function writeJevAck(command, status, reason = '') {
+  if (!command || typeof command.run_id !== 'string' || !JEV_UUID_RE.test(command.run_id)) return;
+  if (typeof command.game_instance_id !== 'string' || !JEV_UUID_RE.test(command.game_instance_id)) return;
+  if (!Number.isInteger(command.opportunity_seq) || command.opportunity_seq < 1) return;
+  // opportunity_seq restarts per game, so scope the ack by game instance too;
+  // keying only on run_id made a second game in the same run collide with the
+  // first game's ack (the runner then refused the command as a replay).
+  const directory = path.join(JEV_ACK_ROOT, command.run_id, command.game_instance_id);
+  const target = path.join(directory, `opportunity_${String(command.opportunity_seq).padStart(8, '0')}.json`);
+  try {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    let previous = null;
+    try { previous = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
+    if (previous && ['accepted', 'outcome_unknown'].includes(previous.status) && previous.status !== status) return;
+    if (previous?.status === 'accepted' && status === 'accepted') return;
+    const payload = {
+      schema_version: 1,
+      status,
+      ...(reason ? { reason } : {}),
+      run_id: command.run_id,
+      game_instance_id: command.game_instance_id,
+      game_generation: command.game_generation,
+      player_generation: command.player_generation,
+      opportunity_seq: command.opportunity_seq,
+      frame_seq: command.frame_seq,
+      candidate_id: command.candidate_id,
+      command_id: command.command_id,
+      updated_at: new Date().toISOString(),
+    };
+    const temporary = `${target}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(payload), { mode: 0o600 });
+    fs.chmodSync(temporary, 0o600);
+    fs.renameSync(temporary, target);
+    fs.chmodSync(target, 0o600);
+  } catch (error) {
+    console.warn(`[JEV] ack write failed: ${error.message}`);
+  }
 }
 
 // canvas の CSS 表示領域の中央をクリックする。Unity キャンバスがウィンドウ/画面
@@ -1023,9 +1249,17 @@ function clearCommands() {
 // Get game state from JS Bridge
 async function getGameState(page) {
   try {
+    // Player changes are committed at a GAMEOVER boundary without restarting
+    // this bridge. Refresh the durable snapshot before every observation so
+    // the next JEV game gets its identity and the finish path clears it from
+    // the same long-lived process.
+    refreshCommittedPlayerState();
     const state = await page.evaluate(() => window.__sorenGameState);
-    return state || null;
+    const annotated = annotateJevState(state || null);
+    gameObservation.observe(annotated);
+    return annotated;
   } catch (e) {
+    gameObservation.observe(null);
     console.error('Error getting game state:', e.message);
     return null;
   }
@@ -1034,7 +1268,8 @@ async function getGameState(page) {
 // Write game state to JSON file for AI loop
 function writeGameState(state) {
   if (!state) return;
-  fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(state, null, 2));
+  const persisted = state.jev_identity ? state : annotateJevState(state);
+  fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(persisted, null, 2));
 }
 
 function writeAudioHealth(health) {
@@ -1559,6 +1794,12 @@ async function processGameLifecycleControl(page, runtime = {}) {
     if (!lifecycleStopRequestStillCurrent(control)) {
       return { handled: false, status: 'stale' };
     }
+    if (readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot?.stale_founding_stop) {
+      // Re-observe the actual bridge after overlay readiness, before claiming.
+      // A resumed MOVE revokes the exceptional boundary without any input.
+      await getGameState(page);
+      // The broker revokes the ACK/control if this observation changed or failed.
+    }
     // This is the atomic no-restore fence.  Cancellation remains possible up
     // to this point; after it succeeds, the bridge must finish or fail closed.
     const claim = await claimLifecycleStop(control.request_id);
@@ -1569,16 +1810,44 @@ async function processGameLifecycleControl(page, runtime = {}) {
     return { handled: false, status: 'stale' };
   }
 
+  const boundarySnapshot = readGameLifecycleAck(GAME_LIFECYCLE_DIR)?.boundary_snapshot;
+  const foundingGate = {
+    required: boundarySnapshot?.stale_founding_stop === true,
+    board: boundarySnapshot?.founding_boundary_board ?? null,
+  };
   let evidence;
   let quitInvocationUncertain = false;
   runtime.markLifecycleIrreversible?.();
   try {
-    evidence = await withTimeout(page.evaluate(() => {
+    evidence = await withTimeout(page.evaluate((foundingGate) => {
       const canvas = document.querySelector('canvas');
       const unity = window.unityInstance;
       if (!unity || typeof unity.Quit !== 'function') {
         return {
           quit_supported: false,
+          canvas_present: Boolean(canvas),
+        };
+      }
+      // Claim IPC and page.evaluate both yield. Check the claimed STOP inside
+      // the same browser task as Quit(), with no await or input in between.
+      if (foundingGate.required) {
+        const state = window.__sorenGameState;
+        const board = state && Object.fromEntries(
+          ['state', 'score', 'makeSorenCount', 'pieces'].map(key => [key, state[key] ?? null]),
+        );
+        const canonical = value => JSON.stringify(value, (_key, item) => {
+          if (typeof item === 'number' && !Number.isFinite(item)) throw new Error('invalid board');
+          return item && typeof item === 'object' && !Array.isArray(item)
+            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item;
+        });
+        let same = false;
+        try {
+          same = board?.state === 'STOP' && Number.isSafeInteger(board.makeSorenCount)
+            && board.makeSorenCount > 0 && foundingGate.board !== null
+            && canonical(board) === canonical(foundingGate.board);
+        } catch {}
+        if (!same) return {
+          quit_supported: true, quit_called: false, boundary_gate_rejected: true,
           canvas_present: Boolean(canvas),
         };
       }
@@ -1601,7 +1870,7 @@ async function processGameLifecycleControl(page, runtime = {}) {
           canvas_present: Boolean(canvas),
         };
       }
-    }), 3000, 'game-only Unity Quit');
+    }, foundingGate), 3000, 'game-only Unity Quit');
   } catch (error) {
     // A context/page error can happen after the browser accepted Quit but
     // before Playwright returned.  Keep the fence in that ambiguous case.
@@ -1615,7 +1884,11 @@ async function processGameLifecycleControl(page, runtime = {}) {
 
   if (!evidence?.quit_supported || !evidence?.quit_called) {
     if (!quitInvocationUncertain) runtime.clearLifecycleIrreversible?.();
-    if (!quitInvocationUncertain) await restoreGameOnlyRuntime(page, runtime);
+    // A denied gate has not changed resources. Restoring would reload the
+    // resumed game, so keep the existing fenced failure without recovery input.
+    if (!quitInvocationUncertain && !evidence?.boundary_gate_rejected) {
+      await restoreGameOnlyRuntime(page, runtime);
+    }
     // Quit evaluation is async: re-verify currency before writing failed so a
     // superseded request never overwrites the newer resource.
     if (!lifecycleStopWriteStillCurrent(control)) {
@@ -1802,12 +2075,14 @@ function stateChanged(prev, curr) {
   if (!prev || !curr) return true;
   return prev.state !== curr.state ||
          prev.score !== curr.score ||
+         prev.makeSorenCount !== curr.makeSorenCount ||
          JSON.stringify(prev.pieces) !== JSON.stringify(curr.pieces);
 }
 
 // Execute a command via JS Bridge
-async function executeCommand(page, command, externalGameAudio = null) {
+async function executeCommand(page, command, externalGameAudio = null, jevDropGuard = null) {
   if (command.action === 'retry') {
+    gameObservation.reset();
     console.log('Executing: RETRY');
     externalGameAudio?.resetForNewGame();
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
@@ -1826,10 +2101,39 @@ async function executeCommand(page, command, externalGameAudio = null) {
     await page.evaluate((v) => { window.__sorenCommand = v; }, command.value);
     await page.waitForTimeout(1000);
   } else if (command.action === 'drop') {
+    let jevValidation = null;
+    let currentState = null;
+    if (command.player_policy === 'jev') {
+      currentState = await getGameState(page);
+      jevValidation = jevDropGuard?.dispatch(command, {
+        state: currentState,
+        identity: currentState?.jev_identity,
+      }) || { ok: false, status: 'rejected', reason: 'guard_unavailable' };
+      if (!jevValidation.ok) {
+        writeJevAck(command, jevValidation.status, jevValidation.reason);
+        console.warn(`[JEV] guarded drop rejected: ${jevValidation.reason}`);
+        return currentState;
+      }
+      writeJevAck(command, 'dispatched');
+    }
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     externalGameAudio?.playDrop();
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
     await page.waitForTimeout(500);
+    if (command.player_policy === 'jev') {
+      const afterState = await getGameState(page);
+      const beforeId = currentState?.jev_identity?.drop_piece_id;
+      const afterId = afterState?.jev_identity?.drop_piece_id;
+      const phaseChanged = afterState?.state !== 'MOVE' && afterState?.phase !== 'MOVE';
+      const pieceAdvanced = Number.isInteger(afterId) && afterId !== beforeId;
+      if (!phaseChanged && !pieceAdvanced) {
+        writeJevAck(command, 'outcome_unknown', 'drop_transition_not_observed');
+        console.warn('[JEV] drop outcome unknown: no post-drop state transition observed');
+      } else {
+        writeJevAck(command, 'accepted');
+      }
+      return afterState || currentState;
+    }
   } else if (command.action === 'mute') {
     console.log('Executing: MUTE');
     await page.evaluate(() => {
@@ -1853,6 +2157,131 @@ async function executeCommand(page, command, externalGameAudio = null) {
   return state;
 }
 
+// --- Mute-flag ownership reader (see lib/mute_flag.py) ----------------------
+// The local game is muted while tmp/mute_local_bgm holds an ownership record
+// written by soren91_control.sh.  The record is released by the owner itself
+// (leave) or, when the session died with the flag still set, by THIS reader: a
+// reap is allowed only if the record in front of us is provably the stale one
+// (its exact token/revision/browser_id, every owner dead, and no CDP page other
+// than the local game) — the compare-and-swap itself lives in mute_flag.py.
+function muteFlagCli(args, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    execFile('python3', [MUTE_FLAG_HELPER, ...args], { timeout: timeoutMs, maxBuffer: 1 << 20 },
+      (error, stdout) => {
+        if (error) {
+          resolve({ ok: false, reason: 'cli-error', error: String((error && error.message) || error) });
+          return;
+        }
+        try {
+          resolve(JSON.parse(String(stdout)));
+        } catch (e) {
+          resolve({ ok: false, reason: 'unparsable', error: String((e && e.message) || e) });
+        }
+      });
+  });
+}
+
+// Same endpoint resolution as soren91_control.sh:_soren91_cdp_base_url so both
+// sides hash the same browser instance.
+function cdpBaseUrl() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CDP_ENDPOINT_FILE, 'utf-8'));
+    const url = parsed && parsed.url;
+    if (url) return String(url).replace('localhost', '127.0.0.1').replace(/\/+$/, '');
+  } catch (e) { /* fall back to the listener port */ }
+  return `http://127.0.0.1:${CDP_PORT}`;
+}
+
+async function currentBrowserId() {
+  try {
+    const response = await withTimeout(fetch(`${cdpBaseUrl()}/json/version`), 3000, 'mute flag cdp version');
+    if (!response.ok) return '';
+    const payload = await response.json();
+    return browserIdFromWebSocketUrl(payload && payload.webSocketDebuggerUrl);
+  } catch (e) {
+    return '';
+  }
+}
+
+// CDP Target.getTargets: how many targets of type "page" exist besides our own
+// local game page.  Returns -1 when unavailable so the decision stays muted.
+async function countForeignPages(context, page) {
+  let session = null;
+  try {
+    session = await withTimeout(context.newCDPSession(page), 3000, 'mute flag CDP session');
+    const own = await withTimeout(session.send('Target.getTargetInfo'), 3000, 'Target.getTargetInfo');
+    const ownId = own && own.targetInfo ? own.targetInfo.targetId : '';
+    if (!ownId) return -1;
+    const targets = await withTimeout(session.send('Target.getTargets'), 3000, 'Target.getTargets');
+    const infos = (targets && targets.targetInfos) || [];
+    return infos.filter((info) => info.type === 'page' && info.targetId !== ownId).length;
+  } catch (e) {
+    return -1;
+  } finally {
+    try { if (session) await session.detach(); } catch (e) { /* session may be gone */ }
+  }
+}
+
+async function evaluateMuteFlag({ page, context, log, previousReason = '' }) {
+  // Cheap path first: with no flag file at all nothing else can be needed.
+  if (!fs.existsSync(MUTE_FLAG_FILE)) {
+    return { muted: false, reason: 'absent' };
+  }
+  const status = await muteFlagCli(['status', '--flag', MUTE_FLAG_FILE]);
+  const shouldCountPages = Boolean(status && status.ok === true && status.state === 'owned'
+    && status.armed && status.all_owners_dead);
+  const foreignPages = shouldCountPages ? await countForeignPages(context, page) : -1;
+  const ownBrowserId = shouldCountPages ? await currentBrowserId() : '';
+  const decision = decideMuteAction({ status, ownBrowserId, foreignPages });
+  if (!decision.reap) {
+    // One line per reason change only: a kept flag would otherwise append to the
+    // diagnostic log on every tick for the whole soren91 session.
+    if (decision.reason !== previousReason) log(`MUTE flag kept (${decision.reason})`);
+    return { muted: true, reason: decision.reason };
+  }
+  const result = await muteFlagCli([
+    'reap', '--flag', MUTE_FLAG_FILE,
+    '--token', String(decision.reap.token),
+    '--revision', String(decision.reap.revision),
+    '--browser-id', String(decision.reap.browserId),
+    '--foreign-pages', '0',
+  ]);
+  if (result && result.ok === true) {
+    log(`MUTE flag reaped (all owners dead, no foreign page; rev=${decision.reap.revision})`);
+    return { muted: false, reaped: true, reason: 'reaped' };
+  }
+  log(`MUTE flag reap refused (${(result && result.reason) || 'unknown'})`);
+  return { muted: true, reason: 'reap-refused' };
+}
+
+// soren91 freezes the local game page for its whole session
+// (soren91/main.mjs setNormalGameLifecycle: Page.setWebLifecycleState=frozen,
+// CPU throttle, canvas hidden, __sorenRenderPaused).  After a reap that session
+// is gone, so undo the freeze or the broadcast keeps the dead, blank canvas.
+async function restoreLocalPageLifecycleAfterReap(page, context) {
+  let session = null;
+  try {
+    session = await withTimeout(context.newCDPSession(page), 3000, 'mute flag restore session');
+    await withTimeout(session.send('Page.setWebLifecycleState', { state: 'active' }), 3000, 'Page.setWebLifecycleState');
+    await withTimeout(session.send('Emulation.setCPUThrottlingRate', { rate: 1 }), 3000, 'Emulation.setCPUThrottlingRate');
+    await withTimeout(page.evaluate(() => {
+      const canvas = document.querySelector('canvas');
+      const saved = globalThis.__soren91NormalCanvasStyle;
+      if (canvas && saved) {
+        canvas.style.visibility = saved.visibility;
+        canvas.style.pointerEvents = saved.pointerEvents;
+      }
+      globalThis.__sorenRenderPaused = false;
+      delete globalThis.__soren91NormalCanvasStyle;
+    }), 3000, 'mute flag restore evaluate');
+    console.log('[MUTE-FLAG] restored local game page lifecycle after reap');
+  } catch (e) {
+    console.warn(`[MUTE-FLAG] lifecycle restore failed: ${(e && e.message) || e}`);
+  } finally {
+    try { if (session) await session.detach(); } catch (e) { /* session may be gone */ }
+  }
+}
+
 async function runLocalController() {
   // Check build directory exists
   if (!fs.existsSync(BUILD_DIR)) {
@@ -1867,6 +2296,7 @@ async function runLocalController() {
   try {
     server = await startServer();
     console.log(`Server started on port ${SERVE_PORT}`);
+    advertisePlayerCapability();
   } catch (e) {
     console.error('Failed to start server:', e.message);
     process.exit(1);
@@ -1896,12 +2326,16 @@ async function runLocalController() {
   }
   process.on('SIGINT', () => {
     console.log('\nShutting down...');
+    removePlayerCapability();
     removeCdpEndpoint();
     server.close();
     if (twicaProxyServer) twicaProxyServer.close();
     process.exit(0);
   });
-  process.on('exit', removeCdpEndpoint);
+  process.on('exit', () => {
+    removePlayerCapability();
+    removeCdpEndpoint();
+  });
 
   let browser;
   let context;
@@ -2517,11 +2951,18 @@ async function runLocalController() {
   let checkCount = 0;
   let nullStateCount = 0;
   let isMuted = false;
+  // Mute-flag ownership state.  Seeded fail-closed from the flag file so the
+  // very first iteration cannot drive the game while a record exists, then
+  // refreshed (throttled) by evaluateMuteFlag().
+  let muteFlagMuted = fs.existsSync(MUTE_FLAG_FILE);
+  let muteFlagReason = '';
+  let lastMuteFlagCheckAt = 0;
   let lastAudioRouteHealAt = 0;
   let lastAudioWatchdogAt = 0;
   let lastUnityAudioRecoverAt = 0;
   let lastStrayTabGuardAt = 0;
   let lastGameRenderHealthAt = 0;
+  const jevDropGuard = new JevDropGuard();
   let gameLifecycleStopped = false;
   let gameLifecycleBlocked = false;
   let gameLifecycleRequestId = '';
@@ -2587,13 +3028,33 @@ async function runLocalController() {
       continue;
     }
 
-    // Check mute flag file (independent of commands.txt to avoid race condition)
-    const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
+    // Mute gate: the ownership record (lib/mute_flag.py, independent of
+    // commands.txt to avoid a race condition) decides.  A record that is
+    // provably stale — matching token/revision/browser_id, every owner dead, no
+    // CDP page other than the local game — is reaped with the compare-and-swap
+    // inside mute_flag.py, and only then do we drive the game again.  Anything
+    // unprovable (legacy/corrupt/unarmed/unknown owner/other browser) keeps the
+    // mute.  The check shells out to python3, so it is throttled.
     const audioDiagLog = (msg) => {
       const line = `[${new Date().toISOString()}] ${msg}`;
       console.log(line);
       try { fs.appendFileSync('tmp/audio_diag.log', line + '\n'); } catch (e) {}
     };
+    // The presence check stays cheap and immediate: a record that appears (a
+    // soren91 session starting) or disappears must gate the very next iteration,
+    // exactly like the old `fs.existsSync` did.  Only the *contents* of an
+    // existing record are re-read on the throttle.
+    const muteFlagPresent = fs.existsSync(MUTE_FLAG_FILE);
+    if (muteFlagPresent !== muteFlagMuted
+      || Date.now() - lastMuteFlagCheckAt >= MUTE_FLAG_RECHECK_MS) {
+      lastMuteFlagCheckAt = Date.now();
+      const evaluated = await evaluateMuteFlag({
+        page, context, log: audioDiagLog, previousReason: muteFlagReason,
+      });
+      muteFlagMuted = evaluated.muted;
+      muteFlagReason = evaluated.reason;
+    }
+    const shouldMute = muteFlagMuted;
     if (shouldMute && !isMuted) {
       audioDiagLog('MUTE flag detected, muting audio');
       externalGameAudio.setMuted(true);
@@ -2610,8 +3071,12 @@ async function runLocalController() {
       });
       isMuted = true;
     } else if (!shouldMute && isMuted) {
-      audioDiagLog('MUTE flag removed, resuming audio');
+      audioDiagLog('MUTE flag released, resuming audio');
       externalGameAudio.setMuted(false);
+      // The record is gone (the owner released it, or we reaped it): no soren91
+      // session owns the local game any more, so undo the lifecycle freeze it
+      // applied.  Idempotent when soren91 restored the page on its own exit.
+      await restoreLocalPageLifecycleAfterReap(page, context);
       // Diagnosis (from [AUDIO-UNMUTE] logs): the tracked AudioContext stays
       // "suspended" after resume() even though the tab is visible. The local
       // game is driven via the window.__sorenCommand JS bridge, so after the
@@ -2807,7 +3272,7 @@ async function runLocalController() {
 
     if (commands.length > processedCount) {
       for (let i = processedCount; i < commands.length; i++) {
-        const state = await executeCommand(page, commands[i], externalGameAudio);
+        const state = await executeCommand(page, commands[i], externalGameAudio, jevDropGuard);
         lastState = state;
         if (state) nullStateCount = 0;
         processedCount++;
@@ -2886,6 +3351,11 @@ export {
   lifecycleStopWriteStillCurrent,
   processGameLifecycleControl,
   restoreGameOnlyRuntime,
+  // Mute-flag ownership reader (see lib/mute_flag.py).  Exported so the real
+  // decision/restore path can be driven against a live CDP browser by
+  // tests/e2e_stale_mute.mjs.
+  evaluateMuteFlag,
+  restoreLocalPageLifecycleAfterReap,
 };
 
 if (process.env.SOREN_LOCAL_CONTROLLER_IMPORT_ONLY !== '1') {

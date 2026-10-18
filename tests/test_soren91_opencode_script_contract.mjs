@@ -11,12 +11,17 @@ import {
 
 const source = readFileSync(new URL('../soren91/text_ai.mjs', import.meta.url), 'utf8');
 
-test('opencode text fallback uses direct stdin JSON transport without a TTY shell', () => {
+test('opencode text fallback holds the shared rotation gate without a TTY shell', () => {
   assert.match(
     source,
-    /execFile\('opencode', \['run', '--format', 'json', '--model', model\]/,
+    /OPENCODE_ROTATION_GATE_EXEC = join\(PROJECT_DIR, 'lib', 'opencode_rotation_gate_exec\.sh'\)/,
+  );
+  assert.match(
+    source,
+    /execFile\('bash', \[OPENCODE_ROTATION_GATE_EXEC, 'opencode', 'run', '--title', 'docich:soren91', '--format', 'json', '--model', model\]/,
   );
   assert.match(source, /child\.stdin\.write\(promptText\);/);
+  assert.doesNotMatch(source, /execFile\('opencode'/);
   assert.doesNotMatch(source, /execFile\('script'/);
   assert.doesNotMatch(source, /bash -[lc]/);
   assert.doesNotMatch(source, /"\$\(cat /);
@@ -63,4 +68,11 @@ test('a model that times out is cooled down instead of retried every comment', (
   assert.equal(isOpencodeTimeout({ message: 'provider failure' }), false);
   assert.equal(isOpencodeTimeout(null), false);
   assert.match(source, /opencode model skipped \(timed out recently\)/);
+});
+
+test('Soren91 opencode calls use the shared priority queue and release it', () => {
+  assert.match(source, /AI_QUEUE_SCRIPT = join\(PROJECT_DIR, 'lib', 'ai_generation_queue_cli\.sh'\)/);
+  assert.match(source, /runAiQueueCli\(\['acquire', lane\]\)/);
+  assert.match(source, /await releaseOpencodeQueue\(tag, queueSlot\)/);
+  assert.match(source, /if \(options\.queueLane\) return String\(options\.queueLane\)/);
 });

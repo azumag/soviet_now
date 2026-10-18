@@ -2,9 +2,22 @@
 
 
 is_game_over() {
-	local s
-	s=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('state',''))" 2>/dev/null)
-	[ "$s" = "GAMEOVER" ] || [ "$s" = "STOP" ]
+	python3 - "$GAME_STATE" "${TMP_MARKERS_DIR:-tmp/markers}/.soviet_created" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+
+from lib.game_terminal import is_terminal
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    state = json.load(stream)
+if not is_terminal(
+    state,
+    state_mtime=os.path.getmtime(sys.argv[1]),
+    founding_seen=os.path.exists(sys.argv[2]),
+):
+    raise SystemExit(1)
+PY
 }
 
 is_move_state() {
@@ -54,8 +67,8 @@ _soviet_hold_active() {
 	since=$(cat "$hold_file" 2>/dev/null || echo 0)
 	case "$since" in ''|*[!0-9]*) rm -f "$hold_file" 2>/dev/null || true; return 1 ;; esac
 	now=$(date +%s)
-	hold_sec="${SOVIET_HOLD_SEC:-600}"
-	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	hold_sec="${SOVIET_HOLD_SEC:-0}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=0 ;; esac
 	if [ "$hold_sec" -gt 0 ] && [ $((now - since)) -lt "$hold_sec" ]; then
 		return 0
 	fi
@@ -71,8 +84,8 @@ _soviet_hold_remaining() {
 	since=$(cat "$hold_file" 2>/dev/null || echo 0)
 	case "$since" in ''|*[!0-9]*) echo 0; return 1 ;; esac
 	now=$(date +%s)
-	hold_sec="${SOVIET_HOLD_SEC:-600}"
-	case "$hold_sec" in ''|*[!0-9]*) hold_sec=600 ;; esac
+	hold_sec="${SOVIET_HOLD_SEC:-0}"
+	case "$hold_sec" in ''|*[!0-9]*) hold_sec=0 ;; esac
 	rem=$((hold_sec - (now - since)))
 	if [ "$rem" -gt 0 ]; then echo "$rem"; else echo 0; fi
 }

@@ -5,12 +5,25 @@ import { randomUUID } from 'node:crypto';
 
 const STAGES = ['capture', 'analyze', 'ranking', 'decide', 'input', 'cooldown', 'poll'];
 export const DROP_PROFILE_STAGES = [...STAGES, 'holdInput', 'overlap', 'unattributed'];
+export const CAPTURE_PROFILE_STAGES = ['geometryBefore', 'screenshot', 'imageValidate', 'geometryAfter'];
 const REASONS = ['unknown-current', 'uncalibrated', 'invalid-board', 'confirm-frame',
   'preview-changed', 'board-moving', 'stable', 'stable-slow-advance', 'non-move', 'other'];
 const QUEUE_TRANSITIONS = ['advanced', 'same', 'unknown'];
+const SAFE_FAILURE_CLASSES = new Set([
+  'capture-budget-exhausted', 'capture-session-busy', 'capture-timeout',
+  'capture-invalid-geometry', 'capture-invalid-png', 'capture-invalid-jpeg', 'capture-invalid-image',
+  'capture-pixel-scale-mismatch', 'capture-geometry-changed',
+  'input-stale-observation', 'input-calibration-mismatch', 'input-geometry-changed',
+]);
+const OBSERVATION_CAPTURE_CAPACITY = 16;
 const zeros = names => Object.fromEntries(names.map(name => [name, 0]));
 const rounded = n => Math.round(n * 10) / 10;
 const PROFILE_CAPACITY = 128;
+
+function safeFailureClass(error) {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return SAFE_FAILURE_CLASSES.has(message) ? message : 'other';
+}
 
 export function writeMetricsAtomically(path, value) {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -36,6 +49,7 @@ export class LoopMetrics {
     this.lastDrop = null;
     this.intervals = [];
     this.lastWrite = -Infinity;
+    this.lastFailure = null;
     // Independent of the legacy turn-scoped metrics. No extra timer or I/O.
     this.profileSession = randomUUID();
     this.profileRecords = [];
@@ -44,14 +58,19 @@ export class LoopMetrics {
     this.profileOpen = null;
     this.profileActive = new Set();
     this.profileLastInput = null;
+    this.profilePendingCapture = null;
   }
   begin(game, turn) {
+    // begin() is the boundary of one gameplay-loop attempt. A recovered error
+    // must not be reported again by a later successful attempt on the same turn.
+    this.lastFailure = null;
     if (this.game !== game) {
       this.lastDrop = null;
       this.intervals = [];
       // Never turn an inter-round wait or the first drop into a complete interval.
       this.profileOpen = null;
       this.profileLastInput = null;
+      this.profilePendingCapture = null;
     }
     if (this.game !== game || this.turn !== turn) {
       this.startedAt = this.now();
@@ -85,10 +104,20 @@ export class LoopMetrics {
     if (!STAGES.includes(stage)) throw new TypeError('Unknown latency stage');
     const start = this.now();
     this._profileSettle(start);
+    if (stage === 'capture') this.profilePendingCapture = null;
     const token = { stage, inputMs: 0, inputBucket: null };
     this.profileActive.add(token);
     if (this.profileOpen) this.profileOpen.phaseCalls[stage]++;
-    try { return await action(); }
+    try {
+      const result = await action();
+      if (stage === 'capture') this._captureStages(result?.captureStageMs);
+      return result;
+    } catch (error) {
+      // Keep only fixed enums. Raw error text can include host paths, URLs or
+      // provider details and must never be written to the metrics sidecar.
+      this.lastFailure = { stage, errorClass: safeFailureClass(error) };
+      throw error;
+    }
     finally {
       const end = this.now();
       this._profileSettle(end);
@@ -96,6 +125,21 @@ export class LoopMetrics {
       if (stage === 'input') this.profileLastInput = token;
       this.stages[stage] += Math.max(0, end - start);
     }
+  }
+  _captureStages(value) {
+    const bucket = this.profileOpen;
+    if (!bucket || !value || typeof value !== 'object') return;
+    const parsed = {};
+    for (const key of CAPTURE_PROFILE_STAGES) {
+      const n = value[key];
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return;
+      parsed[key] = n;
+    }
+    for (const key of CAPTURE_PROFILE_STAGES) bucket.captureStageMs[key] += parsed[key];
+    // Keep only the most recent successful capture until observe() consumes it.
+    // This correlates existing timing with the existing sanitized reason without
+    // adding a capture, wait, state payload, path or free-form error to telemetry.
+    this.profilePendingCapture = parsed;
   }
   observe(state) {
     this.observations++;
@@ -112,6 +156,20 @@ export class LoopMetrics {
       // changing gameplay. This is not treated as authoritative game acceptance.
       const rawTransition = String(state?.perception?.queueTransition || 'unknown');
       const transition = QUEUE_TRANSITIONS.includes(rawTransition) ? rawTransition : 'unknown';
+      const captureStageMs = this.profilePendingCapture;
+      this.profilePendingCapture = null;
+      if (captureStageMs) {
+        if (bucket.observationCaptureRecords.length >= OBSERVATION_CAPTURE_CAPACITY) {
+          bucket.observationCaptureRecords.shift();
+          bucket.observationCaptureDropped++;
+        }
+        bucket.observationCaptureRecords.push({
+          observation: bucket.observations,
+          reason: key,
+          queueTransition: transition,
+          captureStageMs: Object.fromEntries(CAPTURE_PROFILE_STAGES.map(stage => [stage, rounded(captureStageMs[stage])])),
+        });
+      }
       const acceptance = bucket.dropAcceptance;
       acceptance.observations++;
       acceptance.transitionCounts[transition]++;
@@ -123,6 +181,8 @@ export class LoopMetrics {
         acceptance.confirmObservation = acceptance.observations;
         acceptance.confirmReason = key;
       }
+    } else {
+      this.profilePendingCapture = null;
     }
   }
   holdSent() {
@@ -151,13 +211,18 @@ export class LoopMetrics {
     const bucket = this.profileOpen;
     if (bucket) {
       const stageMs = Object.fromEntries(DROP_PROFILE_STAGES.map(s => [s, rounded(bucket.stageMs[s])]));
+      const captureStageMs = Object.fromEntries(CAPTURE_PROFILE_STAGES.map(s => [s, rounded(bucket.captureStageMs[s])]));
       const durationMs = rounded(Math.max(0, now - bucket.start));
       const accountingErrorMs = rounded(durationMs - Object.values(stageMs).reduce((a, b) => a + b, 0));
       this.profileRecords.push({
         sample: ++this.profileTotal, game: this.game, fromTurn: bucket.fromTurn, toTurn: this.turn,
-        endedAtMs: Date.now(), durationMs, stageMs, phaseCalls: { ...bucket.phaseCalls },
+        endedAtMs: Date.now(), durationMs, stageMs, captureStageMs, phaseCalls: { ...bucket.phaseCalls },
         observations: bucket.observations, holds: bucket.holds, errors: bucket.errors,
         reasonCounts: { ...bucket.reasonCounts },
+        observationCaptureRecords: bucket.observationCaptureRecords.map(record => ({
+          ...record, captureStageMs: { ...record.captureStageMs },
+        })),
+        observationCaptureDropped: bucket.observationCaptureDropped,
         dropAcceptance: {
           confirmed: bucket.dropAcceptance.confirmed,
           confirmLatencyMs: bucket.dropAcceptance.confirmLatencyMs,
@@ -174,13 +239,16 @@ export class LoopMetrics {
     }
     this.profileOpen = {
       start: now, cursor: now, fromTurn: this.turn, clockValid: true,
-      stageMs: zeros(DROP_PROFILE_STAGES), phaseCalls: zeros([...STAGES, 'holdInput']),
+      stageMs: zeros(DROP_PROFILE_STAGES), captureStageMs: zeros(CAPTURE_PROFILE_STAGES),
+      phaseCalls: zeros([...STAGES, 'holdInput']),
       observations: 0, holds: 0, errors: 0, reasonCounts: zeros(REASONS),
+      observationCaptureRecords: [], observationCaptureDropped: 0,
       dropAcceptance: {
         confirmed: false, confirmLatencyMs: null, confirmObservation: null, confirmReason: null,
         observations: 0, transitionCounts: zeros(QUEUE_TRANSITIONS),
       },
     };
+    this.profilePendingCapture = null;
     // A measured operation crossing a boundary touches both intervals.
     for (const token of this.profileActive) this.profileOpen.phaseCalls[token.stage]++;
     this.profileLastInput = null;
@@ -193,14 +261,19 @@ export class LoopMetrics {
     this.lastWrite = now;
     const sorted = [...this.intervals].sort((a, b) => a - b);
     const percentile = p => sorted.length ? rounded(sorted[Math.ceil(sorted.length * p) - 1]) : null;
+    const normalizedOutcome = ['observe', 'hold-sent', 'drop-sent', 'error'].includes(outcome) ? outcome : 'error';
     const value = {
       schemaVersion: 1, updatedAtMs: Date.now(), game: this.game, turn: this.turn,
-      outcome: ['observe', 'hold-sent', 'drop-sent', 'error'].includes(outcome) ? outcome : 'error',
+      outcome: normalizedOutcome,
       observations: this.observations, holds: this.holds,
       elapsedMs: rounded(Math.max(0, now - this.startedAt)),
       sinceDropSentMs: this.lastDrop == null ? null : rounded(now - this.lastDrop),
       stageMs: Object.fromEntries(STAGES.map(s => [s, rounded(this.stages[s])])),
       reasonCounts: { ...this.reasons },
+      // One bounded, sanitized failure label makes telemetry-only evidence useful
+      // when a game dies before the first drop. Successful/recovered attempts do
+      // not retain an earlier failure from the same turn.
+      lastFailure: normalizedOutcome === 'error' && this.lastFailure ? { ...this.lastFailure } : null,
       dropSentIntervalMs: { samples: sorted.length,
         last: this.intervals.length ? rounded(this.intervals.at(-1)) : null,
         p50: percentile(0.5), p95: percentile(0.95), max: sorted.length ? rounded(sorted.at(-1)) : null },
@@ -217,8 +290,12 @@ export class LoopMetrics {
         // Retain completed intervals across rounds; a process restart starts a
         // new session. Snapshot callbacks cannot mutate the internal ring.
         records: this.profileRecords.map(record => ({ ...record,
-          stageMs: { ...record.stageMs }, phaseCalls: { ...record.phaseCalls },
+          stageMs: { ...record.stageMs }, captureStageMs: { ...record.captureStageMs },
+          phaseCalls: { ...record.phaseCalls },
           reasonCounts: { ...record.reasonCounts },
+          observationCaptureRecords: record.observationCaptureRecords.map(item => ({
+            ...item, captureStageMs: { ...item.captureStageMs },
+          })),
           dropAcceptance: { ...record.dropAcceptance,
             transitionCounts: { ...record.dropAcceptance.transitionCounts } } })),
       },

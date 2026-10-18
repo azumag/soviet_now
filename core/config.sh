@@ -50,8 +50,8 @@ MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
 # deepseek-v4-flash もOpenCode CLIにセッションヘッダーを付けさせるため opencode-go: で呼ぶ。
 # Aは入出力単価$0かつHTTP 200/本文ありを確認したモデル。Bは月$5 Free Tier対象の
 # 通常単価モデルで、カタログ表示とAPIの対象認識（RestrictedModelsErrorではなく429）を確認。
-# Cは登録せず、A→Bの順で使う。
-VERCEL_CATEGORY_A_AGENTS="${VERCEL_CATEGORY_A_AGENTS-vercel:minimax/minimax-m3-free,vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin}"
+# Cは登録せず、A→Bの順で使う。MiniMax M3は品質上の理由で候補から外す。
+VERCEL_CATEGORY_A_AGENTS="${VERCEL_CATEGORY_A_AGENTS-vercel:poolside/laguna-s-2.1-free,vercel:inclusionai/ling-3.0-flash-fin}"
 # Bは月$5クレジットを消費するモデル。2026-09-05にGateway HTTP 200を確認し、
 # Aの後ろへ低単価順で置く。Free Tierの短期429時は300秒backoffして次候補へ進む。
 VERCEL_CATEGORY_B_AGENTS="${VERCEL_CATEGORY_B_AGENTS-vercel:zai/glm-5.3-flash,vercel:xiaomi/mimo-v2.5,vercel:alibaba/qwen3.8-flash,vercel:xiaomi/mimo-v2.5-pro}"
@@ -90,12 +90,18 @@ RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
 # RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。共通チェーンを
 # そのまま使う。ai_generate_list() が順に試行する。
 RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-$AI_COMMON_AGENTS}"
+# RADIO_QUALITY_REPAIR_AGENTS: mixed_language の局所修正専用チェーン。
+# 未指定時は実行中コーナーの生成チェーンを使う。MiniMax撤廃のサニタイズ対象にも含める。
+RADIO_QUALITY_REPAIR_AGENTS="${RADIO_QUALITY_REPAIR_AGENTS-}"
+RADIO_QUALITY_REPAIR_MAX_SPANS="${RADIO_QUALITY_REPAIR_MAX_SPANS:-3}"
+RADIO_QUALITY_REPAIR_MAX_CHARS="${RADIO_QUALITY_REPAIR_MAX_CHARS:-800}"
+# 局所修正は既存のprepassと同じ短い総時間上限を既定値にする。
+RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC="${RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC:-${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}}"
 AI_AGENT_BACKOFF_SEC="${AI_AGENT_BACKOFF_SEC:-600}"
 RADIO_OPENCODE_DEFER_DURING_IMPROVE="${RADIO_OPENCODE_DEFER_DURING_IMPROVE:-1}"
-# AIレーン同時実行制御 (issue #7 必須条件)。放送系 (RADIO/NEWS/JIJI/CELEBRATION) は
-# モデル差に関係なく単一ロックへ直列化、コメント返しも comment レーンで直列化する。
-# 全体で 放送系1 + コメント返し1 + 改善1 の最大3並列になる。
-# 改善ジョブ稼働中は新規の放送系生成のみ待機する (開始済み生成はキャンセルしない)。
+# AIレーン同時実行制御。優先度付き共有スケジューラは comment > radio > improve。
+# comment は1件ずつ直列化し、すでに走っている radio/improve とだけ1件並行できる。
+# radio と improve は共有の background 1枠を使い、コメント待ちがあれば新規開始しない。
 # 読み上げ/TTSはAI呼出を経ないため影響を受けない。
 AI_RADIO_LANE_LOCK="${AI_RADIO_LANE_LOCK:-1}"
 AI_COMMENT_LANE_LOCK="${AI_COMMENT_LANE_LOCK:-1}"
@@ -103,6 +109,7 @@ AI_COMMENT_LANE_LOCK="${AI_COMMENT_LANE_LOCK:-1}"
 # それ以上古いコーナーを無期限に溜めると、単一radioレーンの背後へbackground
 # process treeが蓄積する。0で明示的に無期限待機へ戻せる。
 AI_RADIO_QUEUE_MAX_WAIT_SEC="${AI_RADIO_QUEUE_MAX_WAIT_SEC:-300}"
+AI_IMPROVE_QUEUE_MAX_WAIT_SEC="${AI_IMPROVE_QUEUE_MAX_WAIT_SEC:-300}"
 AI_RADIO_IMPROVE_GATE="${AI_RADIO_IMPROVE_GATE:-1}"
 # 改善中に放送系生成が待機する上限秒。超過したらその生成だけ諦める
 # (改善サイクル実測 439-828秒のため余裕を見て1200秒)。
@@ -120,15 +127,6 @@ RADIO_OLLAMA_TIMEOUT="${RADIO_OLLAMA_TIMEOUT:-300}"
 COMMENT_OLLAMA_MODEL="${COMMENT_OLLAMA_MODEL:-qwen3.5:9b}"
 COMMENT_OLLAMA_MODEL_IMPROVING="${COMMENT_OLLAMA_MODEL_IMPROVING:-gemma4:latest}"
 COMMENT_OLLAMA_TIMEOUT="${COMMENT_OLLAMA_TIMEOUT:-20}"
-COMMENT_CLASSIFIER_AGENT="${COMMENT_CLASSIFIER_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_FALLBACK="${COMMENT_CLASSIFIER_FALLBACK:-amd:DeepSeek-V4-Flash}"
-COMMENT_CLASSIFIER_EDIT_AGENT="${COMMENT_CLASSIFIER_EDIT_AGENT:-opencode:muse-spark-1.3-contributor-free}"
-COMMENT_CLASSIFIER_EDIT_FALLBACK="${COMMENT_CLASSIFIER_EDIT_FALLBACK:-amd:DeepSeek-V4-Flash}"
-COMMENT_CLASSIFIER_EDIT_TIMEOUT="${COMMENT_CLASSIFIER_EDIT_TIMEOUT:-45}"
-COMMENT_CLASSIFIER_TIMEOUT="${COMMENT_CLASSIFIER_TIMEOUT:-90}"
-COMMENT_CLASSIFIER_AI_ENABLED="${COMMENT_CLASSIFIER_AI_ENABLED:-0}"
-COMMENT_CLASSIFIER_OPENCODE_PERMISSION_DEFAULT='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow","external_directory":"allow"}'
-COMMENT_CLASSIFIER_OPENCODE_PERMISSION="${COMMENT_CLASSIFIER_OPENCODE_PERMISSION:-$COMMENT_CLASSIFIER_OPENCODE_PERMISSION_DEFAULT}"
 # docich#32: 未信頼な視聴者コメントからの書込可能Coding Agent自動起動を既定停止。
 # 再有効化はoperatorが明示的に環境変数を設定した場合のみ。
 CODEX_BUG_DISPATCH_ENABLED="${CODEX_BUG_DISPATCH_ENABLED:-0}"
@@ -197,7 +195,7 @@ PEAK_HOURS_AGENT_PREFERENCE="${PEAK_HOURS_AGENT_PREFERENCE:-opencode:muse-spark-
 # `codex:` プレフィックスを除いたモデル名相当（local はそのまま）。
 # 既定（該当なし）は AI_AGENT_BACKOFF_SEC。muse-spark contributor 系は opencode-go 契約の
 # クォータ制枠のため 1 日バックオフ（free 枠も同様に 1 日）。
-AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/minimax/minimax-m3-free:300 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 deepseek-v4.1-flash:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
+AI_BACKOFF_SEC_ITEMS="deepseek-v4-flash-free:86400 muse-spark-1.3-contributor-free:86400 muse-spark-1.2-contributor-free:86400 vercel/poolside/laguna-s-2.1-free:300 vercel/inclusionai/ling-3.0-flash-fin:300 vercel/zai/glm-5.3-flash:300 vercel/xiaomi/mimo-v2.5:300 vercel/xiaomi/mimo-v2.5-pro:300 vercel/alibaba/qwen3.8-flash:300 amd-token-factory-deepseek-v4-flash:86400 openrouter/free:86400 local:1800 deepseek-v4-flash:18000 deepseek-v4.1-flash:18000 muse-spark-1.3-contributor:86400 muse-spark-1.2-contributor:86400"
 # レート制限/クォータ以外の失敗（プロバイダダウン・認証・一時的な CLI 障害）に使う
 # 短いバックオフ。1日級のパークは Q数枯渇（429）に限定し、一過性の失敗では
 # 無料枠を早期に復帰させる。
@@ -206,7 +204,7 @@ AI_BACKOFF_FAILURE_SEC="${AI_BACKOFF_FAILURE_SEC:-300}"
 # radio_main で timeout が高止まり）。COMMENT/RADIO ラベルは他プロバイダと同じ
 # 予算 (COMMENT_CODEX_TIMEOUT=90秒 / RADIO_CODEX_TIMEOUT=240秒) を使うようになった
 # (lib/ai_generate.sh)。この値はそれ以外のラベルに限った最終フォールバックで、
-# 他の同種の単発LLM呼び出し予算 (COMMENT_CLASSIFIER_EDIT_TIMEOUT=45) に合わせた。
+# 他の同種の単発LLM呼び出し予算 (旧コメント分類器のedit予算45秒) に合わせた。
 VERCEL_OPENCODE_TIMEOUT="${VERCEL_OPENCODE_TIMEOUT:-45}"
 # ピーク時間帯限定: issue #5 のバックプレッシャー(MAX=5)とは別に、ピーク中はキューが
 # 完全に空(0件)になるまで新規ラジオ生成をブロックする追加ゲート。同一tick内で複数
@@ -288,6 +286,8 @@ RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
 RADIO_THEME_PICK_STATUS_FILE="$TMP_STATE_DIR/.radio_theme_pick_status.json"
 RADIO_CORNER_STATUS_FILE="$TMP_STATE_DIR/.radio_corner_status.json"
 COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
+# docich#1182: WebUI 生成中インジケータの詳細 JSON (model/preview/count/attempt/max_retry/batch_hash/mode/owner_pid)。
+COMMENT_GEN_DETAIL_FILE="${COMMENT_GEN_DETAIL_FILE:-${EVENT_OVERLAY_COMMENT_GEN_DETAIL_STATE:-$TMP_STATE_DIR/.comment_gen_state.json}}"
 LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
 MANUAL_MERIKEN_MODE_FILE="$TMP_STATE_DIR/manual_meriken_mode.json"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","webfetch":"allow","web":"allow","web-search":"allow","external_directory":"allow"}'
@@ -923,6 +923,17 @@ MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
 export NEWS_MAX_AGE_HOURS NEWS_SELF_SEARCH_FALLBACK
 RUSSIA_CELEBRATION_CLIP_DELAY_SEC="${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
 SOVIET_CELEBRATION_CLIP_DELAY_SEC="${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
+# Twitch側で公開確認できたソ連建国クリップをBlueskyへ告知する。
+# 認証情報が無い場合は投稿せず、クリップとTwitchチャットは継続する。
+SOVIET_CELEBRATION_BLUESKY_ENABLED="${SOVIET_CELEBRATION_BLUESKY_ENABLED:-1}"
+SOVIET_CELEBRATION_BLUESKY_TAGS="${SOVIET_CELEBRATION_BLUESKY_TAGS:-ソ連建国}"
+export SOVIET_CELEBRATION_BLUESKY_ENABLED SOVIET_CELEBRATION_BLUESKY_TAGS
+# ソ連建国後も同一試合・通常ループを継続する。正の値を明示した場合だけ保持する。
+SOVIET_HOLD_SEC="${SOVIET_HOLD_SEC:-0}"
+# 建国演出後は runner を保持して最大5分待ち、同じ盤面で操作を再開する。
+# 上の試合終了後 hold とは別。retry や worker の休止マーカーは使わない。
+SOVIET_CELEBRATION_PAUSE_SEC="${SOVIET_CELEBRATION_PAUSE_SEC:-300}"
+export SOVIET_CELEBRATION_PAUSE_SEC
 # --- Twitch 広告スヌーズ（読み上げ中、GitHub #18） ---
 TWITCH_ADS_ENABLED="${TWITCH_ADS_ENABLED:-1}"
 TWITCH_SNOOZE_THRESHOLD_SEC="${TWITCH_SNOOZE_THRESHOLD_SEC:-600}"
@@ -1062,3 +1073,61 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	[ -f "tmp/improve_ai.log" ] && mv "tmp/improve_ai.log" "$TMP_DEBUG_DIR/improve_ai.log" 2>/dev/null
 	touch "$TMP_STATE_DIR/.migrated"
 fi
+
+# MiniMax is retired.  A long-lived supervisor can retain an older exported
+# environment even after .env has been corrected, so sanitize every model
+# list when this file is sourced.  This keeps reloads fail-closed without
+# requiring a restart of the shared streaming/overlay services.
+# Keep this path in the current shell: frequently sourced workers must not
+# launch a subshell and tr for every model token.
+_remove_retired_minimax_agents() {
+    local input="${1:-}" output="" token
+    local -a tokens=()
+    local old_ifs="$IFS"
+    _retired_model_value=""
+    [ -n "$input" ] || return 0
+    IFS=','
+	read -r -a tokens <<< "$input"
+	IFS="$old_ifs"
+	for token in "${tokens[@]}"; do
+		token="${token#"${token%%[![:space:]]*}"}"
+		token="${token%"${token##*[![:space:]]}"}"
+		[ -n "$token" ] || continue
+		case "$token" in
+		*[mM][iI][nN][iI][mM][aA][xX]*) continue ;;
+		esac
+		if [ -n "$output" ]; then
+			output="$output,$token"
+		else
+			output="$token"
+		fi
+	done
+	_retired_model_value="$output"
+}
+
+# Remove retired credentials/overrides from the current shell as well as from
+# future children.  The live .env no longer defines these names, but unset is
+# required because sourcing an env file does not remove inherited variables.
+unset MINIMAX_API_KEY MINIMAX_BASE_URL MINIMAX_MODEL CODEX_MINIMAX_RUN_TIMEOUT_SEC
+
+for _retired_model_var in \
+	MODEL_IMPROVE MODEL_FALLBACK_IMPROVE MODEL_IMPROVE_LIST MODEL_IMPROVE_PEAK_LIST \
+	VERCEL_CATEGORY_A_AGENTS VERCEL_CATEGORY_B_AGENTS VERCEL_FREE_AGENTS \
+	AI_COMMON_AGENTS RADIO_MAIN_AGENT RADIO_MAIN_PREPASS_AGENT RADIO_MAIN_FALLBACK \
+	RADIO_AGENTS RADIO_PREPASS_AGENTS RADIO_QUALITY_REPAIR_AGENTS \
+	COMMENT_AGENTS COMMENT_TRANSLATION_AGENTS TWITCH_POLL_AGENTS \
+	COMMENT_SOREN91_AGENT COMMENT_SOREN91_FALLBACK \
+	RADIO_SOREN91_AGENT RADIO_SOREN91_FALLBACK \
+	PEAK_HOURS_PRIORITY_AGENT PEAK_HOURS_AGENT_PREFERENCE \
+	ROLLBACK_POSTMORTEM_MODEL ROLLBACK_POSTMORTEM_FALLBACK \
+	RADIO_FACT_CHECK_AGENT RADIO_FACT_CHECK_FALLBACK \
+	RADIO_FACT_CHECK_TERTIARY RADIO_FACT_CHECK_QUINARY \
+	BATCH_COMMENTARY_AGENTS; do
+	if [ -n "${!_retired_model_var+x}" ]; then
+		_remove_retired_minimax_agents "${!_retired_model_var}"
+		printf -v "$_retired_model_var" '%s' "$_retired_model_value"
+		export "$_retired_model_var"
+	fi
+done
+
+unset _retired_model_var _retired_model_value

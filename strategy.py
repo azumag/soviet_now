@@ -3412,11 +3412,24 @@ def merge_opportunity_alternatives(game_state, analysis, decision):
                     continue
                 pairs.append((lo, hi, bottom, top))
 
+        _reason = str(decision.get('reason', ''))
+        # "NO_MERGE" contains "MERGE" but marks an ordinary non-merge candidate,
+        # which is exactly where the burial loss has to apply. Only a genuine
+        # merge reason (a MERGE occurrence that is not part of NO_MERGE) keeps
+        # the hook away from the runtime choice.
+        _upper_reason = _reason.upper()
+        _merge_decision = (_upper_reason.count('MERGE') - _upper_reason.count('NO_MERGE')) > 0
+        _generic = not (_merge_decision or any(k in _reason for k in (
+            'RUSSIA', 'ANCHOR', 'CONTACT', 'OPEN_TWIN', 'DEADLINE_GUARD',
+            'DIRECT', 'PROBABLE')))
+
         def losses(q):
             px, py = float(q['x']), float(q['landing_y'])
             placed = (nt, px, py, dh, py + dt, py - db)
             cap = int(bool(targets) and all(above(placed, p) for p in targets))
-            gaps = sum(lo < px < hi and placed[5] < top and placed[4] > bottom
+            gaps = sum(lo < px < hi and (placed[5] < top and placed[4] > bottom
+                                         or (_generic and nt < 8 and lo + 0.25 < px < hi - 0.25
+                                             and placed[5] >= top - 0.25))
                        for lo, hi, bottom, top in pairs)
             return gaps, cap
 

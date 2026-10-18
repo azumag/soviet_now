@@ -9,6 +9,8 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'bgm_worker.sh'
+      - 'tests/test_bgm_worker.py'
       - 'wait_soren_runtime_prereqs.sh'
       - '.github/workflows/runtime-service-contracts.yml'
   push:
@@ -20,6 +22,8 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'bgm_worker.sh'
+      - 'tests/test_bgm_worker.py'
       - 'wait_soren_runtime_prereqs.sh'
       - '.github/workflows/runtime-service-contracts.yml'
 
@@ -35,4 +39,5 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_cleanup_overlay_pidfiles tests.test_soren_runtime_service
+      - run: python3 -m unittest tests.test_bgm_worker
       - run: python3 -m py_compile lib/cleanup_overlay_pidfiles.py

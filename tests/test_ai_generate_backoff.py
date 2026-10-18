@@ -15,6 +15,45 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class AiGenerateBackoffTests(unittest.TestCase):
+    def test_opencode_session_title_uses_fixed_metadata_buckets(self) -> None:
+        script = textwrap.dedent(
+            f"""
+            set -u
+            source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+            for label in 'RADIO:weather:prepass' 'RADIO:theme' 'COMMENT:prepass-like-user-text' 'IMPROVE:cycle' 'PROBE:health' 'arbitrary user-looking label'; do
+                _opencode_session_title "$label"
+                printf '\\n'
+            done
+            """
+        )
+        result = subprocess.run(
+            ["bash", "-c", script],
+            cwd=REPO_ROOT,
+            env=os.environ.copy(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "docich:radio_prepass",
+                "docich:radio_main",
+                "docich:comment",
+                "docich:improvement",
+                "docich:probe",
+                "docich:other",
+            ],
+        )
+        source = (REPO_ROOT / "lib/ai_generate.sh").read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            source.count('"${opencode_session_title_args[@]}"'),
+            2,
+            "both OpenCode execution paths must carry the fixed session title",
+        )
+        self.assertIn('opencode_session_title_args=(--title "$session_title")', source)
+
     def test_rate_limit_status_reports_main_and_fallback(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
             state_dir = Path(temp_dir)
@@ -131,6 +170,18 @@ class AiGenerateBackoffTests(unittest.TestCase):
         quality_retry = source[start:end]
         self.assertNotIn("_ai_backoff_set", quality_retry)
         self.assertIn("モデルbackoffなし", quality_retry)
+
+    def test_mixed_language_repairs_local_span_before_full_regeneration(self) -> None:
+        source = (REPO_ROOT / "broadcast/radio_engine.sh").read_text(encoding="utf-8")
+        start = source.index("品質チェック失敗")
+        end = source.index("done # attempt loop end", start)
+        quality_retry = source[start:end]
+        self.assertIn('if [ "$_qr" = "FAIL:mixed_language" ]', quality_retry)
+        self.assertIn("_radio_repair_mixed_language", quality_retry)
+        self.assertLess(
+            quality_retry.index("_radio_repair_mixed_language"),
+            quality_retry.index("_radio_build_rewrite_prompt"),
+        )
 
     def test_comment_global_backoff_is_only_set_for_rate_limit_outcome(self) -> None:
         source = (REPO_ROOT / "broadcast/comment.sh").read_text(encoding="utf-8")
@@ -385,7 +436,7 @@ class AiGenerateBackoffTests(unittest.TestCase):
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:amd-token-factory-deepseek-v4-flash RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:openrouter/free RADIO)"
-            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:minimax/minimax-m3-free RADIO)"
+            printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:inclusionai/ling-3.0-flash-fin RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent vercel:poolside/laguna-s-2.1-free RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent local RADIO)"
             printf '%s\\n' "$(_ai_backoff_sec_for_agent codex:deepseek-v4-flash RADIO)"
@@ -585,6 +636,50 @@ class AiGenerateBackoffTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+
+    def test_invalid_agent_prevents_failure_backoff_only_suppression(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir:
+            root = Path(temp_dir)
+            prompt = root / "prompt.txt"
+            prompt.write_text("test prompt\n", encoding="utf-8")
+            script = textwrap.dedent(
+                f"""
+                set -u
+                AI_GENERATION_QUEUE_ENABLED=0
+                AI_BACKOFF_DIR={root / 'rate_backoff'!s}
+                AI_FAILURE_BACKOFF_DIR={root / 'failure_backoff'!s}
+                AI_FAMILY_BACKOFF_DIR={root / 'family_backoff'!s}
+                AI_FAIL_STREAK_DIR={root / 'fail_streak'!s}
+                AI_STATS_DIR={root / 'stats'!s}
+                AI_BACKOFF_FAILURE_SEC=300
+                AI_FAILURE_STREAK_MAX_BACKOFF_SEC=3600
+                source {REPO_ROOT / 'core/helpers.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate.sh'!s}
+                source {REPO_ROOT / 'lib/ai_generate_policy.sh'!s}
+                log() {{ :; }}
+                mkdir -p "$AI_BACKOFF_DIR" "$AI_FAILURE_BACKOFF_DIR" "$AI_FAMILY_BACKOFF_DIR" "$AI_FAIL_STREAK_DIR" "$AI_STATS_DIR"
+                _ai_dispatch() {{ return 1; }}
+                agent='opencode:test-shared'
+                ai_generate_list 'RADIO:weather:prepass' {prompt!s} "$agent" >/dev/null 2>&1 || true
+                before_failed=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                before_chain=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                ai_generate_list 'RADIO:weather:prepass' {prompt!s} "$agent,invalid-agent-spec" >/dev/null 2>&1 || true
+                after_failed=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                after_chain=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+                printf '%s %s %s %s\n' "$before_failed" "$before_chain" "$after_failed" "$after_chain"
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines()[-1], "1 1 2 2")
 
 
 class AiBackoffStatusScopeTests(unittest.TestCase):

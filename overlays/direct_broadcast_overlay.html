@@ -273,7 +273,7 @@ html[data-soren-neutral="1"] .toast {
   display: flex;
   align-items: center;
   padding: 0 11px;
-  border-left: 4px solid #64748b;
+  border-left: 0;
   border-radius: 5px;
   color: #dceefe;
   background: rgba(12, 28, 48, .72);
@@ -283,17 +283,17 @@ html[data-soren-neutral="1"] .toast {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.summary-line.sum-head { color: #67e8f9; border-left-color: #22d3ee; background: rgba(8, 51, 68, .72); }
-.summary-line.sum-recent { color: #fcd34d; border-left-color: #f59e0b; background: rgba(64, 43, 4, .72); }
-.summary-line.sum-strategy { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(46, 23, 80, .72); }
-.summary-line.sum-ab { color: #f0abfc; border-left-color: #d946ef; background: rgba(58, 20, 80, .72); }
-.summary-line.sum-live { color: #86efac; border-left-color: #22c55e; background: rgba(10, 55, 34, .72); }
-.summary-line.sum-backend { color: #7dd3fc; border-left-color: #38bdf8; background: rgba(9, 47, 73, .72); }
-.summary-line.sum-ai { color: #fca5a5; border-left-color: #ef4444; background: rgba(76, 17, 17, .78); font-size: 11.5px; letter-spacing: -.1px; }
-.summary-line.sum-queue { color: #fde047; border-left-color: #eab308; background: rgba(56, 47, 4, .72); }
-.summary-line.sum-drop { color: #fdba74; border-left-color: #f97316; background: rgba(61, 27, 5, .72); }
-.summary-line.sum-av { color: #f9a8d4; border-left-color: #ec4899; background: rgba(63, 12, 44, .72); }
-.summary-line.sum-muted { color: #aab8c8; border-left-color: #64748b; }
+.summary-line.sum-head { color: #67e8f9; background: rgba(8, 51, 68, .72); }
+.summary-line.sum-recent { color: #fcd34d; background: rgba(64, 43, 4, .72); }
+.summary-line.sum-strategy { color: #c4b5fd; background: rgba(46, 23, 80, .72); }
+.summary-line.sum-ab { color: #f0abfc; background: rgba(58, 20, 80, .72); }
+.summary-line.sum-live { color: #86efac; background: rgba(10, 55, 34, .72); }
+.summary-line.sum-backend { color: #7dd3fc; background: rgba(9, 47, 73, .72); }
+.summary-line.sum-ai { color: #fca5a5; background: rgba(76, 17, 17, .78); font-size: 11.5px; letter-spacing: -.1px; }
+.summary-line.sum-queue { color: #fde047; background: rgba(56, 47, 4, .72); }
+.summary-line.sum-drop { color: #fdba74; background: rgba(61, 27, 5, .72); }
+.summary-line.sum-av { color: #f9a8d4; background: rgba(63, 12, 44, .72); }
+.summary-line.sum-muted { color: #aab8c8; }
 #work {
   height: 73px;
   display: none;
@@ -402,10 +402,640 @@ html[data-soren-neutral="1"] .toast {
 .toast.fresh { animation: enter .18s ease-out; }
 @keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 @keyframes thinking-pulse { 0%, 100% { box-shadow: 0 6px 16px rgba(0, 0, 0, .28); } 50% { box-shadow: 0 0 16px rgba(245, 158, 11, .4); } }
+
+/* Hanjuku: readable at the actual 320px broadcast sidebar width. */
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 390px; }
+html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 auto; }
+.hanjuku-card { box-sizing: border-box; width: 306px; padding: 10px; border: 1px solid #e9b84d; border-radius: 9px; background: linear-gradient(145deg,#202017,#101c2c); color: #f8fafc; font-family: sans-serif; white-space: normal; }
+.hanjuku-card.stale { border-color: #f59e0b; background: #282014; }
+.hanjuku-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 900; }
+.hanjuku-badge { border-radius: 4px; padding: 3px 6px; background: #123c36; color: #86efac; font-size: 11px; }
+.stale .hanjuku-badge { background: #713f12; color: #fef08a; }
+.hanjuku-chapter { color: #fde68a; font-size: 38px; line-height: 46px; font-weight: 950; }
+.hanjuku-month { font-size: 14px; color: #cbd5e1; margin-bottom: 7px; }
+.hanjuku-details { margin-top: 8px; border-top: 1px solid #475569; padding-top: 6px; font-size: 12px; line-height: 20px; }
+.hanjuku-dots { display: flex; gap: 4px; margin: 0 0 9px; }
+.hanjuku-dot { width: 20px; height: 6px; border: 1px solid #536170; border-radius: 2px; }
+.hanjuku-dot.current { background: #facc15; border-color: #fef08a; }
+.hanjuku-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.hanjuku-kpi { background: #07121e; border: 1px solid #334155; border-radius: 6px; padding: 6px 8px; }
+.hanjuku-label { color: #b3c3d5; font-size: 10px; }
+.hanjuku-value { color: #f1f5f9; font-size: 22px; line-height: 27px; font-weight: 900; }
+.hanjuku-kpi { min-width: 0; }
+.hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 16px; overflow-wrap: anywhere; }
+.hanjuku-status { margin-top: 8px; padding: 6px 8px; border-radius: 5px; background: #12324c; color: #bae6fd; font-size: 16px; font-weight: 900; }
+.hanjuku-duel { margin-top: 7px; padding: 5px 8px; border-radius: 5px; background: #3d1520; color: #fecdd3; font-size: 13px; font-weight: 800; }
+.hanjuku-note { margin-top: 6px; color: #a9bacb; font-size: 10px; line-height: 14px; }
+
+
+/* Approved preview v2 (941edb59): reuse its flat panels, palette and rail spacing.
+   The live feed/parser/health contract and three surface rectangles stay intact.
+   Do not add mock services or logs: the production feeds remain authoritative. */
+:root { --cyan: #8ce5f0; --blue: #75daec; --muted: #829aae; --line: #36566b; }
+html, body { color: #deedf7; font-family: "Noto Sans JP", "Segoe UI", sans-serif; font-synthesis: none; }
+#broadcast-sidebar { padding: 8px; background: #040e17; }
+.feed-head { height: 28px; padding: 0 5px; border-bottom-color: #33566c; color: #a5e6f3; font-size: 12px; font-weight: 600; letter-spacing: .07em; }
+.live-dot { width: 6px; height: 6px; background: #34e6ad; box-shadow: none; }
+#feed-label { font-size: 8px; color: #91abc0; }
+#feed-age { color: #91b3cc; }
+#feed { width: 303px; height: 642px; gap: 7px; }
+.feed-panel { border: 1px solid #36566b; background: #040e17; }
+.feed-panel + .feed-panel { padding-top: 0; border-top: 1px solid #36566b; }
+.panel-head { height: 25px; gap: 6px; padding: 0 8px; border-bottom: 1px solid #36566b; color: #8ce5f0; }
+.badge { padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 10px; color: #8ce5f0; }
+.panel-name { color: #91abc0; font-size: 8px; }
+.panel-meta { color: #829aae; font-size: 8px; }
+.feed-lines, .feed-line { width: 301px; }
+/* Keep dense all-line feeds until their structured status/log contract exists. */
+.feed-line { min-height: 0; padding-left: 5px; border-left: 0; text-shadow: none; }
+.feed-foot { color: #7896aa; font-size: 7px; font-weight: 500; }
+#top-rail, #bottom-rail { padding: 8px; background: #020b13; border-color: #2d596c; }
+#bottom-rail { padding: 7px 8px; }
+#summary { height: 73px; gap: 6px 7px; }
+.summary-line { border: 1px solid #325e77; border-radius: 4px; background: #051422; font-weight: 500; }
+.summary-line[class] { background: #051422; }
+#work, #gen-top { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 8px 12px; border-radius: 4px; border-color: #a77727; background: #171206; color: #f6c564; }
+.work-bar, #gen-top .gen-top-bar, .toast-bar { display: none; }
+.work-title { color: #f6f0dc; font-size: 21px; font-weight: 700; line-height: 1.4; }
+.work-body, #gen-top .gen-top-body { margin-top: 2px; color: #e0d5bd; font-size: 12px; font-weight: 400; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* Keep a 21px title and two readable body lines inside the fixed 73px card. */
+#work { padding-top: 4px; padding-bottom: 4px; }
+.work-title { line-height: 1.2; }
+.work-body { line-height: 1.4; }
+.work-elapsed, #gen-top .gen-top-elapsed { align-self: stretch; display: flex; align-items: center; border-left: 1px solid #715926; padding-left: 12px; color: #f6c564; font-size: 24px; font-weight: 500; }
+#gen-top .gen-top-title { color: #f6f0dc; font-weight: 700; }
+#toast-grid { height: 75px; gap: 7px; }
+.toast { grid-template-columns: minmax(0, 1fr); background: #051422; border: 1px solid #325e77; border-radius: 4px; box-shadow: none; }
+.toast-copy { padding: 0; }
+.toast-head { height: 24px; align-items: center; padding: 0 8px; border-bottom: 1px solid #24485f; color: #75daec; }
+.toast-title { color: #e3eef7; font-size: 13px; font-weight: 600; }
+.toast-time { color: #93afc4; font-size: 8px; font-weight: 400; }
+.toast-body { margin-top: 0; padding: 4px 8px; color: #b9cedf; font-size: 9px; line-height: 1.45; font-weight: 400; }
+/* Live cards also carry troop/garrison/order observations absent from the mock.
+   Let the card claim its measured height rather than crop it at 390px. */
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 auto; }
+.hanjuku-card { width: 301px; padding: 8px 10px 6px; border: 0; border-radius: 0; background: #040e17; color: #deedf7; font-family: inherit; }
+.hanjuku-card.stale { background: #040e17; }
+.hanjuku-head { font-size: 15px; font-weight: 600; }
+.hanjuku-badge { padding: 2px 5px; border: 1px solid #277963; border-radius: 2px; background: transparent; color: #43e2ad; font-size: 10px; }
+.stale .hanjuku-badge { border-color: #99703b; background: transparent; color: #f7c161; }
+.hanjuku-chapter { color: #ffe6a2; font-size: 33px; line-height: 1.5; font-weight: 700; letter-spacing: .08em; }
+.hanjuku-month { margin-bottom: 6px; color: #b8c7d2; font-size: 13px; }
+.hanjuku-dots { display: none; }
+.hanjuku-kpi { border-color: #3a596d; border-radius: 3px; background: #03111d; }
+.hanjuku-label { color: #adc3d3; font-size: 9px; }
+.hanjuku-value { color: #deedf7; font-size: 19px; line-height: 1.35; font-weight: 600; }
+.hanjuku-status { margin-top: 8px; padding: 5px 7px; border: 1px solid #294b61; border-radius: 0; background: #082334; color: #80d8e9; font-size: 15px; line-height: 1.3; font-weight: 600; }
+.stale .hanjuku-status { background: #251a0b; border-color: #936a37; color: #f4c077; font-size: 12px; }
+.hanjuku-duel { border: 1px solid #583640; border-radius: 0; background: #2b1420; color: #ffc5c1; font-size: 11px; font-weight: 500; overflow-wrap: anywhere; }
+.hanjuku-details { margin-top: 6px; padding-top: 0; border-top: 0; color: #b3c6d5; font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.hanjuku-note { margin-top: 3px; color: #a1b8c9; font-size: 8px; line-height: 1.5; }
+html[data-soren-neutral="1"] #broadcast-sidebar,
+html[data-soren-neutral="1"] #top-rail,
+html[data-soren-neutral="1"] #bottom-rail { background: rgb(5, 5, 5); }
+
+
+/* Broadcast status hierarchy v4: make GAME/OPS readable as cards, not a log dump. */
+#broadcast-sidebar {
+  padding: 8px;
+  background: #030a12;
+  border-left: 2px solid #24485c;
+}
+.feed-head {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #284c61;
+  border-radius: 7px;
+  background: #071823;
+  box-shadow: none;
+  color: #e1f7fb;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+.live-dot { width: 7px; height: 7px; background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .10); }
+#feed-label { margin-left: auto; color: #8fb2c7; font-size: 8px; font-weight: 700; }
+#feed-age { min-width: 24px; text-align: right; color: #a8c7d8; font-size: 8px; }
+#feed { margin-top: 8px; width: 303px; height: 632px; gap: 8px; }
+html[data-prediction-active="1"] #feed { height: 568px; }
+.feed-panel {
+  flex: 1 1 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+}
+.feed-panel + .feed-panel { padding-top: 0; border-top: 0; }
+.feed-panel:has(.game-dashboard) .panel-head,
+.feed-panel:has(.hanjuku-card) .panel-head,
+.feed-panel:has(.ops-dashboard) .panel-head { display: none; }
+.feed-panel:has(.game-dashboard) .feed-lines,
+.feed-panel:has(.ops-dashboard) .feed-lines { padding: 0; }
+.feed-panel:has(.game-dashboard) .game-dashboard,
+.feed-panel:has(.ops-dashboard) .ops-dashboard { padding: 5px 2px 0; }
+html[data-hanjuku-active="1"] .feed-panel.panel-g { flex: 0 0 auto; }
+html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
+.panel-head {
+  height: 30px;
+  padding: 0 8px;
+  gap: 6px;
+  border-bottom: 1px solid #29495d;
+  background: #0a1b27;
+}
+.panel-g .panel-head,
+.panel-s .panel-head,
+.panel-i .panel-head { box-shadow: none; }
+.badge {
+  padding: 2px 6px;
+  border: 1px solid #39677d;
+  border-radius: 999px;
+  background: #07141e;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 12px;
+}
+.badge-g { color: #8debf5; border-color: #257786; }
+.badge-s { color: #9df0c9; border-color: #2d735a; }
+.badge-i { color: #fdba74; border-color: #8a5a2d; }
+.panel-name { color: #d2e3ed; font-size: 9px; font-weight: 800; letter-spacing: .06em; }
+.panel-state {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid #385468;
+  border-radius: 3px;
+  color: #9fb6c7;
+  background: #07131c;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.panel-state.ok { color: #86efac; border-color: #276448; background: rgba(34, 197, 94, .08); }
+.panel-state.warn { color: #fde68a; border-color: #7c6120; background: rgba(245, 158, 11, .09); }
+.panel-state.down { color: #fecaca; border-color: #7f3434; background: rgba(239, 68, 68, .10); }
+.panel-state.info { color: #a5f3fc; border-color: #276775; background: rgba(34, 211, 238, .08); }
+.panel-meta { margin-left: 0; color: #7894a7; font-size: 7px; }
+.feed-lines { width: 100%; padding: 0 5px; }
+.feed-line { width: 100%; padding: 0 5px; border-left: 0; border-radius: 3px; text-shadow: none; }
+.feed-line.s-health,
+.feed-line.s-activity,
+.feed-line.s-core,
+.feed-line.s-audio,
+.feed-line.s-twitch,
+.feed-line.s-youtube,
+.feed-line.s-rollback {
+  margin-top: 2px;
+  background: #0b2330;
+  color: #a9e8f3;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.feed-line.ops-primary { background: rgba(52, 211, 153, .09); color: #b7f7da; font-weight: 900; }
+.feed-line.ops-alert { background: rgba(239, 68, 68, .15); color: #fecaca; font-weight: 900; }
+.feed-line.ops-warn { background: rgba(245, 158, 11, .14); color: #fde68a; font-weight: 900; }
+.feed-line.game-primary { background: rgba(34, 211, 238, .10); color: #cffafe; font-weight: 900; }
+.feed-line.game-trend { background: rgba(129, 140, 248, .10); color: #c7d2fe; font-weight: 800; }
+.feed-line.g-section { background: #0a202d; color: #8ce5f0; font-weight: 900; }
+
+/* Structured broadcast dashboard. Raw status feeds remain the source of truth,
+   but Soren91/JEV and OPS are projected into a scannable 320px surface. */
+.game-dashboard,
+.ops-dashboard {
+  height: 100%;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.dash-eyebrow {
+  color: #7896aa;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .10em;
+}
+.game-title-row,
+.ops-title-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.game-title {
+  min-width: 0;
+  color: #f0fbff;
+  font-size: 15px;
+  line-height: 18px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-title-row .game-title {
+  font-size: 13px;
+  line-height: 16px;
+  letter-spacing: .05em;
+}
+.dash-pill {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid #315d70;
+  border-radius: 999px;
+  background: #091923;
+  color: #a9cad8;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.dash-pill.ok { color: #a7f3d0; border-color: #267158; background: rgba(16, 185, 129, .10); }
+.dash-pill.warn { color: #fde68a; border-color: #83631e; background: rgba(245, 158, 11, .11); }
+.dash-pill.down { color: #fecaca; border-color: #7f3434; background: rgba(239, 68, 68, .12); }
+.game-kpis,
+.ops-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+.dash-kpi {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: #081a25;
+}
+.dash-kpi-label {
+  color: #7895a8;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .11em;
+}
+.dash-kpi-value {
+  margin-top: 2px;
+  color: #f1fbff;
+  font-size: 23px;
+  line-height: 1.05;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-kpi-sub {
+  margin-top: 3px;
+  color: #7392a4;
+  font-size: 6px;
+  line-height: 8px;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+.ops-kpis .dash-kpi-value { font-size: 19px; }
+.ops-system-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #071720;
+}
+.ops-metric-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 26px minmax(40px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px;
+  min-height: 16px;
+}
+.ops-metric-label,
+.ops-metric-state {
+  color: #8ba5b4;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .07em;
+}
+.ops-metric-value {
+  color: #e5f4fa;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.ops-metric-value.warn { color: #f4d486; }
+.ops-metric-value.unknown { color: #aec0c9; }
+.ops-metric-spark {
+  min-width: 0;
+  overflow: hidden;
+  color: #79bdc7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: .04em;
+  line-height: 12px;
+  white-space: nowrap;
+}
+.ops-metric-state { text-align: right; white-space: nowrap; }
+.ops-metric-state:empty { display: none; }
+.game-live,
+.game-trend-line {
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: #071720;
+  color: #aac3d2;
+  font-size: 9px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-records { display: grid; gap: 4px; }
+.game-record { color: #aac3d2; font-size: 10px; line-height: 1.3; overflow-wrap: anywhere; }
+.ops-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.ops-activity-item {
+  min-width: 0;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: #071720;
+}
+.ops-activity-label {
+  color: #6f8b9e;
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.ops-activity-value {
+  margin-top: 2px;
+  color: #b8d0dc;
+  font-size: 8px;
+  line-height: 10px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-trend-line.better { color: #a7f3d0; background: rgba(16, 185, 129, .08); }
+.game-trend-line.worse { color: #fecaca; background: rgba(239, 68, 68, .09); }
+.game-trend-line.flat { color: #cbd5e1; }
+.game-history-head,
+.ops-services-head,
+.ops-alerts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #7895a8;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .10em;
+}
+.game-bars {
+  height: 52px;
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  padding: 4px 6px 0;
+  border-radius: 5px;
+  background: #06141d;
+}
+.game-bar-wrap {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+}
+.game-bar {
+  min-height: 5px;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, #67e8f9, #0e7490);
+  opacity: .88;
+}
+.game-bar-wrap:last-child .game-bar {
+  background: linear-gradient(180deg, #fde68a, #d97706);
+  opacity: 1;
+}
+.game-bar-label {
+  margin-top: 2px;
+  color: #718b9d;
+  font-size: 6px;
+  line-height: 8px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ops-worker-value.ok { color: #a7f3d0; }
+.ops-worker-value.warn { color: #fde68a; }
+.ops-worker-value.down { color: #fecaca; }
+.ops-services {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.ops-service {
+  min-width: 0;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 4px;
+  background: #071720;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+}
+.ops-service-name {
+  color: #819bab;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .07em;
+}
+.ops-service-value {
+  min-width: 0;
+  color: #b8ccd8;
+  font-size: 8px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-service.ok .ops-service-value { color: #a7f3d0; }
+.ops-service.warn .ops-service-value { color: #fde68a; }
+.ops-service.down .ops-service-value { color: #fecaca; }
+.ops-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.ops-alert {
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, .10);
+  color: #fde68a;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-alert.down { background: rgba(239, 68, 68, .12); color: #fecaca; }
+.ops-clear {
+  padding: 7px 8px;
+  border: 1px solid #255844;
+  border-radius: 5px;
+  background: rgba(16, 185, 129, .06);
+  color: #9fe4c5;
+  font-size: 8px;
+  font-weight: 850;
+  text-align: center;
+  letter-spacing: .04em;
+}
+.ops-dashboard.compact {
+  padding: 7px 8px;
+  gap: 5px;
+}
+.ops-dashboard.compact .ops-title-row { min-height: 20px; }
+.ops-dashboard.compact .ops-title-row .game-title { font-size: 11px; line-height: 14px; }
+.ops-dashboard.compact .dash-pill { padding: 2px 5px; font-size: 7px; }
+.ops-dashboard.compact .dash-kpi { padding: 5px 7px; }
+.ops-dashboard.compact .dash-kpi-value { font-size: 16px; }
+.ops-dashboard.compact .dash-kpi-sub,
+.ops-dashboard.compact .ops-services-head,
+.ops-dashboard.compact .ops-activity-grid { display: none; }
+.ops-dashboard.compact .ops-services { gap: 4px; }
+.ops-dashboard.compact .ops-service { padding: 4px 6px; }
+.ops-dashboard.micro {
+  padding: 5px 6px;
+  gap: 4px;
+}
+.ops-dashboard.micro .ops-title-row,
+.ops-dashboard.micro .ops-services-head,
+.ops-dashboard.micro .ops-services,
+.ops-dashboard.micro .ops-activity-grid { display: none; }
+.ops-dashboard.micro .ops-kpis { gap: 4px; }
+.ops-dashboard.micro .dash-kpi { padding: 4px 5px; border-radius: 4px; }
+.ops-dashboard.micro .dash-kpi-label { font-size: 5.5px; }
+.ops-dashboard.micro .dash-kpi-value { margin-top: 1px; font-size: 13px; line-height: 14px; }
+.ops-dashboard.micro .dash-kpi-sub { display: none; }
+.ops-dashboard.micro .ops-alerts-head { font-size: 6px; }
+.ops-dashboard.micro .ops-alerts { gap: 2px; }
+.ops-dashboard.micro .ops-alert { padding: 3px 5px; font-size: 7px; line-height: 9px; }
+.ops-dashboard.micro.has-alerts .ops-kpis { display: none; }
+/* Use one content inset for every game and health view. */
+.feed-head { display: none; }
+#feed { margin-top: 0; height: 680px; }
+html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
+.feed-lines:has(.hanjuku-card) { padding: 0; }
+.hanjuku-card { width: 100%; padding: 5px 2px 0; background: transparent; }
+.hanjuku-card.stale { background: transparent; }
+/* Prioritize the game state over automation telemetry. */
+.hanjuku-card { font-family: system-ui, sans-serif; }
+.hanjuku-period { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 7px; }
+.hanjuku-chapter { font-size: 26px; line-height: 1.2; letter-spacing: 0; }
+.hanjuku-month { margin: 0; font-size: 12px; }
+.hanjuku-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 14px; margin-bottom: 16px; }
+.hanjuku-kpi:nth-child(1) { order: 0; }
+.hanjuku-kpi:nth-child(2) { order: 2; }
+.hanjuku-kpi:nth-child(3) { order: 1; }
+.hanjuku-label { white-space: nowrap; }
+.hanjuku-detail-row + .hanjuku-detail-row { margin-top: 5px; }
+.hanjuku-details { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; color: #edf5fb; font-size: 18px; line-height: 1.35; }
+.hanjuku-group { min-width: 0; }
+.hanjuku-group-title { margin-bottom: 4px; color: #bdcdd9; font-size: 14px; font-weight: 600; }
+.hanjuku-detail-row { display: block; margin-top: 0; }
+.hanjuku-detail-label { margin-bottom: 3px; color: #bdcdd9; font-size: 14px; }
+.hanjuku-detail-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.hanjuku-troops { color: #f7fafc; font-size: 24px; font-weight: 700; line-height: 1.15; }
+.hanjuku-castles, .hanjuku-orders { color: #deedf7; font-size: 16px; }
+.hanjuku-records { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.hanjuku-note { font-size: 11px; line-height: 1.4; color: #bdcdd9; }
+.hanjuku-kpi { padding: 0; border: 0; background: transparent; }
+.hanjuku-label { color: #bdcdd9; font-size: 12px; }
+.hanjuku-value, .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 24px; line-height: 1.25; }
+.hanjuku-status { padding: 0; border: 0; background: transparent; font-size: 17px; }
+.hanjuku-duel { padding: 0; border: 0; background: transparent; font-size: 18px; line-height: 1.35; }
+/* Game details are distinct cards, without decorative edge accents. */
+.hanjuku-details { gap: 6px; }
+.hanjuku-group, .hanjuku-detail-row, .hanjuku-duel {
+  box-sizing: border-box; padding: 7px 10px; border: 1px solid #28404f;
+  border-radius: 7px; background: #0b1c28;
+}
+.hanjuku-detail-row + .hanjuku-detail-row { margin-top: 0; }
+.hanjuku-duel { background: #211b26; border-color: #493341; }
+.hanjuku-holds, .hanjuku-garrison, .hanjuku-marching {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
+.hanjuku-records > div { padding: 0; }
+.ops-kpis { grid-template-columns: minmax(0, 1fr); }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-g { height: 100%; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .soren-monitor { height: 100%; min-height: 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-s { position: relative; flex: 0 0 190px; padding-top: 0; border-top: 0; background: #040e17; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-s,
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { position: absolute; inset: 0; height: 100%; transition: opacity 600ms ease-in-out; }
+#monitor-observer { display: none; opacity: 0; padding: 5px 2px 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { display: block; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer .monitor-section { height: 100%; display: flex; flex-direction: column; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer .monitor-section-body { flex: 1; min-height: 0; overflow: hidden; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="observer"] #feed-s { opacity: 0; }
+html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="observer"] #monitor-observer { opacity: 1; }
+.monitor-header { flex-shrink: 0; }
+.monitor-viewport { flex: 1; min-height: 0; overflow: hidden; }
+.monitor-stack { display: flex; flex-direction: column; gap: 6px; }
+.monitor-stack .monitor-section { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-s,
+  html[data-soren-monitor="1"]:not([data-improve-active="1"]) #monitor-observer { transition: none; }
+}
+.feed-panel:has(.soren-monitor) .panel-head { display: none; }
+.feed-panel:has(.soren-monitor) .feed-lines { padding: 0; }
+.soren-monitor { display: flex; flex-direction: column; gap: 6px; padding: 5px 2px 0; color: #b9d9da; font-family: "SFMono-Regular", Consolas, monospace; }
+.monitor-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 1px 5px; color: #e8fbf5; font-size: 14px; font-weight: 800; letter-spacing: .12em; }
+.monitor-header span { color: #71b7b3; font-size: 9px; letter-spacing: .08em; }
+.monitor-section { min-width: 0; border: 1px solid #264650; border-radius: 4px; background: #08171d; overflow: hidden; }
+.monitor-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 5px 7px; border-bottom: 1px solid #203c46; background: #0d222a; color: #83e2d0; font-size: 10px; line-height: 12px; font-weight: 700; letter-spacing: .04em; }
+.monitor-section-head small { color: #83a8ae; font-size: 8px; font-weight: 500; letter-spacing: 0; text-align: right; }
+.monitor-section-body { font-weight: 500; padding: 5px 6px; color: #a8d6cc; font-size: 8px; line-height: 10px; white-space: pre; }
+.monitor-section-body > div { min-height: 10px; }
+.monitor-section[data-kind="timeline"] .monitor-section-body { color: #e7bf75; }
+.monitor-section[data-kind="distribution"] .monitor-section-body { color: #93ddd0; }
+.monitor-section[data-kind="strategy"] .monitor-section-head { color: #e3c97d; }
+.monitor-section[data-kind="observer"] .monitor-section-body,
+.monitor-section[data-kind="events"] .monitor-section-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; line-height: 12px; }
+.monitor-section[data-kind="events"] .monitor-section-head { color: #edca7f; }
+.monitor-chart { width: max-content; transform-origin: left top; }
+.monitor-section[data-kind="observer"] .monitor-section-body > div + div { margin-top: 4px; }
+.monitor-section[data-kind="observer"] .monitor-section-body { white-space: normal; }
+.monitor-section[data-kind="events"] .monitor-section-body > div + div { margin-top: 3px; }
+.feed-foot { padding: 0 3px; color: #7896aa; font-size: 7px; font-weight: 600; }
+
+/* Dedicated surface behind the native game window. It draws only measured padding. */
+#hanjuku-gap { display: none; position: absolute; top: 90px; height: 540px;
+  padding: 12px; background: #040e17; overflow: hidden; font-family: system-ui,sans-serif; }
+.hanjuku-gap-title { font-size: 15px; color: #bdcdd9; margin-bottom: 8px; }
+#hanjuku-gap .hanjuku-group { font-size: 18px; line-height: 1.4; margin-bottom: 8px;
+  overflow-wrap: anywhere; white-space: normal; }
+#hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
+html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
+html[data-soren-region="game-gap"] #broadcast-overlay { width: 960px; height: 540px; }
+html[data-soren-region="game-gap"] #hanjuku-gap { top: 0; }
+html[data-soren-region="game-gap"] .rail,
+html[data-soren-region="game-gap"] #broadcast-sidebar { display: none; }
+html[data-soren-region="sidebar"] #hanjuku-gap,
+html[data-soren-region="top"] #hanjuku-gap,
+html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
+
 </style>
 </head>
 <body>
-<main id="broadcast-overlay" data-broadcast-overlay-version="3">
+<main id="broadcast-overlay" data-broadcast-overlay-version="4">
+  <section id="hanjuku-gap" aria-label="半熟英雄の観測詳細"></section>
   <section id="top-rail" class="rail" aria-live="polite">
     <div id="summary"></div>
     <div id="work">
@@ -421,16 +1051,17 @@ html[data-soren-neutral="1"] .toast {
   </section>
   <section id="bottom-rail" class="rail" aria-live="polite"><div id="toast-grid"></div></section>
   <aside id="broadcast-sidebar">
-    <div class="feed-head"><span class="live-dot"></span><span>SOREN DATA</span><span id="feed-label">G + STATUS</span><span id="feed-age">--</span></div>
+    <div class="feed-head"><span id="feed-label">GAME + OPS</span><span id="feed-age">--</span></div>
     <section id="prediction-round" aria-label="チャネルポイント予想" aria-live="polite"></section>
     <div id="feed">
       <section class="feed-panel panel-g">
-        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">SHOW-STATUS-G</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-g">GAME</span><span class="panel-name">GAME STATS</span><span class="panel-state info" id="feed-g-state">LIVE</span><span class="panel-meta" id="feed-g-lines">0L</span></div>
         <div class="feed-lines" id="feed-g"></div>
       </section>
       <section class="feed-panel panel-s">
-        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">SHOW-STATUS</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
+        <div class="panel-head"><span class="badge badge-s">OPS</span><span class="panel-name">OPS HEALTH</span><span class="panel-state" id="feed-s-state">CHECK</span><span class="panel-meta" id="feed-s-lines">0L</span></div>
         <div class="feed-lines" id="feed-s"></div>
+        <div id="monitor-observer" aria-hidden="true"></div>
       </section>
       <section class="feed-panel panel-i">
         <div class="panel-head"><span class="badge badge-i">AI</span><span class="panel-name">IMPROVE</span><span class="panel-status" id="feed-i-status"></span><span class="panel-meta" id="feed-i-lines">0L</span></div>
@@ -452,6 +1083,8 @@ html[data-soren-neutral="1"] .toast {
   const feedI = document.getElementById('feed-i');
   const feedGLines = document.getElementById('feed-g-lines');
   const feedSLines = document.getElementById('feed-s-lines');
+  const feedGState = document.getElementById('feed-g-state');
+  const feedSState = document.getElementById('feed-s-state');
   const feedILines = document.getElementById('feed-i-lines');
   const feedIStatus = document.getElementById('feed-i-status');
   const feedLabel = document.getElementById('feed-label');
@@ -462,6 +1095,17 @@ html[data-soren-neutral="1"] .toast {
   const toastGrid = document.getElementById('toast-grid');
   let state = null;
   let lastFeedGKey = '';
+  const MONITOR_VIEW_MS = 45000;
+  // #970: the monitor pan moves 4px/s and the health/observer view flips every
+  // MONITOR_VIEW_MS, yet the motion loop used to read and write layout on every
+  // native animation frame (about 100 Hz under Xvfb). Doing that work at a
+  // bounded rate is visually identical and removes most of the steady
+  // forced-layout cost. requestAnimationFrame is still the scheduler so a
+  // hidden page stops the loop by itself.
+  const MONITOR_ANIM_MIN_MS = 66;
+  const monitorMotion = { startedAt: null, lastTick: null, lastWork: null, frame: null,
+    upper: { position: 0, direction: 1, waitUntil: 0 },
+    observer: { position: 0, direction: 1, waitUntil: 0 } };
   let lastFeedSKey = '';
   let lastFeedIKey = '';
   let lastSummaryKey = '';
@@ -484,7 +1128,8 @@ html[data-soren-neutral="1"] .toast {
     const raw = String(line || '');
     const text = raw.replace(/^[│┃\s]+/, '');
     if (/^━+$/.test(raw) || /^[┌└]─+[┐┘]$/.test(raw)) return 'dim';
-    if (/^  CORE$/.test(raw)) return 's-core';
+    if (/^  (?:CORE|HEALTH)$/.test(raw)) return 's-health';
+    if (/^  ACTIVITY$/.test(raw)) return 's-activity';
     if (/^  AUDIO$/.test(raw)) return 's-audio';
     if (/^  TWITCH$/.test(raw)) return 's-twitch';
     if (/^  YOUTUBE$/.test(raw)) return 's-youtube';
@@ -492,6 +1137,11 @@ html[data-soren-neutral="1"] .toast {
     if (/^│? *SOREN[/]|^│? *Best:|^│? *Avg:/.test(raw)) return 'g-head';
     if (/^Score (Timeline|Distribution)/.test(text) || /^Strategy Comparison/.test(text)) return 'g-section';
     if (/^rk hash/.test(text)) return 'g-head';
+    if (/^Stats:/.test(text)) return 'game-primary';
+    if (/^Trend:/.test(text) || /^wins=/.test(text)) return 'game-trend';
+    if (/Workers\s+.*\bONLINE\b/.test(text) || /^Backend\s+.*(?:LIVE|OBS|OK)/.test(text)) return 'ops-primary';
+    if (/\b(?:STOPPED|DOWN|FAILED|INVALID)\b/.test(text) || /Duplicates\s+DETECTED/.test(text)) return 'down ops-alert';
+    if (/\b(?:DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(text) || /^(?:Stopped|Unexpected|Paused|AI 429)\b/.test(text)) return 'ops-warn';
     if (/^► 1 /.test(text)) return 'g-top';
     if (/^[0-9][0-9.,k]*[┃│]/.test(text)) return 'g-dist';
     if (/[⠀-⣿]/.test(text)) return 'g-chart';
@@ -555,7 +1205,11 @@ html[data-soren-neutral="1"] .toast {
     const head = lines.findIndex((line) => line.includes('SOREN/'));
     if (head < 0) return null;
     let start = head;
-    while (start > 0 && !lines[start].includes('\u250c')) start -= 1;
+    while (start > 0 && !lines[start].includes('\u250c')) {
+      start -= 1;
+      // A closed preceding box is unrelated to this unboxed corner header.
+      if (lines[start].includes('\u2514')) return null;
+    }
     if (!lines[start].includes('\u250c')) return null;
     let end = head;
     while (end < lines.length - 1 && !lines[end].includes('\u2514')) end += 1;
@@ -588,25 +1242,762 @@ html[data-soren-neutral="1"] .toast {
       return row;
     }));
   }
+
+  function dashNode(className, text) {
+    const el = document.createElement('div');
+    el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
+  }
+  function compactValue(value, fallback = '—') {
+    const text = String(value ?? '').trim();
+    return text || fallback;
+  }
+  function parseLast8(text) {
+    const match = String(text || '').match(/^Last8:\s+(.+)$/m);
+    if (!match) return [];
+    return match[1].trim().split(/\s+/).map(value => Number(value.replace(/,/g, '')))
+      .filter(Number.isFinite).slice(-8);
+  }
+  function renderGameDashboard(container, feed) {
+    const text = String(feed?.text || '');
+    const corner = text.match(/^SOREN\/CORNER:\s*([^/\n]+)\/\s*([^/\n]+)\/\s*(.+)$/m);
+    const stats = text.match(/Stats:\s*(\d+)\s+(results|reports)\s*\/\s*best=([^/\n]+)(?:\s*\/\s*Recent30=([^\n]+))?/);
+    const consoleRecord = /^Session:/m.test(text) && corner?.[1].trim() === 'RETRO';
+    if (!corner || (!stats && !consoleRecord)) return false;
+
+    const root = dashNode('game-dashboard');
+    const eyebrow = dashNode('dash-eyebrow', compactValue(corner[1]).toUpperCase());
+    root.appendChild(eyebrow);
+
+    const titleRow = dashNode('game-title-row');
+    titleRow.appendChild(dashNode('game-title', compactValue(corner[2])));
+    const statusText = compactValue(corner[3], 'DATA');
+    const statusTone = /進行中|ACTIVE|LIVE/i.test(statusText) ? 'ok'
+      : /CONFLICT|INVALID|ERROR|FAIL/i.test(statusText) ? 'down' : 'warn';
+    titleRow.appendChild(dashNode(`dash-pill ${statusTone}`, statusText));
+    root.appendChild(titleRow);
+
+    const kpis = dashNode('game-kpis');
+    for (const [label, value] of [
+      [consoleRecord ? 'HISTORY BEST' : 'BEST', compactValue(stats?.[3])],
+      [consoleRecord ? 'HISTORY RECENT 30' : 'RECENT 30', compactValue(stats?.[4] || text.match(/Recent30:[^\n]*mean=([^\s]+)/)?.[1])],
+    ]) {
+      const cell = dashNode('dash-kpi');
+      cell.appendChild(dashNode('dash-kpi-label', label));
+      cell.appendChild(dashNode('dash-kpi-value', value));
+      kpis.appendChild(cell);
+    }
+    root.appendChild(kpis);
+
+    const live = text.match(consoleRecord ? /^Record:\s*(.+)$/m : /^Live:\s*(.+)$/m)?.[1];
+    if (live) root.appendChild(dashNode('game-live', live));
+    if (consoleRecord) {
+      const details = dashNode('game-records');
+      for (const line of text.split('\n').filter(line => /^(Session|Result|Plan|Evidence|Reason):/.test(line)).slice(0, 4)) {
+        details.appendChild(dashNode('game-record', line));
+      }
+      root.appendChild(details);
+    }
+
+    const trend = text.match(/^\s*Trend:\s*(.+)$/m);
+    const wins = text.match(/^\s*wins=(\d+)\s*\/\s*lower rank is better$/m);
+    if (trend) {
+      const tone = /\/\s*better\s*$/i.test(trend[1]) ? 'better'
+        : /\/\s*worse\s*$/i.test(trend[1]) ? 'worse' : 'flat';
+      root.appendChild(dashNode(`game-trend-line ${tone}`, `TREND  ${trend[1]}`));
+    } else if (wins) {
+      root.appendChild(dashNode('game-trend-line better', `WIN  #1 × ${wins[1]}`));
+    }
+
+    const values = parseLast8(text);
+    if (values.length) {
+      const historyHead = dashNode('game-history-head');
+      historyHead.appendChild(dashNode('', 'LAST 8'));
+      historyHead.appendChild(dashNode('', wins ? 'LOWER IS BETTER' : 'RECENT'));
+      root.appendChild(historyHead);
+      const bars = dashNode('game-bars');
+      const lowerBetter = Boolean(wins) || /Rank Timeline/.test(text);
+      const lo = Math.min(...values), hi = Math.max(...values);
+      const span = Math.max(1, hi - lo);
+      values.forEach(value => {
+        const quality = lowerBetter ? (hi - value) / span : (value - lo) / span;
+        const wrap = dashNode('game-bar-wrap');
+        const bar = dashNode('game-bar');
+        bar.style.height = `${Math.round(8 + quality * 30)}px`;
+        wrap.appendChild(bar);
+        wrap.appendChild(dashNode('game-bar-label', value));
+        bars.appendChild(wrap);
+      });
+      root.appendChild(bars);
+    }
+
+    container.replaceChildren(root);
+    return true;
+  }
+  function renderSorenMonitor(container, feed, view) {
+    const raw = String(feed?.text || '');
+    if (!/SOREN\/(?:OBS|FFMPEG)\b/.test(raw)
+        || !/Strategy Comparison/.test(raw) || !/Score Timeline/.test(raw)) return false;
+    const root = dashNode('soren-monitor');
+    const header = dashNode('monitor-header', 'SOREN');
+    const tag = document.createElement('span'); tag.textContent = 'TELEMETRY';
+    header.appendChild(tag); root.appendChild(header);
+    let section = null;
+    let kind = '';
+    const lines = String(view.text || '').split('\n');
+    const addSection = (kind, title, meta = '') => {
+      const card = dashNode('monitor-section'); card.dataset.kind = kind;
+      const head = dashNode('monitor-section-head', title);
+      if (meta) { const caption = document.createElement('small'); caption.textContent = meta; head.appendChild(caption); }
+      const body = dashNode('monitor-section-body');
+      card.appendChild(head); card.appendChild(body); root.appendChild(card);
+      return body;
+    };
+    lines.forEach((line, index) => {
+      const title = line.trim().match(/^(Score Timeline|Score Distribution|Strategy Comparison|Observer Status)(.*)$/);
+      if (title) {
+        const names = {'Score Timeline':['timeline','SCORE TRACE'], 'Score Distribution':['distribution','DISTRIBUTION'],
+          'Strategy Comparison':['strategy','STRATEGY MATRIX'], 'Observer Status':['observer','OBSERVER']};
+        const [nextKind, label] = names[title[1]];
+        kind = nextKind;
+        section = addSection(kind, label, title[2].trim());
+        if (kind === 'timeline') {
+          const chart = dashNode('monitor-chart');
+          section.appendChild(chart); section = chart;
+        }
+      } else if (line.trim()) {
+        if (!section) { kind = 'events'; section = addSection(kind, 'EVENT LOG'); }
+        // The producer's terminal box is chrome, not event data. Keep chart axes.
+        if (kind === 'events' && /^[\s┌┐└┘─━│┏┓┗┛┃]+$/.test(line)) return;
+        const row = dashNode('');
+        const chartText = text => String(text).replace(/[█▓▒░]/g, '=');
+        const start = kind === 'events' ? (line.match(/^\s*[│┃]?\s*/)?.[0].length || 0)
+          : kind === 'observer' ? (line.match(/^\s*/)?.[0].length || 0) : 0;
+        const end = kind === 'events' ? line.length - (line.match(/\s*[│┃]\s*$/)?.[0].length || 0) : line.length;
+        let offset = 0;
+        const segments = view.segments?.[index]?.map(segment => {
+          const from = offset; offset += String(segment.t).length;
+          return {...segment, t: monitorText(chartText(String(segment.t).slice(Math.max(0, start-from), Math.max(0, Math.min(offset,end)-from))))};
+        }).filter(segment => segment.t);
+        appendFeedLineContent(row, monitorText(chartText(line.slice(start,end))), segments);
+        section.appendChild(row);
+      }
+    });
+    container.replaceChildren(root);
+    root._sourceText = raw;
+    return true;
+  }
+  function advanceMonitorScroll(viewport, motion, now, elapsed, reduced) {
+    if (!viewport) return;
+    const limit = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    if (motion.reduced !== reduced) {
+      motion.reduced = reduced; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+    }
+    if (!limit) {
+      motion.position = 0; motion.direction = 1; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+    } else if (now >= motion.waitUntil) {
+      // Dense data stays in one viewport. A slow pan replaces whole-page flips;
+      // reduced motion uses infrequent non-animated advances instead.
+      motion.position += motion.direction * (reduced ? Math.max(12, viewport.clientHeight - 12) : elapsed * 4);
+      if (motion.position >= limit || motion.position <= 0) {
+        motion.position = Math.max(0, Math.min(limit, motion.position));
+        motion.direction *= -1; motion.waitUntil = now + (reduced ? MONITOR_VIEW_MS : 8000);
+      } else if (reduced) motion.waitUntil = now + MONITOR_VIEW_MS;
+    }
+    motion.position = Math.min(limit, motion.position);
+    viewport.scrollTop = motion.position;
+  }
+  // overlay-monitor-animation:start
+  function animateSorenMonitor(now = performance.now()) {
+    // #970: skip layout work between bounded animation slices; the pan keeps
+    // its 4px/s speed because advanceMonitorScroll uses elapsed wall time.
+    if (now - (monitorMotion.lastWork ?? 0) < MONITOR_ANIM_MIN_MS) {
+      monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
+      return;
+    }
+    monitorMotion.lastWork = now;
+    const root = feedG.querySelector('.soren-monitor');
+    const slot = document.getElementById('monitor-observer');
+    const elapsed = Math.max(0, Math.min(1, (now - (monitorMotion.lastTick ?? now))/1000));
+    monitorMotion.lastTick = now;
+    if (root && root.getBoundingClientRect().width > 0) {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const observer = slot.querySelector('.monitor-section');
+      const view = observer && Math.floor((now-monitorMotion.startedAt)/MONITOR_VIEW_MS)%2 ? 'observer' : 'health';
+      if (document.documentElement.dataset.monitorView !== view) document.documentElement.dataset.monitorView = view;
+      feedS.ariaHidden = String(view === 'observer');
+      slot.ariaHidden = String(view !== 'observer');
+      advanceMonitorScroll(root.querySelector('.monitor-viewport'), monitorMotion.upper, now, elapsed, reduced);
+      if (view === 'observer') advanceMonitorScroll(slot.querySelector('.monitor-section-body'), monitorMotion.observer, now, elapsed, reduced);
+    }
+    monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
+  }
+  // overlay-monitor-animation:end
+  function adaptSorenMonitor(container) {
+    const root = container.querySelector('.soren-monitor');
+    const slot = document.getElementById('monitor-observer');
+    if (!root) {
+      if (slot?.children.length) slot.replaceChildren();
+      feedS.ariaHidden = 'false';
+      if (monitorMotion.frame !== null) cancelAnimationFrame(monitorMotion.frame);
+      monitorMotion.frame = null;
+      document.documentElement.dataset.monitorView = 'health';
+      return;
+    }
+    if (!Number.isFinite(container.parentElement?.parentElement?.clientHeight)) return;
+    if (root.getBoundingClientRect().width <= 0) {
+      feedS.ariaHidden = 'false';
+      slot.ariaHidden = 'true';
+      return;
+    }
+    if (!root.querySelector('.monitor-viewport')) {
+      const observer = root.querySelector('[data-kind="observer"]');
+      slot.replaceChildren(...(observer ? [observer] : []));
+      const viewport = dashNode('monitor-viewport');
+      const stack = dashNode('monitor-stack');
+      stack.append(...root.querySelectorAll('.monitor-section'));
+      viewport.appendChild(stack); root.appendChild(viewport);
+    }
+    for (const chart of root.querySelectorAll('.monitor-chart')) {
+      const style = getComputedStyle(chart.parentElement);
+      const width = chart.parentElement.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      chart.style.transform = `scaleX(${width/chart.scrollWidth})`;
+    }
+    // Stable outer slots own opacity transitions. Replacing their inner data
+    // must neither restart the view clock nor recreate the transition targets.
+    root.querySelector('.monitor-viewport').scrollTop = monitorMotion.upper.position;
+    if (slot.querySelector('.monitor-section-body')) slot.querySelector('.monitor-section-body').scrollTop = monitorMotion.observer.position;
+    if (monitorMotion.startedAt === null) {
+      monitorMotion.startedAt = performance.now();
+      monitorMotion.upper.waitUntil = monitorMotion.startedAt + 8000;
+    }
+    if (monitorMotion.frame === null) monitorMotion.frame = requestAnimationFrame(animateSorenMonitor);
+  }
+  function opsTone(value) {
+    const text = String(value || '').toUpperCase();
+    if (/STOPPED|DOWN|FAILED|INVALID|DISCONNECTED|ALERT/.test(text)) return 'down';
+    if (/DEGRADED|CHECK|UNKNOWN|PAUSED|RETRY|WAITING/.test(text)) return 'warn';
+    return 'ok';
+  }
+  function sectionLines(text) {
+    const result = {};
+    let section = '';
+    for (const raw of String(text || '').split('\n')) {
+      const trimmed = raw.trim();
+      const heading = trimmed.match(/^(HEALTH|ACTIVITY|AUDIO|TWITCH|YOUTUBE|ROLLBACKS|AI IMPROVE)$/);
+      if (heading) { section = heading[1]; continue; }
+      if (trimmed) (result[section] ||= []).push(trimmed);
+    }
+    return result;
+  }
+  function firstStatus(lines, pattern) {
+    for (const line of lines || []) {
+      const match = line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').match(pattern);
+      if (match) return match[1].trim();
+    }
+    return '';
+  }
+  function metricHistory(history, key, slotCount = 12) {
+    const now = Date.now() / 1000;
+    const cutoff = now - 180;
+    const raw = (Array.isArray(history) ? history : []).slice(-36).map((point, index) => {
+      const timestamp = Number(point?.ts);
+      const value = point?.[key];
+      const hasTimestamp = Number.isFinite(timestamp) && timestamp > 0;
+      return {
+        index,
+        timestamp: hasTimestamp ? timestamp : null,
+        value: hasTimestamp && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null,
+      };
+    });
+    const timed = raw.filter(point => point.timestamp !== null
+      && point.timestamp >= cutoff && point.timestamp <= now + 1);
+    if (timed.length < 2) return { spark: '—', range: '' };
+    const first = Math.min(...timed.map(point => point.timestamp));
+    const last = Math.max(...timed.map(point => point.timestamp));
+    const span = last - first;
+    if (span <= 0) return { spark: '—', range: '' };
+
+    const slots = Array(slotCount).fill(null);
+    const slotHasGap = Array(slotCount).fill(false);
+    raw.forEach(point => {
+      if (point.timestamp !== null
+          && (point.timestamp < cutoff || point.timestamp > now + 1)) return;
+      const position = point.timestamp === null
+        ? point.index / Math.max(1, raw.length - 1)
+        : (point.timestamp - first) / span;
+      const slot = Math.max(0, Math.min(slots.length - 1, Math.round(position * (slots.length - 1))));
+      // Any missing or untimed sample keeps its time bucket as a gap. Dropping
+      // one would shift the graph or imply continuity across an unknown value.
+      if (!Number.isFinite(point.value)) {
+        slotHasGap[slot] = true;
+        slots[slot] = null;
+      } else if (!slotHasGap[slot]) {
+        slots[slot] = point.value;
+      }
+    });
+    const values = slots.filter(Number.isFinite);
+    const low = values.length ? Math.min(...values) : 0;
+    const high = values.length ? Math.max(...values) : 0;
+    const chars = '▁▂▃▄▅▆▇█';
+    const spark = slots.map(value => !Number.isFinite(value) ? '·'
+      : chars[Math.round((high === low ? 0.5 : (value - low) / (high - low)) * (chars.length - 1))]).join('');
+    const range = span >= 60 ? `${Math.round(span / 60)}M` : `${Math.round(span)}S`;
+    return { spark, range };
+  }
+  function updateOpsSystemMetrics(container, metrics) {
+    const panel = container?.querySelector?.('.ops-system-metrics');
+    if (!panel) return;
+    const sampledAt = Number(metrics?.sampledAt);
+    const hasSample = Number.isFinite(sampledAt) && sampledAt > 0;
+    const age = hasSample ? Date.now() / 1000 - sampledAt : null;
+    const stale = hasSample && (age < 0 || age > 15);
+    const update = (kind, label, value, detail, valueKey, threshold) => {
+      const row = panel.querySelector(`[data-metric="${kind}"]`);
+      if (!row) return;
+      const valueNode = row.querySelector('.ops-metric-value');
+      const spark = row.querySelector('.ops-metric-spark');
+      const status = row.querySelector('.ops-metric-state');
+      if (!valueNode || !spark || !status) return;
+      const valid = hasSample && !stale && Number.isFinite(value) && value >= 0 && value <= 100;
+      const visibleSlots = Math.max(2, Math.min(12, Math.floor((spark.clientWidth || 84) / 7)));
+      const trend = metricHistory(metrics?.history, valueKey, visibleSlots);
+      valueNode.textContent = valid ? `${Math.round(value)}%${detail || ''}` : '—';
+      valueNode.className = `ops-metric-value${valid && value >= threshold ? ' warn' : ''}${valid ? '' : ' unknown'}`;
+      spark.textContent = trend.spark;
+      spark.setAttribute('aria-label', `${label} history`);
+      spark.title = `${label} history ${trend.range || 'unknown duration'}`;
+      status.textContent = valid ? (trend.range || '—') : (stale ? 'STALE' : 'UNKNOWN');
+    };
+    const used = metrics?.memoryUsedBytes;
+    const total = metrics?.memoryTotalBytes;
+    const memoryDetail = Number.isSafeInteger(used) && Number.isSafeInteger(total) && total > 0
+      ? ` ${Math.round(used / 1073741824 * 10) / 10}/${Math.round(total / 1073741824 * 10) / 10}G`
+      : '';
+    update('cpu', 'CPU', metrics?.cpuPercent, '', 'cpuPercent', 80);
+    update('memory', 'RAM', metrics?.memoryPercent, memoryDetail, 'memoryPercent', 85);
+  }
+  function adaptOpsDashboard(container) {
+    const dash = container?.querySelector?.('.ops-dashboard');
+    const panel = container?.parentElement;
+    const header = panel?.querySelector?.('.panel-head');
+    if (!dash || !panel || !header || !Number.isFinite(panel.clientHeight) || panel.clientHeight <= 0) return;
+    const available = Math.max(0, panel.clientHeight - header.offsetHeight);
+    container.style.height = `${available}px`;
+    container.style.overflow = 'hidden';
+    dash.className = dash.className.replace(/\s+(?:compact|micro)\b/g, '');
+    if (available < 105) {
+      dash.className += ' micro';
+      return;
+    }
+    if (available < 225 || dash.scrollHeight > available + 1) {
+      dash.className += ' compact';
+      if (dash.scrollHeight > available + 1 && available < 155) {
+        dash.className = dash.className.replace(/\s+compact\b/g, '') + ' micro';
+      }
+    }
+    if (dash.scrollHeight > available + 1 && dash.className.includes('has-alerts')) {
+      dash.className = dash.className.replace(/\s+(?:compact|micro)\b/g, '') + ' micro';
+    }
+  }
+
+  function renderOpsDashboard(container, feed, metrics) {
+    const text = String(feed?.text || '');
+    const workers = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
+    const backendLine = text.split('\n').map(line => line.trim()).find(line => /Backend\s+/.test(line));
+    if (!workers && !backendLine) return false;
+
+    const root = dashNode('ops-dashboard');
+    const sections = sectionLines(text);
+    const titleRow = dashNode('ops-title-row');
+    titleRow.appendChild(dashNode('game-title', 'SYSTEM HEALTH'));
+    const overall = workers?.[3] || (/DOWN|FAILED|INVALID/.test(text) ? 'ALERT' : 'LIVE');
+    titleRow.appendChild(dashNode(`dash-pill ${opsTone(overall)}`, overall));
+    root.appendChild(titleRow);
+
+    const kpis = dashNode('ops-kpis');
+    const workerCell = dashNode('dash-kpi');
+    workerCell.appendChild(dashNode('dash-kpi-label', 'WORKERS'));
+    const workerValue = dashNode(`dash-kpi-value ops-worker-value ${opsTone(workers?.[3])}`,
+      workers ? `${workers[1]} / ${workers[2]}` : '—');
+    workerCell.appendChild(workerValue);
+    kpis.appendChild(workerCell);
+
+    const backend = backendLine
+      ? backendLine.replace(/^[●○✓!▸]\s*/, '').replace(/^Backend\s+/, '').trim()
+      : '—';
+    const backendState = /\bLIVE\b|\bOK\b/.test(backend) ? 'LIVE'
+      : /\bDOWN\b|\bFAILED\b/.test(backend) ? 'DOWN' : '';
+    root.appendChild(kpis);
+
+    const systemMetrics = dashNode('ops-system-metrics');
+    for (const [kind, label] of [['cpu', 'CPU'], ['memory', 'RAM']]) {
+      const row = dashNode('ops-metric-row');
+      row.dataset.metric = kind;
+      row.appendChild(dashNode('ops-metric-label', label));
+      row.appendChild(dashNode('ops-metric-value unknown', '—'));
+      row.appendChild(dashNode('ops-metric-spark', '—'));
+      row.appendChild(dashNode('ops-metric-state', 'UNKNOWN'));
+      systemMetrics.appendChild(row);
+    }
+    root.appendChild(systemMetrics);
+    updateOpsSystemMetrics(root, metrics);
+
+    const servicesHead = dashNode('ops-services-head');
+    servicesHead.appendChild(dashNode('', 'SERVICES'));
+    servicesHead.appendChild(dashNode('', 'LIVE STATE'));
+    root.appendChild(servicesHead);
+
+    const health = sections.HEALTH || [];
+    const audio = sections.AUDIO || [];
+    const twitch = sections.TWITCH || [];
+    const youtube = sections.YOUTUBE || [];
+    const services = [
+      ['STREAM', backendState || '—'],
+      ['LOOP', firstStatus(health, /^Loop\s+(.+)$/)],
+      ['AUDIO', firstStatus(audio, /^(?:Say|Radio)\s+(.+)$/)],
+      ['TWITCH', firstStatus(twitch, /^Chat\s+(.+)$/)],
+      ['YOUTUBE', firstStatus(youtube, /^Chat\s+(.+)$/)],
+    ];
+    const serviceGrid = dashNode('ops-services');
+    for (const [name, raw] of services) {
+      const value = compactValue(raw, '—').replace(/\s{2,}.*/, '');
+      const card = dashNode(`ops-service ${opsTone(value)}`);
+      card.appendChild(dashNode('ops-service-name', name));
+      card.appendChild(dashNode('ops-service-value', value));
+      serviceGrid.appendChild(card);
+    }
+    root.appendChild(serviceGrid);
+
+    const activity = sections.ACTIVITY || [];
+    const game = activity.find(line => /\bGame\s+/.test(line));
+    const queue = activity.find(line => /QueueMeter/.test(line));
+    const lastDrop = activity.find(line => /LastDrop/.test(line));
+
+    const alerts = text.split('\n').map(line => line.trim()).filter(line =>
+      /\b(?:STOPPED|DOWN|FAILED|INVALID|DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(line)
+      || /Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429/.test(line)
+    ).slice(0, 2);
+
+    if (alerts.length) {
+      root.className += ' has-alerts';
+      const alertHead = dashNode('ops-alerts-head');
+      alertHead.appendChild(dashNode('', 'ATTENTION'));
+      alertHead.appendChild(dashNode('', `${alerts.length} ITEM${alerts.length === 1 ? '' : 'S'}`));
+      root.appendChild(alertHead);
+      const alertBox = dashNode('ops-alerts');
+      for (const line of alerts) {
+        alertBox.appendChild(dashNode(`ops-alert ${opsTone(line) === 'down' ? 'down' : ''}`,
+          line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').replace(/\s{2,}/g, ' ')));
+      }
+      root.appendChild(alertBox);
+    } else {
+      const activityGrid = dashNode('ops-activity-grid');
+      const gameValue = game?.match(/Game\s+(\d+)試合目/)?.[1]
+        || game?.replace(/^[◆]\s*/, '').replace(/^Game\s+/, '').trim() || '—';
+      const queueMatch = queue?.match(/A=(\d+)\s+C=(\d+)\s+T=(\d+)/);
+      const queueValue = queueMatch
+        ? String(Number(queueMatch[1]) + Number(queueMatch[2]) + Number(queueMatch[3]))
+        : '—';
+      const dropValue = lastDrop
+        ? lastDrop.replace(/^[▾]\s*/, '').replace(/^LastDrop\s+/, '').trim().split(/\s+/)[0]
+        : '—';
+      for (const [label, value] of [['GAME', gameValue], ['QUEUE', queueValue], ['DROP', dropValue]]) {
+        const item = dashNode('ops-activity-item');
+        item.appendChild(dashNode('ops-activity-label', label));
+        item.appendChild(dashNode('ops-activity-value', value));
+        activityGrid.appendChild(item);
+      }
+      root.appendChild(activityGrid);
+    }
+
+    container.replaceChildren(root);
+    return true;
+  }
+  function hanjukuView(feed, now) {
+    const text = String(feed?.text || '');
+    if (!/^SOREN\/CORNER:.*\/ hanjuku-hero \//m.test(text)) return null;
+    const lines = text.split('\n').map(line => line.trim());
+    const pick = pattern => lines.map(line => line.match(pattern)).find(Boolean);
+    const values = pick(/^第(\d+|不明)話 \/ 所持金 (\d+|不明)G$/);
+    const calendar = pick(/^ゲーム内: (\d+|不明)年(\d+|不明)月（最終観測）$/);
+    const castles = pick(/^占領記録 (\d+|不明)城/);
+    const plan = pick(/^計画段階: (.{1,24})（完了未確認）$/);
+    const pending = pick(/^保留計画: ([a-z_]+|不明)$/);
+    // The card lines carry extra observed fields after these prefixes; anchor on
+    // the leading group only so an added field cannot drop a parsed value.
+    const inputs = pick(/^実入力: (\d+|不明)回 \/ 観測 (\d+|不明)秒前(?:（(\d+|不明)回）)?$/);
+    const battle = pick(/^戦闘結果: (\d+|不明)勝 \/ (\d+|不明)敗/);
+    const battleFlow = pick(/^戦闘: 開始 (\d+|不明) \/ 終了 (\d+|不明) \/ 切り札確定 (\d+|不明)$/);
+    const duel = pick(/^交戦HP: 敵 (\d+)（([^）]*)） \/ 我 (\d+)（([^）]*)）$/);
+    const troops = pick(/^兵力: (\d+|不明)名 \/ 停滞 (\d+|不明)秒$/);
+    const holds = pick(/^保有: (.{1,80})$/);
+    const lost = pick(/^失った城: (.{1,120})$/);
+    const castleLosses = pick(/^城失陥: (\d+)件/);
+    const garrison = pick(/^駐留: (.{1,120})$/);
+    const marching = pick(/^行軍中: (.{1,120})$/);
+    const intent = pick(/^出撃意図: (.{1,220})$/);
+    const eggs = pick(/^卵: (.{1,160})$/);
+    const orders = pick(/^出撃: 成立 (\d+) \/ 失敗 (\d+)$/);
+    const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
+    const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
+    const chapter = number(values?.[1]);
+    const age = now - Number(feed?.updatedAt || 0);
+    const fresh = Number.isFinite(age) && age >= 0 && age <= 30
+      && lines.includes('半熟英雄 / 最終観測・記録') && Boolean(values);
+    const labels = {battle:'白兵戦', battle_menu:'作戦選択', battle_menu_pending:'メニュー確認中',
+      card_list:'切り札を選択', card_select:'携行札を選択', egg_battle_menu:'召喚獣の戦闘',
+      monster_menu:'召喚獣の戦闘', world_map:'戦況を確認中', map:'行軍・探索', map_target:'行先を選択',
+      castle_menu:'城の管理', general_list:'将軍を選択', month_menu:'月初の処理',
+      sortie_confirm:'出撃を確認中', unknown:'画面を確認中'};
+    const geometry = pick(/^投影余白: (?:side=(left|right) )?x=(\d+) w=(\d+) until=(\d+(?:\.\d+)?)$/);
+    const gapLeft = number(geometry?.[2]), gapWidth = number(geometry?.[3]);
+    const gapSide = geometry?.[1] || (gapLeft > 0 ? 'right' : 'left');
+    const gapUntil = Number(geometry?.[4]);
+    const gapGeometryOk = gapSide === 'left'
+      ? gapLeft === 0 && gapWidth >= 180 && gapWidth < 960
+      : gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960;
+    const timedRows = prefix => lines.filter(s=>s.startsWith(prefix)).map(s=>s.slice(prefix.length).match(/^until=(\d+(?:\.\d+)?) (.{1,500})$/))
+      .filter(m=>m && now <= Number(m[1]) && Number(m[1])-now <= 30).map(m=>m[2]);
+    const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
+      ? {left:gapLeft, width:gapWidth, side:gapSide,
+         captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
+         garrison:timedRows('余白駐留: '),
+         marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
+         intent:pick(/^余白出撃意図: (.{1,220})$/)?.[1] || null,
+         hp:timedRows('余白交戦HP: ')[0] || null,
+         soldiers:timedRows('余白交戦兵数: ')[0] || null,
+         tactics:timedRows('余白戦闘計画: ')[0] || null,
+         cards:timedRows('余白切り札: ')[0] || null,
+         decision:timedRows('余白戦闘判断: ')[0] || null,
+         egg:timedRows('余白卵対策: ')[0] || null} : null;
+    return {gap, fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
+      gold:fresh ? number(values?.[2]) : null,
+      year:fresh && number(calendar?.[1]) >= 1 && number(calendar?.[1]) <= 9999 ? number(calendar[1]) : null,
+      month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
+      captured:fresh ? number(castles?.[1]) : null,
+      actions:fresh ? number(inputs?.[1]) : null,
+      observationAge:fresh ? number(inputs?.[2]) : null,
+      observations:fresh ? number(inputs?.[3]) : null,
+      soldiers:fresh ? number(troops?.[1]) : null,
+      stalled:fresh ? number(troops?.[2]) : null,
+      holds:fresh ? (holds?.[1] || null) : null,
+      lost:fresh ? (lost?.[1] || null) : null,
+      castleLosses:fresh ? number(castleLosses?.[1]) : null,
+      garrison:fresh ? (garrison?.[1] || null) : null,
+      marching:fresh ? (marching?.[1] || null) : null,
+      intent:fresh ? (intent?.[1] || null) : null,
+      eggs:fresh ? (eggs?.[1] || null) : null,
+      battlesStarted:fresh ? number(battleFlow?.[1]) : null,
+      battlesFinished:fresh ? number(battleFlow?.[2]) : null,
+      cardsConfirmed:fresh ? number(battleFlow?.[3]) : null,
+      launched:fresh ? number(orders?.[1]) : null, failed:fresh ? number(orders?.[2]) : null,
+      enemyHp:fresh ? number(duel?.[1]) : null, enemy:fresh ? (duel?.[2] || null) : null,
+      allyHp:fresh ? number(duel?.[3]) : null, ally:fresh ? (duel?.[4] || null) : null,
+      plan:fresh && plan?.[1] !== '不明' ? plan?.[1] : null,
+      pending:fresh ? ({monthly:'月次処理', recall:'帰還', repair:'卵修理', sortie:'出撃'}[pending?.[1]] || null) : null,
+      wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
+      screen:fresh ? (screen?.[1] || null) : null,
+      phase:fresh ? (screen?.[2] || null) : null,
+      status:fresh ? (labels[screen?.[1]] || '進行状況を確認中') : '最新情報を確認中'};
+  }
+  function renderHanjuku(container, value) {
+    const node = (cls, text) => {
+      const el = document.createElement('div'); el.className = cls;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    };
+    const shown = v => v === null ? '—' : String(v);
+    const card = node(`hanjuku-card${value.fresh ? '' : ' stale'}`);
+    const head = node('hanjuku-head', '半熟英雄');
+    head.appendChild(node('hanjuku-badge', value.fresh ? '進行中' : '要確認'));
+    card.appendChild(head);
+    const period = node('hanjuku-period');
+    period.appendChild(node('hanjuku-chapter', value.chapter === null ? '話数 未確認' : `第 ${value.chapter} 話`));
+    period.appendChild(node('hanjuku-month', value.year === null || value.month === null
+      ? '年月 未確認' : `${value.year}年 ${value.month}月（最終観測）`));
+    card.appendChild(period);
+    card.appendChild(node('hanjuku-status', value.status));
+    const dots = node('hanjuku-dots');
+    for (let i = 1; i <= 12; i++) dots.appendChild(node(`hanjuku-dot${i === value.chapter ? ' current' : ''}`));
+    card.appendChild(dots);
+    const kpis = node('hanjuku-kpis');
+    for (const [label, text] of [['所持金', `${shown(value.gold)} G`],
+      ['勝 / 敗（累計）', `${shown(value.wins)} / ${shown(value.losses)}`],
+      ['兵力', `${shown(value.soldiers)}名`]]) {
+      const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
+      cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
+    }
+    card.appendChild(kpis);
+    if (!value.gap && value.enemyHp !== null) {
+      card.appendChild(node('hanjuku-duel',
+        `交戦 ${value.enemy} ${value.enemyHp} / ${value.ally} ${value.allyHp}`));
+    }
+    const details = node('hanjuku-details');
+    const group = title => {
+      const section = node('hanjuku-group');
+      section.appendChild(node('hanjuku-group-title', title));
+      details.appendChild(section);
+      return section;
+    };
+    const detail = (section, cls, label, text) => {
+      const row = node('hanjuku-detail-row');
+      row.appendChild(node('hanjuku-detail-label', label));
+      row.appendChild(node(cls, text));
+      section.appendChild(row);
+    };
+    if (!value.gap && value.holds) {
+      const territory = group('占領した拠点（累計記録）');
+      territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
+    }
+    if (!value.gap && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
+    if (!value.gap && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    if (!value.gap && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
+    if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
+    const records = node('hanjuku-records');
+    records.appendChild(node('hanjuku-castles', `占領記録 ${shown(value.captured)}城（累計）`));
+    if (value.launched !== null) records.appendChild(node('hanjuku-orders', `出撃 成立 ${value.launched} / 失敗 ${value.failed}`));
+    details.appendChild(records);
+    card.appendChild(details);
+    if (!value.fresh) card.appendChild(node('hanjuku-note', '観測が古いため数値は非表示'));
+    container.replaceChildren(card);
+  }
+  function renderHanjukuGap(value) {
+    const surface = document.getElementById('hanjuku-gap');
+    surface.replaceChildren(); surface.style.display = 'none';
+    const frame = SURFACE_REGION === 'game-gap' ? window.frameElement : null;
+    // Transparent empty iframes can still cover WebGL with Chromium's dark
+    // canvas on Xvfb. Remove the whole surface until measured padding exists.
+    if (frame) frame.style.display = 'none';
+    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) return;
+    const gap = value.gap;
+    if (frame) {
+      // Crop the iframe itself; transparent space must not overlap game pixels.
+      frame.style.left = `${gap.left}px`;
+      frame.style.width = `${gap.width}px`;
+      frame.style.display = 'block';
+    }
+    surface.style.left = `${frame ? 0 : gap.left}px`; surface.style.width = `${gap.width}px`;
+    surface.style.display = 'block';
+    const title = document.createElement('div'); title.className = 'hanjuku-gap-title';
+    title.textContent = '最終観測・記録'; surface.appendChild(title);
+    const items = [];
+    const add = (label, text) => {
+      const card = document.createElement('div'); card.className = 'hanjuku-group';
+      const head = document.createElement('div'); head.className = 'hanjuku-group-title'; head.textContent = label;
+      const body = document.createElement('div'); body.textContent = text;
+      card.append(head, body); items.push(card);
+    };
+    const shown = v => v === null || v === undefined ? '—' : String(v);
+    add('現在状況',
+      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名`);
+    add('戦績・戦闘',
+      `${shown(value.wins)}勝 ${shown(value.losses)}敗 / 開始 ${shown(value.battlesStarted)} / 終了 ${shown(value.battlesFinished)} / 切り札 ${shown(value.cardsConfirmed)} / 城失陥 ${shown(value.castleLosses)}`);
+    if (value.launched !== null || value.failed !== null || value.plan || value.pending) {
+      add('出撃・計画',
+        `成立 ${shown(value.launched)} / 失敗 ${shown(value.failed)} / 計画 ${value.plan || '—'} / 保留 ${value.pending || '—'}`);
+    }
+    if (value.eggs) add('卵残回数', value.eggs.replace(/\s*[／/]\s*/g, ' ・ '));
+    if (value.lost) add('失った城', value.lost.replace(/\s*[／/]\s*/g, ' ・ '));
+    if (value.actions !== null || value.observations !== null || value.observationAge !== null) {
+      add('入力・観測',
+        `実入力 ${shown(value.actions)}回 / 観測 ${shown(value.observations)}回 / 最新 ${shown(value.observationAge)}秒前`);
+    }
+    if (gap.hp || gap.soldiers) {
+      add('交戦詳細（10秒以内の観測）', [gap.hp, gap.soldiers].filter(Boolean).join(' / '));
+    }
+    if (gap.intent) add('現在の出撃意図', gap.intent);
+    if (gap.tactics) add('AI戦闘計画（10秒以内）', gap.tactics);
+    if (gap.cards) add('切り札状況（10秒以内）', gap.cards);
+    if (gap.egg) add('卵・奥の手（10秒以内）', gap.egg);
+    if (gap.decision) add('判断理由（10秒以内）', gap.decision);
+    for (const row of gap.garrison) {
+      const [castle, generals] = row.split('=');
+      const names = (generals || '').split('/').filter(Boolean);
+      for (let i=0;i<names.length;i+=3) add(`駐留 ${castle}（30秒以内）`, names.slice(i,i+3).join(' ・ '));
+    }
+    for (const row of gap.marching) add('行軍（成立未確認を含む）', row);
+    const castles = (gap.captured || '').split(' / ').filter(Boolean);
+    for (let i=0;i<castles.length;i+=3) add('占領した拠点（累計記録）', castles.slice(i,i+3).join(' ・ '));
+    if (!items.length) add('観測詳細', '新しい観測を待っています');
+    // Keep large type and whole cards. Paginate using actual DOM heights;
+    // every bounded roster/castle row is available without a two-line clamp.
+    const pages = [[]]; let used = 0;
+    const capacity = surface.clientHeight - title.offsetHeight - 44;
+    for (const card of items) {
+      surface.appendChild(card);
+      const height = card.getBoundingClientRect().height + 8;
+      card.remove();
+      if (used && used + height > capacity) {pages.push([]); used = 0;}
+      pages.at(-1).push(card); used += height;
+    }
+    const index = Math.floor(Date.now()/10000) % pages.length;
+    surface.append(...pages[index]);
+    if (pages.length > 1) {
+      const footer = document.createElement('div'); footer.className = 'hanjuku-gap-pages';
+      footer.textContent = `${index+1} / ${pages.length}`; surface.appendChild(footer);
+    }
+  }
+  function setPanelState(element, label, tone) {
+    if (!element) return;
+    element.textContent = label;
+    element.className = `panel-state ${tone || ''}`.trim();
+  }
+  function gamePanelState(feed) {
+    const text = String(feed?.text || '');
+    if (/STATE (?:CONFLICT|INVALID)|unavailable/i.test(text)) return ['ALERT', 'down'];
+    const best = text.match(/Stats:\s*\d+\s+(?:results|reports)\s*\/\s*best=([^/\n]+)/);
+    if (best) return [`BEST ${best[1].trim()}`, 'info'];
+    if (/^Live:/m.test(text) || /SOREN\/CORNER:.*(?:進行中|ACTIVE)/i.test(text)
+        || /最終観測・記録/.test(text)) return ['LIVE', 'ok'];
+    return ['DATA', 'info'];
+  }
+  function opsPanelState(feed) {
+    const text = String(feed?.text || '');
+    const compact = text.match(/Workers\s+(\d+)\/(\d+)\s+(ONLINE|DEGRADED|CHECK)/);
+    if (compact) {
+      if (compact[3] === 'ONLINE') return [`${compact[1]}/${compact[2]} OK`, 'ok'];
+      return [compact[3], compact[3] === 'DEGRADED' ? 'down' : 'warn'];
+    }
+    const legacy = text.match(/Workers.*?(\d+)\/(\d+) expected online/);
+    if (legacy) return [`${legacy[1]}/${legacy[2]} OK`, 'ok'];
+    if (/\b(?:STOPPED|DOWN|FAILED|INVALID)\b|Duplicates\s+DETECTED/.test(text)) return ['ALERT', 'down'];
+    if (/\b(?:DEGRADED|UNKNOWN|PAUSED)\b/.test(text)) return ['CHECK', 'warn'];
+    if (/Backend\s+.*(?:FFMPEG LIVE|OBS)|Chat:\s*RUNNING/.test(text)) return ['LIVE', 'ok'];
+    return ['OPS', 'info'];
+  }
+
   function renderFeed() {
     const g = state?.feeds?.showStatusG;
     const s = state?.feeds?.showStatus;
     const i = state?.feeds?.improve;
     const improveActive = Boolean(i?.active);
+    const [gameStateLabel, gameStateTone] = gamePanelState(g);
+    const [opsStateLabel, opsStateTone] = opsPanelState(s);
+    setPanelState(feedGState, gameStateLabel, gameStateTone);
+    setPanelState(feedSState, opsStateLabel, opsStateTone);
     document.documentElement.dataset.improveActive = improveActive ? '1' : '';
-    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}`;
+    const hanjuku = hanjukuView(g, Date.now() / 1000);
+    if (hanjuku && state.gameGapEnabled !== true) hanjuku.gap = null;
+    document.documentElement.dataset.hanjukuActive = hanjuku ? '1' : '';
+    renderHanjukuGap(hanjuku);
+    const gKey = `${g?.updatedAt || 0}:${g?.text || ''}:${hanjuku?.fresh}:${Boolean(hanjuku?.gap)}`;
     const sKey = `${s?.updatedAt || 0}:${s?.text || ''}`;
     if (gKey !== lastFeedGKey) {
       const gView = stripHeaderBox(g?.text, g?.segments);
-      renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      if (hanjuku) renderHanjuku(feedG, hanjuku);
+      else if (!renderGameDashboard(feedG, g) && !renderSorenMonitor(feedG, g, gView)) renderFeedLines(feedG, gView.text, { segmentLines: gView.segments });
+      document.documentElement.dataset.sorenMonitor = feedG.querySelector('.soren-monitor') ? '1' : '';
       feedGLines.textContent = `${g?.lineCount || 0}L`;
       lastFeedGKey = gKey;
     }
     if (sKey !== lastFeedSKey) {
-      renderFeedLines(feedS, s?.text);
+      if (!renderOpsDashboard(feedS, s, state?.feeds?.systemMetrics)) renderFeedLines(feedS, s?.text);
       feedSLines.textContent = `${s?.lineCount || 0}L`;
       lastFeedSKey = sKey;
     }
+    updateOpsSystemMetrics(feedS, state?.feeds?.systemMetrics);
     if (improveActive) {
       const iKey = `${i?.updatedAt || 0}:${(i?.logLines || []).join('\n')}`;
       if (iKey !== lastFeedIKey) {
@@ -624,7 +2015,7 @@ html[data-soren-neutral="1"] .toast {
         feedIStatus.textContent = '';
         lastFeedIKey = '';
       }
-      feedLabel.textContent = 'G + STATUS';
+      feedLabel.textContent = 'GAME + OPS';
     }
     feedAge.textContent = ageLabel(Math.max(
       g?.updatedAt || 0,
@@ -632,11 +2023,31 @@ html[data-soren-neutral="1"] .toast {
       improveActive ? (i?.logUpdatedAt || 0) : (i?.updatedAt || 0),
     ));
     feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
+    adaptSorenMonitor(feedG);
+    adaptOpsDashboard(feedS);
+    // Raw feeds retain every source row. New panel chrome must not push the last
+    // rows below the frame; fit leading/type to the actual remaining height.
+    // Structured Hanjuku cards keep their natural height and all observations.
+    for (const container of [feedG, feedS, feedI]) {
+      if (container.querySelector('.game-dashboard,.ops-dashboard,.hanjuku-card')) {
+        container.style.fontSize = '';
+        container.style.lineHeight = '';
+        continue;
+      }
+      const rows = container.querySelectorAll('.feed-line');
+      const panel = container.parentElement;
+      const headerHeight = panel?.querySelector('.panel-head')?.offsetHeight;
+      const available = panel?.clientHeight - headerHeight;
+      if (!rows.length || !Number.isFinite(available) || available <= 0) continue;
+      const leading = Math.min(13.05, available / rows.length);
+      container.style.fontSize = `${Math.min(9, leading / 1.16)}px`;
+      container.style.lineHeight = `${leading}px`;
+    }
   }
   function summaryClass(text) {
     if (/A\/B\s*残り:/.test(text)) return 'sum-ab';
     if (/A\/B:/.test(text)) return 'sum-ab';
-    if (/SOREN[/]OBS|FFMPEG/.test(text)) return 'sum-head';
+    if (/^SOREN\b/.test(text)) return 'sum-head';
     if (/Recent30/.test(text)) return 'sum-recent';
     if (/Strategy/.test(text)) return 'sum-strategy';
     if (/^Live:/.test(text)) return 'sum-live';
@@ -689,7 +2100,7 @@ html[data-soren-neutral="1"] .toast {
         if (selected.length >= 4) break;
       }
     }
-    return selected.slice(0, 4).map((line) => String(line).replace(/[│┌┐└┘─━]/g, '').trim());
+    return selected.slice(0, 4).map((line) => monitorText(String(line).replace(/[│┌┐└┘─━]/g, '').trim()));
   }
   function renderTopRail() {
     const workState = state?.notifications?.work || {};
@@ -747,13 +2158,17 @@ html[data-soren-neutral="1"] .toast {
       }
     }
   }
+  function monitorText(text) {
+    return text.replace(/\bBackend\s+(?:FFMPEG|OBS)\s*/g, '配信 ')
+      .replace(/\bSOREN\/(?:FFMPEG|OBS)\b/g, 'SOREN');
+  }
   function liveStatusCards() {
     const ops = String(state?.feeds?.showStatus?.text || '').split('\n');
     return [/Backend/, /Game|Queued/, /LastDrop/].map((pattern) => ops.find((line) => pattern.test(line)))
       .filter(Boolean).map((line) => ({
         category: 'system',
         title: 'LIVE STATUS',
-        body: line.trim(),
+        body: monitorText(line.trim()),
         ts: 0,
         liveStatus: true,
       }));

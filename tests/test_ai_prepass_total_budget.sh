@@ -17,6 +17,17 @@ _ai_dispatch() {
 	local label="$1" agent="$2" _prompt="$3" timeout_override="${4:-}"
 	printf '%s|%s|%s|%s\n' "$label" "$agent" "$timeout_override" "${OPENCODE_ABORT_RETRY:-unset}" >>"$ATTEMPT_LOG"
 	case "$agent" in
+	greedy)
+		# Unlike ``slow`` (which caps its own sleep at 1s), a greedy candidate
+		# really spends whatever timeout it was handed. This is the fixture for
+		# azumag/docich#993 要件2: without a per-candidate cap it swallows the
+		# whole remaining chain budget and the fallback never dispatches.
+		local greedy_delay="${timeout_override:-1}"
+		[[ "$greedy_delay" =~ ^[0-9]+$ ]] || greedy_delay=1
+		[ "$greedy_delay" -lt 1 ] && greedy_delay=1
+		sleep "$greedy_delay"
+		return 1
+		;;
 	slow)
 		local delay="${timeout_override:-1}"
 		[ "$delay" -gt 1 ] && delay=1
@@ -109,7 +120,37 @@ else
 	fail_case "healthy live main (out=$main_out timeout=$main_timeout retry=$main_retry restored=${OPENCODE_ABORT_RETRY:-unset})"
 fi
 
-# 4. RADIO users that are not the normal on-air main-generation contract remain
+# 4. Mixed-language local repair uses its own short total budget instead of the
+# unbounded fallback path used by non-live RADIO consumers.
+: >"$ATTEMPT_LOG"
+RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC=1
+repair_out=$(ai_generate_list 'RADIO:news:mixed_repair' "$prompt" 'slow,success' '' \
+	'_radio_is_valid_mixed_language_repair_candidate' 2>/dev/null || true)
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+repair_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+repair_retry=$(awk -F'|' 'NR==1 {print $4}' "$ATTEMPT_LOG")
+if [ -z "$repair_out" ] && [ "$lines" -eq 1 ] && [ "$repair_timeout" = 1 ] \
+	&& [ "$repair_retry" = 0 ] && [ "$OPENCODE_ABORT_RETRY" = 1 ]; then
+	pass 'mixed-language repair releases after its bounded total budget'
+else
+	fail_case "mixed repair total budget (out=$repair_out lines=$lines timeout=$repair_timeout retry=$repair_retry restored=${OPENCODE_ABORT_RETRY:-unset})"
+fi
+
+# 5. The repair caller shares one deadline across its per-span chains. An already
+# expired shared deadline must not be replaced by a fresh budget for the next span.
+: >"$ATTEMPT_LOG"
+AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH=$(( $(date +%s) - 1 ))
+expired_repair=$(ai_generate_list 'RADIO:news:mixed_repair' "$prompt" 'success' '' \
+	'_radio_is_valid_mixed_language_repair_candidate' 2>/dev/null || true)
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+if [ -z "$expired_repair" ] && [ "$lines" -eq 0 ]; then
+	pass 'mixed-language repair reuses one shared deadline across spans'
+else
+	fail_case "mixed repair shared deadline (out=$expired_repair lines=$lines)"
+fi
+unset AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH
+
+# 6. RADIO users that are not the normal on-air main-generation contract remain
 # untouched. This prevents a generic RADIO:* match from changing batch/poll policy.
 : >"$ATTEMPT_LOG"
 batch_out=$(ai_generate_list 'RADIO:batch_commentary' "$prompt" 'success' 2>/dev/null || true)
@@ -121,7 +162,7 @@ else
 	fail_case "non-live RADIO policy (out=$batch_out timeout=$batch_timeout retry=$batch_retry)"
 fi
 
-# 5. Caller-provided timeouts shorter than either total budget stay authoritative.
+# 7. Caller-provided timeouts shorter than either total budget stay authoritative.
 : >"$ATTEMPT_LOG"
 RADIO_PREPASS_TOTAL_BUDGET_SEC=5
 prepass_out=$(ai_generate_list 'RADIO:weather:prepass' "$prompt" 'success' 2 2>/dev/null || true)
@@ -137,7 +178,7 @@ else
 	fail_case "explicit shorter timeout (prepass=$prepass_timeout main=$main_short_timeout)"
 fi
 
-# 6. Misconfiguration cannot silently restore multi-minute lane ownership.
+# 8. Misconfiguration cannot silently restore multi-minute lane ownership.
 RADIO_PREPASS_TOTAL_BUDGET_SEC=garbage
 prepass_invalid=$(_ai_prepass_total_budget_sec)
 RADIO_PREPASS_TOTAL_BUDGET_SEC=99999
@@ -146,14 +187,19 @@ RADIO_MAIN_TOTAL_BUDGET_SEC=garbage
 main_invalid=$(_ai_radio_main_total_budget_sec)
 RADIO_MAIN_TOTAL_BUDGET_SEC=99999
 main_capped=$(_ai_radio_main_total_budget_sec)
+RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC=garbage
+repair_invalid=$(_ai_radio_mixed_repair_total_budget_sec)
+RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC=99999
+repair_capped=$(_ai_radio_mixed_repair_total_budget_sec)
 if [ "$prepass_invalid" = 60 ] && [ "$prepass_capped" = 120 ] \
-	&& [ "$main_invalid" = 180 ] && [ "$main_capped" = 240 ]; then
+	&& [ "$main_invalid" = 180 ] && [ "$main_capped" = 240 ] \
+	&& [ "$repair_invalid" = 60 ] && [ "$repair_capped" = 120 ]; then
 	pass 'radio chain budgets default safely and have hard caps'
 else
-	fail_case "budget validation (prepass=$prepass_invalid/$prepass_capped main=$main_invalid/$main_capped)"
+	fail_case "budget validation (prepass=$prepass_invalid/$prepass_capped main=$main_invalid/$main_capped repair=$repair_invalid/$repair_capped)"
 fi
 
-# 7. Exercise the real generation-lane lock around a budgeted fake provider. Once
+# 9. Exercise the real generation-lane lock around a budgeted fake provider. Once
 # the budgeted main chain returns, no stale radio lock remains and the next caller
 # can acquire the same lane immediately.
 if (
@@ -196,13 +242,55 @@ else
 	fail_case 'budgeted main releases real radio lane for next caller'
 fi
 
-# 8. Runtime shim must load the budget wrapper after the policy implementation.
+# 10. Runtime shim must load the budget wrapper after the policy implementation.
 policy_line=$(grep -nF 'source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"' "$ROOT/eloop_lib.sh" | cut -d: -f1)
 budget_line=$(grep -nF 'source "$ELOOP_LIB_DIR/lib/ai_prepass_budget.sh"' "$ROOT/eloop_lib.sh" | cut -d: -f1)
 if [ -n "$policy_line" ] && [ -n "$budget_line" ] && [ "$budget_line" -gt "$policy_line" ]; then
 	pass 'runtime loads radio budget after ai_generate policy'
 else
 	fail_case 'runtime load order keeps radio budget after ai_generate policy'
+fi
+
+# 11. azumag/docich#993 要件2: a single slow prepass candidate must not spend
+# the whole window before the fallback list is reached. Before the per-candidate
+# cap, ``greedy`` was handed the entire remaining budget, burned it, and the
+# second candidate was skipped before reaching provider dispatch.
+#
+# The review that followed made the regression explicit: asserting ``lines=2``
+# alone cannot catch the *absolute-deadline* variant of the cap, where the
+# second candidate only survives because it is clamped to 1s. So pin the
+# timeout each candidate actually received (budget=6 -> per-candidate cap 3):
+# first ~3s, and the second still gets a real window afterwards.
+: >"$ATTEMPT_LOG"
+RADIO_PREPASS_TOTAL_BUDGET_SEC=6
+unset OPENCODE_ABORT_RETRY
+start=$(date +%s)
+prepass_out=$(ai_generate_list 'RADIO:news:prepass' "$prompt" 'greedy,success' 2>/dev/null || true)
+elapsed=$(( $(date +%s) - start ))
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+first_timeout=$(awk -F'|' 'NR==1 {print $3}' "$ATTEMPT_LOG")
+second_timeout=$(awk -F'|' 'NR==2 {print $3}' "$ATTEMPT_LOG")
+if [ "$prepass_out" = ok ] && [ "$lines" -eq 2 ] \
+	&& [ "$first_timeout" -ge 2 ] && [ "$first_timeout" -le 3 ] \
+	&& [ "$second_timeout" -ge 2 ] \
+	&& [ "$elapsed" -le 6 ]; then
+	pass 'slow first prepass candidate still leaves the fallback a real dispatch'
+else
+	fail_case "prepass per-candidate cap (out=$prepass_out lines=$lines first_timeout=$first_timeout second_timeout=$second_timeout elapsed=$elapsed)"
+fi
+
+# 12. azumag/docich#993 要件1/7: the per-candidate cap never extends the chain
+# total budget -- the whole run still finishes inside the same wall-clock window.
+: >"$ATTEMPT_LOG"
+RADIO_PREPASS_TOTAL_BUDGET_SEC=3
+start=$(date +%s)
+ai_generate_list 'RADIO:news:prepass' "$prompt" 'greedy,greedy,success' >/dev/null 2>&1 || true
+elapsed=$(( $(date +%s) - start ))
+lines=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')
+if [ "$elapsed" -le 3 ]; then
+	pass 'prepass wall-clock stays inside the total budget with the per-candidate cap'
+else
+	fail_case "prepass wall-clock exceeded total budget (lines=$lines elapsed=$elapsed)"
 fi
 
 printf '# pass=%d fail=%d\n' "$ok" "$fail"

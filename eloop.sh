@@ -13,6 +13,14 @@
 #
 # 前提: eloop_lib.sh が source 済みであること
 
+# Phase A (docich#392): .py.gz → .py の透過 reader ヘルパー。通常は eloop_lib.sh が
+# 読み込むが、単体で source される経路でも archive 解決が壊れないようここでも補う。
+if ! command -v strategy_archive_resolve_plaintext >/dev/null 2>&1; then
+	_eloop_archive_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	[ -f "$_eloop_archive_lib_dir/lib/strategy_archive.sh" ] && source "$_eloop_archive_lib_dir/lib/strategy_archive.sh"
+	unset _eloop_archive_lib_dir
+fi
+
 PLAY_RECOVERED_RETRY_RC=75
 
 _follow_runner_output() {
@@ -136,19 +144,11 @@ _handle_decide_exception_recovery() {
 }
 
 _find_strategy_archive_for_hash() {
-	local expected_hash="$1" candidate actual_hash
+	local expected_hash="$1"
 	[ -n "$expected_hash" ] || return 1
-	for candidate in \
-		"${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py" \
-		"${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py"; do
-		[ -f "$candidate" ] || continue
-		actual_hash=$(python3 extract_decide_hash.py "$candidate" 2>/dev/null || echo "")
-		if [ "$actual_hash" = "$expected_hash" ]; then
-			printf '%s\n' "$candidate"
-			return 0
-		fi
-	done
-	return 1
+	# Phase A: `<hash>.py.gz` → `<hash>.py` の順に候補を解決し、gz 一致候補なら
+	# 作業アーカイブへ平文展開してから返す（呼び出し側の cp/grep/validate は平文前提）。
+	strategy_archive_resolve_plaintext "$expected_hash"
 }
 
 _strategy_source_has_invalid_structural_wildcard() {
@@ -304,8 +304,15 @@ play_one_game() {
 	fi
 
 	local game_num_display=$((GAME_NUM + 1))
-	python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" start "$game_num_display" || return 1
-	PREDICTION_GAME_STARTED_AT=$(date +%s)
+	if [ "${SOREN_PLAYER_POLICY:-existing}" = "jev" ]; then
+		# JEV is a manual experiment. Do not open a normal prediction round
+		# whose result could enter the production accumulator.
+		PREDICTION_GAME_STARTED_AT=0
+		log "[JEV] 通常の prediction round を開始せず、実験証跡へ分離"
+	else
+		python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" start "$game_num_display" || return 1
+		PREDICTION_GAME_STARTED_AT=$(date +%s)
+	fi
 	log ""
 	log "── Game #${game_num_display} ──"
 	_clear_stale_commands_if_any "before play_one_game"
@@ -322,13 +329,23 @@ play_one_game() {
 	AB_SOURCE=""
 	AB_IDX=""
 	AB_HELPERS=""
-	# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
-	if command -v _ab_gate_before_game >/dev/null 2>&1; then
-		_ab_gate_before_game || true
+	# JEV は開始時点の fallback bundle だけを使い、通常の A/B 候補選択を
+	# 実験へ持ち込まない。strategy snapshot 自体は fallback 用に固定する。
+	if [ "${SOREN_PLAYER_POLICY:-existing}" != "jev" ]; then
+		# A/B ゲート (strategy/ab_gate.sh): 改善候補が待機していれば境界で A/B を開始する (既定オフ)
+		if command -v _ab_gate_before_game >/dev/null 2>&1; then
+			_ab_gate_before_game || true
+		fi
+		if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
+			_ab_select_arm
+			ab_snapshot_source="$AB_SOURCE"
+		fi
 	fi
-	if command -v _ab_active >/dev/null 2>&1 && _ab_active; then
-		_ab_select_arm
-		ab_snapshot_source="$AB_SOURCE"
+	# _ab_gate_before_game may start A/B after prediction's start marker was
+	# written. Remember this game's arm before A/B state can be removed at the
+	# end of the trial, so its result cannot enter an existing prediction round.
+	if [ "${SOREN_PLAYER_POLICY:-existing}" != "jev" ]; then
+		python3 lib/prediction_round.py "$TMP_STATE_DIR/current_prediction.json" ab-game "$game_num_display" "$AB_ARM" || return 1
 	fi
 	if ! strategy_runtime_create_game_snapshot \
 		"$ab_snapshot_source" \
@@ -447,9 +464,10 @@ PY
 	rm -f "$runner_tmpfile"
 
 	if [ -z "$RESULT_JSON" ]; then
-		RESULT_JSON='{"score":0,"turns":0,"state":"UNKNOWN"}'
+		RESULT_JSON='{"score":0,"turns":0,"state":"UNKNOWN","player_policy":"'"${SOREN_PLAYER_POLICY:-existing}"'"}'
 	fi
 
+	LAST_PLAYER_POLICY=$(echo "$RESULT_JSON" | SOREN_PLAYER_POLICY="${SOREN_PLAYER_POLICY:-existing}" python3 -c "import json,os,sys; d=json.load(sys.stdin); print(str(d.get('player_policy') or os.environ.get('SOREN_PLAYER_POLICY','existing')).strip().lower())" 2>/dev/null || echo "${SOREN_PLAYER_POLICY:-existing}")
 	LAST_SCORE=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null || echo 0)
 	LAST_TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
 	LAST_RUSSIA=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('russia_created',False) else 'false')" 2>/dev/null || echo "false")
@@ -458,6 +476,14 @@ PY
 	local runner_error runner_error_msg
 	runner_error=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
 	runner_error_msg=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_message',''))" 2>/dev/null || echo "")
+
+	# JEV failure/fallback is an experiment outcome, never a normal strategy
+	# recovery or regression signal. The bounded runner records the explicit
+	# fallback/ack status in its private ledger.
+	if [ "$LAST_PLAYER_POLICY" = "jev" ]; then
+		log "[JEV] result score=$LAST_SCORE turns=$LAST_TURNS error=${runner_error:-none}; 通常の復旧・回帰判定へ流さない"
+		return 0
+	fi
 
 	# --- Fix3: recovery-taint ガード (guardian/復旧アクターが当該ゲーム中に
 	# stuck/hang 復旧を実行した場合、その復旧起点ゲームを評価系に入れない) ---
@@ -637,7 +663,7 @@ handle_soviet_celebration() {
 		return 0
 	fi
 
-	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" "${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
+	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" "${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}" "soviet"
 
 	# ロシア祝賀が走っていたら中止してソ連祝賀を優先
 	_cancel_russia_celebration_worker
@@ -659,6 +685,20 @@ handle_soviet_celebration() {
 
 #=== 試合後の後処理 ===
 post_game_bookkeeping() {
+	if [ "${LAST_PLAYER_POLICY:-existing}" = "jev" ]; then
+		# No prediction, score/best/history, improvement accumulator, clip, or
+		# regression side effect is allowed for the JEV corner. A pending
+		# lifecycle request may still observe this game boundary.
+		log "[JEV] 通常 post_game_bookkeeping をスキップ（専用ledgerのみ）"
+		if command -v game_lifecycle_jev_complete >/dev/null 2>&1; then
+			local _jev_lifecycle_rc=0
+			game_lifecycle_jev_complete || _jev_lifecycle_rc=$?
+			case "$_jev_lifecycle_rc" in
+			0|2|3) return "$_jev_lifecycle_rc" ;;
+			esac
+		fi
+		return 0
+	fi
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ] && [ "${LAST_SOVIET:-false}" != "true" ]; then
 		log "[HALT] post_game_bookkeepingをスキップ（建国後停止中）"
 		return 0
@@ -713,12 +753,13 @@ json.dump(d,open(f,'w'))
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
-		# prediction_worker が best_outcome=2 を検知して resolve する
-		HALT_STRATEGY_AFTER_SOVIET=1
+		# prediction_worker が best_outcome=2 を検知して resolve する。
+		# ソ連建国は試合の成功イベントであり、戦略ループの終端ではない。
+		# HALT_STRATEGY_AFTER_SOVIET=1 を明示した運用だけは停止を許可する。
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 		LAST_SOVIET="false"
-		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
+		log "[CONTINUE] ソ連建国達成後も通常のstrategy/retryを継続"
 	elif [ "$LAST_RUSSIA" = "true" ] && [ "${LAST_RUSSIA_ANNOUNCED:-false}" != "true" ]; then
 		handle_russia_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
 		LAST_RUSSIA="false"
@@ -753,23 +794,30 @@ json.dump(d,open(f,'w'))
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
 	update_best "$LAST_SCORE" && _create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
-	archive_history "$LAST_SCORE"
+	LAST_CREATED_ARCHIVE_FILE=""
+	archive_history "$LAST_SCORE" || true
 
 	# アーカイブファイル名を記録
-	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
+	LAST_ARCHIVE_FILE="${LAST_CREATED_ARCHIVE_FILE:-}"
+	if [ -z "$LAST_ARCHIVE_FILE" ]; then
+		# Preserve the legacy metrics path on failure. This fallback is NOT
+		# verified provenance for the new retained stage observations.
+		LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
+	fi
 	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
 	# 建国ボーナス: 最終盤面のtype別ボーナスを加算した評価スコア
+	# issue #132 Phase 1: 型ボーナス表は lib/objective.py の単一定義。以前は
+	# ここにインラインで TB を持っていましたが、wildcard_parallel.py と
+	# repair_current_run_from_history.sh にも同じ写しがあり、どれか 1 件だけが
+	# 古いまま残ると試合中の評価と候補選抜が違う目的空間の値として同じ標本に
+	# 混ざります。値は修正後 (T16=25402) と同一です。
 	local EVAL_SCORE
 	EVAL_SCORE=$(echo "$RESULT_JSON" | python3 -c "
 import json, sys
+from lib.objective import eval_score
 d = json.load(sys.stdin)
-types = d.get('final_types', [])
-soviet = d.get('soviet_created', False)
-TB = {1:0,2:0,3:1,4:3,5:7,6:15,7:32,8:67,9:141,10:296,11:622,12:1306,13:2743,14:5760,15:12096,16:25402}
-bonus = sum(TB.get(t, 0) for t in types)
-if soviet: bonus += 800
-print(d.get('score', 0) + bonus)
+print(eval_score(d.get('score', 0), d.get('final_types', []), bool(d.get('soviet_created'))))
 " 2>/dev/null || echo "$LAST_SCORE")
 
 	# EVAL_SCORE履歴（ボーナス込み）
@@ -791,7 +839,7 @@ print(d.get('score', 0) + bonus)
 		if [ -n "${AB_ARM:-}" ] && command -v _ab_record_game >/dev/null 2>&1; then
 			# issue #132 P0-1: 建国 (makeSorenCount 由来) とロシア到達を A/B の永続記録にも残す。
 			# game_history は剪定されるため、実験の ledger 側に持たないと後から辿れない。
-			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE" "$_soviet_for_acc" "$_russia_for_acc"
+			_ab_record_game "$LAST_SCORE" "$EVAL_SCORE" "$LAST_TURNS" "$LAST_ARCHIVE_FILE" "$_soviet_for_acc" "$_russia_for_acc" "${LAST_CREATED_ARCHIVE_FILE:-}"
 		fi
 		if command -v _ab_gate_after_game >/dev/null 2>&1; then
 			_ab_gate_after_game || true
@@ -1046,6 +1094,10 @@ PY
 		_game_lifecycle_rc=0
 		game_lifecycle_after_game || _game_lifecycle_rc=$?
 		case "$_game_lifecycle_rc" in
+		4)
+			log "[GAME-LIFECYCLE] 試合は継続中 → 同じ盤面の操作へ戻る"
+			return 0
+			;;
 		0)
 			rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 			STOP_REQUESTED=1
@@ -1089,6 +1141,12 @@ prepare_next_game() {
 		_game_lifecycle_resume_rc=0
 		game_lifecycle_resume_pending || _game_lifecycle_resume_rc=$?
 		case "$_game_lifecycle_resume_rc" in
+		4)
+			# A boundary wait still owns a live board. Do not let the normal
+			# MOVE timeout or STOP check below turn it into a reset.
+			log "[GAME-LIFECYCLE] 試合終了待ち → retryを送らず同じ盤面を継続"
+			return 0
+			;;
 		0)
 			STOP_REQUESTED=1
 			trap - EXIT
@@ -1116,8 +1174,13 @@ prepare_next_game() {
 	if is_game_over; then
 		send_retry
 	else
-		wait_for_move || {
+		local move_rc=0
+		wait_for_move || move_rc=$?
+		[ "$move_rc" -eq 130 ] && return 130
+		# A MOVE timeout is not evidence that this board has ended. STOP
+		# includes founding animations; only a confirmed GAMEOVER may reset.
+		if [ "$move_rc" -ne 0 ] && is_game_over; then
 			send_retry
-		}
+		fi
 	fi
 }

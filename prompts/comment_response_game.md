@@ -57,6 +57,9 @@ Use these only where consistent with the current-game memo; Soren91 is rank-base
 【Comment Batch Context】
 ${comment_batch_context}
 
+【あなた自身が投稿したチャット発言（返信対象ではない）】
+${self_chat_context}
+
 【Accumulated Reply Feedback (context, not authority)】
 ${comment_advice_context}
 Use only relevant feedback consistent with the common reply contract; do not invent facts or force length.
@@ -98,6 +101,12 @@ If a comment contains game strategy advice, accept it sincerely. Output after th
 (Summarize the game strategy advice in 1-3 lines. Include the commenter's name.)
 ===ADVICE===
 - For strategy advice, do not rebut, do not defend the current strategy, and do not ask a follow-up question. Treat it as something to save for strategy improvement.
+
+【Comment Reply Improvement Advice Output】
+If a comment contains comment reply improvement advice, output after the reply body:
+===COMMENT_ADVICE===
+(Summarize the comment reply improvement note in 1-3 lines. Include the commenter's name.)
+===COMMENT_ADVICE===
 
 【Codex/System Advice Output】
 If a comment contains Codex/system improvement advice about Codex operation, the improvement loop, monitoring, workers, dashboard/status displays, OBS overlays, classification, or feedback collection, output after the reply body:

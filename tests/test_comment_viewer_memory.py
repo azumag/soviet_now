@@ -180,6 +180,35 @@ class CommentViewerMemoryTests(unittest.TestCase):
         self.assertIn("【レア】赤いカード", context)
         self.assertNotIn("DoCiAI", context)
 
+    def test_ascii_bracket_card_notification_updates_recipient(self):
+        # Twica's live format uses ASCII brackets, contains ": " inside the
+        # notification body, and trusted-card lines carry no poster prefix.
+        line = (
+            "@もやしちゃん が [コモン] 一ルーブル札 を獲得しました. Lv.2 - 83 種類中 20 種類所持 "
+            "素材: X / Public Domain 出典・権利確認:  シリーズ: 同志の心得"
+        )
+        self.assertEqual(
+            self.stage_and_commit(
+                batch=f"{line}\n",
+                reply="同志もやしちゃん、カードについて返答しました。\n",
+                batch_hash="card-ascii",
+                metadata=[
+                    {
+                        "line": line,
+                        "message_id": "bot-card-ascii-1",
+                        "stable_id": "dociai-id",
+                        "login": "dociai",
+                        "flags": ["trusted-card"],
+                    }
+                ],
+            ),
+            1,
+        )
+        context = self.context("もやしちゃん: この前のカードどうだった？\n")
+        self.assertIn("カード獲得", context)
+        self.assertIn("[コモン] 一ルーブル札", context)
+        self.assertNotIn("dociai", context)
+
     def test_human_cannot_spoof_card_acquisition_for_another_viewer(self):
         line = "mallory: aliceが【レア】偽カードを獲得しました"
         self.assertEqual(

@@ -164,6 +164,9 @@ class FakeOverlayFrame {
 
   getBoundingClientRect() {
     const number = (value) => Number.parseFloat(String(value || '0')) || 0;
+    if (String(this.style.display || '').toLowerCase() === 'none') {
+      return { left: 0, top: 0, width: 0, height: 0 };
+    }
     return {
       left: number(this.style.left),
       top: number(this.style.top),
@@ -177,7 +180,7 @@ class FakeOverlayFrame {
     const region = this.dataset.sorenOverlayRegion || 'full';
     const rendered = html.includes('broadcast-overlay');
     const width = region === 'sidebar' ? 320 : 960;
-    const height = region === 'sidebar' ? 720 : 90;
+    const height = region === 'sidebar' ? 720 : region === 'game-gap' ? 540 : 90;
     const overlay = rendered ? {
       getBoundingClientRect: () => ({ left: 0, top: 0, width, height }),
     } : null;
@@ -536,6 +539,7 @@ test('HTTP service serves only health, blank root, and configured overlay routes
       '/healthz', '/', '/__soren_overlay/broadcast/state',
       '/__soren_overlay/broadcast/sidebar',
       '/__soren_overlay/broadcast/top',
+      '/__soren_overlay/broadcast/game-gap',
       '/__soren_overlay/broadcast/bottom',
       '/__soren_overlay/twica',
       '/__soren_overlay/wildcard',
@@ -576,7 +580,7 @@ test('required frame readiness follows the visible direct-overlay buffer after f
   // into view.  Let those first load handlers run before checking readiness.
   await new Promise((resolve) => setImmediate(resolve));
   await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
-  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastBottom']) {
+  for (const key of ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom']) {
     const elementId = config.direct.surfaces.find((item) => item.key === key).elementId;
     const primary = page.document.getElementById(elementId);
     const buffer = page.document.getElementById(`${elementId}-buffer`);
@@ -585,6 +589,31 @@ test('required frame readiness follows the visible direct-overlay buffer after f
     assert.equal(buffer.style.opacity, '1');
     assert.ok(buffer.contentDocument.getElementById('broadcast-overlay'));
   }
+});
+
+
+test('required frame readiness accepts only hidden or measured edge-cropped game-gap frames', async () => {
+  const page = new FakeInstallerPage();
+  const config = loadSharedOverlayConfig({}, 'linux');
+  await installDirectOverlay(page, config.direct);
+  await new Promise((resolve) => setImmediate(resolve));
+  const elementId = config.direct.surfaces.find((item) => item.key === 'broadcastGameGap').elementId;
+  const gap = page.document.getElementById(`${elementId}-buffer`);
+
+  assert.equal(gap.style.display, 'none');
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { display: 'block', left: '0px', top: '90px', width: '239px', height: '540px' });
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { left: '721px', width: '239px' });
+  await waitForSharedOverlayFrames(page, config, { timeoutMs: 25 });
+
+  Object.assign(gap.style, { left: '300px', width: '239px' });
+  await assert.rejects(waitForSharedOverlayFrames(page, config, { timeoutMs: 25 }));
+
+  Object.assign(gap.style, { left: '0px', width: '960px' });
+  await assert.rejects(waitForSharedOverlayFrames(page, config, { timeoutMs: 25 }));
 });
 
 
@@ -1137,4 +1166,47 @@ test('shared overlay unit is installable for boot (always on)', () => {
     'utf8',
   );
   assert.match(readme, /systemctl enable --now soren-shared-overlay\.service/);
+});
+
+
+test('current corner statistics survive lifecycle masking with chart segments', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-corner-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const context = path.join(temp, 'game_switch.json');
+  const config = fixtureConfig(temp, context);
+  for (const [game, heading] of [
+    ['robots', 'RETRO / robots'], ['hanjuku-hero', 'RETRO / hanjuku-hero'],
+    ['nethack', 'NETHACK / expedition 3'], ['soren91', 'SOREN91 / soren91'],
+    ['paper-view', 'PAPER / dashboard'], ['sorengame', 'JEV / sorengame'],
+  ]) {
+    fs.writeFileSync(context, JSON.stringify({ active: { game }, phase: 'ready' }));
+    fs.writeFileSync(path.join(temp, 'stats.html'), `<pre>SOREN/CORNER: ${heading} / 進行中\nStats: count=4 mean=10\nSCORE TIMELINE\n<span style="color:#00ff00">▁▃▅█</span>\nSCORE DISTRIBUTION</pre>`);
+    const state = buildSharedBroadcastOverlayState(config);
+    assert.equal(state.feeds.showStatusG.generic, undefined, game);
+    assert.match(state.feeds.showStatusG.text, /Stats: count=4/);
+    assert.match(state.feeds.showStatusG.text, /SCORE DISTRIBUTION/);
+    assert.ok(state.feeds.showStatusG.segments.flat().some((s) => s.t.includes('▁▃▅█')));
+    assert.equal(state.feeds.improve.active, false);
+    assert.match(state.feeds.showStatus.text, /Backend: fixture/);
+  }
+});
+
+
+test('corner stats mask another game, missing context, or conflicting headers', (t) => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-stale-corner-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const context = path.join(temp, 'game_switch.json');
+  const config = fixtureConfig(temp, context);
+  for (const [game, heading] of [
+    ['robots', 'RETRO / bastet / 進行中'], ['sorengame', 'RETRO / robots / 進行中'],
+    [null, 'RETRO / robots / 進行中'], ['robots', 'STATE CONFLICT'],
+    ['robots', 'RETRO / robots / 進行中\nSOREN/CORNER: RETRO / bastet / 進行中'],
+    ['robots', 'NETHACK / expedition 3 / 進行中'],
+  ]) {
+    fs.writeFileSync(context, JSON.stringify({ active: game ? { game } : null }));
+    fs.writeFileSync(path.join(temp, 'stats.html'), `<pre>SOREN/CORNER: ${heading}\nStats: old-score=999</pre>`);
+    const state = buildSharedBroadcastOverlayState(config);
+    assert.equal(state.feeds.showStatusG.generic, true);
+    assert.doesNotMatch(state.feeds.showStatusG.text, /999/);
+  }
 });

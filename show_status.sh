@@ -122,6 +122,17 @@ CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 
+# Read a single-line state file without spawning zsh command substitutions or
+# external cat processes. Callers read the result from REPLY.
+_read_first_line() {
+	local path="$1" fallback="${2:-}"
+	REPLY="$fallback"
+	if [[ -r "$path" ]]; then
+		IFS= read -r REPLY < "$path" || true
+		[[ -n "$REPLY" ]] || REPLY="$fallback"
+	fi
+}
+
 _config_int_default() {
 	local name="$1" fallback="$2" value=""
 	value=$(sed -nE "s/^${name}=\\\"?([0-9]+)\\\"?.*/\\1/p" core/config.sh 2>/dev/null | tail -n 1)
@@ -892,7 +903,7 @@ _maybe_run_fullscreen_random() {
 	now=$(date +%s)
 	if [[ -f "$FULLSCREEN_LAST_FILE" ]]; then
 		local last
-		last=$(cat "$FULLSCREEN_LAST_FILE" 2>/dev/null)
+		_read_first_line "$FULLSCREEN_LAST_FILE"; last="$REPLY"
 		case "$last" in
 		''|*[!0-9]*) ;;
 		*)
@@ -913,36 +924,24 @@ _maybe_run_fullscreen_random() {
 
 #=== メイン表示 ===
 show_status() {
-	# --- 改善プロセス状態 ---
+	# --- 共通snapshot: improve + game/accumulated + lightweight observer ---
+	# Keep all frequent read-only JSON reads in one interpreter per render.
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0 imp_updated_at=0
 	local imp_monitor_status="" imp_monitor_action="" imp_monitor_stale_sec=0
+	local game_state="" game_score=0 game_pieces=0
+	local current_hash_for_acc=""
+	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
+	local rejected_count=0
+	local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a"
+	eval "$(python3 lib/status_snapshot.py \
+		game_state.json strategy.py "$TMP_STATE_DIR/accumulated_games.json" \
+		"$TMP_HISTORY_DIR/rejected_hashes.txt" "$TMP_STATE_DIR/rejected_hash_metrics.json" \
+		"$TMP_STATE_DIR/stagnation_counter.json" "$REJECTED_REEVALUATE_TTL_SEC" \
+		"$TMP_STATE_DIR/improve_state.json" "$TMP_STATE_DIR/improve_monitor_status.json" \
+		2>/dev/null || true)"
+
 	local ai_backoff_lines=""
 	ai_backoff_lines=$(_ai_backoff_status_lines)
-	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/improve_state.json'))
-print('imp_status=' + shlex.quote(str(d.get('status', 'idle'))))
-print(f'imp_pid={d.get(\"pid\",0)}')
-print('imp_hash=' + shlex.quote(str(d.get('strategy_hash_before', ''))))
-print('imp_phase=' + shlex.quote(str(d.get('phase', ''))))
-print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
-print(f'imp_updated_at={int(d.get(\"updated_at\",0) or 0)}')
-" 2>/dev/null)
-	fi
-	if [[ -f "$TMP_STATE_DIR/improve_monitor_status.json" ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/improve_monitor_status.json'))
-print('imp_monitor_status=' + shlex.quote(str(d.get('status', ''))))
-print('imp_monitor_action=' + shlex.quote(str(d.get('action', ''))))
-try:
-    stale = int(d.get('stale_sec', 0) or 0)
-except Exception:
-    stale = 0
-print(f'imp_monitor_stale_sec={stale}')
-" 2>/dev/null)
-	fi
 
 	local imp_alive=false imp_elapsed=""
 	if _pid_alive_as "$imp_pid" "eloop_improve"; then
@@ -988,24 +987,14 @@ capture { block = block $0 ORS }
 END { printf "%s", block }
 ')
 		imp_ai_source=$(printf '%s' "$imp_ai_source" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
-		imp_ai_output_block=$(printf '%s' "$imp_ai_output_block" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g')
 		imp_ai_output_block=$(printf '%s\n' "$imp_ai_output_block" \
-			| sed '/^[[:space:]]*$/d' \
-			| grep -v 'opencode thinking' \
-			| grep -v '^Continue if you have next steps' \
-			| grep -v '^[[:space:]]*[✱→←] ' \
+			| perl lib/status_ai_output_filter.pl 0 \
 			| LC_ALL=C awk 'line != prev { print; prev=line }' \
 			| tail -n "$ai_max_lines")
 		if [[ -z "$imp_ai_output_block" ]]; then
 			# START/END が取れない場合でも、直近の改善ログを最低限見せる
 			imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null \
-				| perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g' \
-				| grep -v '^\s*$' \
-				| grep -v 'opencode thinking' \
-				| grep -v '^Continue if you have next steps' \
-				| grep -v '^[[:space:]]*[✱→←] ' \
-				| grep -v '\[IMPROVE\] job start' \
-				| grep -v '\[IMPROVE\] attached pid=' \
+				| perl lib/status_ai_output_filter.pl 1 \
 				| LC_ALL=C awk 'line != prev { print; prev=line }' \
 				| tail -n "$ai_max_lines")
 			if [[ -z "$imp_ai_source" ]] && [[ -n "$imp_ai_output_block" ]]; then
@@ -1018,7 +1007,7 @@ END { printf "%s", block }
 	# --- soren_loop 状態 ---
 	local loop_running=false loop_pid=""
 	if [[ -f tmp/.soren_loop.lock/pid ]]; then
-		loop_pid=$(cat tmp/.soren_loop.lock/pid 2>/dev/null)
+		_read_first_line tmp/.soren_loop.lock/pid; loop_pid="$REPLY"
 		if [[ -n "$loop_pid" ]] && _pid_exists "$loop_pid"; then
 			loop_running=true
 		fi
@@ -1034,119 +1023,15 @@ END { printf "%s", block }
 		loop_pid=$(_activity_label "logs/soren_loop.log" "log")
 	fi
 
-	# --- ゲーム状態 ---
-	local game_state="" game_score=0 game_pieces=0
-	if [[ -f game_state.json ]]; then
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('game_state.json'))
-print('game_state=' + shlex.quote(str(d.get('state', '?'))))
-print(f'game_score={d.get(\"score\",0)}')
-print(f'game_pieces={len(d.get(\"pieces\",[]))}')
-" 2>/dev/null)
-	fi
-
-	# --- 蓄積ゲーム ---
-	local acc_count=0 acc_scores="" acc_russia_count=0 acc_soviet=false acc_max_type=0
-	if [[ -f $TMP_STATE_DIR/accumulated_games.json ]]; then
-		local current_hash_for_acc=""
-		current_hash_for_acc=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "")
-		acc_count=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('count',0) if (h and h == '$current_hash_for_acc') else 0)" 2>/dev/null)
-		acc_scores=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('scores','') if (h and h == '$current_hash_for_acc') else '')" 2>/dev/null)
-		eval $(python3 -c "
-import json, shlex
-d=json.load(open('$TMP_STATE_DIR/accumulated_games.json'))
-h=d.get('hash','')
-if h and h == '$current_hash_for_acc':
-    print('acc_russia_count=' + shlex.quote(str(int(d.get('russia_count', 0) or 0))))
-    print('acc_soviet=' + shlex.quote('true' if d.get('soviet', False) else 'false'))
-    print('acc_max_type=' + shlex.quote(str(int(d.get('best_max_type', 0) or 0))))
-else:
-    print('acc_russia_count=0')
-    print('acc_soviet=false')
-    print('acc_max_type=0')
-" 2>/dev/null)
-	fi
-
-	# --- リジェクト履歴 ---
-	local rejected_count=0
-	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(python3 - <<PY 2>/dev/null
-import json
-import time
-from pathlib import Path
-
-rejected_path = Path("$TMP_HISTORY_DIR/rejected_hashes.txt")
-meta_path = Path("$TMP_STATE_DIR/rejected_hash_metrics.json")
-ttl_sec = int(${REJECTED_REEVALUATE_TTL_SEC})
-
-try:
-    hashes = [line.strip() for line in rejected_path.read_text().splitlines() if line.strip()]
-except Exception:
-    print(0)
-    raise SystemExit
-
-try:
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    if not isinstance(meta, dict):
-        meta = {}
-except Exception:
-    meta = {}
-
-now = int(time.time())
-active = 0
-for hash_ in hashes:
-    entry = meta.get(hash_)
-    if not isinstance(entry, dict):
-        continue
-    updated_at = int(entry.get("updated_at", 0) or 0)
-    if updated_at <= 0:
-        continue
-    if ttl_sec > 0 and now - updated_at >= ttl_sec:
-        continue
-    active += 1
-
-print(active)
-PY
-)
+	# --- ゲーム状態 + 蓄積ゲーム + 軽量観測値 ---
+	# Values were captured by the common snapshot at function entry.
+	local stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
 
 	# --- リバートバックアップ ---
 	local revert_available=false
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 帯域脱出・停滞監視 ---
-		local stagnation_count=0 regression_streak=0 stagnation_event="none" stagnation_age="n/a" stagnation_defer_label="" fresh_objective_label="none" wildcard_origin_count=0 wildcard_eval_name="WildEval" wildcard_eval_label="none" annealing_label="none"
-	if [[ -f "$TMP_STATE_DIR/stagnation_counter.json" ]]; then
-		eval $(python3 - "$TMP_STATE_DIR/stagnation_counter.json" <<'PY' 2>/dev/null
-import json
-import shlex
-import sys
-import time
-
-path = sys.argv[1]
-try:
-    data = json.load(open(path, encoding="utf-8")) or {}
-except Exception:
-    data = {}
-count = int(data.get("consecutive_no_improve", 0) or 0)
-regression_streak = int(data.get("regression_streak", 0) or 0)
-event = str(data.get("last_event", "unknown") or "unknown")
-updated = int(data.get("updated_at", 0) or 0)
-age = "n/a"
-if updated > 0:
-    diff = max(0, int(time.time()) - updated)
-    if diff < 60:
-        age = f"{diff}s"
-    elif diff < 3600:
-        age = f"{diff // 60}m"
-    else:
-        age = f"{diff // 3600}h"
-print(f"stagnation_count={count}")
-print(f"regression_streak={regression_streak}")
-print("stagnation_event=" + shlex.quote(event))
-print("stagnation_age=" + shlex.quote(age))
-PY
-)
-		fi
 		if [[ -f "$TMP_STATE_DIR/accumulated_games.json" || -f "$TMP_STATE_DIR/current_strategy_run.json" ]]; then
 			stagnation_defer_label=$(python3 - "$TMP_STATE_DIR/accumulated_games.json" "$TMP_STATE_DIR/current_strategy_run.json" "$current_hash_for_acc" "$MIN_GAMES_BEFORE_REGRESSION" "$WILDCARD_TRIGGER_STAGNATION" "$stagnation_count" "${WILDCARD_EARLY_ESCAPE_MIN_GAMES:-4}" <<'PY' 2>/dev/null
 import json
@@ -1531,6 +1416,9 @@ import sys
 import time
 
 from lib.country_names import country_name
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import candidate_paths as _sa_candidates, find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
 
 rolling_file, anchor_file, rejected_file, origin_file, cooldown_file, no_candidate_file, archive_dir, permanent_archive_dir = sys.argv[1:9]
 
@@ -1584,13 +1472,6 @@ def metrics(scores):
         "p25": quantile(vals, 0.25),
     }
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 def boolish(value, default=True):
     if value is None:
         return default
@@ -1599,21 +1480,18 @@ def boolish(value, default=True):
 include_permanent = boolish(os.getenv("ARCHIVE_RESTART_INCLUDE_PERMANENT", "1"), True)
 allow_origin_retry = boolish(os.getenv("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", "1"), True)
 
-def find_archive_path(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+def archive_candidate_dirs():
+    dirs = [archive_dir] if archive_dir else []
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    for path in paths:
-        if os.path.exists(path) and archive_is_runtime_stable(path):
-            return path
-    return ""
+        dirs.append(permanent_archive_dir)
+    return dirs
+
+def find_archive_path(h):
+    return _sa_find_path(h, archive_candidate_dirs(), archive_is_runtime_stable)
 
 def archive_path_blocker(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
-    if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
     saw_file = False
-    for path in paths:
+    for path in _sa_candidates(h, archive_candidate_dirs()):
         if not os.path.exists(path):
             continue
         saw_file = True
@@ -1832,7 +1710,10 @@ PY
 
 		# --- 視聴者チャット観測 ---
 		local viewer_chat_label="none"
-		if [[ -x ./viewer_chat_monitor.sh ]]; then
+		# Unified overlay refreshes viewer_chat_monitor.json only when the source
+		# history changes, and owns ChatObs on the STATS side. Avoid rescanning
+		# the same history here for an OPS line that will be filtered out.
+		if [[ "${SHOW_STATUS_SKIP_VIEWER_CHAT_REFRESH:-0}" != "1" && -x ./viewer_chat_monitor.sh ]]; then
 			viewer_chat_label=$(./viewer_chat_monitor.sh line 2>/dev/null || echo "none")
 			viewer_chat_label=$(_truncate_display_width_keep_tail "$viewer_chat_label" 48)
 		fi
@@ -2078,7 +1959,7 @@ PY
 	# --- say (TTS) 状態 ---
 	local say_running=false say_pid=""
 	if [[ -f tmp/.say_queue/pid ]]; then
-		say_pid=$(cat tmp/.say_queue/pid 2>/dev/null)
+		_read_first_line tmp/.say_queue/pid; say_pid="$REPLY"
 		if [[ -n "$say_pid" ]] && _pid_exists "$say_pid"; then
 			say_running=true
 		fi
@@ -2098,7 +1979,7 @@ PY
 		say_lock_present=true
 		local say_lock_owner_raw="" say_lock_hb="" say_lock_age_sec=0
 		local say_lock_stale_sec=180
-		say_lock_owner_raw=$(cat tmp/.say_queue/.lock/owner_pid 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/.lock/owner_pid; say_lock_owner_raw="$REPLY"
 		say_lock_owner_pid="${say_lock_owner_raw%%:*}"
 		case "$say_lock_owner_pid" in
 		''|*[!0-9]*) say_lock_owner_pid="" ;;
@@ -2106,7 +1987,7 @@ PY
 		if [[ -n "$say_lock_owner_pid" ]] && _pid_exists "$say_lock_owner_pid"; then
 			say_lock_owner_alive=true
 		fi
-		say_lock_hb=$(cat tmp/.say_queue/.lock/heartbeat 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/.lock/heartbeat; say_lock_hb="$REPLY"
 		case "$say_lock_hb" in
 		''|*[!0-9]*)
 			say_lock_hb=$(stat -f %m tmp/.say_queue/.lock 2>/dev/null) \
@@ -2133,7 +2014,7 @@ PY
 	local say_source_is_radio=false say_source_is_comment=false
 	if [[ -f tmp/.say_queue/current_source ]]; then
 		local cs_line="" cs_owner="" cs_ts=""
-		cs_line=$(cat tmp/.say_queue/current_source 2>/dev/null || true)
+		_read_first_line tmp/.say_queue/current_source; cs_line="$REPLY"
 		IFS='|' read -r cs_owner say_phase say_source cs_ts say_label _ <<<"$cs_line"
 		case "$cs_ts" in
 		''|*[!0-9]*) ;;
@@ -2201,7 +2082,7 @@ PY
 	local radio_status="idle" radio_corner="" radio_elapsed=""
 	if [[ -f $TMP_STATE_DIR/.radio_state ]]; then
 		local radio_line radio_mode radio_ts radio_owner_pid
-		radio_line=$(cat $TMP_STATE_DIR/.radio_state 2>/dev/null)
+		_read_first_line "$TMP_STATE_DIR/.radio_state"; radio_line="$REPLY"
 		IFS=':' read -r radio_mode radio_corner radio_ts radio_owner_pid _ <<<"$radio_line"
 		if [[ -n "$radio_ts" ]]; then
 			local age=$(( $(date +%s) - radio_ts ))
@@ -2272,14 +2153,14 @@ PY
 	# コメント生成プロセス (PIDファイル + 状態ファイル)
 	local comment_gen_running=false comment_gen_pid="" comment_gen_phase=""
 	if [[ -f tmp/.twitch_chat/comment_gen.pid ]]; then
-		comment_gen_pid=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null)
+		_read_first_line tmp/.twitch_chat/comment_gen.pid; comment_gen_pid="$REPLY"
 		comment_gen_pid=${comment_gen_pid%%|*}
 		if [[ -n "$comment_gen_pid" ]] && _pid_exists "$comment_gen_pid"; then
 			comment_gen_running=true
 		fi
 	fi
 	if [[ -f $TMP_STATE_DIR/.comment_gen_state ]]; then
-		local cg_line=$(cat $TMP_STATE_DIR/.comment_gen_state 2>/dev/null)
+		local cg_line=""; _read_first_line "$TMP_STATE_DIR/.comment_gen_state"; cg_line="$REPLY"
 		comment_gen_phase="${cg_line%%:*}"
 		local cg_ts=${cg_line##*:}
 		if ! $comment_gen_running && [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
@@ -2296,7 +2177,7 @@ PY
 	# --- Worker プロセス状態 ---
 	local chat_worker_running=false chat_worker_pid=""
 	if [[ -f tmp/state/chat_worker.pid ]]; then
-		chat_worker_pid=$(cat tmp/state/chat_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/chat_worker.pid; chat_worker_pid="$REPLY"
 		if [[ -n "$chat_worker_pid" ]] && _pid_exists "$chat_worker_pid"; then
 			chat_worker_running=true
 		fi
@@ -2316,7 +2197,7 @@ PY
 	1 | true | TRUE | yes | YES) youtube_worker_enabled=true ;;
 	esac
 	if [[ -f tmp/state/youtube_worker.pid ]]; then
-		youtube_worker_pid=$(cat tmp/state/youtube_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/youtube_worker.pid; youtube_worker_pid="$REPLY"
 		if [[ -n "$youtube_worker_pid" ]] && _pid_exists "$youtube_worker_pid"; then
 			youtube_worker_running=true
 		fi
@@ -2336,7 +2217,7 @@ PY
 	1 | true | TRUE | yes | YES) kick_worker_enabled=true ;;
 	esac
 	if [[ -f tmp/state/kick_worker.pid ]]; then
-		kick_worker_pid=$(cat tmp/state/kick_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/kick_worker.pid; kick_worker_pid="$REPLY"
 		if [[ -n "$kick_worker_pid" ]] && _pid_exists "$kick_worker_pid"; then
 			kick_worker_running=true
 		fi
@@ -2353,7 +2234,7 @@ PY
 	fi
 	local audio_worker_running=false audio_worker_pid=""
 	if [[ -f tmp/state/audio_worker.pid ]]; then
-		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/audio_worker.pid; audio_worker_pid="$REPLY"
 		if [[ -n "$audio_worker_pid" ]] && _pid_exists "$audio_worker_pid"; then
 			audio_worker_running=true
 		fi
@@ -2370,7 +2251,7 @@ PY
 	fi
 	local radio_worker_running=false radio_worker_pid=""
 	if [[ -f tmp/state/radio_worker.pid ]]; then
-		radio_worker_pid=$(cat tmp/state/radio_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/radio_worker.pid; radio_worker_pid="$REPLY"
 		if [[ -n "$radio_worker_pid" ]] && _pid_exists "$radio_worker_pid"; then
 			radio_worker_running=true
 		fi
@@ -2397,7 +2278,7 @@ PY
 		prediction_worker_paused=true
 	fi
 	if [[ -f tmp/state/prediction_worker.pid ]]; then
-		prediction_worker_pid=$(cat tmp/state/prediction_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/prediction_worker.pid; prediction_worker_pid="$REPLY"
 		if [[ -n "$prediction_worker_pid" ]] && _pid_exists "$prediction_worker_pid"; then
 			prediction_worker_running=true
 		fi
@@ -2413,7 +2294,7 @@ PY
 		poll_worker_paused=true
 	fi
 	if [[ -f tmp/state/poll_worker.pid ]]; then
-		poll_worker_pid=$(cat tmp/state/poll_worker.pid 2>/dev/null)
+		_read_first_line tmp/state/poll_worker.pid; poll_worker_pid="$REPLY"
 		if [[ -n "$poll_worker_pid" ]] && _pid_exists "$poll_worker_pid"; then
 			poll_worker_running=true
 		fi
@@ -2426,7 +2307,7 @@ PY
 	fi
 	local improve_daemon_running=false improve_daemon_pid=""
 	if [[ -f tmp/state/improve_daemon.pid ]]; then
-		improve_daemon_pid=$(cat tmp/state/improve_daemon.pid 2>/dev/null)
+		_read_first_line tmp/state/improve_daemon.pid; improve_daemon_pid="$REPLY"
 		if [[ -n "$improve_daemon_pid" ]] && _pid_exists "$improve_daemon_pid"; then
 			improve_daemon_running=true
 		fi
@@ -2492,7 +2373,7 @@ PY
 		twitch_running=true
 		twitch_pid="$chat_worker_pid"
 	elif [[ -f tmp/.twitch_chat/daemon.pid ]]; then
-		twitch_pid=$(cat tmp/.twitch_chat/daemon.pid 2>/dev/null)
+		_read_first_line tmp/.twitch_chat/daemon.pid; twitch_pid="$REPLY"
 		if [[ -n "$twitch_pid" ]] && _pid_exists "$twitch_pid"; then
 			twitch_running=true
 		fi
@@ -2538,11 +2419,11 @@ PY
 
 	# ========== 描画 ==========
 	echo ""
-	printf "${C_BOLD}${C_CYAN}━━━ SOREN STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
+	printf "${C_BOLD}${C_CYAN}━━━ SOREN OPS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 	echo ""
 
 	# === セクション: Core ===
-	printf "  ${C_BOLD}CORE${C_RESET}\n"
+	printf "  ${C_BOLD}HEALTH${C_RESET}\n"
 
 	# メインループ
 	if $loop_running; then
@@ -2552,10 +2433,14 @@ PY
 			printf "    ${C_GREEN}●${C_RESET} Loop        ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=${loop_pid}${C_RESET}\n"
 		fi
 	else
-		printf "    ${C_RED}○${C_RESET} Loop        ${C_DIM}STOPPED${C_RESET}\n"
+		printf "    ${C_RED}●${C_RESET} Loop        ${C_RED}STOPPED${C_RESET}\n"
 	fi
 
-	# Worker 個別状態
+	# Worker health: make the aggregate state the primary scan target.  The
+	# individual healthy PID rows are useful for debugging but too noisy for
+	# the broadcast OPS rail, so compact mode expands only intentional pauses,
+	# disabled optional workers, and faults.  Set SHOW_STATUS_WORKER_DETAIL=verbose
+	# to restore the legacy per-worker rows.
 	local _worker_rows=(
 		"ChatW" "$chat_worker_running" "$chat_worker_pid"
 		"YouTubeW" "$youtube_worker_running" "$youtube_worker_pid"
@@ -2566,41 +2451,10 @@ PY
 		"PollW" "$poll_worker_running" "$poll_worker_pid"
 		"ImproveD" "$improve_daemon_running" "$improve_daemon_pid"
 	)
-	local _w_i _w_name _w_running _w_pid
-	for ((_w_i = 1; _w_i <= ${#_worker_rows[@]}; _w_i += 3)); do
-		_w_name="${_worker_rows[$_w_i]}"
-		_w_running="${_worker_rows[$((_w_i + 1))]}"
-		_w_pid="${_worker_rows[$((_w_i + 2))]}"
-		local _w_paused=false
-		case "$_w_name" in
-		ChatW) _w_paused=$chat_worker_paused ;;
-		YouTubeW) _w_paused=$youtube_worker_paused ;;
-		KickW) _w_paused=$kick_worker_paused ;;
-		AudioW) _w_paused=$audio_worker_paused ;;
-		RadioW) _w_paused=$radio_worker_paused ;;
-		PredW) _w_paused=$prediction_worker_paused ;;
-		PollW) _w_paused=$poll_worker_paused ;;
-		esac
-		if [[ "$_w_paused" == "true" ]]; then
-			printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
-		elif [[ "$_w_running" == "true" ]]; then
-			if [[ "$_w_pid" == activity:* ]]; then
-				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$_w_name" "${_w_pid#activity:}"
-			else
-				printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
-			fi
-		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
-			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
-		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
-			printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
-		else
-			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
-		fi
-	done
 
-	# ワーカー稼働メーター
-	local workers_online=0 workers_total=7 workers_expected=7
-	# paused workers (tmp/state/<name>.paused) are intentionally idle → drop from expected & online
+	# Preserve the existing expected/online semantics; this is a presentation
+	# refactor, not a worker-health policy change.
+	local workers_online=0 workers_expected=7
 	$prediction_worker_paused && workers_expected=$((workers_expected - 1))
 	$poll_worker_paused && workers_expected=$((workers_expected - 1))
 	$chat_worker_paused && workers_expected=$((workers_expected - 1))
@@ -2619,16 +2473,117 @@ PY
 	{ $prediction_worker_running && ! $prediction_worker_paused; } && workers_online=$((workers_online + 1))
 	{ $poll_worker_running && ! $poll_worker_paused; } && workers_online=$((workers_online + 1))
 	$improve_daemon_running && workers_online=$((workers_online + 1))
-	local workers_bar
+
+	local workers_bar worker_health_color worker_health_label
 	workers_bar=$(_bar_meter "$workers_online" "$workers_expected" 12)
-	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/%d expected online${C_RESET}\n" "$workers_bar" "$workers_online" "$workers_expected"
+	worker_health_color="$C_GREEN"
+	worker_health_label="ONLINE"
+	if (( workers_online < workers_expected )); then
+		worker_health_color="$C_RED"
+		worker_health_label="DEGRADED"
+	elif (( workers_online > workers_expected )); then
+		worker_health_color="$C_YELLOW"
+		worker_health_label="CHECK"
+	fi
+	printf "    ${worker_health_color}●${C_RESET} Workers     ${worker_health_color}%d/%d %s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" \
+		"$workers_online" "$workers_expected" "$worker_health_label" "$workers_bar"
+
+	local worker_detail_mode="${SHOW_STATUS_WORKER_DETAIL:-compact}"
+	local _w_i _w_name _w_running _w_pid
+	local -a _w_paused_names _w_disabled_names _w_stopped_names _w_unexpected_names
+	_w_paused_names=()
+	_w_disabled_names=()
+	_w_stopped_names=()
+	_w_unexpected_names=()
+	for ((_w_i = 1; _w_i <= ${#_worker_rows[@]}; _w_i += 3)); do
+		_w_name="${_worker_rows[$_w_i]}"
+		_w_running="${_worker_rows[$((_w_i + 1))]}"
+		_w_pid="${_worker_rows[$((_w_i + 2))]}"
+		local _w_paused=false
+		case "$_w_name" in
+		ChatW) _w_paused=$chat_worker_paused ;;
+		YouTubeW) _w_paused=$youtube_worker_paused ;;
+		KickW) _w_paused=$kick_worker_paused ;;
+		AudioW) _w_paused=$audio_worker_paused ;;
+		RadioW) _w_paused=$radio_worker_paused ;;
+		PredW) _w_paused=$prediction_worker_paused ;;
+		PollW) _w_paused=$poll_worker_paused ;;
+		esac
+
+		if [[ "$worker_detail_mode" == "verbose" ]]; then
+			if [[ "$_w_paused" == "true" ]]; then
+				printf "    ${C_YELLOW}◌${C_RESET} %-11s ${C_YELLOW}PAUSED${C_RESET}  ${C_DIM}idle — rm tmp/state/*.paused to resume${C_RESET}\n" "$_w_name"
+			elif [[ "$_w_running" == "true" ]]; then
+				if [[ "$_w_pid" == activity:* ]]; then
+					printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$_w_name" "${_w_pid#activity:}"
+				else
+					printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
+				fi
+			elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+				printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}YOUTUBE_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+			elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+				printf "    ${C_DIM}○${C_RESET} %-11s ${C_DIM}DISABLED${C_RESET}  ${C_DIM}KICK_CHAT_ENABLED=0${C_RESET}\n" "$_w_name"
+			else
+				printf "    ${C_RED}○${C_RESET} %-11s ${C_RED}STOPPED${C_RESET}\n" "$_w_name"
+			fi
+			continue
+		fi
+
+		if [[ "$_w_paused" == "true" ]]; then
+			_w_paused_names+=("$_w_name")
+		elif [[ "$_w_name" == "YouTubeW" && "$youtube_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
+		elif [[ "$_w_name" == "KickW" && "$kick_worker_enabled" != "true" ]]; then
+			if [[ "$_w_running" == "true" ]]; then
+				_w_unexpected_names+=("$_w_name")
+			else
+				_w_disabled_names+=("$_w_name")
+			fi
+		elif [[ "$_w_running" == "true" ]]; then
+			:
+		else
+			_w_stopped_names+=("$_w_name")
+		fi
+	done
+
+	if [[ "$worker_detail_mode" != "verbose" ]]; then
+		local _w_names
+		if (( ${#_w_stopped_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_stopped_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_RED}!${C_RESET} Stopped     ${C_RED}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_unexpected_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_unexpected_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}!${C_RESET} Unexpected  ${C_YELLOW}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_paused_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_paused_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_YELLOW}◌${C_RESET} Paused      ${C_YELLOW}%s${C_RESET}\n" "$_w_names"
+		fi
+		if (( ${#_w_disabled_names[@]} > 0 )); then
+			_w_names="${(j:, :)_w_disabled_names}"
+			_w_names=$(_truncate_display_width "$_w_names" "$(( W - 18 ))")
+			printf "    ${C_DIM}○ OptionalOff ${_w_names}${C_RESET}\n"
+		fi
+	fi
+
+	# Duplicate scans are quiet when healthy in compact mode; faults and unknown
+	# scans remain explicit because they require operator attention.
 	if [[ "$duplicate_status" == "duplicate" ]]; then
 		printf "    ${C_RED}!${C_RESET} Duplicates  ${C_RED}DETECTED${C_RESET}  ${C_DIM}%s${C_RESET}\n" "$duplicate_detail"
-	elif [[ "$duplicate_status" == "ok" ]]; then
-		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
 	elif [[ "$duplicate_status" == "unknown" ]]; then
 		printf "    ${C_YELLOW}!${C_RESET} Duplicates  ${C_YELLOW}UNKNOWN${C_RESET}  ${C_DIM}%s${C_RESET}\n" "${duplicate_detail:-duplicate scan unavailable}"
+	elif [[ "$worker_detail_mode" == "verbose" ]]; then
+		printf "    ${C_GREEN}✓${C_RESET} Duplicates  ${C_DIM}none${C_RESET}\n"
 	fi
+
 	local stream_status_line stream_status stream_detail
 	case "$STREAM_BACKEND" in
 	ffmpeg)
@@ -2699,7 +2654,10 @@ PY
 		printf "    ${C_YELLOW}!${C_RESET} ImproveD    ${C_YELLOW}restart soon${C_RESET}  ${C_DIM}%d games to improve gate${C_RESET}\n" "$(( min_games - acc_count ))"
 	fi
 
-		# 蓄積ゲーム (最低試合ゲート付き)
+	echo ""
+	printf "  ${C_BOLD}ACTIVITY${C_RESET}\n"
+
+	# 蓄積ゲーム (最低試合ゲート付き)
 		if (( acc_count > 0 )); then
 			local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"

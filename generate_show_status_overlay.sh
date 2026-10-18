@@ -43,6 +43,7 @@ import tempfile
 import time
 
 from lib.overlay_text import normalize_overlay_text
+from lib.overlay_dashboard_cards import dashboard_css, render_ops_dashboard
 
 out_file, width, height = sys.argv[1:4]
 raw = normalize_overlay_text(os.environ.get("SHOW_STATUS_OVERLAY_RAW", ""))
@@ -110,7 +111,11 @@ def ansi_to_html(text):
         stack.pop()
     return "".join(out)
 
-body = ansi_to_html(raw.rstrip() or "show_status.sh returned no output")
+raw_body = raw.rstrip() or "show_status.sh returned no output"
+body = ansi_to_html(raw_body)
+cards_css = dashboard_css()
+ops_cards = render_ops_dashboard(raw_body)
+visible = ops_cards or f'<pre class="fallback-pre">{body}</pre>'
 generated = time.strftime("%H:%M:%S")
 doc = f"""<!doctype html>
 <html lang="ja">
@@ -149,19 +154,19 @@ html, body {{
   color: #94a3b8;
   font-weight: 600;
 }}
-pre {{
-  margin: 0;
-  white-space: pre;
-  font: 12.8px/1.17 "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  letter-spacing: 0;
-  color: #dbeafe;
-}}
+{cards_css}
+.broadcast-card {{ height: calc(100% - 38px); padding: 14px; }}
+.metric-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+.metric-value {{ font-size:23px; line-height:26px; }}
+.card-title {{ font-size:21px; line-height:24px; }}
+.source-pre {{ display:none !important; }}
 </style>
 </head>
 <body>
 <div class="frame">
-  <div class="meta"><span>SOREN OPS</span><span>{html.escape(generated)}</span></div>
-  <pre>{body}</pre>
+  <div class="meta"><span>OPS HEALTH</span><span>{html.escape(generated)}</span></div>
+  <pre class="source-pre">{body}</pre>
+  {visible}
 </div>
 </body>
 </html>

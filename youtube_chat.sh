@@ -251,6 +251,8 @@ PY
 
 # docich#39: url ($YOUTUBE_API_KEY をクエリに含むことがある) と
 # Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
+# docich#71: `_curl_secure_run` (env -i + 最小allowlist) で実行し、
+# export済みsecretの environ 継承も断つ。
 _api_get() {
 	local url="$1"
 	local access_token="${2:-}"
@@ -260,7 +262,7 @@ _api_get() {
 	else
 		cfg=$(_curl_cfg_build url "$url")
 	fi
-	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" -K -
+	printf '%s' "$cfg" | _curl_secure_run -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" -K -
 }
 
 _youtube_json_value() {
@@ -287,7 +289,8 @@ _discover_live_video_id_from_channel_page() {
 	fi
 	[ -n "$channel_id" ] || return 1
 	local page video_id
-	page=$(curl -fsSL --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "https://www.youtube.com/channel/${channel_id}/live") || return 1
+	# docich#71: secretを含まない取得でも export済みsecretの environ 継承を断つ。
+	page=$(_curl_secure_run -fsSL --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" "https://www.youtube.com/channel/${channel_id}/live") || return 1
 	video_id=$(printf '%s' "$page" | python3 -c '
 import re
 import sys
@@ -971,12 +974,64 @@ _ack_batch_nolock() {
 		return 0
 	fi
 	before_count=$(wc -l <"$PENDING_LOG" | tr -d ' ')
-	awk -F'\t' 'NR==FNR { if (NF) target[$0]=1; next } !($NF in target)' \
-		"$batch_tmp" "$PENDING_LOG" >"$out_tmp"
+	# New batches may carry the provider message ID and must remove only that
+	# exact row. Legacy/plain batches fall back to NFKC-normalized text:
+	# emit-batch normalizes punctuation for the model ("？！" -> "?!") while
+	# pending envelopes keep the provider's original full-width characters, so a
+	# byte-exact $NF match silently removed nothing. The stuck row then stayed in
+	# pending.log forever and, once COMMENT_PROCESSED_LINES_TTL expired, the same
+	# comment was answered and spoken again every 30 minutes (2026-10-01 実測:
+	# 1コメントが10回生成・再生). twitch_chat.sh / kick_chat.sh already own this
+	# contract; keep the three viewer chat sources identical.
+	if ! python3 - "$batch_tmp" "$PENDING_LOG" "$out_tmp" <<'PY'
+import re
+import sys
+import unicodedata
+from pathlib import Path
+
+batch_path, pending_path, out_path = map(Path, sys.argv[1:4])
+id_re = re.compile(r"^[0-9A-Za-z._:-]+$")  # same grammar as this script's own fetch
+
+
+def normalized_line(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).split())
+
+
+target_ids: set[str] = set()
+target_lines: set[str] = set()
+for raw in batch_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and id_re.fullmatch(message_id):
+        target_ids.add(message_id)
+    elif fields:
+        text = normalized_line(fields[-1])
+        if text:
+            target_lines.add(text)
+
+kept: list[str] = []
+for raw in pending_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    fields = raw.split("\t")
+    message_id = fields[0][3:] if fields and fields[0].startswith("id=") else ""
+    if message_id and message_id in target_ids:
+        continue
+    text = normalized_line(fields[-1]) if fields else ""
+    if text and text in target_lines:
+        continue
+    kept.append(raw)
+
+Path(out_path).write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+PY
+	then
+		# fail-closed: a partial rewrite would drop unread viewer comments.
+		rm -f "$batch_tmp" "$out_tmp"
+		_log "ack_batch: message-id照合に失敗したためpendingを維持"
+		return 1
+	fi
 	cat "$out_tmp" >"$PENDING_LOG"
 	after_count=$(wc -l <"$PENDING_LOG" | tr -d ' ')
 	removed_count=$((before_count - after_count))
-	_log "ack_batch: ${removed_count}件をpendingから削除"
+	_log "ack_batch: ${removed_count}件をpendingから削除 (残り${after_count}件)"
 	rm -f "$batch_tmp" "$out_tmp"
 }
 
@@ -1004,13 +1059,14 @@ _oauth_access_token() {
 		# docich#39: client_id/client_secret/refresh_token を argv に載せない。
 		# curl の `-K -` で標準入力から渡す (data-urlencode/data/url いずれも
 		# argv ではなく config directive として渡る)。
+		# docich#71: `_curl_secure_run` で environ 継承も断つ。
 		oauth_cfg=$(_curl_cfg_build \
 			url "https://oauth2.googleapis.com/token" \
 			data-urlencode "client_id=${YOUTUBE_OAUTH_CLIENT_ID}" \
 			data-urlencode "client_secret=${YOUTUBE_OAUTH_CLIENT_SECRET}" \
 			data-urlencode "refresh_token=${YOUTUBE_OAUTH_REFRESH_TOKEN}" \
 			data "grant_type=refresh_token")
-		http_code=$(printf '%s' "$oauth_cfg" | curl -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+		http_code=$(printf '%s' "$oauth_cfg" | _curl_secure_run -sS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
 			-o "$resp_file" -w '%{http_code}' \
 			-K - 2>"$err_file")
 		rc=$?
@@ -1081,6 +1137,7 @@ _maybe_oauth_access_token() {
 
 # docich#39: insert_url ($YOUTUBE_API_KEY をクエリに含むことがある) と
 # Authorization ヘッダを argv に載せない。curl の `-K -` で標準入力から渡す。
+# docich#71: `_curl_secure_run` で environ 継承も断つ。
 _send_api() {
 	local insert_url="$1"
 	local access_token="$2"
@@ -1092,7 +1149,7 @@ _send_api() {
 		url "$insert_url" \
 		header "Authorization: Bearer ${access_token}" \
 		header "Content-Type: application/json; charset=UTF-8")
-	printf '%s' "$cfg" | curl -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
+	printf '%s' "$cfg" | _curl_secure_run -fsS --max-time "${YOUTUBE_API_TIMEOUT_SEC:-12}" \
 		-X POST \
 		--data-binary "@${payload_file}" \
 		-K - >"$resp_file" 2>"$err_file"

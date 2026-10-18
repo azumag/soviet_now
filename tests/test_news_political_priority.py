@@ -49,6 +49,144 @@ class NewsPoliticalPriorityTest(unittest.TestCase):
     def test_default_share_is_two_thirds_target(self) -> None:
         self.assertEqual(news_priority.DEFAULT_POLITICAL_SHARE, 0.67)
 
+
+    def test_default_overseas_share_is_half(self) -> None:
+        self.assertEqual(news_priority.DEFAULT_OVERSEAS_SHARE, 0.5)
+
+    def test_source_scope_prefers_explicit_meta_then_key_and_language(self) -> None:
+        self.assertEqual(
+            news_priority.source_scope({"scope": "overseas", "source_key": "nhk_politics"}),
+            "overseas",
+        )
+        self.assertEqual(news_priority.source_scope({"source_key": "nhk_politics"}), "domestic")
+        self.assertEqual(news_priority.source_scope({"source_key": "google_news_jp_world"}), "domestic")
+        self.assertEqual(news_priority.source_scope({"source_key": "bbc_world"}), "overseas")
+        self.assertEqual(news_priority.source_scope({"source_key": "globalvoices_ja"}), "overseas")
+        self.assertEqual(news_priority.source_scope({"source": "Media", "lang": "en"}), "overseas")
+        self.assertEqual(news_priority.source_scope({}), "unknown")
+
+    def test_overseas_share_one_prefers_overseas_political_news(self) -> None:
+        blocks = (
+            "■ 国会で来年度予算案を審議\n政治本文\n\n"
+            "■ Government signals new sanctions on Russia\nDiplomacy body"
+        )
+        meta = {
+            "国会で来年度予算案を審議": {
+                "source": "NHK 政治",
+                "source_key": "nhk_politics",
+                "published_ts": 100000,
+            },
+            "Government signals new sanctions on Russia": {
+                "source": "BBC World",
+                "source_key": "bbc_world",
+                "lang": "en",
+                "scope": "overseas",
+                "published_ts": 100000,
+            },
+        }
+        chosen = news_priority.choose_news_block(
+            blocks,
+            meta=meta,
+            source_counts={},
+            political_share=1.0,
+            overseas_share=1.0,
+            rng=random.Random(1),
+        )
+        self.assertTrue(chosen.startswith("■ Government signals new sanctions on Russia"))
+
+    def test_overseas_share_zero_prefers_domestic_political_news(self) -> None:
+        blocks = (
+            "■ 国会で来年度予算案を審議\n政治本文\n\n"
+            "■ Government signals new sanctions on Russia\nDiplomacy body"
+        )
+        meta = {
+            "国会で来年度予算案を審議": {
+                "source": "NHK 政治",
+                "source_key": "nhk_politics",
+                "published_ts": 100000,
+            },
+            "Government signals new sanctions on Russia": {
+                "source": "BBC World",
+                "source_key": "bbc_world",
+                "lang": "en",
+                "scope": "overseas",
+                "published_ts": 100000,
+            },
+        }
+        chosen = news_priority.choose_news_block(
+            blocks,
+            meta=meta,
+            source_counts={},
+            political_share=1.0,
+            overseas_share=0.0,
+            rng=random.Random(1),
+        )
+        self.assertTrue(chosen.startswith("■ 国会で来年度予算案を審議"))
+
+    def test_overseas_balance_falls_back_when_one_scope_is_missing(self) -> None:
+        blocks = (
+            "■ 国会で来年度予算案を審議\n政治本文\n\n"
+            "■ Government signals new sanctions on Russia\nDiplomacy body"
+        )
+        meta = {
+            "国会で来年度予算案を審議": {
+                "source": "NHK 政治",
+                "source_key": "nhk_politics",
+                "published_ts": 100000,
+            },
+            "Government signals new sanctions on Russia": {
+                "source": "Custom Media",
+                "source_key": "custom_world",
+                "published_ts": 100000,
+            },
+        }
+        rng = _RecordingRng()
+        news_priority.choose_news_block(
+            blocks,
+            meta=meta,
+            source_counts={},
+            political_share=1.0,
+            overseas_share=1.0,
+            rng=rng,
+        )
+        self.assertEqual(rng.population, [0, 1])
+
+    def test_unknown_scope_disables_balance_step(self) -> None:
+        blocks = "■ 国会で来年度予算案を審議\n政治本文\n\n■ Government mystery story\n本文"
+        meta = {
+            "国会で来年度予算案を審議": {
+                "source": "NHK 政治",
+                "source_key": "nhk_politics",
+                "published_ts": 100000,
+            },
+            "Government mystery story": {"source": "Unknown", "published_ts": 100000},
+        }
+        rng = _RecordingRng()
+        news_priority.choose_news_block(
+            blocks,
+            meta=meta,
+            source_counts={},
+            political_share=1.0,
+            overseas_share=1.0,
+            rng=rng,
+        )
+        self.assertEqual(rng.population, [0, 1])
+
+    def test_invalid_overseas_share_env_falls_back_and_values_are_clamped(self) -> None:
+        previous = os.environ.get("NEWS_OVERSEAS_SHARE")
+        try:
+            os.environ["NEWS_OVERSEAS_SHARE"] = "invalid"
+            self.assertEqual(news_priority.overseas_share_from_env(), 0.5)
+            os.environ["NEWS_OVERSEAS_SHARE"] = "4"
+            self.assertEqual(news_priority.overseas_share_from_env(), 1.0)
+            os.environ["NEWS_OVERSEAS_SHARE"] = "-1"
+            self.assertEqual(news_priority.overseas_share_from_env(), 0.0)
+        finally:
+            if previous is None:
+                os.environ.pop("NEWS_OVERSEAS_SHARE", None)
+            else:
+                os.environ["NEWS_OVERSEAS_SHARE"] = previous
+
     def test_political_source_marks_even_neutral_headline(self) -> None:
         self.assertTrue(news_priority.is_political_title("きょうの主な動き", "nhk_politics"))
 
@@ -142,6 +280,7 @@ class NewsPoliticalPriorityTest(unittest.TestCase):
             meta=meta,
             source_counts={"google_news": 3, "globalvoices": 1},
             political_share=1.0,
+            overseas_share=None,
             rng=rng,
         )
         self.assertEqual(rng.population, [0, 1])
@@ -167,6 +306,58 @@ class NewsPoliticalPriorityTest(unittest.TestCase):
         )
         self.assertAlmostEqual(weights[0], 7.0)
         self.assertAlmostEqual(weights[1], 2.5)
+
+    def test_topic_family_marks_numbered_storm_variants_as_weather(self) -> None:
+        self.assertEqual(
+            news_priority.topic_family("台風17号上陸、沖縄で住宅浸水と避難指示"),
+            "weather_disaster",
+        )
+        self.assertEqual(
+            news_priority.topic_family("鹿児島に台風17号、避難所を開設"),
+            "weather_disaster",
+        )
+
+    def test_topic_cooldown_prefers_another_family(self) -> None:
+        blocks = """■ 台風17号上陸、沖縄で住宅浸水と避難指示
+天気本文
+
+■ 大手メーカーが新工場を稼働
+経済本文"""
+        chosen = news_priority.choose_news_block(
+            blocks,
+            meta=self.meta,
+            source_counts={},
+            political_share=0.0,
+            recent_titles=["鹿児島に台風16号、避難所を開設"],
+            rng=random.Random(1),
+        )
+        self.assertTrue(chosen.startswith("■ 大手メーカーが新工場を稼働"))
+
+    def test_topic_cooldown_falls_back_when_only_family_is_available(self) -> None:
+        block = "■ 台風17号上陸、沖縄で住宅浸水と避難指示\n天気本文"
+        chosen = news_priority.choose_news_block(
+            block,
+            meta=self.meta,
+            source_counts={},
+            recent_titles=["鹿児島に台風16号、避難所を開設"],
+            rng=random.Random(1),
+        )
+        self.assertEqual(chosen, block)
+
+    def test_invalid_topic_cooldown_falls_back_safely(self) -> None:
+        previous = os.environ.get("NEWS_TOPIC_COOLDOWN")
+        try:
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "invalid"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 2)
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "-1"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 0)
+            os.environ["NEWS_TOPIC_COOLDOWN"] = "1000"
+            self.assertEqual(news_priority.topic_cooldown_from_env(), 60)
+        finally:
+            if previous is None:
+                os.environ.pop("NEWS_TOPIC_COOLDOWN", None)
+            else:
+                os.environ["NEWS_TOPIC_COOLDOWN"] = previous
 
 
 if __name__ == "__main__":

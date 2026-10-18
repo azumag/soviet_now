@@ -76,6 +76,23 @@ if [ -n "$stats_file" ]; then
 	check '[ "$(grep -c '"'"'"event":"queue_giveup_detail"'"'"' "$stats_file")" -eq 2 ]' 'successful acquisition emits no giveup detail'
 fi
 
+# The priority scheduler can already provide a coarse lane (radio/comment/improve).
+# Exercise that preset path itself: observability must normalize it to the
+# collector's fixed holder vocabulary before recording the detail event.
+for pair in "radio radio_main" "comment other" "improve other"; do
+	set -- $pair
+	preset="$1"
+	expected="$2"
+	_ai_generation_queue_enter_base() {
+		AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY="$preset"
+		return "$AI_QUEUE_GIVEUP_RC"
+	}
+	_ai_generation_queue_enter "TEST:preset-holder" >/dev/null 2>&1
+	rc=$?
+	check '[ "$rc" -eq "$AI_QUEUE_GIVEUP_RC" ]' "preset $preset still returns queue giveup rc"
+	check 'tail -n 1 "$stats_file" | grep -q "holder=$expected"' "preset $preset is normalized to $expected"
+done
+
 # Long-lived radio_worker sources eloop_lib.sh again after reviewed runtime files
 # change. Simulate ai_generate.sh replacing the wrapped queue function, then
 # re-source the observability shim and verify it delegates to the newly loaded

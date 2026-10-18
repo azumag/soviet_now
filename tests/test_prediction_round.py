@@ -1,5 +1,13 @@
+import re
 import unittest
 from lib.prediction_round import record_game
+
+
+def _extract_function(source, name):
+    match = re.search(rf"(?ms)^{re.escape(name)}\(\) \{{.*?^\}}", source)
+    if not match:
+        raise AssertionError(f"function not found: {name}")
+    return match.group(0)
 
 class PredictionRoundTest(unittest.TestCase):
     def state(self):
@@ -26,20 +34,52 @@ class PredictionRoundTest(unittest.TestCase):
         self.assertEqual(s['games_completed'],2)
         self.assertEqual(s['best_outcome'],0)
 
+    def test_ab_game_does_not_advance_prediction_round(self):
+        s=self.state()
+        s.update(target_first_game=10, russia_created=False)
+        record_game(s, 10, 101, True, True, ab_game=True)
+        self.assertEqual(s['games_completed'],0)
+        self.assertEqual(s['best_outcome'],0)
+        self.assertFalse(s['russia_created'])
+        self.assertTrue(s['ab_interrupted'])
+        self.assertEqual(s['last_ab_game_num'],10)
+        # A duplicate result for the skipped A/B game stays excluded.
+        record_game(s, 10, 101, True, True)
+        self.assertEqual(s['games_completed'],0)
+        # The next clean game resumes the round's own remaining-game count.
+        record_game(s, 11, 102, False, False)
+        self.assertEqual(s['games_completed'],1)
+        self.assertEqual(s['best_outcome'],0)
+
     def test_soviet_takes_precedence(self):
         s=self.state();record_game(s,10,101,True,True)
         self.assertEqual(s['best_outcome'],2)
 
 class WorkerRoundIntegration(unittest.TestCase):
-    def run_tick(self, state=None, fenced=False):
+    def run_tick(
+        self,
+        state=None,
+        fenced=False,
+        *,
+        games=0,
+        threshold=48,
+        improve_status="idle",
+        ab_state=False,
+        ab_toggle="",
+    ):
         import json
         import os
         from pathlib import Path
+        import shlex
         import subprocess
         import tempfile
         root=Path(__file__).resolve().parents[1]
         source=(root/'workers/prediction_worker.sh').read_text()
         block=source.split('\t# Independent rounds',1)[1].split('\n\tif [ -f "$HOT_STREAK',1)[0]
+        gate_functions='\n\n'.join(
+            _extract_function(source, name)
+            for name in ('_prediction_ab_test_running', '_prediction_cycle_start_allowed')
+        )
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)
             (path/"tmp").mkdir()
@@ -48,11 +88,13 @@ class WorkerRoundIntegration(unittest.TestCase):
             if state is not None: state=dict(prediction_id="test-id", **state)
             if state is not None:
                 (path/'current_prediction.json').write_text(json.dumps(state))
+            if ab_state:
+                (path/'ab_state.json').write_text('{}')
             if fenced:(path/'regression_check_in_progress').touch()
             stub=path/'twitch_predictions.sh'
             stub.write_text('#!/bin/bash\necho "$*" >> calls\n')
             stub.chmod(0o755)
-            helpers='''
+            helpers = gate_functions + '''
 _read_json_field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],sys.argv[3]))' "$1" "$2" "$3" 2>/dev/null || echo "$3"; }
 _has_prediction() { [ -f "$TMP_STATE_DIR/current_prediction.json" ]; }
 _get_best_outcome() { _read_json_field "$TMP_STATE_DIR/current_prediction.json" best_outcome 0; }
@@ -60,8 +102,13 @@ _prediction_retry_active_for() { return 1; }
 _log() { :; }
 current_game_num=42
 _LAST_GAME_NUM=42
-current_acc_count=33
-improve_status=running
+current_acc_count=''' + str(games) + '''
+improve_status=''' + shlex.quote(improve_status) + '''
+MIN_GAMES_BEFORE_IMPROVE=''' + str(threshold) + '''
+AB_STATE_FILE="$TMP_STATE_DIR/ab_state.json"
+IMPROVE_LOCK_FILE="$TMP_STATE_DIR/improve.lock"
+HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
+SOREN_AB_ALT_STRATEGY=''' + shlex.quote(ab_toggle) + '''
 POLL_INTERVAL=0
 TWITCH_PREDICTIONS_ENABLED=1
 for tick in 1; do
@@ -70,8 +117,14 @@ for tick in 1; do
             subprocess.run(['bash','-c',helpers+'# Independent rounds'+block+'\ndone'],cwd=directory,env=env,check=True,timeout=5)
             return (path/'calls').read_text().strip() if (path/'calls').exists() else ''
 
-    def test_creates_despite_nonzero_accumulator_and_running_improve(self):
-        self.assertEqual(self.run_tick(),'create 42')
+    def test_creates_only_for_a_clean_48_game_improvement_cycle(self):
+        self.assertEqual(self.run_tick(), 'create 42')
+
+    def test_does_not_create_outside_a_clean_48_game_improvement_cycle(self):
+        self.assertEqual(self.run_tick(games=33, improve_status='running'), '')
+        self.assertEqual(self.run_tick(threshold=12), '')
+        self.assertEqual(self.run_tick(ab_state=True), '')
+        self.assertEqual(self.run_tick(ab_toggle='tmp/state/ab_alt_strategy.py'), '')
 
     def test_waits_for_own_round_not_improve_reset(self):
         self.assertEqual(self.run_tick(dict(round_version=2,games_completed=1,max_games=2,best_outcome=1)),'')
@@ -133,6 +186,25 @@ class PredictionDisplayTest(unittest.TestCase):
         s=dict(round_version=2,target_first_game=100,max_games=48,games_completed=0)
         self.assertEqual(display_lines(s,99)[1], '#99：今回の予想対象外')
 
+    def test_ab_running_display_is_paused_and_excludes_current_game(self):
+        from lib.prediction_round import display_lines
+        s=dict(round_version=2,target_first_game=100,max_games=2,games_completed=1)
+        self.assertEqual(
+            display_lines(s,101,ab_running=True),
+            ['予想：A/B中は一時停止｜終了1/2｜残り1試合',
+             '#101：A/B中のため予想対象外'],
+        )
+
+    def test_interrupted_round_displays_remaining_clean_games(self):
+        from lib.prediction_round import display_lines
+        s=dict(round_version=2,target_first_game=100,max_games=2,games_completed=1,
+               last_game_num=101,last_ab_game_num=100,ab_interrupted=True)
+        self.assertEqual(
+            display_lines(s,102),
+            ['予想対象：#100以降の対象2試合｜終了1/2｜残り1試合',
+             '#102：今回の予想対象（進行中）'],
+        )
+
     def test_fixed_boundary_counts_same_second_start(self):
         s=dict(round_version=2,created_at=100,target_first_game=10,max_games=2,games_completed=0)
         record_game(s,9,100,True,True)
@@ -164,3 +236,51 @@ class PredictionBoundaryTest(unittest.TestCase):
             call('start','101')
             call('101',str(state['created_at']),'false','false')
             self.assertEqual(json.loads(path.read_text())['games_completed'],1)
+
+    def test_ab_marker_excludes_result_after_ab_state_is_removed(self):
+        import json, os, subprocess, tempfile
+        from pathlib import Path
+        helper=Path(__file__).resolve().parents[1]/'lib/prediction_round.py'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            path=root/'tmp/state/current_prediction.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(dict(
+                round_version=2,created_at=100,target_first_game=100,max_games=2,
+                games_completed=0,best_outcome=0,russia_created=False,
+            )))
+            ab_state=path.parent/'ab_state.json'
+            env=dict(os.environ,AB_STATE_FILE=str(ab_state),SOREN_AB_ALT_STRATEGY='')
+            def call(*args):
+                return subprocess.run(
+                    ['python3',str(helper),str(path),*args],cwd=root,env=env,
+                    text=True,capture_output=True,check=True,
+                )
+            call('start','100')
+            # The A/B gate starts after the normal game-start marker.
+            call('ab-game','100','A')
+            # A/B state is gone by result handling; the per-game marker must
+            # still prevent this game's result from entering the prediction.
+            call('100','101','true','true')
+            state=json.loads(path.read_text())
+            self.assertEqual(state['games_completed'],0)
+            self.assertEqual(state['best_outcome'],0)
+            self.assertFalse(state['russia_created'])
+            (path.parent/'main_strategy_runner_active.json').write_text(json.dumps({'game':100}))
+            self.assertEqual(
+                call('display').stdout.strip().splitlines(),
+                ['予想：A/B中は一時停止｜終了0/2｜残り2試合',
+                 '#100：A/B中のため予想対象外'],
+            )
+            # The next clean game's marker clears the A/B pause and advances
+            # the same round without forcing a fixed, now incorrect end game.
+            call('start','101')
+            call('101','102','false','false')
+            state=json.loads(path.read_text())
+            self.assertEqual(state['games_completed'],1)
+            (path.parent/'main_strategy_runner_active.json').write_text(json.dumps({'game':102}))
+            self.assertEqual(
+                call('display').stdout.strip().splitlines(),
+                ['予想対象：#100以降の対象2試合｜終了1/2｜残り1試合',
+                 '#102：今回の予想対象（進行中）'],
+            )

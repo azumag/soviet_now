@@ -20,6 +20,54 @@ docichのWeb UI/PAPER通知writerも同じプロトコルを使用します。�
 Web UIプロセスが終了してからPAPER通知を有効にします。旧writerとの同時稼働は未対応です。
 この変更だけで通知・読み上げ・paper workerを有効化することはありません。
 
+## 半熟英雄の実況音声
+
+`enqueue_audio_text TEXT hanjuku_commentary SPEAKER FENCE_JSON` は、半熟英雄だけに
+実行世代を固定した実況を積みます。第4引数は `game` (`hanjuku-hero`)、`runtime_id`、
+`generation` (整数)、`lease_id`、`expires_at` (Unix秒、現在から最大120秒) の5項目のJSONです。
+本文公開前に `.runtime_fence.json` を保存し、metadataの欠落・破損・期限切れは破棄します。
+通常の3引数呼び出しは従来どおりです。
+旧source `hanjuku:commentary` の既存 `.txt` / `.playing` もfenceを必須とし、
+metadataがない旧実況は読み上げず破棄します。旧sourceへの新規投入も拒否します。
+
+参照先は `SOREN_ACTIVE_GAME_CONTEXT_FILE`（既定
+`/home/ubuntu/docich/run-soren-live/game_switch.json`）と、その親の
+`runtimes/<runtime_id>/hanjuku_run.json` に固定し、JSON内のパスを受け付けません。
+claim時、TTS待機後の実プレイヤー起動直前、再生中100ms間隔で、canonicalのready/active、
+4項目のidentity、非terminal/playingを確認します。起動時だけ既存game-switch shared lockを
+使い、再生中はゲーム切替を妨げません。失効時はその実況が起動した子プロセス群だけを
+停止・waitし、`played.log` に `skipped_hanjuku_fence` を記録します。
+
+`audio_worker` は毎pollでモジュールを再sourceし、`say_enqueue.sh` は都度起動されるため、
+この関数変更の反映に共通音声workerの再起動は不要です。既に始まった旧版の読み上げが
+なくなったことと、次の実況でfenceが有効になったことは配備後に別途検証します。
+
+## 天気corner共有audio consumer（producer未接続）
+
+`enqueue_weather_audio_request REQUEST_JSON` は `weather_corner` 専用の値契約を検証し、
+既存の共有comment queueへ項目を積みます。`execution_id` と `item_index` のitem keyで冪等化し、
+正規化したrequest全体のSHA-256が同じ場合だけretryとして扱います。同じkeyに本文・runtime・
+予報metadataの異なるrequestを送ると拒否します。既存の本文MD5 dedupはweather項目には使いません。
+
+queue受理・claim時のruntime確認は既存のGameSwitch lockを0.5秒単位で待ち、競合中にreceipt
+ledgerを無期限に保持しません。owned player起動直前にはcanonical `game_switch.json` のready状態・
+`weather-view` runtime ID・generation・lease ID・expiryを確認します。開始後の監視はreceipt ledger lockの
+外で完全runtime tupleを検査します。identity loss時はweatherが起動したowned player groupを先に停止し、
+その後`interrupted/runtime_fence_lost`を確定します。そのためexclusive GameSwitch lock中にcheck/enqueueが
+ledgerを保持しても音声停止を遅らせません（expiryは開始gateであり、開始済み音声は切りません）。
+再生側は既存`_play_comment_queue` と `say_enqueue.sh` のowned player起動を使い、実player終了時に
+チャンクごとの完了証跡を記録します。`say_enqueue.sh` が全チャンク数を事前に固定し、各owned playerの
+終了コードと厳格な再生尺確認が通った後だけ、そのチャンクをackします。`finish`は計画した全チャンクが
+ackされた場合だけitemを `played` に確定し、未確定・不足・失敗は `interrupted` または `rejected` のまま
+扱います。itemをclaimしたworkerが落ちた場合は再投入せず `interrupted` を保存します。
+`queued` は受理済みだけを表し、再生完了の意味ではありません。`get_weather_audio_receipt ITEM_KEY` は
+そのdurable receiptを返します。
+
+receiptは既存comment queue内の `.weather_audio_receipts/` に保持します。別playback queue、worker、
+timer、forecast fetch、原稿生成、producer activationは追加していません。入力原稿は呼び出し側が
+渡したliteral textのまま使用し、このconsumerは予報を補完・予測・生成しません。詳細は
+[`docs/weather-audio-consumer.md`](docs/weather-audio-consumer.md) を参照してください。
+
 ## アーキテクチャ
 
 ```
@@ -35,6 +83,15 @@ soren91/                   ← 91人対戦版 (メリケンAI) 自動プレイ�
     ├── strategy.mjs       ← ドロップ位置決定（変更は明示的な人手/PRのみ）
     └── soren91_control.sh ← 親ループからの起動・停止・手動メリケンモード管理
 ```
+
+ソ連建国時は `makeSorenCount` の増加を観測してクリップをキューへ送ります。
+建国演出の `STOP` は試合終了ではありません。プレイ用プロセスと盤面を保持して
+既定300秒待ち、最新盤面を読み直して同じ試合の操作を再開します。
+`SOVIET_CELEBRATION_PAUSE_SEC` で0〜300秒に短縮でき、停止ファイルや終了シグナルは
+待機中も有効です。ゲームの `GAMEOVER` を確認するまでretryや切替境界へ進みません。
+クリップの公開URLを確認できない場合は成功扱いせず `tmp/clip_queue/failed/` と
+`tmp/debug/twitch_clip.log` に結果を残します。作成結果が不明な通信切断では、重複を
+避けるため自動で作り直しません。
 
 ## AI ループ
 
@@ -172,7 +229,7 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 
 本番では `IMPROVE_KEEP_MAIN_GAME_RUNNING=1` を指定すると、改善ロック待ち・AI改善・WILDCARD候補評価の間もメインゲームを継続する。各試合は開始時に `strategy.py` と `strategy_helpers` を固定スナップショットへコピーし、その試合中は同じ組を使い続ける。改善結果は共通ロック下で原子的に反映され、次の試合から有効になる。このモードでは soren91 代打とメインゲームの commands 競合を避けるため、改善開始時に代打だけを止める。`0` または未指定なら従来どおり改善中は本線を一時停止する。
 
-改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。MiniMax系の1回の上限は `CODEX_MINIMAX_RUN_TIMEOUT_SEC`（既定300秒）で、最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
+改善AIが失敗した場合、`improve_daemon` は backoff の期限判定を trigger 側へ委譲して retry lock を孤立させない。primary 失敗後の fallback は既定3回まで再試行し、期待ファイルが安定して書かれた時点で長時間残るproviderを終了する。最後の手段も含めて「ファイルが実際に更新されたこと」を成功条件にする。
 
 改善jobの開始時には入力batchを `tmp/state/improve_retry_batch.json` へ原子的に退避する。`failed_no_apply` で通常lockが別の回収経路に消えていても、現行strategyと同一hashかつ通常しきい値を満たすbatchだけを復元し、backoff後に再試行する。hashが古いbatchと、通常しきい値未満のpartial batchは復元しない。戦略が実際に変わった場合は退避batchを消し、旧戦略の100試合を新戦略へ混ぜない。
 
@@ -280,7 +337,6 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `WILDCARD_ESCAPE_AI_SEED_MIN_BEST_TYPE` | `14` | `escape_ai` seed として許す最小 frontier 到達type |
 | `IMPROVE_KEEP_MAIN_GAME_RUNNING` | `0` | `1` なら改善・backoff・候補評価中も本線ゲームを継続し、試合単位スナップショットで戦略世代を固定する |
 | `RUN_AI_FALLBACK_RETRIES` | `3` | primary失敗後にfallbackモデルを再試行する最大回数 |
-| `CODEX_MINIMAX_RUN_TIMEOUT_SEC` | `300` | MiniMax系の改善AIを1回だけ待つ最大秒数 |
 
 `EARLY_COMP_TOP_GAP_MIN_GAMES=4` は低スコア崩壊の短絡用であり、4試合でロシア(type15)未達というだけでは粛清しない。current が type14 以上の frontier に届いている間は、通常の `MIN_GAMES_BEFORE_REGRESSION` まで見てから回帰判定する。
 
@@ -300,9 +356,10 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
 - Unity ブラウザ音声は `soviet_local.mjs` が `tmp/state/local_audio_health.json` に WebAudio 状態を書き出す。`suspended` / `interrupted` を検出した場合はゲームページだけを前面化して AudioContext resume を試み、macOS の既定音声出力は変更しない。
-- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。NHK・新聞社・Global Voicesに加えてGoogle Newsの日本・政治・経済・国際・科学RSSを使い、公開日時が確認できる`NEWS_MAX_AGE_HOURS`（既定48時間）以内の記事だけを候補にする。全RSSで未読がない場合や取得失敗時だけスキップし、モデルの記憶による自主探索は行わない（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
+- ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。NHK・新聞社・Global Voicesに加えてGoogle Newsの日本・政治・経済・国際RSS、およびBBC World / The Guardian World / The New York Times World / NPR World / France 24 / DWの英語海外RSSを使い、公開日時が確認できる`NEWS_MAX_AGE_HOURS`（既定48時間）以内の記事だけを候補にする。選定は政治・政策・外交・安全保障を約2/3優先（`NEWS_POLITICAL_SHARE`、既定0.67）したうえで、国内ソースと海外ソースが偏らないよう `NEWS_OVERSEAS_SHARE`（既定0.5）で分散する。全RSSで未読がない場合や取得失敗時だけスキップし、モデルの記憶による自主探索は行わない（自主探索を明示的に戻す場合のみ `NEWS_SELF_SEARCH_FALLBACK=1`、取得失敗時の前回キャッシュ再利用は `NEWS_ALLOW_STALE_CACHE=1`）。
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
+- 自分の投稿（配信アカウントのチャット投稿）は読み取り対象のまま保持し、IRC の login が `TWITCH_SELF_AUTHORS`（既定 `dociai azumagdev`。未設定時は従来の `TWITCH_IGNORE_AUTHORS` を読む）と完全一致した行だけを自分の投稿として扱う。表示名の一致や本文中の自己申告（「私はDoCiAI」等）では判定しない。生成プロンプトでは第三者のコメント一覧へ混ぜず、`self_chat_context` として自分の既発言に分離して渡す（2026-10-17 #2373。ack は従来どおり全行対象）
 - コメント返しの生成中に別プロセスが同じコメント行を先に処理済みにした場合は、古い返答をキューへ入れずに破棄する。これにより pending 再試行や mode 切替後の遅延生成が、同じ視聴者コメントへ二重返答する事故を防ぐ。
 - コメント返しは、画面・現在状況・スコアなどを参照するコメントだけ配信サムネイルOCRを使う。通常雑談ではOCRを省略し、改善中は短い timeout と少ない retry で fallback へ早めに進めて pending 滞留を抑える。
 - コメント返しが抽出する `ADVICE` / `COMMENT_ADVICE` / `CODEX_ADVICE` は、元コメントの分類が助言系のときだけ保存する。ガチャ、短い反応、通常雑談では返信本文だけを使い、構造抽出候補や生成ブロックも含めて、戦略・コメント改善・Codex改善メモへは混ぜない。
@@ -314,12 +371,13 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - ファクトチェックの判定範囲は「事実誤認・嘘・でっちあげ」のみ。政治・戦争・軍事の話題は事実に基づく限り通す。ブロック対象は性的コンテンツのみ
 - ファクトチェック出力の書式が崩れても、本文抽出をやり直して極力再生する。最終的に検証出力が使えない場合でも、無音スキップせず元原稿で続行する
 - `theme` / `soviet` / `news` はファクトチェック前に Web 由来の資料も取得して検証AIへ渡す。既定では `fetch_radio_grounding.py` が Wikipedia と Google News RSS を引く
-- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` → `RADIO_FACT_CHECK_QUINARY` の順（既定は x-preview → muse → MiniMax）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
+- 検証モデルは `RADIO_FACT_CHECK_AGENT` → `RADIO_FACT_CHECK_SECONDARY` → `RADIO_FACT_CHECK_FALLBACK` → `RADIO_FACT_CHECK_TERTIARY` → `RADIO_FACT_CHECK_QUINARY` の順（既定は muse → DeepSeek → AMD）で、`RADIO_FACT_CHECK_CLAUDE_MODEL` も調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
 - WebFetch / WebSearch の権限確認や失敗ログが読み上げ・overlay へ漏れていないかは `monitor_webfetch_failure.sh` で確認する。`tmp/debug`、`tmp/.radio_deferred_queue`、`tmp/.say_queue`、`tmp/state/overlay_events.jsonl` を対象にし、prompt や opencode raw log は監視対象から外す
 - 各モデルの出力は `lib/model_output_guard.py` で thinking、analysis、tool call/result、Web検索進捗を除去し、`lib/radio_parser.py` が明示的なオンエア本文だけを抽出する。本文として検証できない候補は成功扱いにせず、`ai_generate_list` が次モデルへ進む。
 - ニュース見出しや試合終了後のスコア進捗などの自動チャット投稿は `lib/outbound_queue.sh` の outbound queue を経由して Twitch へ送る。Twitch は `TWITCH_CLIENT_ID` / `TWITCH_BROADCASTER_ID` がある場合 `chat/messages` API を優先し、失敗時は `tmp/debug/outbound_chat_twitch.log` と `show_status.sh` の `OutboundErr` に残して pending へ戻す。Twitch OAuth が無効な場合は `tmp/.outbound_chat_queue/twitch_backoff_until` / `twitch_backoff_count` で指数的に再送間隔を伸ばし、同じ古い投稿でチャット worker を毎分詰まらせない。成功したら Twitch backoff state は消える。`YOUTUBE_CHAT_SEND_ENABLED=1` の時だけ YouTube へミラーする。YouTube の cached `live_chat_id` が 403 を返した場合や `YOUTUBE_VIDEO_ID` の配信が終了している場合は stale とみなし、保存済み/設定済みの channel ID から現在ライブ中の video ID を探して `activeLiveChatId` を再取得する。send 経路では OAuth access token を取得してから live chat ID を解決し、API key の `videos.list` / `search.list` が 403 の場合でも bearer 認証で送信先解決を試す。poll 経路も API key の `liveChatMessages.list` が 403 の時は OAuth bearer で live chat ID を再解決して読み取りを再試行し、API quota / 403 が続く時は `tmp/.youtube_chat/web_live_chat_continuation` を使う YouTube web live chat fallback で読み取りだけ継続する。再解決も web fallback も使えない場合は `tmp/.youtube_chat/api_backoff_until` で短期 backoff し、`show_status.sh` の YouTube 行を `DEGRADED` にして、送信停止を「接続中」に見せない。outbound mirror も同じ backoff を読んで、期限中は YouTube 送信だけをスキップするため、Twitch 側の自動投稿成功を YouTube quota 失敗ログで汚さない。
 - YouTube 送信 mirror は curl の stderr と API response の両方を `tmp/.youtube_chat/last_send_error.txt` に残す。403 の時は stale `live_chat_id` / page token を破棄し、channel live discovery で一度だけ再解決して再送する。これにより YouTube 側だけ止まっている状態を Twitch outbound 成功と混同しない。
+- YouTube の未読取得と ack 契約は `twitch_chat.sh` / `kick_chat.sh` と同じ。`tmp/.youtube_chat/pending.log` は `id=<message-id>\tuser-id=…\tdisplay=…\tflags=…\t<本文>` の envelope で、モデル用の OUTFILE (`tmp/youtube_comments.txt`) は `lib/comment_viewer_memory.py emit-batch` が NFKC 正規化するため本文の句読点（全角 `？！` → 半角 `?!`）が provider 原文と食い違う。`youtube_chat.sh ack-batch` は `id=<message-id>` が一致する行だけを除去し、無 id の legacy/plain バッチは NFKC 正規化テキストで照合する。バイト一致だけで照合すると何も除去できず pending に残り、`COMMENT_PROCESSED_LINES_TTL`（1800秒）が切れた時点で**同じコメントが再生成・再読み上げされる**（2026-10-01 実測: 1コメントが30分間隔で10回）。照合処理が失敗した場合は pending を維持して fail closed になる
 - YouTube映像は、encoderがingestへ送信中でも対応するliveBroadcast枠が終了すると公開ページだけ停止し得る。`YOUTUBE_BROADCAST_GUARD_ENABLED=1` はOAuthでactive/upcoming枠を監視し、3回連続で枠が無い場合にだけ復旧候補とする。さらに `YOUTUBE_BROADCAST_GUARD_AUTO_CREATE=1` を明示した時だけ、公開枠を `enableAutoStart=true` / `enableAutoStop=false` で1件作成し、単独のactive liveStream（複数なら停止、または `YOUTUBE_BROADCAST_STREAM_ID` で固定）へbindする。その後、`/proc/<pid>/cmdline` がローカルRTMP宛のffmpegと一致した場合だけpublisherをTERMし、supervisorの新PIDとYouTubeのactive枠を確認する。ゲームプロセスは操作しない。OAuth不正・複数stream・既存枠・cooldown中はfail closedで、stateは `tmp/state/youtube_broadcast_guard.json` に秘密情報なしで記録する。既定は監視・作成ともOFF。
 - Kick のコメントは `kick_chat_daemon.mjs` が Kick web クライアントと同じ公開 Pusher チャンネル (`chatrooms.<chatroom_id>.v2`) を**読み取り専用・認証なし**で購読し、`tmp/.kick_chat/raw.log` へ `id=<msg-id>\t<user>: <本文>` 形式で追記する。`chatroom_id` は `KICK_CHATROOM_ID` 未設定なら `https://kick.com/api/v2/channels/<slug>` から解決する。`kick_chat.sh fetch` / `ack-batch` の契約は `twitch_chat.sh` と同じで、`workers/kick_worker.sh` が daemon の死活監視と `generate_comment_response kick` を回す。有効化は `KICK_CHAT_ENABLED=1`、対象は `KICK_CHANNEL`（既定 `dociai`）。Kick のエモートは `[emote:ID:NAME]` で届くので `NAME` だけに正規化して Twitch と同じ見え方に揃える。Kick への**送信**は別途 Kick 側の認証が要るため未対応なので、返答は Twitch / YouTube にだけ出る。送信していない＝エコーが発生しないため `KICK_IGNORE_AUTHORS` の既定は**空**で、自チャンネル (`dociai`) の投稿も配信者本人のコメントとして読む（2026-08-26 に既定で無視していて実コメントを取りこぼした）。Kick 送信を実装したら、その送信元アカウントを `KICK_IGNORE_AUTHORS` に入れないと自分の返答を読み返す
 - `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
@@ -701,7 +759,7 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 
 ```bash
 MODEL_PRIMARY="opencode-go:deepseek-v4-flash"           # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
-MODEL_FALLBACK="minimax-api:MiniMax-M3"
+MODEL_FALLBACK="opencode-go:deepseek-v4.1-flash"
 MODEL_IMPROVE="opencode:muse-spark-1.3-contributor-free" # 改善primary
 MODEL_FALLBACK_IMPROVE="opencode-go:muse-spark-1.3-contributor" # 改善fallback
 MODEL_LAST_RESORT="opencode-go:deepseek-v4-flash"
@@ -722,16 +780,16 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | チャンネル | Primary | 2nd | 3rd | Last Resort |
 |-----------|---------|-----|-----|-------------|
-| **改善** | `opencode:muse-spark-1.3-contributor-free` | `opencode:muse-spark-1.2-contributor-free` | `amd:DeepSeek-V4-Flash` → `minimax-api:MiniMax-M3` → `opencode-go:omen-alpha` → `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` | `opencode-go:deepseek-v4-flash` |
+| **改善** | `opencode:muse-spark-1.3-contributor-free` | `opencode:muse-spark-1.2-contributor-free` | `amd:DeepSeek-V4-Flash` → `opencode-go:muse-spark-1.3-contributor` → `opencode-go:muse-spark-1.2-contributor` | `opencode-go:deepseek-v4-flash` |
 | **ラジオ生成** | 共通チェーン（muse 1.3先行） | - | - | - |
-| **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:omen-alpha` | `opencode-go:muse-spark-1.3-contributor` → `minimax-api:MiniMax-M3` | 元原稿 |
+| **ラジオ fact-check** | `opencode:muse-spark-1.3-contributor-free` | `opencode-go:deepseek-v4.1-flash` | `amd:DeepSeek-V4-Flash` → `opencode-go:muse-spark-1.3-contributor` | 元原稿 |
 | **コメント返し** | `codex:...` | - | - | - |
 | **コメント(改善中)** | `codex:...` | →通常モードへ | - | - |
 | **コメント(!claude)** | `codex:...` | →通常モードへ | - | - |
 | **粛清ポストモーテム** | `codex:...` | - | - | - |
 | **メリケンAI(全コメント)** | `codex:...` | - | - | - |
 
-`amd:<model>` / `minimax-api:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
+`amd:<model>` / `opencode-go:<model>` はOpenCode CLIへ渡す。
 事前調査ラベルでは`webfetch`/`websearch`だけを許可した`soren-research`、本文生成では
 全tool denyの`soren-lite`を使う。`codex:<model>` は移行互換用に残す。
 
@@ -778,7 +836,7 @@ Bのスモーク時点は全て429のため既定では無効。HTTP 200・費�
 codex CLI は `~/.codex/config.toml` と `model_providers` を使用する。プロジェクト側では
 `codex:<model>` スペックのみを使い、エージェント定義ファイルは不要。
 VM のDeepSeek V4 Flashは `opencode run --model opencode-go/deepseek-v4-flash` で
-opencode.aiへ接続する。`codex:<model>` はAMD Token FactoryやMiniMaxなど、
+opencode.aiへ接続する。`codex:<model>` はAMD Token Factoryなど、
 Codex CLIで使うモデルだけに指定する。
 
 #### Claude Code の使い方
@@ -826,6 +884,18 @@ ditto -x -k --sequesterRsrc soren-game-fixed.zip /tmp/soren-fixed/
 - `Assets/SORENGAMEFIXED/Script/SorenBridge.cs` — Unity 側: `MainManager.GetBridgeState()` / `ExecuteBridgeCommand()` を 0.1秒ごとに呼び出し
 - `Assets/Plugins/WebGL/SorenBridge.jslib` — JS 側: `window.__sorenGameState` / `window.__sorenCommand` を介してブラウザとやり取り
 - `Assets/Editor/WebGLBuilder.cs` — ビルド時に `SorenBridge` コンポーネントを Main Manager に自動アタッチ
+
+#### ゲーム側パッチ（追跡対象）
+
+`Assets/SORENGAMEFIXED/Script/*.cs` は Git 管理外のため、ゲーム本体の恒久修正は
+`sorengame/patches/` のパッチとして追跡する。ソース展開・アセット補完のあと、ビルド前に必ず適用する:
+
+```bash
+patch -p1 -d sorengame/_extracted/soren-game-fixed \
+  < sorengame/patches/0001-report-gameover-terminal-state.patch
+```
+
+- `0001-report-gameover-terminal-state.patch` — GAME OVER 画面を表示したあとも `GameState.GAMEOVER` のまま報告する。`GameOverState()` が即座に `GameState.STOP` へ遷移していたため `GAMEOVER` が 1 フレームしか存在せず、0.1 秒間隔の JS Bridge (`SorenBridge.cs`) は `game_state.json` へ `STOP` しか書けなかった。`STOP` は建国演出・次試合の MOVE 待ちと同じ値なので、切替境界が終端を証明できず待ち続ける。回帰テスト: `tests/test_sorengame_gameover_state.py`
 
 #### ビルド実行
 
@@ -945,6 +1015,7 @@ AI ループの稼働状況は以下で監視できる。
 - 表示調整:
   - `SHOW_STATUS_AI_OUTPUT_LINES` (既定: `6`) — 表示する `AIOutput` 行数
   - `SHOW_STATUS_AI_TAIL_LINES` (既定: `400`) — ログ解析時に末尾から読む行数
+  - `SHOW_STATUS_WORKER_DETAIL=verbose` — `show-status` のworkerを従来どおり1行ずつ表示（既定は正常workerを集約する `compact`）
 
 ## コマンドインターフェース
 

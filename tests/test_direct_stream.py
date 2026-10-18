@@ -38,6 +38,65 @@ def base_env(**overrides: str) -> dict[str, str]:
 
 
 class DirectStreamTests(unittest.TestCase):
+    @staticmethod
+    def write_proc(proc: Path, cpu: str, *, total: int = 1000, available: int = 500) -> None:
+        proc.mkdir(parents=True, exist_ok=True)
+        (proc / "stat").write_text(f"cpu {cpu}\n", encoding="ascii")
+        (proc / "meminfo").write_text(
+            f"MemTotal: {total} kB\nMemAvailable: {available} kB\n", encoding="ascii"
+        )
+
+    def test_system_metrics_initial_unknown_then_cpu_and_ram_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = Path(temp_dir)
+            sampler = direct_stream.SystemMetricsSampler()
+            self.write_proc(proc, "100 0 50 850 0 0 0 0 0 0")
+            first = sampler.sample(now_epoch=100, now_monotonic=0, proc_root=proc, platform="linux")
+            self.assertIsNone(first["cpu_percent"])
+            self.assertEqual(first["memory_percent"], 50.0)
+            self.assertEqual(first["memory_used_bytes"], 500 * 1024)
+
+            skipped = sampler.sample(now_epoch=102, now_monotonic=2, proc_root=proc, platform="linux")
+            self.assertIs(skipped, first, "reads are cadence limited")
+            self.write_proc(proc, "125 0 75 900 0 0 0 0 0 0")
+            second = sampler.sample(now_epoch=105, now_monotonic=5, proc_root=proc, platform="linux")
+            self.assertEqual(second["cpu_percent"], 50.0)
+            self.assertEqual(second["memory_percent"], 50.0)
+            self.assertEqual([point["ts"] for point in second["history"]], [100, 105])
+
+    def test_system_metrics_counter_reset_and_malformed_data_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = Path(temp_dir)
+            sampler = direct_stream.SystemMetricsSampler()
+            self.write_proc(proc, "100 0 50 850 0 0 0 0 0 0")
+            sampler.sample(now_epoch=1, now_monotonic=0, proc_root=proc, platform="linux")
+            self.write_proc(proc, "10 0 5 85 0 0 0 0 0 0")
+            reset = sampler.sample(now_epoch=6, now_monotonic=5, proc_root=proc, platform="linux")
+            self.assertIsNone(reset["cpu_percent"])
+            (proc / "stat").write_text("cpu NaN broken\n", encoding="ascii")
+            (proc / "meminfo").write_text("MemTotal: NaN kB\n", encoding="ascii")
+            malformed = sampler.sample(now_epoch=11, now_monotonic=10, proc_root=proc, platform="linux")
+            self.assertIsNone(malformed["cpu_percent"])
+            self.assertIsNone(malformed["memory_percent"])
+            self.assertIsNone(malformed["memory_used_bytes"])
+
+    def test_system_metrics_are_unknown_off_linux_and_history_is_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = Path(temp_dir)
+            sampler = direct_stream.SystemMetricsSampler()
+            for index in range(40):
+                self.write_proc(proc, f"{100 + index * 10} 0 50 {850 + index * 10} 0 0 0 0 0 0")
+                result = sampler.sample(
+                    now_epoch=100 + index * 5,
+                    now_monotonic=index * 5,
+                    proc_root=proc,
+                    platform="darwin",
+                )
+            self.assertIsNone(result["cpu_percent"])
+            self.assertIsNone(result["memory_percent"])
+            self.assertEqual(len(result["history"]), direct_stream.SYSTEM_METRICS_HISTORY_LIMIT)
+            self.assertEqual(result["history"][0]["ts"], 120)
+
     def test_live_command_has_expected_video_audio_and_loopback_output(self) -> None:
         config = direct_stream.load_config(base_env())
         command = direct_stream.build_ffmpeg_command(config, mode="live")

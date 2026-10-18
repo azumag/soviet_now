@@ -1,0 +1,25 @@
+{
+  "game_state": {
+    "state": "MOVE",
+    "score": 42,
+    "makeSorenCount": 0,
+    "pieces": [],
+    "shapes": {},
+    "next": {"type": 3, "r": 0.316},
+    "nextNext": {"type": 4, "r": 0.38}
+  },
+  "decision": {"x": 0.0, "reason": "legacy-fixture"},
+  "expected": {
+    "turn": 1,
+    "score": 42,
+    "score_delta": 42,
+    "piece_count": 0,
+    "next_type": 3,
+    "next_next_type": 4,
+    "decision_x": 0.0,
+    "decision_reason": "legacy-fixture",
+    "merge_available": false,
+    "best_merge_grade": "NO",
+    "deadline_candidate_count": 31
+  }
+}

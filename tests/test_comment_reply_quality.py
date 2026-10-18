@@ -202,9 +202,17 @@ class TestRenderedCommentQuality(PromptHarness):
 
     def test_singing_and_advice_blocks_survive(self):
         self.assertIn('===SING===', self.render('sing_request'))
-        default = self.render('strategy_advice')
+        strategy = self.render('strategy_advice')
         for marker in ('===ADVICE===', '===COMMENT_ADVICE===', '===CODEX_ADVICE==='):
-            self.assertIn(marker, default)
+            self.assertIn(marker, strategy)
+
+    def test_strategy_advice_uses_game_prompt_and_current_game_context(self):
+        strategy = self.render('strategy_advice', body='viewer: 左のほうが良くない？')
+        self.assertIn('CURRENT_GAME_MARKER', strategy)
+        self.assertIn('Main Game Basic Rules', strategy)
+        self.assertIn('same-country clustering', strategy)
+        general = self.render('general_question', body='viewer: 明日の天気は？')
+        self.assertNotIn('Main Game Basic Rules', general)
 
     def test_retry_does_not_reintroduce_forced_expansion(self):
         source = SOURCE.read_text()

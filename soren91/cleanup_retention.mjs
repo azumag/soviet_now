@@ -14,7 +14,7 @@
  * env: SOREN91_RETENTION_DAYS (default 3)
  */
 
-import { existsSync, readdirSync, statSync, rmSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, statSync, rmSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,6 +24,7 @@ export const RETENTION_TARGETS = [
   'tmp/summaries',
   'game_history',
   'tmp/game_screenshots',
+  'tmp/rejected_frame_diagnostics',
   'tmp/strategy_snapshots',
   'tmp/screenshots',
 ];
@@ -35,9 +36,11 @@ function isManagedArtifact(rel, name) {
       ? [/^game_\d+\.jsonl$/, /^latest_\d+\.jsonl$/, /^abandoned_\d+_\d+_\d+\.jsonl$/]
       : rel === 'tmp/game_screenshots'
         ? [/^game_\d+$/]
-        : rel === 'tmp/strategy_snapshots'
-          ? [/^game_\d+_strategy\.mjs$/]
-          : [/^game_\d+(?:[._-].*)?$/];
+        : rel === 'tmp/rejected_frame_diagnostics'
+          ? [/^run_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i]
+          : rel === 'tmp/strategy_snapshots'
+            ? [/^game_\d+_strategy\.mjs$/]
+            : [/^game_\d+(?:[._-].*)?$/];
   return patterns.some(pattern => pattern.test(name));
 }
 
@@ -69,6 +72,12 @@ export function cleanupRetention(options) {
   for (const rel of RETENTION_TARGETS) {
     const dir = join(runtimeDir, rel);
     if (!existsSync(dir)) continue;
+    if (rel === 'tmp/rejected_frame_diagnostics') {
+      try {
+        const info = lstatSync(dir);
+        if (!info.isDirectory() || info.isSymbolicLink()) { errors += 1; continue; }
+      } catch { errors += 1; continue; }
+    }
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -81,14 +90,23 @@ export function cleanupRetention(options) {
         kept += 1;
         continue;
       }
+      if (rel === 'tmp/rejected_frame_diagnostics' && entry.isSymbolicLink()) {
+        errors += 1;
+        continue;
+      }
       const path = join(dir, entry.name);
-      let mtimeMs;
+      let info;
       try {
-        mtimeMs = statSync(path).mtimeMs;
+        info = rel === 'tmp/rejected_frame_diagnostics' ? lstatSync(path) : statSync(path);
+        if (rel === 'tmp/rejected_frame_diagnostics' && !info.isDirectory()) {
+          errors += 1;
+          continue;
+        }
       } catch {
         errors += 1;
         continue;
       }
+      const mtimeMs = info.mtimeMs;
       if (mtimeMs >= cutoff) {
         kept += 1;
         continue;

@@ -22,6 +22,16 @@ _BR_PROFILE="${SOREN_LOCAL_USER_DATA_DIR:-$_BR_ROOT/tmp/soviet_local_chromium_pr
 # every other recovery target (port/CDP/profile) is already env-scoped.
 _BR_TMUX_SESSION="${SOREN_BRIDGE_TMUX_SESSION:-soren_bridge}"
 _BR_STALE_SEC="${BRIDGE_STALE_SEC:-240}"
+# Issue #500: game_state.json の mtime 停滞は bridge 障害の証明にならない。
+# 稼働中の bridge は live page からの実観測 (tmp/state/game_observation.json) を
+# 盤面が静止していても最長1秒ごとに更新する (docs/founding-stop-boundary.md)。
+# 停滞を検知しても実観測で裏を取るまで kill/relaunch へ進まない。
+_BR_OBSERVATION="${BRIDGE_OBSERVATION_FILE:-$_BR_ROOT/tmp/state/game_observation.json}"
+_BR_OBSERVE_FRESH_SEC="${BRIDGE_OBSERVE_FRESH_SEC:-15}"
+_BR_OBSERVE_WAIT_SEC="${BRIDGE_OBSERVE_WAIT_SEC:-5}"
+# 同じ保留理由を毎周回ログしない。
+_BR_STALE_NOTICE_SEC="${BRIDGE_STALE_NOTICE_SEC:-60}"
+: "${_BR_STALE_HOLD_LOGGED_AT:=0}"
 _BR_BASE_GAP="${BRIDGE_RELAUNCH_BASE_GAP:-90}"
 _BR_MAX_GAP="${BRIDGE_RELAUNCH_MAX_GAP:-600}"
 _BR_AUDIO_HEALTH="${BRIDGE_AUDIO_HEALTH_FILE:-$_BR_ROOT/tmp/state/local_audio_health.json}"
@@ -251,8 +261,64 @@ print(f"WRONG routed={routed[:8]} running={len(running)} sink_empty")
 PY
 }
 
+# game-only lifecycle が意図的にブリッジを止めている間 (停止済み/停止中) は、
+# desync/phantom/audio/消失のどの検知でも再起動してはならない。watchdog と
+# start_all は同じ述語で抑止済みだが、eloop 側の自己復旧が見ていなかったため、
+# 試合中に停止されるとコーナー中に停止済みブリッジが復活した (soviet_now#599)。
+_br_lifecycle_parked() {
+	command -v game_lifecycle_bridge_parked >/dev/null 2>&1 && game_lifecycle_bridge_parked
+}
+
+# 同一盤面を保持する要求が生きているか (soviet_now#500)。
+# cancel 後の旧ゲーム継続 / boundary 待ち / player_change prepared では、
+# game_state.json の mtime が何分止まっても「盤面が生きている」のが正しい。
+# その間に mtime 停滞を bridge クラッシュと誤認して kill/relaunch すると、
+# 依頼どおり保持すべき盤面が score0 の新盤面に置き換わる。
+# 判定は serve/CDP の実ポートと game_state の中身まで見てから下す。
+_br_lifecycle_board_retention() {
+	command -v game_lifecycle_bridge_board_retention >/dev/null 2>&1 || return 1
+	game_lifecycle_bridge_board_retention
+}
+
+# 生きている page を非破壊に再観測できるか (soviet_now#500)。
+# serve ポートが実際に LISTEN していて、CDP の /json に game page が残っている
+# ことを確認する。これが通れば「盤面は生きているが動いていない」であり、
+# 復旧不能ではない。回復不能と確定したときだけ明示して上位へ返す。
+_br_live_page_reobservable() {
+	[ -n "$(_br_port_pid)" ] || return 1
+	[ -n "$(_br_cdp_port_pid)" ] || return 1
+	command -v curl >/dev/null 2>&1 || return 1
+	local targets
+	targets=$(curl -s --max-time 5 "http://127.0.0.1:${_BR_CDP_PORT}/json" 2>/dev/null) || return 1
+	[ -n "$targets" ] || return 1
+	printf '%s' "$targets" | grep -q "\"type\":\"page\"" && return 0
+	printf '%s' "$targets" | grep -q '"type": "page"' && return 0
+	return 1
+}
+
 _br_relaunch() {
 	local pids p
+	# 意図した停止を障害として復旧しない。rc=3 は呼び出し側で「失敗」扱い
+	# (成功扱いにすると「bridge 再起動 成功」と誤記録され、試合が成立したように見える)。
+	# 同一盤面保持要求が生きている間は kill/relaunch そのものを止める
+	# (soviet_now#500)。phantom/desync 経由の復旧でも保持対象の盤面を
+	# 失ってはならない。生きた page を非破壊に確認できるなら保持、確認
+	# できないなら復旧不能として明示し、どちらも kill/relaunch は行わない。
+	# ただし bridge プロセスが既に存在しない場合は保持対象の盤面自体が
+	# 失われており、ここで復旧を止めると永久に停止する。process 消失は
+	# 保持ガードの対象外として通常の復旧へ進める。
+	if _br_lifecycle_board_retention && [ -n "$(_br_target_pids)" ]; then
+		if _br_live_page_reobservable; then
+			_br_log "同一盤面保持要求あり・生きたpage確認済 → kill/relaunch を保留し盤面を維持"
+		else
+			_br_log "同一盤面保持要求あり・生きたpageを非破壊再観測できず → 復旧不能として明示。盤面リセットとなる kill/relaunch は行わない"
+		fi
+		return 3
+	fi
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park) → bridge relaunch を保留"
+		return 3
+	fi
 	# Fix0: 共有 lease を取得してから kill/relaunch。他の復旧アクター
 	# (guardian/soviet_watchdog) が処理中なら今回は譲り次周期再試行。
 	if ! rr_lease_acquire "ensure_bridge_alive"; then
@@ -260,6 +326,11 @@ _br_relaunch() {
 		return 2
 	fi
 	trap 'rr_lease_release' RETURN
+	# lease 待ちの間に停止要求が来る競合を閉じる (kill 前に再判定)。
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park, lease取得後) → bridge relaunch を保留"
+		return 3
+	fi
 	pids=$(_br_target_pids)
 	for p in $pids; do
 		_br_log "kill -9 PID=$p CMD=[$(_br_cmd_of "$p")]"
@@ -361,11 +432,91 @@ _br_relaunch() {
 	return 1
 }
 
+# ---- Issue #500: 実観測による停滞の裏取り (kill/relaunch 前の非破壊確認) ----
+# game_state.json は盤面が変化した時だけ書かれる。休止・境界待ちで同じ盤面を
+# 保持している間は進捗が無いので mtime も止まる。したがって mtime 停滞だけでは
+# bridge 障害 (= 盤面喪失を伴う復旧が必要) と断定できない。稼働中の bridge は
+# live page の実観測 (tmp/state/game_observation.json) を静止中も最長1秒ごとに
+# 更新するので、こちらを非破壊な生存確認に使う。
+_br_observation_age() {
+	local f m n
+	f="${_BR_OBSERVATION:-$_BR_ROOT/tmp/state/game_observation.json}"
+	[ -f "$f" ] || return 1
+	m=$(stat -f %m "$f" 2>/dev/null) \
+		|| m=$(stat -c %Y "$f" 2>/dev/null) \
+		|| return 1
+	case "$m" in ''|0|*[!0-9]*) return 1 ;; esac
+	n=$(date +%s)
+	[ "$n" -ge "$m" ] || return 1
+	printf '%s\n' "$((n - m))"
+	return 0
+}
+
+# 最後の実観測が閾値以内か (実観測があるファイルの mtime のみを根拠にしない)。
+_br_live_observation_fresh() {
+	local age
+	age=$(_br_observation_age 2>/dev/null) || return 1
+	case "$age" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$age" -le "$_BR_OBSERVE_FRESH_SEC" ]
+}
+
+# mtime 停滞を検知した時の非破壊な再観測。live page を観測できている bridge は
+# 1秒以内に実観測を更新するので、有界の待機で生存を確認できる (休止解除直後の
+# 1周回で観測がまだ古い場合をここで吸収する)。kill も bridge への入力も送らない。
+_br_live_page_reobserved() {
+	_br_live_observation_fresh && return 0
+	local waited=0 wait_sec
+	wait_sec="${_BR_OBSERVE_WAIT_SEC:-5}"
+	case "$wait_sec" in ''|*[!0-9]*) wait_sec=5 ;; esac
+	while [ "$waited" -lt "$wait_sec" ]; do
+		sleep 1
+		waited=$((waited + 1))
+		_br_live_observation_fresh && return 0
+	done
+	return 1
+}
+
+# 実観測中の盤面 (ログ用)。取得できなければ空。
+_br_observation_board() {
+	python3 - "${_BR_OBSERVATION:-}" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    record = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+board = record.get("board") if isinstance(record, dict) else None
+if not isinstance(board, dict):
+    raise SystemExit(1)
+print("board=state:{} score:{} makeSorenCount:{}".format(
+    board.get("state"), board.get("score"), board.get("makeSorenCount")))
+PY
+}
+
+# 同じ保留理由を毎周回ログしない (周回は数秒間隔なので洪水になる)。
+_br_log_stale_hold() {
+	local stale_age="$1" obs_age="$2" board="$3" now
+	now=$(date +%s)
+	if [ "${_BR_STALE_HOLD_LOGGED_AT:-0}" -ne 0 ] &&
+		[ "$((now - _BR_STALE_HOLD_LOGGED_AT))" -lt "$_BR_STALE_NOTICE_SEC" ]; then
+		return 0
+	fi
+	_BR_STALE_HOLD_LOGGED_AT=$now
+	_br_log "game_state停滞(${stale_age}s) だが実観測は生存(age=${obs_age}s ${board}) → 保持中の盤面と判定し kill/relaunch を保留 (盤面リセットへ自動で進まない)"
+}
+
 # soren_loop メインループから毎周回呼ぶ。pause 後・play_one_game 前に配置。
 _ensure_bridge_alive() {
 	# 防御: 明示停止中は監視しない (pause 述語の主ガードは呼び出し位置で担保済 codex#5)
 	[ -f tmp/stop ] && return 0
 	[ -f tmp/state/manual_improve_mode ] && return 0
+	# 停止済みブリッジを監視しない。0 を返すと呼び出し側が試合を始めるので、
+	# 復旧未完了(1)として試合開始を次周回へ延期させる。
+	if _br_lifecycle_parked; then
+		_br_log "game-only lifecycle handover中 (park) → ブリッジ監視/復旧を保留"
+		return 1
+	fi
 
 	local crash="" audio_crash="" wrong_sink="" m n
 	m=$(stat -f %m "$_BR_GAME_STATE" 2>/dev/null) \
@@ -411,8 +562,36 @@ _ensure_bridge_alive() {
 		crash=""
 	elif [ -z "$(_br_target_pids)" ]; then
 		crash="プロセス消失"
-	else
-		[ "$m" -gt 0 ] && [ "$((n - m))" -ge "$_BR_STALE_SEC" ] && crash="game_state停滞($((n-m))s)"
+	elif [ "$m" -gt 0 ] && [ "$((n - m))" -ge "$_BR_STALE_SEC" ]; then
+		# Live observation wins over retention: allow play_one_game to resume
+		# the existing board instead of deferring until the retention window ends.
+		if _br_live_page_reobserved; then
+			_br_log_stale_hold "$((n - m))" "$(_br_observation_age 2>/dev/null || echo NA)" "$(_br_observation_board 2>/dev/null || true)"
+			_BR_CONSEC_FAIL=0
+			return 0
+		fi
+		# mtime 停滞は「bridge が死んだ」意味ではない (soviet_now#500)。
+		# game_state.json は stateChanged のときだけ書き換わるので、MOVE を
+		# 送っていない生きた盤面は何分でも mtime が動かない。同一盤面保持要求
+		# (cancel 後の旧ゲーム継続 / boundary 待ち / prepared) が生きている
+		# あいだは kill/relaunch へ進まず、生きた page を非破壊に再観測して
+		# 依頼どおり盤面を保持する。再観測できなければ復旧不能であることを
+		# 明示し、盤面リセットへは自動で進まず試合開始だけを延期する。
+		if _br_lifecycle_board_retention; then
+			local page_live=0
+			_br_live_page_reobservable && page_live=1
+			if [ "$page_live" -eq 1 ]; then
+				_br_log "同一盤面保持要求あり・生きたpage確認済 (game_state停滞=$((n-m))s) → kill/relaunch せず盤面を維持"
+			else
+				_br_log "同一盤面保持要求あり・生きたpageを非破壊再観測できず (game_state停滞=$((n-m))s) → 復旧不能として明示。kill/relaunch も盤面リセットも行わず試合開始を延期"
+			fi
+			if [ "$_BR_CONSEC_FAIL" -ne 0 ]; then
+				_br_log "盤面保持のため復旧失敗カウントを reset"
+				_BR_CONSEC_FAIL=0
+			fi
+			return 1
+		fi
+		crash="game_state停滞($((n-m))s)"
 	fi
 	[ -z "$crash" ] && { [ "$_BR_CONSEC_FAIL" -ne 0 ] && { _br_log "ブリッジ正常化 → fail reset"; _BR_CONSEC_FAIL=0; }; return 0; }
 

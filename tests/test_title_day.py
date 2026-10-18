@@ -16,12 +16,24 @@ class TitleDayTest(unittest.TestCase):
         viewer=None,
         title="Keep Title DAY 177 intact",
         ops_brief=None,
+        channel_failure=False,
     ):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
-            shutil.copy(ROOT / "update_stream_title_day.sh", p)
+            self.last_skip_log = ""
             (p / "lib").mkdir()
             shutil.copy(ROOT / "lib/stream_title_public.py", p / "lib/stream_title_public.py")
+            (p / "lib/stream_title_sync.py").write_text(
+                "\n".join([
+                    "import os, sys",
+                    'with open(os.environ["SYNC_SKIP_LOG"], "a", encoding="utf-8") as f:',
+                    '    f.write(" ".join(sys.argv[1:]) + "\\n")',
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+            skip_log = p / "skip.log"
+            shutil.copy(ROOT / "update_stream_title_day.sh", p)
 
             if viewer is not None or ops_brief is not None:
                 (p / "prompts").mkdir()
@@ -33,12 +45,17 @@ class TitleDayTest(unittest.TestCase):
             (p / "curl").write_text(
                 r'''#!/bin/bash
 case "$*" in
-*oauth2/validate*)
- case "$*" in
- *OAuth\ bad*) echo '{"client_id":"app","user_id":"123","scopes":[]}' ;;
- *) printf '{"client_id":"app","user_id":"%s","scopes":["channel:manage:broadcast"]}' "$TEST_OWNER" ;;
- esac ;;
-*) printf '{"data":[{"title":"%s"}]}' "$TEST_TITLE" ;;
+ *oauth2/validate*)
+  case "$*" in
+  *OAuth\ bad*) echo '{"client_id":"app","user_id":"123","scopes":[]}' ;;
+  *) printf '{"client_id":"app","user_id":"%s","scopes":["channel:manage:broadcast"]}' "$TEST_OWNER" ;;
+  esac ;;
+*)
+ if [ "$TEST_CHANNEL_FAILURE" = "1" ]; then
+  printf '{"data":[]}'
+ else
+  printf '{"data":[{"title":"%s"}]}' "$TEST_TITLE"
+ fi ;;
 esac
 '''
             )
@@ -52,13 +69,18 @@ esac
                 "TWITCH_BOT_TOKEN": "good",
                 "TEST_OWNER": owner,
                 "TEST_TITLE": title,
+                "TEST_CHANNEL_FAILURE": "1" if channel_failure else "0",
+                "SYNC_SKIP_LOG": str(skip_log),
             }
-            return subprocess.run(
+            result = subprocess.run(
                 ["bash", str(p / "update_stream_title_day.sh"), "--dry-run"],
                 env=env,
                 text=True,
                 capture_output=True,
             )
+            if skip_log.exists():
+                self.last_skip_log = skip_log.read_text(encoding="utf-8")
+            return result
 
     def test_scope_fallback_normalizes_day_prefix(self):
         r = self.run_script()
@@ -66,6 +88,12 @@ esac
         self.assertIn("TWITCH_BOT_TOKEN", r.stderr)
         self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
         self.assertNotIn("good", r.stderr)
+
+    def test_twitch_read_failure_records_skip_before_returning(self):
+        r = self.run_script(channel_failure=True)
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertNotIn("command not found", r.stderr)
+        self.assertEqual(self.last_skip_log, "--record-skip twitch_read_failed\n")
 
     def test_wrong_broadcaster_is_rejected(self):
         self.assertEqual(self.run_script("999").returncode, 3)
@@ -87,6 +115,13 @@ esac
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
         self.assertNotIn("PR770", r.stdout)
+
+    def test_daily_tick_cannot_replace_game_body_from_ops_brief(self):
+        r = self.run_script(
+            ops_brief="# memo\n- 新しい配信内容\n- 過去の内容\n"
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
 
     def test_empty_viewer_title_preserves_safe_body(self):
         r = self.run_script(viewer="# empty\n")

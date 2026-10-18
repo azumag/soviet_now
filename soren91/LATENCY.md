@@ -13,7 +13,55 @@
 - ゲートごとに `[game] Midgame gate: ...` を、生成完了に `[game] Midgame completed: ... generated=` を出力。生成は非同期で投下を待たせない。
 - 過去の無言試合: game_0007 が 12手で終了し、旧条件 `turn >= 20` に一度も到達していなかったのが直接原因。game_0006〜0008 の median 間隔は 15〜24秒。
 
+## 投下間隔の再計測 (2026-09-28)
+
+- 本番VMの `soren91_loop_metrics.json` dropProfile 実測: 投下間 11〜16秒のターンは観測4〜6回、理由は `board-moving`/`preview-changed` が支配的。投下間 3.7秒のターンは観測1回で `stable-slow-advance` が発火していた。
+- 原因: `SOREN91_SINGLE_FRAME_ADVANCE_MS` 既定 2500ms に対しリモート撮影の観測間隔が約2.4秒で、**常に閾値の直下**になり高速パスがほぼ発火しない。厳格な2フレーム安定判定へ毎回落ち、撮影1枚約2.2秒×4〜6回が支配していた。
+- 変更: 既定を 1200ms（ゲーム側の最小投下間隔 `DROP_COOLDOWN_MS` と同値、env上書き可）へ。高速パスの成立条件（キュー前進の証拠）は不変で、時間下限だけを実測cadenceに合わせる。判定ログへ `trans=` と `gapMs=` を追加。
+- 配備後実測（session 0912fbe7、10区間）: 投下間隔 p50 11.5→6.6秒、観測 4→2回、capture mean_calls 2.4。まだ2観測のターンが残るため、高速パスの前進証拠を「**矛盾なし・証拠1以上**」まで許容（`SOREN91_ADVANCE_SINGLE_EVIDENCE=0` で無効化）。キュー安定化は従来の厳格分類のままで、時間的NEXT補完は変えない（readinessのみ緩和）。
+
+## captureタイムアウトによるbot停止 (2026-09-29)
+
+- 現象: 手動Meriken枠で投下1〜2回の後に `capture-timeout` が連続し、11回目で「Too many consecutive errors, stopping」→ botが終了。コーナーは残り時間そのまま更新されない（視聴者には白/停止画面）。
+- 実測: リモート撮影コストは p50 約1.9秒/枚・p95 4.6秒（#519配備後の dropProfile）。既定予算3秒では負荷時に超えやすい。リトライは1秒固定・上限10回だった。
+- 変更: capture予算の既定を **3000→6000ms**（env `SOREN91_CAPTURE_TIMEOUT_MS` で最大9000）。連続エラーは**指数バックオフ**（1s→2s→…最大15s、`SOREN91_ERROR_BACKOFF_MAX_MS`）で再試行し、停止上限を **30回**（`SOREN91_ERROR_LIMIT`）へ。一時的な負荷でコーナーが死なないようにする。
+
+## 状態ポーリング待ちの二重課金 (2026-10-15, #452)
+
+- 実測: リモートでは1 captureが既に p50 約1.9秒 / p95 4.6秒かかるため、`POLL_INTERVAL_MS`=200ms を「capture後の待ち」として毎回フルで足す分は純増だった。dropProfile の `poll` 段は区間あたり約0.6秒（再観測3回分）を占め、投下間隔に対して無条件の追加遅延になっていた。
+- 変更: `gameLoop` の各iteration先頭で `iterationStartedAt` を取り、MOVE以外の状態待ちは `max(0, POLL_INTERVAL_MS - 経過)` だけsleepする。`POLL_INTERVAL_MS` は **cadence floor**（iteration開始からの下限）として意味を保つため、captureが200ms未満の環境では従来どおり200ms待つ。cadenceが締まることはない。
+- 不変: stability gate（`observation_guard` の2フレーム判定・`preview-changed`/`board-moving`/`stable-slow-advance` 分類）、geometry validation、input-before-confirmation、capture cadence、strategy、risk評価、provider/security boundary。gate判定に使う時間は capture の実経過時間のみで、poll sleep の長さは判定に影響しない。
+- 回帰: `tests/test_soren91_round_lifecycle.mjs` に、capture 1300ms（インターバル超過）で余分な200msが乗らないこと、capture 50ms（インターバル未満）で200ms floor が維持されることを確認する2件を追加。投下回数・観測回数・round lifecycle は既存12テストと同一。
+- 本番配備後の `dropSentIntervalMs` p50/p95 と `stageMs.poll` の前後比較は未実施（fresh contiguous runtime evidence が必要）。
+
+## 認識保留の bounded escape (2026-10-15)
+
+- 背景: #654 の配備で投下間隔 mean 9.58→3.01秒（probe session `0de2df17`）になったが、`unknown-current` が続く停滞が残った。入力なし → 盤面が変わらない → 次の観測も同じ、という静止ループになる。保存証跡では12観測・約10秒、別の完了ラウンド `game_0007` は最後の投下から93秒後に終了した。初期説明の「本体全面がfieldと同色」は原本SHAを固定した再現で否定され、下記の境界線接続とHUDによる上端隠れを確認した。
+- 変更: `observation_guard.mjs` の `createHoldEscapePolicy()` が連続 `unknown-current` を数え、`main.mjs` の非MOVE分岐が上限付きの代替投下（既定 `x=0`）を行う。env:
+  - `SOREN91_HOLD_ESCAPE_FRAMES`（既定 6、0で無効、上限200）
+  - `SOREN91_HOLD_ESCAPE_INTERVAL_MS`（既定 4000、上限60000）
+  - `SOREN91_HOLD_ESCAPE_LIMIT`（既定 3、0で無効、上限100）
+- 前提: `unknown-current` は「校正と盤面は健全で、現在ピースだけが同定できない」を意味する。`observation_guard.mjs` の分類順を `uncalibrated` → `invalid-board` → `unknown-current` にし、壊れた校正・盤面がこのラベルへ丸められないようにした（`usable` / `frameValid` の意味は不変）。加えてループ側でも現フレームの `usableCalibration(...)` を要求する。現ピースが不明なため、escapeでは戦略関数を呼ばず固定位置へ投下する。
+- 実判定の投下（`noteDrop`）またはラウンド境界（`reset`）で連続数と残回数をリセットする。上限に達した後は従来どおり待機する。
+- 呼び出し側も全ての非MOVE観測をpolicyへ渡す。初回実装は短絡条件で `unknown-current` 以外を渡しておらず、途中の `board-moving` / `preview-changed` / 不正geometryをまたいで6回を累積していた。実ループ回帰で誤投下を再現し、別の理由や不正geometryで連続数が途切れるよう修正した。数値設定と1停滞あたりの上限は変更しない。
+- 観測性: telemetry schema は変えない。発動は「`reasonCounts['unknown-current']` が6以上・`holds=0` のまま1区間が閉じた dropProfile レコード」とプレイヤーログ `[game] Recognition hold escape: ...` で確認できる。
+
+## 現ピースの境界接続とHUD上端隠れ（2026-10-15、docich #414）
+
+- 原本fixture `tests/fixtures/soren91-sprites/game_0008_turn_2_20261015.jpg` は evidence export `38625894231` の `partial/game_0008/original/turn_0002.jpg` と同一バイト列。SHA-256 `ca386ba404a46775282c2cc0295bc3be9b087a40a66bf525e11a2f4124c4ce34`。ゲーム画面のみで、視聴者名・チャット・機密情報がないことを目視確認した。
+- 校正は1280×720、board x=442..836、deadline y=223.5、arena top=135。現行spawn ROI x=443..835/y=141..221にdeadlineのAA行y=220が入り、黒い現ピースを盤面幅の成分へ接続して `clipped-current` になる。左右のinset変更だけでは除去できない。
+- 実測した細い連続の赤線（盤面幅の70%以上）だけをspawn抽出から除外する。広い赤い敗退overlayやboard-wide成分の拒否は維持する。現ピースはx=445..619/y=141..220。上部はHUDで隠れており、完全な国旗テンプレートとの距離は0.203で不採用だった。
+- 完全形が不採用で、候補がHUD側のROI上端へ接し、側面へ接していない場合だけ、既存の独立したラベル付きテンプレートの上端10〜35%を隠した形を比較する。部分照合は距離上限0.12、margin下限0.06と完全形より厳しくする。採用confidence閾値0.58・時系列guard・下端clipping・支持物確認は維持する。新fixtureはテンプレートに使わない。
+- 問題原本はtype 11（ウズベキスタン）、confidence 0.74、距離0.07165、margin 0.36763。旧アートを除外しても別実写のテンプレートでconfidence 0.69。これはオフライン認識の結果であり、配備・実戦改善の証明とは分ける。
+- 性能は保存済みsent-to-sent区間に母集団を固定する。`capture/呼出し = capture累積 / phaseCalls.capture` と `capture累積/区間` は別の指標。旧session `1f9e6d46` の12区間は各0.75634秒/4.22288秒、観測5.583回/区間であり、「撮影1回が4秒」という説明は誤り。
+
 ## 配備前の確認
 
 - 本番VMの `soren91/main.mjs` には 2026-09-17 時点で手動パッチ (CDP captureScreenshot) が入っている。PR #371 をマージして配備する場合、VMパッチとの差分を確認してから置換する。無確認上書きはしない。
 - `SOREN91_TEST_BROWSER` を明示した時だけ実Chromiumテストが動く (通常CIはskip)。
+
+## 修正後probeで残ったREADYと投下直後の観測（2026-10-15）
+
+- 最初の根本修正版（`32bfb6681`、session `eb320e97`）は19区間で3.36398秒へ短縮したが、unknownは21/42観測（50%）。修正前35/79（44.30%）より生比率は増えた。unknown/投下は1.94→1.11へ減少しており、余分なboard-moving観測が減った分母効果を区別する。生比率を改善済みとは扱わない。
+- 残ったescapeは開始時の1回。実写では現ピース未出現のREADY文字を5ピースとして読み取っていた。`ready_20261015.jpg`（SHA-256 `a47e6b6e02cb0dd75d01cdee0198ac4c12c8e231fb9bbd96074feafe2df202fb`）のglyph形状・白/紫・位置/寸法を確認し、spawnと盤面の残りが空であるときだけWAITINGへ分類する。単なる空盤面や現在ピース不明をREADYとはしない。視聴者名・チャット・機密情報がないことを目視確認済み。
+- 通常の18区間は投下直後のunknown 1回と確定1回。既存のゲーム側クールダウン約1秒に対し、送信から800msだけ待って最初の撮影を行う。待機は既存cooldown計測に含める。1.2秒の入力最小間隔、再撮影、2フレーム確認、unknownの定義、confidence閾値は維持する。初回とHOLDに新しい待機を課さない。性能と比率の採否は追加のclean probeで確認する。

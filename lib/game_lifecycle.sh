@@ -16,10 +16,16 @@ GAME_LIFECYCLE_POLL_SEC="${GAME_LIFECYCLE_POLL_SEC:-1}"
 GAME_LIFECYCLE_IMPROVE_PAUSE_FILE="$GAME_LIFECYCLE_DIR/improvement_pause.json"
 GAME_LIFECYCLE_PREDICTION_PAUSE_FILE="$GAME_LIFECYCLE_DIR/prediction_pause.json"
 GAME_LIFECYCLE_PREDICTION_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/prediction_worker.paused"
+GAME_LIFECYCLE_PLAYER_STATE_FILE="$GAME_LIFECYCLE_DIR/player_state.json"
 GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE="$GAME_LIFECYCLE_DIR/watchdog_pause.json"
+# 同一盤面保持要求 (cancel/boundary待ち/prepared) の有効窓。この間は
+# bridge 自己復旧の game_state mtime 停滞判定を「盤面を維持する」側に解釈し、
+# kill/relaunch へ進まない (soviet_now#500)。
+GAME_LIFECYCLE_BOARD_RETENTION_SEC="${GAME_LIFECYCLE_BOARD_RETENTION_SEC:-1800}"
 GAME_LIFECYCLE_WATCHDOG_MARKER="$GAME_LIFECYCLE_ROOT/tmp/state/soviet_watchdog.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_FILE="$GAME_LIFECYCLE_ROOT/tmp/state/soren_loop.paused"
 GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE="$GAME_LIFECYCLE_DIR/loop_pause.json"
+GAME_LIFECYCLE_JEV_ONE_GAME_FILE="$GAME_LIFECYCLE_DIR/jev_one_game.json"
 
 _game_lifecycle_log() {
 	if command -v log >/dev/null 2>&1; then
@@ -67,6 +73,146 @@ game_lifecycle_ack_status() {
 
 game_lifecycle_resource_status() {
 	_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/game_resource.json" status 2>/dev/null
+}
+
+game_lifecycle_operation() {
+	_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/request.json" operation 2>/dev/null
+}
+
+# Load the committed player snapshot for the next game. Missing/invalid state
+# deliberately means legacy existing player; an unknown policy never starts
+# JEV implicitly.
+game_lifecycle_load_player_policy() {
+	local state_file="$GAME_LIFECYCLE_PLAYER_STATE_FILE"
+	[ -f "$state_file" ] || return 0
+	local values
+	values=$(python3 - "$state_file" <<'PY'
+import json
+import sys
+try:
+    value = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(value, dict) or value.get("schema") != 1 or value.get("game") != "sorengame":
+    raise SystemExit(1)
+policy = value.get("policy")
+generation = value.get("player_generation")
+game_generation = value.get("game_generation")
+if policy not in {"existing", "jev"} or type(generation) is not int or generation < 0:
+    raise SystemExit(1)
+if game_generation is not None and (type(game_generation) is not int or game_generation < 1):
+    raise SystemExit(1)
+run_id = value.get("run_id") or ""
+if policy == "jev" and (not isinstance(run_id, str) or not run_id):
+    raise SystemExit(1)
+print(f"{policy}\t{generation}\t{game_generation if game_generation is not None else ''}\t{run_id}")
+PY
+	) || {
+		_game_lifecycle_log "player_state.json が不正のため existing へ fail-closed"
+		export SOREN_PLAYER_POLICY="existing"
+		export JEV_PLAYER_ENABLED="0"
+		unset SOREN_JEV_RUN_ID SOREN_JEV_PLAYER_GENERATION SOREN_JEV_GAME_GENERATION
+		return 1
+	}
+	local policy generation game_generation run_id
+	IFS=$'\t' read -r policy generation game_generation run_id <<<"$values"
+	export SOREN_PLAYER_POLICY="$policy"
+	export SOREN_JEV_PLAYER_GENERATION="$generation"
+	if [ -n "$game_generation" ]; then export SOREN_JEV_GAME_GENERATION="$game_generation"; fi
+	if [ "$policy" = "jev" ]; then
+		# The committed player snapshot is the explicit opt-in boundary.  Keep
+		# the inner runner disabled for legacy/existing snapshots so an inherited
+		# .env value cannot turn an existing game into an implicit JEV run.
+		export JEV_PLAYER_ENABLED="1"
+		# These values are part of the Issue #771 contract and are deliberately
+		# fixed at the runtime boundary; an inherited .env override must not make
+		# the config hash describe a different experiment.
+		export JEV_MAX_REQUESTS_PER_RUN="500"
+		export JEV_DECISION_BUDGET_MS="1500"
+		export JEV_HTTP_TIMEOUT_MS="1000"
+		export JEV_FAILURE_LATCH_AFTER="3"
+		export SOREN_JEV_RUN_ID="$run_id"
+	else
+		export JEV_PLAYER_ENABLED="0"
+		unset SOREN_JEV_RUN_ID SOREN_JEV_GAME_GENERATION
+	fi
+}
+
+# A completed manual JEV game is an intentional park, not a crashed loop.
+# Verify the marker against the committed player snapshot so a stale marker
+# cannot suppress an existing-policy runtime or a later JEV generation.
+game_lifecycle_jev_one_game_parked() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	python3 - "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" "$GAME_LIFECYCLE_PLAYER_STATE_FILE" <<'PY'
+import json
+import sys
+
+try:
+    marker = json.load(open(sys.argv[1], encoding="utf-8"))
+    state = json.load(open(sys.argv[2], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(marker, dict) or not isinstance(state, dict):
+    raise SystemExit(1)
+if marker.get("schema") != 1 or state.get("schema") != 1:
+    raise SystemExit(1)
+if marker.get("game") != "sorengame" or state.get("game") != "sorengame":
+    raise SystemExit(1)
+if marker.get("policy") != "jev" or state.get("policy") != "jev":
+    raise SystemExit(1)
+for field in ("run_id", "game_generation", "player_generation"):
+    if marker.get(field) != state.get(field):
+        raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+game_lifecycle_mark_jev_one_game() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	_game_lifecycle_cli mark-jev-one-game
+}
+
+# Handle the JEV end-of-game boundary without allowing the supervisor to
+# respawn another JEV game. If an operator already requested existing, the
+# normal request-scoped boundary path remains authoritative.
+game_lifecycle_jev_complete() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	if [ -e "$GAME_LIFECYCLE_DIR/request.json" ] || [ -e "$GAME_LIFECYCLE_DIR/ack.json" ]; then
+		game_lifecycle_after_game
+		return $?
+	fi
+	# The one-game park marker is what stops the supervisor from respawning
+	# another JEV game.  game_state.json is written asynchronously, so retry
+	# briefly for the stable boundary instead of exiting without a marker and
+	# silently starting a second JEV game.
+	local attempt=0 output rc
+	while :; do
+		# Keep the call in an `if` condition: a bare assignment would abort a
+		# `set -e` loop on the first not-yet-stable boundary.
+		if output=$(game_lifecycle_mark_jev_one_game 2>&1); then
+			# A long-lived supervisor can predate game_lifecycle_jev_one_game_parked,
+			# so the dedicated marker alone may not suppress the respawn.  Also
+			# create the generic loop pause marker every supervisor honours;
+			# finish's commit-player restores it through the matching ownership
+			# record, so it cannot leak.
+			local jev_run_id
+			jev_run_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" run_id 2>/dev/null || true)
+			if [ -n "$jev_run_id" ]; then
+				_game_lifecycle_pause_loop "$jev_run_id" || true
+			fi
+			return 0
+		else
+			rc=$?
+		fi
+		# RC_WAITING means game_state.json has not settled to a terminal
+		# boundary yet; every other code is terminal.
+		if [ "$rc" -ne 1 ] || [ "$attempt" -ge 20 ]; then
+			_game_lifecycle_log "JEV one-game park を確定できません (rc=$rc output=${output:-none})"
+			return "$rc"
+		fi
+		attempt=$((attempt + 1))
+		sleep 0.5
+	done
 }
 
 _game_lifecycle_control_action() {
@@ -127,6 +273,61 @@ if status in {"stop_requested", "resume_requested", "stopping"}:
         raise SystemExit(0)
     raise SystemExit(1)
 raise SystemExit(1)
+PY
+}
+
+# 同一盤面を保持すべきライフサイクル遷移の直後か (soviet_now#500)。
+# cancel で旧ゲームへ戻る / boundary 待ち / player_change prepared はいずれも
+# 「この盤面を続ける」要求。game_state.json は stateChanged のときだけ書き換わる
+# ため、MOVE を送っていない board は何分経っても mtime が動かない。復旧側が
+# mtime 停滞だけで kill/relaunch へ進むと score0 の新盤面になり、依頼と逆の
+# 結果になる (#500 の 20:54:31 事象)。
+# identity は全項目照合。保持は ack の遷移時刻から有限窓のみなので、古い要求が
+# 復旧を永久に抑止することはない。stopped/stopping 等の意図的停止は
+# game_lifecycle_bridge_parked 側の管轄でここには含めない。
+game_lifecycle_bridge_board_retention() {
+	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
+	python3 - "$GAME_LIFECYCLE_DIR/request.json" "$GAME_LIFECYCLE_DIR/ack.json" \
+		"${GAME_LIFECYCLE_BOARD_RETENTION_SEC:-1800}" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime
+
+try:
+    request = json.load(open(sys.argv[1], encoding="utf-8"))
+    ack = json.load(open(sys.argv[2], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(request, dict) or not isinstance(ack, dict):
+    raise SystemExit(1)
+if request.get("schema") != 1 or ack.get("schema") != 1:
+    raise SystemExit(1)
+for field in ("request_id", "game", "generation", "deadline_epoch", "deadline_at"):
+    if field not in request or ack.get(field) != request.get(field):
+        raise SystemExit(1)
+status = ack.get("status")
+# cancelled は「旧ゲームを継続する」明示の巻き戻し。残りは境界待ち/prepared で、
+# どれも現盤面がそのまま生きている。
+if status not in {"cancelled", "boundary", "accepted", "waiting", "prepared"}:
+    raise SystemExit(1)
+# 非終端 status は要求の期限まで。期限切れの要求で復旧を抑止しない。
+if status != "cancelled":
+    try:
+        deadline = float(request.get("deadline_epoch"))
+    except (TypeError, ValueError):
+        raise SystemExit(1)
+    if deadline <= time.time():
+        raise SystemExit(1)
+try:
+    window = max(0.0, float(sys.argv[3]))
+except (TypeError, ValueError):
+    window = 1800.0
+try:
+    updated = datetime.fromisoformat(str(ack.get("updated_at")).replace("Z", "+00:00")).timestamp()
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if (time.time() - updated) <= window else 1)
 PY
 }
 
@@ -266,6 +467,44 @@ _game_lifecycle_marker_owned_by() {
 	[ "$(cat "$path" 2>/dev/null || true)" = "lifecycle:$request_id" ]
 }
 
+# The lifecycle request a pause marker names, or nothing when another writer
+# (operator stop, legacy file) created it.  Reading never adopts the marker.
+_game_lifecycle_marker_owner() {
+	local path="$1" value
+	value=$(cat "$path" 2>/dev/null || true)
+	case "$value" in
+	lifecycle:?*) printf '%s\n' "${value#lifecycle:}" ;;
+	*) return 1 ;;
+	esac
+}
+
+# Whether an existing pause record proves that a *different* lifecycle request
+# created this marker.  Such a record is the only proof that lets that request
+# (or the fixed owner-only recovery operator) clear the marker later, so it
+# must never be overwritten or deleted by this request (issue #2061: candidate
+# cleanup erased the ownership record of the switch that parked the loop and
+# readiness/rollback timed out).
+_game_lifecycle_pause_record_proves_foreign_owner() {
+	local record="$1" field="$2" marker="$3" request_id="$4" owner=""
+	[ -f "$record" ] || return 1
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	[ -n "$owner" ] || return 1
+	[ "$owner" != "$request_id" ] || return 1
+	[ "$(_game_lifecycle_json_field "$record" "$field" 2>/dev/null || true)" = "true" ] || return 1
+	[ "$(_game_lifecycle_marker_owner "$marker" 2>/dev/null || true)" = "$owner" ]
+}
+
+# The request whose gates a restore may release.  An explicit argument wins;
+# otherwise fall back to the request on disk.  An empty result releases
+# nothing, so a caller that has no identity can never clear a foreign pause
+# (issue #2061).
+_game_lifecycle_restore_request_id() {
+	local request_id="${1:-}"
+	[ -n "$request_id" ] || request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || request_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/ack.json" request_id 2>/dev/null || true)
+	printf '%s\n' "$request_id"
+}
+
 _game_lifecycle_pause_improvements() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
@@ -287,10 +526,15 @@ _game_lifecycle_pause_improvements_locked() {
 		return 1
 	fi
 
-	local marker_created=0
+	local marker_created=0 foreign_owner=0
 	if [ -e "$TMP_STATE_DIR/improve_daemon.paused" ]; then
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" improvement_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" improvement_marker_created "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
+			# Another lifecycle request parked the daemon.  Still drain the
+			# improve work this stop owns, but never rewrite that request's
+			# ownership record (issue #2061).
+			foreign_owner=1
 		fi
 	else
 		if ! _game_lifecycle_create_owned_marker "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
@@ -390,6 +634,12 @@ _game_lifecycle_pause_improvements_locked() {
 		fi
 	done
 
+	if [ "$foreign_owner" -eq 1 ]; then
+		# The existing record still proves another request's marker.  Leaving
+		# it intact is what keeps that pause recoverable; this stop is already
+		# satisfied because the daemon is parked.
+		return 0
+	fi
 	_game_lifecycle_write_record "$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE" "$request_id" "$marker_created" "$daemon_pid" "$child_pid" 0 || {
 		[ "$marker_created" -eq 1 ] && rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 		return 1
@@ -398,11 +648,17 @@ _game_lifecycle_pause_improvements_locked() {
 }
 
 game_lifecycle_restore_improvements() {
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
 	local record="$GAME_LIFECYCLE_IMPROVE_PAUSE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created request_id
+	local marker_created owner
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns; its record
+	# is the only proof that lets that request (or the fixed recovery operator)
+	# clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$TMP_STATE_DIR/improve_daemon.paused" "$request_id"; then
 		rm -f "$TMP_STATE_DIR/improve_daemon.paused" 2>/dev/null || true
 	fi
@@ -419,6 +675,37 @@ _game_lifecycle_is_prediction_worker_pid() {
 	echo "$command_line" | grep -Eq '(^|[[:space:]/])workers/prediction_worker[.]sh([[:space:]]|$)'
 }
 
+# The pause marker written below is exactly what makes prediction_worker.sh
+# exit on its own ("pause file detected → exit"), so the recorded PID routinely
+# turns into a zombie between the read and the verification, and kill -0 still
+# succeeds on a zombie.  Reuse infra/cleanup.sh's arbitrage when it is sourced
+# and fall back to the same rule locally, so a stop this pause caused itself is
+# never reported as prediction_stop_failed.  2026-09-25: one such false failure
+# aborted the sorengame→nethack switch and left the rotation in
+# recovery_required for hours.
+_game_lifecycle_pid_gone_or_zombie() {
+	local pid="$1" stat_text="" state=""
+	case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+	if command -v _pid_gone_or_zombie >/dev/null 2>&1; then
+		_pid_gone_or_zombie "$pid"
+		return $?
+	fi
+	if ! kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	stat_text=$(cat "/proc/$pid/stat" 2>/dev/null || true)
+	if [ -n "$stat_text" ]; then
+		# comm (2nd field, in parens) may contain spaces: strip through ") ".
+		state=${stat_text##*) }
+		state=${state%% *}
+		[ "$state" = "Z" ] && return 0
+		return 1
+	fi
+	stat_text=$(ps -p "$pid" -o stat= 2>/dev/null | tr -d '[:space:]' || true)
+	case "$stat_text" in ''|Z*) return 0 ;; esac
+	return 1
+}
+
 _game_lifecycle_pause_predictions() {
 	local request_id="${1:-}"
 	[ -n "$request_id" ] || return 1
@@ -430,12 +717,17 @@ _game_lifecycle_pause_predictions() {
 }
 
 _game_lifecycle_pause_predictions_locked() {
-	local request_id="${1:-}" marker_created=0 pid="" pid_started="" pid_started_now=""
+	local request_id="${1:-}" marker_created=0 foreign_owner=0 pid="" pid_started="" pid_started_now=""
 	[ -n "$request_id" ] || return 1
 	mkdir -p "$GAME_LIFECYCLE_DIR" "$TMP_STATE_DIR" 2>/dev/null || return 1
 	if [ -e "$GAME_LIFECYCLE_PREDICTION_MARKER" ]; then
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" improvement_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" improvement_marker_created "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id"; then
+			# Another lifecycle request parked the prediction worker.  Stop the
+			# worker this handover owns, but never rewrite or release that
+			# request's ownership proof (issue #2061).
+			foreign_owner=1
 		fi
 	else
 		# noclobber makes marker creation atomic.  A concurrent operator-created
@@ -444,31 +736,45 @@ _game_lifecycle_pause_predictions_locked() {
 		marker_created=1
 	fi
 	pid=$(_game_lifecycle_read_pid "$TMP_STATE_DIR/prediction_worker.pid" 2>/dev/null || true)
-	# Persist ownership before sending TERM.  A crash after this point can only
-	# remove a marker positively tied to this request.
-	_game_lifecycle_write_record "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || {
-		[ "$marker_created" -eq 1 ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
-		return 1
-	}
+	if [ "$foreign_owner" -eq 0 ]; then
+		# Persist ownership before sending TERM.  A crash after this point can
+		# only remove a marker positively tied to this request.
+		_game_lifecycle_write_record "$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || {
+			[ "$marker_created" -eq 1 ] && rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
+			return 1
+		}
+	fi
 	if [ -n "$pid" ]; then
 		if ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
-			if kill -0 "$pid" 2>/dev/null; then
-				_game_lifecycle_restore_predictions_locked
+			# Gone-or-zombie is the stop this pause asked for: the marker
+			# written above is what made the worker exit, and a supervised
+			# shell stays a zombie until its supervisor reaps it.  Only a live
+			# PID owned by an unrelated command (reuse) refuses the pause.
+			if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
+				_game_lifecycle_restore_predictions_locked "$request_id"
 				return 1
 			fi
 		else
 			pid_started=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
 			pid_started_now=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
-			if [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
-				_game_lifecycle_restore_predictions_locked
+			if _game_lifecycle_pid_gone_or_zombie "$pid"; then
+				# It already exited on the marker, so no signal is needed and
+				# an empty lstart must not be read as a broken PID file.
+				:
+			elif [ -z "$pid_started" ] || [ "$pid_started_now" != "$pid_started" ] || ! _game_lifecycle_is_prediction_worker_pid "$pid"; then
+				_game_lifecycle_restore_predictions_locked "$request_id"
 				return 1
-			fi
-			kill -TERM "$pid" 2>/dev/null || true
-			local waited=0
-			while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
-			if kill -0 "$pid" 2>/dev/null; then
-				_game_lifecycle_restore_predictions_locked
-				return 1
+			else
+				kill -TERM "$pid" 2>/dev/null || true
+				local waited=0
+				# Poll the settled state instead of bare kill -0: a worker that
+				# exits here stays a zombie until its supervisor reaps it, and
+				# that must count as stopped rather than burn the whole budget.
+				while ! _game_lifecycle_pid_gone_or_zombie "$pid" && [ "$waited" -lt 10 ]; do sleep 1; waited=$((waited + 1)); done
+				if ! _game_lifecycle_pid_gone_or_zombie "$pid"; then
+					_game_lifecycle_restore_predictions_locked "$request_id"
+					return 1
+				fi
 			fi
 		fi
 	fi
@@ -476,10 +782,16 @@ _game_lifecycle_pause_predictions_locked() {
 }
 
 _game_lifecycle_restore_predictions_locked() {
-	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created request_id
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
+	local record="$GAME_LIFECYCLE_PREDICTION_PAUSE_FILE" marker_created owner
 	[ -f "$record" ] || return 0
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker that another lifecycle request still owns; its
+	# record is the only proof that lets that request (or the fixed recovery
+	# operator) clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_PREDICTION_MARKER" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_PREDICTION_MARKER" 2>/dev/null || true
 	fi
@@ -487,8 +799,9 @@ _game_lifecycle_restore_predictions_locked() {
 }
 
 game_lifecycle_restore_predictions() {
+	local request_id="${1:-}"
 	_game_lifecycle_lock_acquire "$GAME_LIFECYCLE_DIR/broker.lock" || return 1
-	_game_lifecycle_restore_predictions_locked
+	_game_lifecycle_restore_predictions_locked "$request_id"
 	local rc=$?
 	_game_lifecycle_lock_release
 	return $rc
@@ -503,11 +816,18 @@ _game_lifecycle_is_watchdog_pid() {
 }
 
 _game_lifecycle_pause_watchdog() {
-	local request_id="${1:-}" marker_created=0 pid="" waited=0 wait_sec="${GAME_LIFECYCLE_WATCHDOG_STOP_WAIT_SEC:-30}"
+	local request_id="${1:-}" marker_created=0 foreign_owner=0 pid="" waited=0 wait_sec="${GAME_LIFECYCLE_WATCHDOG_STOP_WAIT_SEC:-30}"
 	[ -n "$request_id" ] || return 1
 	case "$wait_sec" in ''|*[!0-9]*) wait_sec=30 ;; esac
 	if [ -e "$GAME_LIFECYCLE_WATCHDOG_MARKER" ]; then
-		_game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id" && marker_created=1
+		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$request_id"; then
+			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" improvement_marker_created "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id"; then
+			# Another lifecycle request parked the watchdog.  Keep the record
+			# that proves it; overwriting it would lose the only ownership
+			# proof (issue #2061).
+			foreign_owner=1
+		fi
 	else
 		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id" || return 1
 		marker_created=1
@@ -516,7 +836,9 @@ _game_lifecycle_pause_watchdog() {
 	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
 		pid=$(pgrep -f '[/]soviet_watchdog[.]sh([[:space:]]|$)' 2>/dev/null | head -n 1 || true)
 	fi
-	_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
+	if [ "$foreign_owner" -eq 0 ]; then
+		_game_lifecycle_write_record "$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" "$request_id" "$marker_created" "$pid" "" 0 || return 1
+	fi
 	if [ -n "$pid" ]; then
 		# A dead PID left in the pidfile is already a successful stopped state.
 		# Refuse only when that numeric PID is live but no longer belongs to the
@@ -540,10 +862,14 @@ _game_lifecycle_pause_watchdog() {
 }
 
 game_lifecycle_restore_watchdog() {
-	local record="$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" marker_created request_id
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
+	local record="$GAME_LIFECYCLE_WATCHDOG_PAUSE_FILE" marker_created owner
 	[ -f "$record" ] || return 0
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" improvement_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_WATCHDOG_MARKER" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_WATCHDOG_MARKER" 2>/dev/null || true
 	fi
@@ -560,6 +886,12 @@ _game_lifecycle_pause_loop() {
 		# pre-existing, or game_lifecycle_restore_loop would leak the park.
 		if _game_lifecycle_pause_record_claims_marker "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" loop_marker_created "$request_id"; then
 			marker_created=1
+		elif _game_lifecycle_pause_record_proves_foreign_owner "$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE" loop_marker_created "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id"; then
+			# Another lifecycle request parked this loop.  It is already
+			# paused, which is all this stop needs; rewriting the record for
+			# this request would erase the only proof of that ownership and
+			# make the marker impossible to clear later (#2061).
+			return 0
 		fi
 	else
 		_game_lifecycle_create_owned_marker "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id" || return 1
@@ -569,11 +901,17 @@ _game_lifecycle_pause_loop() {
 }
 
 game_lifecycle_restore_loop() {
+	local request_id
+	request_id=$(_game_lifecycle_restore_request_id "${1:-}")
 	local record="$GAME_LIFECYCLE_LOOP_PAUSE_STATE_FILE"
 	[ -f "$record" ] || return 0
-	local marker_created request_id
+	local marker_created owner
+	owner=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
+	# Never release a marker another lifecycle request still owns; its record
+	# is the only proof that lets that request (or the fixed recovery operator)
+	# clear it later (issue #2061).
+	[ -n "$request_id" ] && [ "$owner" = "$request_id" ] || return 0
 	marker_created=$(_game_lifecycle_json_field "$record" loop_marker_created 2>/dev/null || echo false)
-	request_id=$(_game_lifecycle_json_field "$record" request_id 2>/dev/null || true)
 	if [ "$marker_created" = "true" ] && _game_lifecycle_marker_owned_by "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" "$request_id"; then
 		rm -f "$GAME_LIFECYCLE_LOOP_PAUSE_FILE" 2>/dev/null || true
 	fi
@@ -622,7 +960,7 @@ _game_lifecycle_stop_from_boundary() {
 	local request_id="$1" ack_status="${2:-}"
 	[ -n "$request_id" ] || return 1
 	case "$ack_status" in
-	boundary|stop_requested|stopping|stopped) ;;
+	boundary|stop_requested|stopping|stopped|prepared) ;;
 	*) return 1 ;;
 	esac
 
@@ -630,19 +968,19 @@ _game_lifecycle_stop_from_boundary() {
 		if ! _game_lifecycle_pause_improvements "$request_id"; then
 			_game_lifecycle_log "改善プロセスの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-			game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			return 1
 		fi
 		if ! _game_lifecycle_pause_predictions "$request_id"; then
 			_game_lifecycle_log "予想ワーカーの停止確認に失敗。request=$request_id をキャンセルして旧ゲームを継続"
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-			game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			return 1
 		fi
 		if ! _game_lifecycle_pause_watchdog "$request_id"; then
@@ -658,10 +996,10 @@ _game_lifecycle_stop_from_boundary() {
 	0) ;;
 	2)
 		_game_lifecycle_log "停止要求の期限切れ。旧ゲームを継続 (request=$request_id)"
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 1
 		;;
 	*)
@@ -682,10 +1020,10 @@ _game_lifecycle_stop_from_boundary() {
 			# game alive.  Cancel this exact request and let normal play continue;
 			# do not turn an unsupported capability into a stop.
 			_game_lifecycle_cli cancel --request-id "$request_id" >/dev/null 2>&1 || true
-			game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-			game_lifecycle_restore_improvements
-			game_lifecycle_restore_loop
+			game_lifecycle_restore_watchdog "$request_id"
+			game_lifecycle_restore_predictions "$request_id"
+			game_lifecycle_restore_improvements "$request_id"
+			game_lifecycle_restore_loop "$request_id"
 			_game_lifecycle_log "共有表示未準備/legacy bridge のため handover をキャンセルし、旧ゲームを継続 (request=$request_id)"
 			return 1
 		fi
@@ -740,6 +1078,9 @@ print(f"{request_id}\t{status}")
 PY
 }
 
+# Return 4 when the current game is still live: callers must resume that board
+# without sending retry. Return 3 only after a confirmed boundary parks the
+# next game; waiting for that boundary must never disable the current player.
 game_lifecycle_after_game() {
 	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
 	local request_id ack_status boundary_output boundary_rc pair
@@ -750,8 +1091,8 @@ game_lifecycle_after_game() {
 	[ -n "$ack_status" ] || return 1
 	case "$ack_status" in
 	accepted|waiting)
-		boundary_output=$(_game_lifecycle_cli boundary --request-id "$request_id" 2>/dev/null)
-		boundary_rc=$?
+		boundary_rc=0
+		boundary_output=$(_game_lifecycle_cli boundary --request-id "$request_id" 2>/dev/null) || boundary_rc=$?
 		case "$boundary_rc" in
 		0)
 			# Re-read both records together and confirm the request did not
@@ -761,12 +1102,11 @@ game_lifecycle_after_game() {
 			ack_status="${pair#*$'\t'}"
 			;;
 		1)
-			# The current one-game unit is not terminal yet.  Keep the outer
-			# loop from retrying, but do not stop resources or improvements;
-			# an explicit cancel can remove this park and resume the game.
-			_game_lifecycle_log "試合終了境界をまだ確認できないため次ゲームを保留 (request=$request_id)"
-			_game_lifecycle_pause_loop "$request_id" || true
-			return 3
+			# The runner can finish before the asynchronous game snapshot
+			# settles (including the founding animation). Parking here also
+			# stops the player, so the requested boundary can never arrive.
+			_game_lifecycle_log "試合終了境界を待機中。同じ盤面の操作を継続 (request=$request_id)"
+			return 4
 			;;
 		2|3|4)
 			_game_lifecycle_log "試合終了境界要求を完了できません。通常運転へ戻します (request=$request_id rc=$boundary_rc output=${boundary_output:-none})"
@@ -774,10 +1114,19 @@ game_lifecycle_after_game() {
 			;;
 		esac
 		;;
-	boundary|stop_requested|stopping|stopped) ;;
+	boundary|stop_requested|stopping|stopped|prepared) ;;
 	resume_requested|cancelled|failed|timeout|unsupported|"" ) return 1 ;;
 	*) return 1 ;;
 	esac
+	if [ "$(game_lifecycle_operation 2>/dev/null || true)" = "player_change" ] && [ "$ack_status" = "prepared" ]; then
+		# Freeze only game-owned gates. Common overlay, audio, and encoder stay
+		# alive during a same-game player transaction.
+		_game_lifecycle_pause_improvements "$request_id" || return 2
+		_game_lifecycle_pause_predictions "$request_id" || return 2
+		_game_lifecycle_pause_loop "$request_id" || return 2
+		_game_lifecycle_log "player_change を境界で prepared。commit-player まで次ゲームのみ保留 (request=$request_id)"
+		return 3
+	fi
 	case "$ack_status" in
 	boundary|stop_requested|stopping|stopped)
 		# Boundary acknowledgement only parks the loop.  An explicit stop
@@ -792,6 +1141,23 @@ game_lifecycle_after_game() {
 		;;
 	*) return 1 ;;
 	esac
+}
+
+game_lifecycle_commit_player() {
+	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
+	local request_id output rc
+	request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || return 1
+	[ "$(game_lifecycle_operation 2>/dev/null || true)" = "player_change" ] || return 1
+	output=$(_game_lifecycle_cli commit-player --request-id "$request_id" 2>/dev/null)
+	rc=$?
+	[ "$rc" -eq 0 ] || return "$rc"
+	# Restore only gates created by this request; operator-owned pauses remain.
+	game_lifecycle_restore_predictions "$request_id" || return 2
+	game_lifecycle_restore_improvements "$request_id" || return 2
+	game_lifecycle_restore_loop "$request_id" || return 2
+	printf '%s\n' "$output"
+	return 0
 }
 
 # Explicit irreversible half of a handover.  The coordinator calls this only
@@ -822,6 +1188,10 @@ game_lifecycle_resume_pending() {
 	[ "$GAME_LIFECYCLE_ENABLED" = "1" ] || return 1
 	local status request_id
 	status=$(game_lifecycle_ack_status 2>/dev/null || true)
+	# Recovery restores only the records that carry this request's identity, so
+	# the id must be known before any branch releases a marker.
+	request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+	[ -n "$request_id" ] || request_id=$(_game_lifecycle_json_field "$GAME_LIFECYCLE_DIR/ack.json" request_id 2>/dev/null || true)
 	case "$status" in
 	accepted|waiting)
 		game_lifecycle_after_game
@@ -831,24 +1201,30 @@ game_lifecycle_resume_pending() {
 		# The request was explicitly rolled back (or the live bridge completed an
 		# in-process resume).  Remove only markers created by this handover; an
 		# operator's pre-existing pause remains untouched.
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 1
 		;;
 	resume_requested)
 		# A live bridge may still be clearing its page/audio flags.  Restore the
 		# shell gates now, but never start a fresh game from this recovery path.
-		game_lifecycle_restore_watchdog
-		game_lifecycle_restore_predictions
-		game_lifecycle_restore_improvements
-		game_lifecycle_restore_loop
+		game_lifecycle_restore_watchdog "$request_id"
+		game_lifecycle_restore_predictions "$request_id"
+		game_lifecycle_restore_improvements "$request_id"
+		game_lifecycle_restore_loop "$request_id"
 		return 3
 		;;
 	boundary)
 		# A prior controller may have exited after parking.  Preserve that
 		# park without implicitly converting recovery into a stop.
+		request_id=$(game_lifecycle_request_id 2>/dev/null || true)
+		[ -n "$request_id" ] || return 1
+		_game_lifecycle_pause_loop "$request_id" || return 2
+		return 3
+		;;
+	prepared)
 		request_id=$(game_lifecycle_request_id 2>/dev/null || true)
 		[ -n "$request_id" ] || return 1
 		_game_lifecycle_pause_loop "$request_id" || return 2

@@ -21,6 +21,8 @@ import re
 import sys
 import time
 
+from lib.viewer_chat_cache import monitor_lookback, source_snapshot
+
 source_file, out_file, lookback_raw, mode = sys.argv[1:5]
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -77,12 +79,25 @@ def sanitize_text(line):
 def compact(line):
     return re.sub(r"\s+", " ", sanitize_text(line).strip())[:96]
 
-lookback = max(20, as_int(lookback_raw, 200))
+lookback = monitor_lookback(lookback_raw)
 try:
-    with open(source_file, encoding="utf-8", errors="ignore") as f:
-        raw_lines = f.read().splitlines()
-except Exception:
+    stream = open(source_file, encoding="utf-8", errors="ignore")
+except FileNotFoundError:
+    snapshot = None
     raw_lines = []
+except OSError:
+    # A transient read failure must not publish an empty successful watermark.
+    # Preserve the previous summary and let the next render retry.
+    sys.exit(1)
+else:
+    try:
+        with stream as f:
+            # Record the opened input before read, not the later JSON write time.
+            # Changes during read/publication remain visible to the next refresh.
+            snapshot = source_snapshot(os.fstat(f.fileno()))
+            raw_lines = f.read().splitlines()
+    except OSError:
+        sys.exit(1)
 
 lines = [compact(raw) for raw in raw_lines[-lookback:] if is_observer_comment(raw)]
 recent = lines[-3:]
@@ -90,6 +105,8 @@ latest = recent[-1] if recent else ""
 payload = {
     "epoch": int(time.time()),
     "source": source_file,
+    "source_snapshot": snapshot,
+    "lookback": lookback,
     "latest": latest,
     "recent": recent,
     "count": len(lines),

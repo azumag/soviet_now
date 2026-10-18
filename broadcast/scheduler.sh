@@ -449,9 +449,6 @@ _cancel_game_corner_inflight() {
 
 process_external_audio_triggers() {
 	local game_num="$1" score="$2"
-	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(_last_score)
-	mkdir -p "$MANUAL_AUDIO_TRIGGER_DIR" 2>/dev/null || true
 
 	local max_per_tick="${MANUAL_AUDIO_TRIGGER_MAX_PER_TICK:-3}"
 	case "$max_per_tick" in
@@ -459,9 +456,23 @@ process_external_audio_triggers() {
 	esac
 	[ "$max_per_tick" -lt 1 ] && max_per_tick=1
 
+	# Empty is the normal case. Avoid mkdir + ls + sort + head + _last_score
+	# on every radio worker poll. Bash glob expansion is locale-sorted, matching
+	# the prior sort order for the existing simple .cmd filenames.
+	[ -d "$MANUAL_AUDIO_TRIGGER_DIR" ] || mkdir -p "$MANUAL_AUDIO_TRIGGER_DIR" 2>/dev/null || true
 	local qf processing count=0
-	for qf in $(ls -1 "$MANUAL_AUDIO_TRIGGER_DIR"/*.cmd 2>/dev/null | sort | head -n "$max_per_tick"); do
+	local -a queued=()
+	for qf in "$MANUAL_AUDIO_TRIGGER_DIR"/*.cmd; do
 		[ -f "$qf" ] || continue
+		queued+=("$qf")
+		[ "${#queued[@]}" -ge "$max_per_tick" ] && break
+	done
+	[ "${#queued[@]}" -gt 0 ] || return 0
+
+	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(_last_score)
+
+	for qf in "${queued[@]}"; do
 		processing="${qf%.cmd}.processing"
 		if ! mv "$qf" "$processing" 2>/dev/null; then
 			continue

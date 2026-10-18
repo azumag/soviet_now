@@ -46,6 +46,12 @@ _log() {
 	echo "$line" >>"$LOG_FILE" 2>/dev/null || true
 }
 
+_record_title_sync_skip() {
+    [ -f lib/stream_title_sync.py ] || return 0
+    python3 lib/stream_title_sync.py --record-skip "$1" </dev/null >/dev/null 2>&1 || true
+    return 0
+}
+
 MODE="update"
 case "${1:-}" in
 	--show)    MODE="show" ;;
@@ -121,11 +127,15 @@ except Exception:
     print('')
 ")"
 if [ -z "$CUR_TITLE" ]; then
+	_record_title_sync_skip twitch_read_failed
 	_log "ERROR: failed to fetch current title (resp: $(printf '%s' "$CH_JSON" | head -c 200))"; exit 4
 fi
 _log "current title: $CUR_TITLE"
 
 # --- [dayN] と視聴者向け本文を更新。内部運用メモは公開タイトルへ流さない。 ---
+# The game-switch composer and this daily tick share the same public candidate
+# selection: explicit viewer title -> safe current body -> neutral fallback.
+# Legacy [Game] dayN / free-form DAY n prefixes are normalized by the helper.
 TITLE_HELPER="${STREAM_TITLE_HELPER:-lib/stream_title_public.py}"
 VIEWER_TITLE_FILE="${STREAM_VIEWER_TITLE_FILE:-prompts/viewer_title.md}"
 PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュース・会話に挑戦する実験配信}"
@@ -146,7 +156,23 @@ NEW_TITLE="$(python3 "$TITLE_HELPER" compose \
     exit 1
 }
 
+# Reuse existing credentials only. Per-platform failure must never stop a game
+# switch or a successful Twitch update. The helper emits fixed status enums.
+_sync_other_titles() {
+    case "$MODE" in
+        dryrun) _record_title_sync_skip dry_run; return 0 ;;
+        show) _record_title_sync_skip show_only; return 0 ;;
+    esac
+    if [ "${CATEGORY_ONLY:-0}" = "1" ]; then
+        _record_title_sync_skip category_only
+        return 0
+    fi
+    [ -f lib/stream_title_sync.py ] || return 0
+    printf '%s' "$NEW_TITLE" | python3 lib/stream_title_sync.py || true
+}
+
 if [ "$MODE" = "show" ]; then
+	_record_title_sync_skip show_only
 	_log "show only: would set -> $NEW_TITLE"
 	echo "current: $CUR_TITLE"
 	echo "new    : $NEW_TITLE"
@@ -155,10 +181,12 @@ fi
 
 if [ "$NEW_TITLE" = "$CUR_TITLE" ] && [ "$MODE" != "force" ]; then
 	_log "title already current for day $N; no change needed"
+	_sync_other_titles
 	exit 0
 fi
 
 if [ "$MODE" = "dryrun" ]; then
+	_record_title_sync_skip dry_run
 	_log "dry-run: would PATCH title -> $NEW_TITLE"
 	echo "$NEW_TITLE"
 	exit 0
@@ -175,7 +203,9 @@ HTTP_CODE="$(curl -s --max-time 15 -o /tmp/_stream_title_patch_resp.$$ -w '%{htt
 RESP="$(cat /tmp/_stream_title_patch_resp.$$ 2>/dev/null)"; rm -f /tmp/_stream_title_patch_resp.$$ 2>/dev/null
 if [ "$HTTP_CODE" = "204" ]; then
 	_log "OK: title updated -> $NEW_TITLE"
+	_sync_other_titles
 	exit 0
 fi
+_record_title_sync_skip twitch_update_failed
 _log "ERROR: PATCH failed (HTTP $HTTP_CODE): $(printf '%s' "$RESP" | head -c 300)"
 exit 4

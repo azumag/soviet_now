@@ -3628,7 +3628,6 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
 
     def test_stream_bug_reports_are_queued_for_codex_dispatch(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
-        classifier = (REPO_ROOT / "prompts/comment_classifier.md").read_text()
         comment = (REPO_ROOT / "broadcast/comment.sh").read_text()
         dispatcher = (REPO_ROOT / "codex_bug_dispatcher.sh").read_text()
         chat_worker = (REPO_ROOT / "workers/chat_worker.sh").read_text()
@@ -3637,23 +3636,11 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("CODEX_BUG_DISPATCH_ENABLED", config)
         self.assertIn("CODEX_BUG_QUEUE_DIR", config)
         self.assertIn("CODEX_BUG_DISPATCH_MIN_INTERVAL_SEC", config)
-        self.assertIn("stream_bug_report", classifier)
         self.assertIn("_queue_stream_bug_reports_from_classification()", comment)
         self.assertIn('item.get("category") != "stream_bug_report"', comment)
         self.assertIn("配信不具合レポートをCodexキューへ追加", comment)
-        self.assertIn('"音楽"', comment)
-        self.assertIn('"無音"', comment)
-        self.assertIn("なし|無し", comment)
-        self.assertIn("でなくなる", comment)
-        self.assertIn("無音になってる？", classifier)
-        self.assertIn("ゲーム音なし", classifier)
-        self.assertIn("すぐゲーム音でなくなるね", classifier)
-        self.assertIn("動いてねえんだわ", classifier)
-        self.assertIn('"動いてねえ"', comment)
-        self.assertIn("動いてね[えぇ]", comment)
-        self.assertIn('"record"', comment)
-        self.assertIn("いつもと違う", comment)
-        self.assertIn("Record showing 0", classifier)
+        # The stream-bug vocabulary that decides the category is docich's
+        # (azumag/docich comment_classifier golden); this repo only consumes it.
         self.assertIn("codex exec -C", dispatcher)
         self.assertIn("./codex_work_indicator.sh start", dispatcher)
         self.assertIn("./codex_work_indicator.sh stop", dispatcher)
@@ -12816,8 +12803,10 @@ PY
         self.assertIn("find_archive_path", status)
         self.assertIn("anchor_russia", status)
         self.assertIn("anchor_soviet", status)
-        self.assertIn("opencode thinking", status)
-        self.assertIn("Continue if you have next steps", status)
+        status_filter = (REPO_ROOT / "lib/status_ai_output_filter.pl").read_text()
+        self.assertIn("status_ai_output_filter.pl", status)
+        self.assertIn("opencode thinking", status_filter)
+        self.assertIn("Continue if you have next steps", status_filter)
 
     def test_wildcard_progress_milestones_are_reported_to_audio(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -13024,8 +13013,18 @@ PY
 
         self.assertIn("repair_strategy_to_active_branch_head_if_needed()", eloop)
         self.assertIn('data.get("head_hash")', eloop)
-        self.assertIn('${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}/${expected_hash}.py', eloop)
-        self.assertIn('${STRATEGY_HASH_PERMANENT_ARCHIVE_DIR:-strategy_versions_archive/by_hash}/${expected_hash}.py', eloop)
+        # Phase A (docich#392): 候補解決（`.py.gz` → `.py`、作業 → 永久アーカイブ）は
+        # 共有 reader helper に集約した。ここでは委譲と呼び出し契約を固定する。
+        self.assertIn("strategy_archive_resolve_plaintext \"$expected_hash\"", eloop)
+        archive_helper = (REPO_ROOT / "lib" / "strategy_archive.sh").read_text()
+        self.assertIn(
+            'strategy_archive_dir_candidates "${STRATEGY_HASH_ARCHIVE_DIR:-strategy_versions/by_hash}" "$hash"',
+            archive_helper,
+        )
+        self.assertIn(
+            'strategy_archive_dir_candidates "$STRATEGY_HASH_PERMANENT_ARCHIVE_DIR" "$hash"',
+            archive_helper,
+        )
         self.assertIn("_strategy_source_has_invalid_structural_wildcard", eloop)
         self.assertIn("fallback to best", eloop)
         self.assertIn("_clear_active_branch", eloop)

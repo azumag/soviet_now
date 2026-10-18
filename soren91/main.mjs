@@ -9,20 +9,34 @@
 import 'dotenv/config';
 import { performance } from 'node:perf_hooks';
 import { statSync } from 'node:fs';
-import { createCanvasIO, boundedMs, probeBudget, postDropProbeEnabled } from './realtime_io.mjs';
+import {
+  createCanvasIO,
+  boundedMs,
+  probeBudget,
+  postDropProbeEnabled,
+  captureTimeoutMs,
+  captureErrorBackoffMs,
+  captureErrorLimit,
+  captureImageFormat,
+  captureJpegQuality,
+} from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
+import { createHoldEscapePolicy, markDropSent as markObservationDropSent,
+  usableCalibration } from './observation_guard.mjs';
+import { rejectedFrameReason, saveRejectedFrame } from './rejected_frame_diagnostics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
 import { waitForInlineRails } from './presentation_ready.mjs';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync, execFile, spawn } from 'child_process';
+import { execSync, execFile, execFileSync, spawn } from 'child_process';
 import {
   computeStrategyHashFromFile,
   recordCompletedGame,
   snapshotCurrentStrategyForGame,
 } from './lineage.mjs';
+import { archiveLatestHistory } from './archive_partial_history.mjs';
 import { archiveCriticalTurnScreenshots } from './critical_turn_screenshots.mjs';
 import {
   installDirectGameStage,
@@ -40,6 +54,7 @@ async function loadModule(name) {
 // comment.mjs は実行中に変化しないので、ビート判定用に一度だけ読み込んで使い回す
 // 内容が変わるモジュールだけ更新時に再importする。
 let commentModulePromise = null;
+let sharpModulePromise = null;
 function loadCommentModule() {
   if (!commentModulePromise) {
     const url = new URL('./comment.mjs', `file://${process.cwd()}/`).href;
@@ -47,6 +62,16 @@ function loadCommentModule() {
   }
   return commentModulePromise;
 }
+
+async function copyScreenshotAsPng(sourcePath, destinationPath) {
+  if (!sharpModulePromise) {
+    sharpModulePromise = import('sharp').then(mod => mod.default || mod)
+      .catch(err => { sharpModulePromise = null; throw err; });
+  }
+  const sharp = await sharpModulePromise;
+  await sharp(sourcePath).png().toFile(destinationPath);
+}
+
 // ラウンド固定の戦略スナップショットは不変。同一URLの再評価・蓄積を避ける。
 async function loadStrategy(strategyPath = './strategy.mjs') {
   const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
@@ -77,16 +102,60 @@ async function loadStrategy(strategyPath = './strategy.mjs') {
   });
 });
 
+// --- 停止フラグの所有権レコード (lib/mute_flag.py) ---
+// runner (run_player_loop.sh) が開始した世代に、このプロセスの pid を owner として
+// join する。main が強制終了 (SIGKILL) された場合でも、bridge (soviet_local.mjs) が
+// 「全 owner 死亡」を実証できなければレコードは解除されない (fail-closed)。
+// leave は正常終了時のみ: 解除は owner の leave か bridge の実証済み reap だけ。
+const MUTE_FLAG_TOKEN = process.env.SOREN91_MUTE_TOKEN || '';
+const MUTE_FLAG_PATH = process.env.SOREN91_MUTE_FLAG || '';
+const MUTE_FLAG_HELPER = process.env.SOREN91_MUTE_HELPER
+  || join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'mute_flag.py');
+let muteFlagOwnerLeft = false;
+
+function muteFlagOwnerCommand(args) {
+  if (!MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return '';
+  try {
+    return execFileSync('python3', [MUTE_FLAG_HELPER, ...args, '--flag', MUTE_FLAG_PATH],
+      { encoding: 'utf-8', timeout: 5000 }).trim();
+  } catch (err) {
+    return '';
+  }
+}
+
+function muteFlagOwnerJoin() {
+  if (!MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return;
+  const out = muteFlagOwnerCommand(['join', '--token', MUTE_FLAG_TOKEN, '--role', 'main',
+    '--pid', String(process.pid)]);
+  if (out && out.includes('"ok": true')) {
+    console.log('[main] mute ownership record: joined as main owner');
+  } else {
+    console.log(`[main] mute ownership record: join failed (${out || 'no output'})`);
+  }
+}
+
+function muteFlagOwnerLeave() {
+  if (muteFlagOwnerLeft || !MUTE_FLAG_TOKEN || !MUTE_FLAG_PATH) return;
+  muteFlagOwnerLeft = true;
+  muteFlagOwnerCommand(['leave', '--token', MUTE_FLAG_TOKEN, '--role', 'main',
+    '--pid', String(process.pid)]);
+}
+
+// 異常終了でも owner を残さない (残っても dead owner として reap 対象になるだけ)。
+process.on('exit', () => muteFlagOwnerLeave());
+
 // --- 定数 ---
 const GAME_URL = 'https://unityroom.com/games/sorengame91';
 const PLAYER_NAME = 'DoCiAI:US';
 const SCREENSHOT_DIR = 'tmp/screenshots';
 const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
+const DROP_OBSERVATION_DELAY_MS = 800; // Observe near the end of the existing spawn animation, retaining two-frame confirmation.
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
+// Centre of the calibrated drop area (game x is -3..3). Used only by the
+// bounded recognition-hold escape, never instead of a strategy decision.
+const HOLD_ESCAPE_X = 0;
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
-const CALIBRATION_MIN_CONFIDENCE = 0.55;
-const CALIBRATION_MIN_PIECES = 3;
 const MIN_RANKING_DETECTION_TURNS = 10;
 const MIN_RANKING_FALLBACK_COMMENT_TURNS = 20;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
@@ -138,31 +207,53 @@ const DIRECT_OVERLAY_CONFIG = loadDirectOverlayConfig(
 );
 const OUTPUT_WIDTH = DIRECT_OVERLAY_CONFIG.stage?.outputWidth || DEFAULT_VIEWPORT_WIDTH;
 const OUTPUT_HEIGHT = DIRECT_OVERLAY_CONFIG.stage?.outputHeight || DEFAULT_VIEWPORT_HEIGHT;
+const CAPTURE_IMAGE_FORMAT = captureImageFormat();
+const CAPTURE_JPEG_QUALITY = captureJpegQuality();
+const SCREENSHOT_EXTENSION = CAPTURE_IMAGE_FORMAT === 'jpeg' ? 'jpg' : 'png';
+const REJECTED_FRAME_DIAGNOSTICS_ENABLED = process.env.SOREN91_REJECT_FRAME_DIAGNOSTICS === '1';
 
 const canvasIO = createCanvasIO();
 
 async function captureGameScreenshot(page, path, options = {}) {
   const timeoutMs = Math.min(
-    boundedMs(process.env.SOREN91_CAPTURE_TIMEOUT_MS, 3000),
+    captureTimeoutMs(),
     options.timeoutMs ?? Infinity,
   );
   if (!(timeoutMs > 0)) throw new Error('capture-budget-exhausted');
+  // The path is part of the evidence contract: never write JPEG bytes under a
+  // .png name. Hot gameplay frames use SCREENSHOT_EXTENSION (.jpg remotely),
+  // while title/ranking artifacts that are explicitly .png remain PNG.
+  const lowerPath = String(path).toLowerCase();
+  const imageFormat = /\.jpe?g$/.test(lowerPath) ? 'jpeg'
+    : /\.png$/.test(lowerPath) ? 'png'
+    : CAPTURE_IMAGE_FORMAT;
+  const captureOptions = { timeoutMs, type: imageFormat };
+  if (imageFormat === 'jpeg') captureOptions.quality = CAPTURE_JPEG_QUALITY;
   if (process.env.SOREN91_CAPTURE_MODE !== 'locator') {
-    const frame = await canvasIO.capture(page, { timeoutMs });
+    const frame = await canvasIO.capture(page, captureOptions);
     // Only a completed, geometry-checked canvas frame reaches disk/the analyzer.
     writeFileSync(path, frame.buffer);
     return frame;
   }
   const canvas = page.locator('canvas').first();
-  await canvas.screenshot({ path, timeout: timeoutMs });
+  const locatorOptions = { path, timeout: timeoutMs, type: imageFormat };
+  if (imageFormat === 'jpeg') locatorOptions.quality = CAPTURE_JPEG_QUALITY;
+  await canvas.screenshot(locatorOptions);
   return null;
 }
 
 async function inputCanvasBox(page, calibration, frame) {
   if (frame) {
-    return canvasIO.validateInput(page, frame, calibration, {
-      maxAgeMs: boundedMs(process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS, 4000, 500, 10000),
-    });
+    // Leave maxAgeMs unset by default so realtime_io can scale the freshness
+    // budget from this frame's measured remote-capture cost. A fixed 4s budget
+    // made captures slower than ~4s fail immediately before input, which then
+    // triggered the exponential error backoff and stretched drop cadence into
+    // tens of seconds. Operators can still force a bounded override explicitly.
+    const configuredMaxAgeMs = process.env.SOREN91_INPUT_MAX_FRAME_AGE_MS;
+    const options = configuredMaxAgeMs != null && String(configuredMaxAgeMs).trim() !== ''
+      ? { maxAgeMs: boundedMs(configuredMaxAgeMs, 4000, 500, 10000) }
+      : {};
+    return canvasIO.validateInput(page, frame, calibration, options);
   }
   const canvas = await page.$('canvas');
   if (!canvas) throw new Error('Canvas not found');
@@ -403,6 +494,9 @@ async function cleanupRuntime(reason = 'normal') {
     try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
     try { unlinkSync(SOREN91_READY_FILE); } catch {}
     clearSoren91ModeFlag();
+
+    // 停止フラグの所有権レコードから抜ける (未接続で終了する経路も含む)。
+    muteFlagOwnerLeave();
 
     if (!browser) return;
 
@@ -1109,6 +1203,9 @@ async function main() {
   }
   cleanupCompletedRankingCommentClaims();
 
+  // 停止フラグの所有権レコードに owner として参加 (browser 接続前に join する)。
+  muteFlagOwnerJoin();
+
   // Step 1: トップページHTMLからゲームURLを取得
   console.log('[main] Fetching game URL...');
   const gameUrl = await fetchGameUrl();
@@ -1470,21 +1567,37 @@ async function fetchGameUrl() {
  */
 async function gameLoop(page, calibration, gameNumber) {
   let historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
+  // A (re)started process always resets turn/session state to zero, so a
+  // pre-existing latest_N left by the previous process is a different logical
+  // session. Move it aside as abandoned evidence (never append turn=0 onto
+  // it) so the completed game_N history stays a single contiguous session.
+  // Direct main.mjs launches bypass the runner-level archival in
+  // run_player_loop.sh; gameplay decision logic is untouched.
+  try {
+    const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
+    if (archived) {
+      console.log(`[game] Archived pre-existing partial history before session start: ${archived} (game #${gameNumber} starts fresh)`);
+    }
+  } catch (err) {
+    console.log(`[game] Refusing session start: pre-existing history for game #${gameNumber} is unsafe (${err.message})`);
+    throw err;
+  }
   let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
   let lastDropTime = -Infinity;
   const latency = new LoopMetrics({
     write: value => writeMetricsAtomically('tmp/state/soren91_loop_metrics.json', value),
   });
+  // Bounded escape for a persistent recognition hold (docich#414).
+  const holdEscape = createHoldEscapePolicy(process.env);
   let consecutiveErrors = 0;
   let waitingLogged = false;
   let waitingCount = 0;
-  let calibrated = false;
-  let moveCount = 0;
   let roundEnded = false;
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
   let rankingDetected = false;
+  let roundResultConfirmed = false;
   let rankingBurstCaptured = false;
   let pendingGameOver = null;
   let midgameCommentSent = false;
@@ -1506,7 +1619,15 @@ async function gameLoop(page, calibration, gameNumber) {
   while (true) {
     latency.begin(gameNumber, turn);
     let loopOutcome = 'observe';
+    let gameoverDetectedThisTurn = false;
     try {
+      const spawnWait = DROP_OBSERVATION_DELAY_MS - (performance.now() - lastDropTime);
+      if (spawnWait > 0) await latency.measure('cooldown', () => sleep(spawnWait));
+      // One gameplay-loop attempt starts here. The state-check interval below is
+      // a cadence FLOOR measured from this point, not a wait added on top of the
+      // work: one remote capture already costs seconds, so sleeping the whole
+      // POLL_INTERVAL_MS after it only inflates the drop interval.
+      const iterationStartedAt = performance.now();
       if (existsSync('tmp/stop')) {
         if (pendingGameOver) await pendingGameOver;
         console.log('[game] Stop requested, exiting main loop');
@@ -1515,7 +1636,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // Observe during cooldown; never carry an early frame across a long sleep to input.
       // スクリーンショット取得
-      const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.png`);
+      const screenshotPath = join(SCREENSHOT_DIR, `turn_${String(turn).padStart(4, '0')}.${SCREENSHOT_EXTENSION}`);
       const observation = await latency.measure('capture', () => captureGameScreenshot(page, screenshotPath));
 
       // 盤面解析
@@ -1524,15 +1645,35 @@ async function gameLoop(page, calibration, gameNumber) {
         return analyzeScreenshot(screenshotPath, calibration);
       });
       latency.observe(boardState);
+      const rejectedReason = rejectedFrameReason(boardState.state, boardState.perception?.reason);
+      if (rejectedReason) {
+        try {
+          saveRejectedFrame({
+            enabled: REJECTED_FRAME_DIAGNOSTICS_ENABLED,
+            game: gameNumber,
+            turn,
+            sessionId: latency.profileSession,
+            reason: rejectedReason,
+            observation,
+            boardConfidence: boardState.confidence,
+            currentPieceConfidence: boardState.next?.confidence,
+          });
+        } catch {
+          // Best-effort diagnostics must never alter the gameplay observation loop.
+        }
+      }
       // ランク追跡
       if (boardState.rank != null) lastKnownRank = boardState.rank;
-      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}`);
+      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}, reason=${boardState.perception?.reason ?? '?'}, trans=${boardState.perception?.queueTransition ?? '?'}, gapMs=${Math.round(boardState.perception?.frameGapMs ?? -1)}`);
 
-      // soren91 では GAMEOVER を独立終了イベントにせず、
-      // WAITING/ランキング遷移として既存のラウンド終了ロジックに流す。
+      // soren91 では GAMEOVER を WAITING と同等に扱いながら、
+      // state は GAMEOVER のまま記録する (docich issue #2061 / S1)。
+      // lib/game_terminal.is_terminal が state == "GAMEOVER" を既に acceptance するため、
+      // ここで代入を WAITING に書き換えてしまうと terminal が indefinitely
+      // 止まってしまう。ラウンド終了ロジックだけ WAITING と等価にする。
       if (boardState.state === 'GAMEOVER') {
-        console.log(`[game] GAMEOVER detected at turn ${turn}, treating as WAITING transition`);
-        boardState.state = 'WAITING';
+        console.log(`[game] GAMEOVER detected at turn ${turn}, recording state=GAMEOVER`);
+        gameoverDetectedThisTurn = true;
       }
 
       if (turn >= MIN_RANKING_DETECTION_TURNS && boardState.state === 'MOVE') {
@@ -1541,7 +1682,7 @@ async function gameLoop(page, calibration, gameNumber) {
           const activeRankResult = await latency.measure('ranking', () => detectRankingScreen(screenshotPath));
           if (activeRankResult != null && activeRankResult > 0) {
             const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-            try { copyFileSync(screenshotPath, rkPath); } catch {}
+            try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
             lastKnownRank = activeRankResult;
             boardState.rank = activeRankResult;
             boardState.state = 'WAITING';
@@ -1549,6 +1690,7 @@ async function gameLoop(page, calibration, gameNumber) {
               console.log(`[game] Active ranking screen detected before move: rank=${activeRankResult}`);
             }
             rankingDetected = true;
+            roundResultConfirmed = true;
           }
         } catch (e) {
           console.log(`[game] Active ranking detection error: ${e.message}`);
@@ -1556,9 +1698,13 @@ async function gameLoop(page, calibration, gameNumber) {
       }
 
       // 待機画面 (ランキング/接続中/タイトル画面)
-      if (boardState.state === 'WAITING') {
+      // S1: GAMEOVER も WAITING と等価に回る (state 自体は GAMEOVER のまま保持)。
+      if (boardState.state === 'WAITING'
+          || boardState.state === 'GAMEOVER'
+          || gameoverDetectedThisTurn) {
+        holdEscape.observe('non-move', Date.now()); // READY/matchmaking breaks a consecutive recognition hold.
         waitingCount++;
-        if (awaitingFreshRoundAfterResult) {
+  if (awaitingFreshRoundAfterResult) {
           interRoundWaitingSeen = true;
         }
 
@@ -1568,17 +1714,27 @@ async function gameLoop(page, calibration, gameNumber) {
             console.log(`[game] Connection error screen detected; abandoning game #${gameNumber} without ranking comment`);
             await recoverFromConnectionError(page);
             if (turn > 0 || existsSync(historyFile)) {
-              try { unlinkSync(historyFile); } catch {}
+              // Abandoned partials stay available as retained evidence under
+              // the normal retention window instead of being silently deleted.
+              // Turn/gameNumber reset below is unchanged (gameplay untouched).
+              try {
+                const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
+                if (archived) {
+                  console.log(`[game] Abandoned partial history preserved: ${archived} (game #${gameNumber})`);
+                }
+              } catch (err) {
+                console.log(`[game] Partial history archival failed for game #${gameNumber}: ${err.message}`);
+              }
               gameNumber++;
               historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
               currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+              holdEscape.reset(); // Bounded per round: a new round starts fresh.
               console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
             }
             turn = 0;
-            calibrated = false;
-            moveCount = 0;
             lastKnownRank = null;
             rankingDetected = false;
+            roundResultConfirmed = false;
             roundEnded = false;
             waitingCount = 0;
             waitingLogged = false;
@@ -1605,7 +1761,7 @@ async function gameLoop(page, calibration, gameNumber) {
             // ゲーム1につき最大6枚、リング上書き。SOREN91_RANKDIAG=0 で無効化。
             if (process.env.SOREN91_RANKDIAG !== '0' && turn > 5 && waitingCount >= 1 && waitingCount <= 6) {
               try {
-                copyFileSync(screenshotPath, join('tmp/summaries',
+                await copyScreenshotAsPng(screenshotPath, join('tmp/summaries',
                   `_rankdiag_g${String(gameNumber).padStart(4, '0')}_w${waitingCount}_r${rankResult ?? 'null'}.png`));
               } catch {}
             }
@@ -1614,17 +1770,19 @@ async function gameLoop(page, calibration, gameNumber) {
               // rankResult > 0 なら正確な値で確定、-1 は星なし(late pathで再試行)
               if (rankResult > 0) {
                 // 確定順位つきのフレームは最も価値が高いので保存する
-                try { copyFileSync(screenshotPath, rkPath); } catch {}
+                try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
                 lastKnownRank = rankResult;
                 if (!rankingDetected) {
                   console.log(`[game] RANKING screen detected! rank=${rankResult}`);
                 }
                 rankingDetected = true;
+                // 起動時や前試合の結果画面を、新試合の終了証拠にしない。
+                if (turn > 0) roundResultConfirmed = true;
               } else if (!rankingDetected) {
                 // 不完全なランキング候補は最初の1枚だけ残す。
                 // 後続の白フェード/遷移フレームで有用な画像を上書きしない。
                 if (!existsSync(rkPath)) {
-                  try { copyFileSync(screenshotPath, rkPath); } catch {}
+                  try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
                 }
                 console.log(`[game] RANKING screen detected (star not yet visible)`);
               }
@@ -1642,6 +1800,7 @@ async function gameLoop(page, calibration, gameNumber) {
               if (burstResult.detectedRank != null) {
                 lastKnownRank = burstResult.detectedRank;
                 rankingDetected = true;
+                roundResultConfirmed = burstResult.detectedRank > 0;
               }
             } catch (e) {
               console.log(`[game] Ranking transition burst error: ${e.message}`);
@@ -1649,14 +1808,16 @@ async function gameLoop(page, calibration, gameNumber) {
           }
         }
 
-        // ラウンド終了判定: 十分に進んだゲームで連続6回以上WAITINGが続いたらラウンド終了
-        // (ランキング画面が完全に表示されるまで待つため、3→6に増加)
-        if (turn >= MIN_RANKING_DETECTION_TURNS && waitingCount >= 6 && !roundEnded) {
+        // 確定したランキングは10手未満の試合でも終了証拠になる。
+        // 順位不明のWAITINGだけの場合は従来の手数条件を維持する。
+        const confirmedShortRound = turn > 0 && roundResultConfirmed;
+        if ((turn >= MIN_RANKING_DETECTION_TURNS || confirmedShortRound)
+            && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
-          // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
+          // 履歴と結果を保存 (非同期 — ゲームループをブロックしない)
           const finishedSnapshot = currentStrategySnapshot;
           pendingGameOver = handleGameOver(page, gameNumber, turn, boardState, historyFile, finishedSnapshot)
             .catch(e => console.error('[game] Post-game error:', e.message))
@@ -1667,19 +1828,22 @@ async function gameLoop(page, calibration, gameNumber) {
           gameNumber++;
           historyFile = nextHistoryFile;
           currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+          holdEscape.reset(); // Bounded per round: a new round starts fresh.
           console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;
-          calibrated = false;
-          moveCount = 0;
+          holdUsedThisTurn = false;
           lastKnownRank = null;
           rankingDetected = false;
+          roundResultConfirmed = false;
           rankingBurstCaptured = false;
           midgameCommentSent = false;
           roundStartedAt = null;
           startBeatSent = false;
           pinchBeatSent = false;
           awaitingFreshRoundAfterResult = true;
-          interRoundWaitingSeen = false;
+          // 終了を確定した現在のWAITINGも観測済み。次のフレームがMOVEでも
+          // 進めるように保持し、古いランキング画面は後段で引き続き除外する。
+          interRoundWaitingSeen = true;
 
 
           // 定時ラジオチェック (親プロジェクトの時刻ベースコーナーをメリケンAIペルソナで実行)
@@ -1716,7 +1880,7 @@ async function gameLoop(page, calibration, gameNumber) {
               const prevGameNum = gameNumber - 1;
               // ランキングスクリーンショット保存
               const rkPath = join('tmp/summaries', `ranking_${String(prevGameNum).padStart(4, '0')}.png`);
-              try { copyFileSync(screenshotPath, rkPath); } catch {}
+              try { await copyScreenshotAsPng(screenshotPath, rkPath); } catch {}
               // ゲームサマリーにランクを追記 (星検出はOCRより信頼性が高いため上書き可)
               const summaryPath = join('tmp/summaries', `game_${String(prevGameNum).padStart(4, '0')}.json`);
               if (existsSync(summaryPath)) {
@@ -1784,33 +1948,57 @@ async function gameLoop(page, calibration, gameNumber) {
       waitingCount = 0;
       roundEnded = false;
 
-      // MOVE状態が安定してからキャリブレーション (初回のみ)
-      if (!calibrated) {
-        const shouldAcceptForCalibration =
-          (boardState.pieces?.length ?? 0) >= CALIBRATION_MIN_PIECES &&
-          (
-            (boardState.confidence ?? 0) >= CALIBRATION_MIN_CONFIDENCE ||
-            calibration?.provisional === true
-          );
-        if (shouldAcceptForCalibration) {
-          moveCount++;
-        } else {
-          moveCount = 0;
-        }
-        if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
-          console.log('[game] Game board stable, running calibration...');
-          const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
-          await latency.measure('capture', () => captureGameScreenshot(page, calScreenshot));
-          const { calibrate } = await loadModule('./calibration.mjs');
-          calibration = await calibrate(calScreenshot);
-          calibrated = true;
-          continue; // Re-observe with the new calibration; the old board/frame is not compatible.
-        }
-      }
-
+      // analyzeScreenshot validates the world/HUD anchors before the first
+      // input and recalibrates incompatible geometry. A second pieces>=3 path
+      // could replace valid anchors while pieces or garbage were moving.
       // MOVE状態でない場合は待機
       if (boardState.state !== 'MOVE') {
-        await latency.measure('poll', () => sleep(POLL_INTERVAL_MS));
+        // A persistent recognition hold would otherwise hold every observation
+        // forever: no input means the frame never changes (measured 12 frames
+        // and 93s until the round ended, docich#414). `unknown-current` is only
+        // reported for a healthy calibration and board, the hold must be
+        // uninterrupted, and the policy bounds how often this can happen. The
+        // click still goes through the normal pre-input geometry validation.
+        const holdReason = boardState.perception?.reason;
+        const frameWidth = observation?.width;
+        const frameHeight = observation?.height;
+        const escapeFrameHealthy = Number.isInteger(frameWidth) && Number.isInteger(frameHeight)
+          && usableCalibration(calibration, frameWidth, frameHeight);
+        // Feed every rejected observation to the policy. Short-circuiting on
+        // unknown-current accumulated non-consecutive holds across settling
+        // or invalid geometry, contrary to the bounded escape contract.
+        const escapeDue = holdEscape.observe(escapeFrameHealthy ? holdReason : 'uncalibrated', Date.now());
+        if (holdReason === 'unknown-current' && escapeFrameHealthy && escapeDue) {
+          console.log(`[game] Recognition hold escape: reason=${holdReason} -> fallback drop x=${HOLD_ESCAPE_X}`);
+          await latency.measure('input', () => executeDrop(page, HOLD_ESCAPE_X, calibration, observation));
+          holdUsedThisTurn = false;
+          lastDropTime = performance.now();
+          latency.dropSent();
+          loopOutcome = 'drop-sent';
+          appendFileSync(historyFile, JSON.stringify({
+            turn,
+            timestamp: new Date().toISOString(),
+            state: boardState,
+            decision: { x: HOLD_ESCAPE_X, reason: 'recognition-hold-fallback', hold: false },
+          }) + '\n');
+          turn++;
+          try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
+          consecutiveErrors = 0;
+          if (existsSync('tmp/stop')) {
+            if (pendingGameOver) await pendingGameOver;
+            console.log('[game] Stop requested after fallback drop, exiting');
+            return;
+          }
+          continue;
+        }
+        // Sleep only the remainder of this iteration's state-check interval. A
+        // remote capture already costs seconds, so adding the full
+        // POLL_INTERVAL_MS on top of it is pure added latency (measured poll
+        // stage ~0.6s per drop interval across three re-observations). The
+        // stability gate and every classification are untouched: this only
+        // stops paying the interval twice.
+        const pollRemainderMs = Math.max(0, POLL_INTERVAL_MS - (performance.now() - iterationStartedAt));
+        await latency.measure('poll', () => sleep(pollRemainderMs));
         continue;
       }
 
@@ -1848,6 +2036,7 @@ async function gameLoop(page, calibration, gameNumber) {
       lastDropTime = performance.now();
       latency.dropSent();
       loopOutcome = 'drop-sent';
+      holdEscape.noteDrop(); // A real decision ends the recognition-hold stretch.
 
       if (!rankingDetected && turn >= MIN_RANKING_DETECTION_TURNS) {
         try {
@@ -1942,12 +2131,15 @@ async function gameLoop(page, calibration, gameNumber) {
       consecutiveErrors++;
       console.error(`[game] Error (${consecutiveErrors}):`, err.message);
 
-      if (consecutiveErrors > 10) {
+      if (consecutiveErrors > captureErrorLimit()) {
         console.error('[game] Too many consecutive errors, stopping');
         return;
       }
 
-      await sleep(1000);
+      // Transient remote-capture slowness must not end the corner: back off
+      // (bounded) and keep observing. 2026-09-29: 11 consecutive
+      // capture-timeouts stopped the bot for the rest of the run.
+      await sleep(captureErrorBackoffMs(consecutiveErrors));
     } finally {
       latency.flush(loopOutcome);
     }
@@ -1982,7 +2174,10 @@ async function executeDrop(page, gameX, calibration, frame = null) {
   const { board } = calibration;
   const pixelY = board.top + Math.floor(board.height * 0.18);
 
-  const box = await inputCanvasBox(page, calibration, frame);
+  // The capture already verified its geometry before+after the image transfer.
+  // Reuse that geometry for pointer aiming, then perform exactly one fresh
+  // remote geometry/freshness validation immediately before the click.
+  const box = frame ? canvasIO.frameBox(frame, calibration) : await inputCanvasBox(page, calibration, frame);
   const sx = frame ? box.width / frame.width : 1;
   const sy = frame ? box.height / frame.height : 1;
   const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, box.x + pixelX * sx));
@@ -1998,6 +2193,9 @@ async function executeDrop(page, gameX, calibration, frame = null) {
   if (frame) await inputCanvasBox(page, calibration, frame);
   // クリックでドロップ実行
   await page.mouse.click(clickX, clickY);
+  // Arm exactly one post-drop observation boundary. The guard only uses this
+  // after an actual sent click; failed validation/aiming can never create it.
+  markObservationDropSent(calibration);
 }
 
 /**

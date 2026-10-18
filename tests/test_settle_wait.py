@@ -90,7 +90,8 @@ class SettleWaitTest(unittest.TestCase):
         with mock.patch.multiple(sr, POLL_INTERVAL=0.0, MOVE_TIMEOUT=0.0, STOP_FILE="/nonexistent/soren-stop-file"), \
              mock.patch.object(sr, "load_game_state", lambda: next(seq, _gs([0.0], state="DROP"))):
             gs, ok = sr.wait_for_move_state()
-        self.assertTrue(ok)
+        self.assertFalse(ok)
+        self.assertEqual(gs["state"], "DROP")
         self.assertEqual(sr._LAST_SETTLE, {})
 
     def test_gameover_returns_false(self):

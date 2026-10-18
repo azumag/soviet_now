@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -101,6 +102,42 @@ const VISIBLE_SEC = 18;
 });
 
 
+test('broadcast state publishes only bounded finite direct-stream system metrics', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-broadcast-system-metrics-'));
+  const status = path.join(temp, 'status.json');
+  fs.writeFileSync(status, JSON.stringify({ system_metrics: {
+    sampled_at: 1780000000,
+    cpu_percent: 44.4,
+    memory_percent: 65,
+    memory_used_bytes: 6500,
+    memory_total_bytes: 10000,
+    history: Array.from({ length: 50 }, (_, index) => ({
+      ts: 1780000000 - index,
+      cpu_percent: index === 49 ? Number.NaN : index,
+      memory_percent: index === 48 ? 120 : 60,
+    })),
+    private_path: temp,
+  } }));
+  const state = buildDirectBroadcastOverlayState({
+    sources: { directStreamStatusFile: status },
+  }, 1780000000123);
+  assert.deepEqual(state.feeds.systemMetrics, {
+    sampledAt: 1780000000,
+    cpuPercent: 44.4,
+    memoryPercent: 65,
+    memoryUsedBytes: 6500,
+    memoryTotalBytes: 10000,
+    history: Array.from({ length: 36 }, (_, index) => ({
+      ts: 1780000000 - (index + 14),
+      cpuPercent: index === 35 ? null : index + 14,
+      memoryPercent: index === 34 ? null : 60,
+    })),
+  });
+  assert.doesNotMatch(JSON.stringify(state.feeds.systemMetrics), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
 test('broadcast overlay owns the 720p data regions and never reloads or nests legacy frames', () => {
   const html = fs.readFileSync(BROADCAST_HTML, 'utf8');
   assert.match(html, /id="broadcast-sidebar"/);
@@ -120,6 +157,25 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /id="feed-s"/);
   assert.match(html, /id="feed-i"/);
   assert.match(html, /id="feed-i-status"/);
+  assert.match(html, /GAME \+ OPS/);
+  assert.match(html, /GAME STATS/);
+  assert.match(html, /OPS HEALTH/);
+  assert.match(html, /ops-system-metrics/);
+  assert.match(html, /updateOpsSystemMetrics\(feedS, state\?\.feeds\?\.systemMetrics\)/);
+  assert.match(html, /status\.textContent = valid \? \(trend\.range \|\|/);
+  assert.match(html, /timestamp - first/);
+  assert.match(html, /Any missing or untimed sample keeps its time bucket as a gap/);
+  assert.match(html, /STALE/);
+  assert.match(html, /data-broadcast-overlay-version="4"/);
+  assert.match(html, /id="feed-g-state"/);
+  assert.match(html, /id="feed-s-state"/);
+  assert.match(html, /Broadcast status hierarchy v4/);
+  assert.match(html, /feed-line[.]ops-primary/);
+  assert.match(html, /feed-line[.]ops-alert/);
+  assert.match(html, /feed-line[.]game-primary/);
+  assert.match(html, /HEALTH/);
+  assert.match(html, /ACTIVITY/);
+  assert.doesNotMatch(html, /G \+ STATUS/);
   assert.match(html, /panel-i/);
   assert.match(html, /data-improve-active="1"/);
   assert.match(html, /badge-i/);
@@ -327,6 +383,7 @@ async function runBroadcastOverlayScript(initialState) {
     'prediction-round': new FakeElement('div'),
     'gen-top': new FakeElement('div'),
     'feed-g': new FakeElement('div'),
+    'hanjuku-gap': new FakeElement('div'),
     'feed-s': new FakeElement('div'),
     'feed-i': new FakeElement('div'),
     'feed-g-lines': new FakeElement('span'),
@@ -726,7 +783,7 @@ test('top summary shows how many games remain while an A/B is running', async ()
     'remaining games must be visible in the top rail',
   );
   assert.ok(!summaryTexts.some((text) => /Strategy:/.test(text)), 'redundant Strategy slot yields to remaining games');
-  assert.ok(summaryTexts.some((text) => /SOREN\/FFMPEG/.test(text)), 'boxed SOREN/FFMPEG header is still picked up');
+  assert.ok(summaryTexts.some((text) => /SOREN.*#54104/.test(text)), 'game identity and result count remain without backend branding');
   const summaryClasses = overlay.summary.children.map((line) => line.className);
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-head')));
   assert.ok(summaryClasses.some((cls) => cls.includes('sum-ab')));
@@ -790,9 +847,9 @@ test('game feed renders allowlisted color segments as styled spans without inner
   assert.equal(rows[1].children[1].textContent, '\\');
   assert.equal(rows[1].children[1].style.color, '#facc15');
 
-  const opsRow = overlay.feedS.children[0];
-  assert.equal(opsRow.children.length, 0, 'feeds without segments keep the plain text path');
-  assert.match(opsRow.textContent, /Backend/);
+  const opsCard = overlay.feedS.children[0];
+  assert.equal(opsCard.className, 'ops-dashboard', 'recognized OPS feed uses the structured dashboard path');
+  assert.ok(opsCard.children.length > 0, 'structured OPS dashboard contains visible summary cards');
 
   overlay.setState({
     ...base,
@@ -934,4 +991,252 @@ test('prediction panel shows exact range and excluded current game, then disappe
   await app.tick(2);
   assert.equal(app.documentElement.dataset.predictionActive, '0');
   assert.equal(app.prediction.textContent, '');
+});
+
+
+test('unboxed corner charts after an AI box stay visible in the live sidebar', async () => {
+  const lines = ['┌─────────────┐', '│ AI 429 wait │', '└─────────────┘', '',
+    'SOREN/CORNER: RETRO / robots / 進行中', 'Stats: count=4 mean=10',
+    '┌ SCORE TIMELINE ┐', '│ ▁▃▅█ │', '└───────────────┘', 'SCORE DISTRIBUTION'];
+  const overlay = await runBroadcastOverlayScript({
+    version: 1, updatedAt: 1780000090,
+    feeds: {
+      showStatusG: { label: 'SHOW-STATUS-G', text: lines.join('\n'),
+        segments: lines.map((t) => [{ t, c: '#00ff00' }]), lineCount: lines.length },
+      showStatus: { label: 'SHOW-STATUS', text: 'Backend: fixture', lineCount: 1 },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  });
+  const rendered = overlay.feedG.children.map((line) => line.children.map((span) => span.textContent).join('')).join('\n');
+  assert.match(rendered, /Stats: count=4/);
+  assert.match(rendered, /SCORE TIMELINE/);
+  assert.match(rendered, /▁▃▅█/);
+  assert.match(rendered, /SCORE DISTRIBUTION/);
+});
+
+// Render a Hanjuku card with the real status_dashboard.py / docich_corner_stats
+// code so the card parsers can never drift away from the producer's line format.
+function renderHanjukuCardText() {
+  const script = `
+import json, sys, tempfile, time
+from pathlib import Path
+sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
+from lib.docich_corner_stats import load_active_corner
+import status_dashboard as sd
+root = Path(tempfile.mkdtemp())
+ident = dict(game='hanjuku-hero', runtime_id='g530-abcdef12', generation=530, lease_id='l')
+rt = root / 'runtimes' / ident['runtime_id']
+rt.mkdir(parents=True)
+def w(p, v):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(v, ensure_ascii=False), encoding='utf-8')
+w(root / 'retro_corner.json', dict(schema_version=1, status='active', game='hanjuku-hero', bot_identity=ident))
+w(root / 'game_switch.json', dict(phase='ready', active=ident))
+w(rt / 'hanjuku_run.json', dict(ident, observed_at=time.time(), phase='battle', actions_sent=412,
+    battles_started=9, battles_finished=8, observations=5300, unchanged_seconds=3.2))
+w(rt / 'hanjuku_bot.json', dict(decision_trace=ident, screen_kind='battle_menu', policy=dict(
+    chapter=2, gold=176, month='1-11', captured=['カストーラ', 'スペンソニア'], lost=['ジョンリギ'],
+    home_lost=False, active='J3', variant='chart_adjusted',
+    stats=dict(wins=4, losses=1, unclassified=1, cards_confirmed=4), soldiers_seen=9, tick=5300,
+    orders={'A1': 'launched', 'A2': 'failed'},
+    garrison={'アルマムーン': ['ゼウス', 'ユイートル']},
+    sorties={'J3': dict(general='どうし', target='ナキューメラ', status='en_route', tick=5290)},
+    battle={'enemy': 'dragon', 'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44})))
+print("\\n".join(sd.render_docich_corner_stats(load_active_corner(root))))
+`;
+  const out = spawnSync('python3', ['-c', script], { encoding: 'utf8' });
+  assert.equal(out.status, 0, `renderer probe failed: ${out.stderr}`);
+  assert.ok(out.stdout.includes('半熟英雄 / 最終観測・記録'), out.stdout);
+  return out.stdout;
+}
+
+// The card parsers anchor on the leading fields of each status_dashboard.py
+// line. Keep this text byte-identical to the current renderer output so a new
+// card field cannot silently stop reaching the broadcast sidebar.
+function hanjukuFixture(overrides = {}) {
+  return { version:1, updatedAt:1780001000,
+    feeds:{showStatusG:{updatedAt:1780001000,lineCount:10,text:
+      'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
+      + '  第2話 / 所持金 123G\n  ゲーム内: 1年11月（最終観測）\n'
+      + '  兵力: 9名 / 停滞 3秒\n  占領記録 5城（現在の城数ではない）\n'
+      + '  保有: カストーラ/スペンソニア\n  戦闘結果: 4勝 / 1敗 / 未分類 1\n'
+      + '  交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
+      + '  駐留: アルマムーン=ゼウス/ユイートル\n  行軍中: どうし→ナキューメラ\n'
+      + '  出撃: 成立 4 / 失敗 1\n  画面: battle_menu / battle / 方針 chart_adjusted\n'
+      + '  計画段階: J3（完了未確認）\n  保留計画: sortie\n'
+      + '  実入力: 412回 / 観測 0秒前（5300回）', ...overrides},
+      showStatus:{text:'● Backend FFMPEG LIVE',updatedAt:1780001000}},
+    notifications:{visibleSec:18,events:[],work:{active:false},generators:[]} };
+}
+
+test('Hanjuku sidebar uses large current-chapter cards without changing the top rail source', async () => {
+  const state = hanjukuFixture(); const ui = await runBroadcastOverlayScript(state);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '123 G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x => x.className.includes('current')).length, 1);
+  assert.match(state.feeds.showStatusG.text, /SOREN\/CORNER/);
+});
+
+test('Hanjuku cached figures disappear when source stops updating even without a new payload', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-badge').textContent, '要確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '— G');
+});
+
+test('switching away removes Hanjuku layout and renders the new game without stale figures', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  ui.setState(hanjukuFixture({text:'SOREN/CORNER: RETRO / robots / 進行中\nLive: next game'}));
+  await ui.tick(1);
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '');
+  assert.equal(ui.feedG.querySelector('.hanjuku-card'), null);
+});
+
+test('unavailable, future or malformed Hanjuku status never becomes fabricated progress', async () => {
+  for (const overrides of [
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / ゲーム状況\n状態: 未確認'},
+    {updatedAt:1780002000},
+    {text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n第99話 / 所持金 不明G\n画面: <script> / battle'},
+  ]) {
+    const ui = await runBroadcastOverlayScript(hanjukuFixture(overrides));
+    assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
+    assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x=>x.className.includes('current')).length, 0);
+  }
+});
+
+
+test('Hanjuku prioritizes observed game state and omits automation counters', async () => {
+  const f = hanjukuFixture();
+  f.feeds.showStatusG.text = f.feeds.showStatusG.text.replace(
+    '計画段階: J3（完了未確認）', '計画段階: F1（完了未確認）');
+  const ui = await runBroadcastOverlayScript(f);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
+  assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /5城.*累計/);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-inputs'), null);
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '年月 未確認');
+  assert.equal(ui.feedG.querySelector('.hanjuku-inputs'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan'), null);
+});
+
+test('Hanjuku shows a meaningful stall while omitting brief input pauses', async () => {
+  for (const seconds of [0, 29, 30, 120]) {
+    const f = hanjukuFixture();
+    f.feeds.showStatusG.text = f.feeds.showStatusG.text.replace('停滞 3秒', `停滞 ${seconds}秒`);
+    const ui = await runBroadcastOverlayScript(f);
+    const notice = ui.feedG.querySelector('.hanjuku-stalled');
+    if (seconds < 30) assert.equal(notice, null);
+    else assert.equal(notice.textContent, `${seconds}秒`);
+    await ui.tick(31);
+    assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);
+  }
+});
+
+test('Hanjuku card surfaces the live observed battle, roster and sortie state', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture());
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
+  assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 4 / 失敗 1');
+  // The battle line carries a trailing strategy field; it must not hide the screen.
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4 / 1');
+});
+
+test('Hanjuku card omits the live-battle strip when no battle is observed', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({
+    text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
+      + '第2話 / 所持金 123G\n交戦HP: 戦闘記録なし\n画面: world_map / field'}));
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '戦況を確認中');
+});
+
+test('the card parsers still read every field the real renderer emits', async () => {
+  // Regression guard: a hand-written fixture can drift from status_dashboard.py
+  // and silently drop a value. Drive the card with the renderer's own output.
+  const rendered = renderHanjukuCardText();
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: rendered }));
+  assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '176 G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4 / 1');
+  assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
+  assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
+  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
+  assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 1 / 失敗 1');
+  assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /2城/);
+  assert.equal(ui.feedG.querySelector('.hanjuku-plan'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-inputs'), null);
+});
+
+
+test('Soren telemetry panels preserve chart values and switch away cleanly', async () => {
+  const text = fs.readFileSync(new URL('./fixtures/soren-monitor.txt', import.meta.url), 'utf8');
+  const f = hanjukuFixture({text});
+  const ui = await runBroadcastOverlayScript(f);
+  const monitor = ui.feedG.querySelector('.soren-monitor');
+  assert.ok(monitor);
+  assert.equal(monitor.children.filter(e => e.className === 'monitor-section').length, 5);
+  assert.equal(ui.documentElement.dataset.sorenMonitor, '1');
+  const sections = monitor.children.filter(e => e.className === 'monitor-section');
+  const rows = sections.flatMap(e => e.querySelector('.monitor-section-body').children.flatMap(r =>
+    r.className === 'monitor-chart' ? r.children.map(line => line.textContent) : [r.textContent]));
+  assert.ok(rows.some(t => t.includes('5691')));
+  assert.ok(rows.some(t => t.includes('3722 4145 2822')));
+  assert.ok(rows.some(t => t.includes('LastStep +240')));
+  assert.ok(rows.every(t => !t.includes('FFMPEG')));
+  ui.setState(hanjukuFixture()); await ui.tick(1);
+  assert.equal(ui.feedG.querySelector('.soren-monitor'), null);
+  assert.equal(ui.documentElement.dataset.sorenMonitor, '');
+});
+
+test('console record lines reach the actual dashboard, including empty and interrupted sessions', async () => {
+  const makeText = (next, count, reason = null) => {
+    const script = `
+import sys, json
+sys.path.insert(0, ${JSON.stringify(REPO_ROOT)})
+import status_dashboard as sd
+value={'history_status':'readable', 'session_count':${count}, 'session_mean':20 if ${count} else None,
+       'session_best':30 if ${count} else None, 'latest':{'score':30,'at':160,'age':40} if ${count} else None,
+       'next':${JSON.stringify(next)}, 'remaining':1, 'remaining_seconds':300, 'reason':${reason ? JSON.stringify(reason) : 'None'}}
+corner={'kind':'retro','label':'RETRO','game':'nsnake','status':'active','target_matches':3,
+        'session_matches':${count},'scores':[{'score':10},{'score':30}] if ${count} else [],'console':value}
+print('\\n'.join(sd.render_docich_corner_stats(corner)))`;
+    const out = spawnSync('python3', ['-c', script], { encoding:'utf8' });
+    assert.equal(out.status, 0, out.stderr); return out.stdout;
+  };
+  const ui = await runBroadcastOverlayScript({feeds:{showStatusG:{text:makeText('collect-results',2)}}});
+  let dashboard = ui.feedG.querySelector('.game-dashboard');
+  const rows = dashboard.querySelector('.game-records').children.map(r=>r.textContent).join('\n');
+  assert.match(rows,/Session: n=2 \/ best=30 \/ mean=20/);
+  assert.match(rows,/Result: 30 .*40s ago/);
+  assert.match(rows,/1 matches left \/ limit 5:00/);
+  assert.match(rows,/live score unobserved/);
+  for (const [next, count] of [['restore-wait',2],['unverified',0]]) {
+    ui.setState({feeds:{showStatusG:{text:makeText(next,count)}}}); await ui.tick(1);
+    dashboard=ui.feedG.querySelector('.game-dashboard');
+    const text=dashboard.querySelector('.game-records').children.map(r=>r.textContent).join('\n');
+    assert.match(text,next==='restore-wait'?/restoration pending/:/runtime unverified/);
+    assert.doesNotMatch(text,/matches left/);
+  }
+  for (const reason of ['manual_saved_stop','manual_forced_stop','readiness_timeout']) {
+    ui.setState({feeds:{showStatusG:{text:makeText('restore-wait',2,reason)}}}); await ui.tick(2);
+    const records=ui.feedG.querySelector('.game-records').children.map(r=>r.textContent);
+    assert.equal(records.length,4);
+    assert.match(records[3],/^Reason: .*\(record\) \/ live score unobserved$/);
+  }
+  ui.setState(hanjukuFixture()); await ui.tick(3);
+  assert.equal(ui.feedG.querySelector('.game-records'),null,'console records disappear on a game switch');
 });

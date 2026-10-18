@@ -1,7 +1,7 @@
 #!/bin/bash
 # broadcast/radio_quality.sh - ラジオ生成テキストの品質チェック
 #
-# 中国語出力・非日本語・無限ループ・文字化け・ニュース素材の丸読みを検出し、
+# 中国語出力・不要な英語混入・非日本語・無限ループ・文字化け・ニュース素材の丸読みを検出し、
 # リライト用プロンプトを生成するユーティリティ。
 
 # _radio_quality_check <talk_text> [corner_name] [source_material]
@@ -102,7 +102,35 @@ simplified_chars = re.findall(
     r"长头电听门无类团图药难义术击处备复组织济产业严饭开观觉实际]",
     text,
 )
-if english_run or len(lower_words) >= 8 or simplified_chars:
+if english_run or simplified_chars:
+    print("FAIL:mixed_language")
+    sys.exit(0)
+
+# 日本語本文へ英単語が1〜数語だけ混ざると、上の長文・多用判定を
+# 通過してしまう。ニュース／時事コーナーでは、略称と固有名詞以外の
+# 原綴りを読み上げない契約なので、不要な小文字語・混在語も再生成へ回す。
+if corner in {"news", "jiji"}:
+    allowed_latin = {
+        "afd", "ai", "ap", "apec", "asean", "bbc", "brics", "cnn", "cptpp",
+        "df", "dx", "eu", "g7", "g20", "gdp", "iaea", "imf", "it", "jaxa",
+        "lgbtq", "ms", "msnow", "nasa", "nato", "nhk", "npt", "oecd", "opec",
+        "politico", "reuters", "rcep", "sbi", "sdd", "soren", "ssd", "tbs",
+        "tpp", "uk", "un", "us", "who", "wto", "youtube", "youtuber",
+        "openai", "chatgpt", "google", "apple", "amazon", "microsoft", "meta",
+        "tiktok", "facebook", "instagram", "spacex", "starlink", "iphone",
+        "deepseek", "minimax", "claude", "codex", "opencode", "voicevox",
+    }
+    allowed_latin.update(
+        word.casefold()
+        for word in re.split(r"[\s,]+", os.environ.get("RADIO_QUALITY_ALLOWED_LATIN_WORDS", ""))
+        if word.strip()
+    )
+    latin_words = re.findall(r"(?<![A-Za-z])([A-Za-z]{3,})(?![A-Za-z])", text)
+    if any(word.casefold() not in allowed_latin and not word.isupper() for word in latin_words):
+        print("FAIL:mixed_language")
+        sys.exit(0)
+
+if len(lower_words) >= 8:
     print("FAIL:mixed_language")
     sys.exit(0)
 

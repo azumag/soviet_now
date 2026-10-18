@@ -1,0 +1,7 @@
+{
+  "rules_version": "sorengame-v1",
+  "candidate_version": "uniform25-v1",
+  "model": "jev-1.13.0",
+  "instructions": "Choose one candidate for the current falling piece. Aim to form the Soviet Union, then improve score while avoiding game over. Predictions are approximate geometry aids, not guaranteed outcomes. Use only the supplied observation and candidates.",
+  "candidate_note": "Choose exactly one supplied candidate ID. Do not invent coordinates, free-text actions, or commands."
+}

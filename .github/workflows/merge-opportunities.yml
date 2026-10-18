@@ -5,12 +5,25 @@ on:
       - 'strategy.py'
       - 'strategy_runner.py'
       - 'eloop.sh'
+      - 'soren_loop.sh'
+      - 'core/config.sh'
+      - 'core/game_state.sh'
+      - 'core/version.sh'
+      - 'workers/chat_worker.sh'
+      - 'lib/chat_clip_queue.sh'
+      - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
+      - 'tests/test_soviet_continuation.py'
+      - 'tests/test_twitch_clip_delivery.py'
+      - 'tests/test_settle_wait.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
       - 'tests/test_merge_opportunity_preservation.py'
       - 'tests/test_merge_opportunity_trace.py'
+      - 'tests/test_buried_exposed_merge_candidate.py'
+      - 'tests/test_merge_burial_baseline.py'
+      - 'tools/merge_burial_baseline.py'
       - 'tests/fixtures/merge_opportunities/**'
       - '.github/workflows/merge-opportunities.yml'
   push:
@@ -19,12 +32,25 @@ on:
       - 'strategy.py'
       - 'strategy_runner.py'
       - 'eloop.sh'
+      - 'soren_loop.sh'
+      - 'core/config.sh'
+      - 'core/game_state.sh'
+      - 'core/version.sh'
+      - 'workers/chat_worker.sh'
+      - 'lib/chat_clip_queue.sh'
+      - 'twitch_clip.sh'
       - 'tests/test_eloop_runner_tail_cleanup.sh'
+      - 'tests/test_soviet_continuation.py'
+      - 'tests/test_twitch_clip_delivery.py'
+      - 'tests/test_settle_wait.py'
       - 'extract_decide_hash.py'
       - 'analyze_board.py'
       - 'strategy_helpers/**'
       - 'tests/test_merge_opportunity_preservation.py'
       - 'tests/test_merge_opportunity_trace.py'
+      - 'tests/test_buried_exposed_merge_candidate.py'
+      - 'tests/test_merge_burial_baseline.py'
+      - 'tools/merge_burial_baseline.py'
       - 'tests/fixtures/merge_opportunities/**'
       - '.github/workflows/merge-opportunities.yml'
 permissions:
@@ -40,7 +66,9 @@ jobs:
       - run: bash tests/test_eloop_runner_tail_cleanup.sh
       - run: >-
           python3 -m unittest
-          tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_strategy_hash
+          tests.test_soviet_continuation
+          tests.test_twitch_clip_delivery tests.test_settle_wait
+          tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_buried_exposed_merge_candidate tests.test_merge_burial_baseline tests.test_strategy_hash
           tests.test_policy_bundle tests.test_v747_endgame_merge
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
           tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct

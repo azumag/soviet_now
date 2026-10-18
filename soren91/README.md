@@ -8,8 +8,9 @@ Soren91 が試合後・一定試合数ごと・日次スケジュール等で LL
 
 - 旧互換の改善実行モジュール・PID/lock/watchdog・環境変数triggerも削除済みで、runtimeから自動改善を起動する経路はありません。
 - 試合履歴、summary、strategy snapshot、スクリーンショットは引き続き保存し、明示的な手動レビューや再現評価に利用できます。
+- 認識拒否フレームの追加保存は既定で無効です。必要な実測の承認後に `SOREN91_REJECT_FRAME_DIAGNOSTICS=1` を明示した場合だけ、既存captureのbytesから `non-move` / `unknown-current` / `confirm-frame` を1実行sessionごと最大3枚保存します。追加captureは行わず、画像は `tmp/rejected_frame_diagnostics/run_<session-uuid>/` に0600、親directoryは0700で保存し、固定allowlistのJSON provenanceだけを添えます。
 - 戦略変更は、原因仮説・評価・テストを伴う通常のレビュー済みリポジトリ変更として行います。
-- runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。
+- runtime evidence の保持は自動改善の消費状態に依存せず、`cleanup_retention.mjs` が既定3日で age-based cleanup します。拒否フレームのexportは行わず、画像内容をpublic telemetryやログへ投影しません。
 
 ## 起動時の枠の準備
 
@@ -40,11 +41,13 @@ strategy_contract.mjs    # 戦略の共通契約
 comment.mjs              # 試合中/結果コメント
 result_screen_ocr.mjs    # ランキング画面解析
 critical_turn_screenshots.mjs # 重要局面の証拠選別
+rejected_frame_diagnostics.mjs # 任意・上限付きの認識拒否フレーム保存
 cleanup_retention.mjs    # 証拠データの保持期間管理
 
 game_history/            # ラウンドごとのJSONL
 tmp/summaries/           # ラウンドsummary
 tmp/game_screenshots/    # 保存スクリーンショット
+tmp/rejected_frame_diagnostics/ # 明示opt-inした拒否フレーム／session別（既定off）
 tmp/strategy_snapshots/  # 試合時点のstrategy snapshot
 ```
 
@@ -103,6 +106,16 @@ node backfill_result_ranks.mjs
 - Board X: `[-3.5, +3.5]`（実投下可能範囲はピース半径で狭まる）
 - Board Y: `-5.0` floor 〜 `+3.32` deadline
 - 15種のピース。同type接触で上位typeへ併合
+
+## 画像からの状態認識
+
+`calibration.mjs` の座標 schema 2 は、赤い deadline と床を `board` の world 座標アンカーにし、HUD 下端から床までの探索範囲を `arena` として分けます。旧キャッシュや画面サイズが合わない座標は、最初の入力より前に再検出します。おじゃまの上面を床として扱いません。
+
+投下待ちの駒は arena 上部の正立候補から読み、HOLD と横並びの NEXT は別の HUD セルから読みます。戦略に渡す `next` は現在の投下候補、`nextPieces` は `[current, NEXT左, NEXT中央]` です。未知の current を過去の NEXT で補完して入力することはありません。複数候補・接触・不明な模様は待機し、同型候補の縦移動も再確認します。横移動は物理盤面の移動として扱いません。
+
+`sprite_perception.mjs` は国旗の複数色と輪郭を、ラベル確認済みの画像へ照合します。`tools/build_soren91_flag_templates.mjs` で既存画像・テスト fixture から固定テンプレートを再生成でき、元画像のハッシュと切り出し位置を記録します。対象画像自身のテンプレートを除いた照合もテストします。単一静止画の候補識別だけで実ゲームの投下受理を保証するものではなく、guard の時系列確認と入力直前の鮮度確認を併用します。
+
+物理盤面は国旗の色断片と全色の輪郭を照合し、同じ画素を二重に数えないよう対応付けます。型が不明な全色補助検出は低 confidence の障害物として残します。現在の候補と識別した画素だけを除外し、deadline より上という理由だけで積まれた駒を消しません。
 
 ## 依存関係
 

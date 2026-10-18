@@ -145,7 +145,9 @@ _run_opencode_comment_unqueued() {
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
 		rm -f "$raw_file"
-		_run_opencode_radio "$agent" "$prompt_file"
+		# The caller already owns the comment lane. Re-entering the shared
+		# radio lane here would deadlock when the sandbox fallback is used.
+		_run_opencode_radio_unqueued "$agent" "$prompt_file"
 		return
 	fi
 	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
@@ -884,6 +886,206 @@ _radio_parse_output_to_files() {
 		"$body_file" "$summary_file" "$selected_news_file"
 }
 
+_radio_mixed_language_helper() {
+	local root="${ELOOP_LIB_DIR:-}"
+	if [ -z "$root" ]; then
+		root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+	fi
+	printf '%s/lib/radio_mixed_language.py' "$root"
+}
+
+_radio_mixed_language_spans() {
+	local text_file="$1" corner_name="${2:-}"
+	local helper
+	helper=$(_radio_mixed_language_helper)
+	[ -r "$helper" ] || return 1
+	python3 "$helper" spans \
+		--text-file "$text_file" \
+		--corner "$corner_name" \
+		--allowed-latin "${RADIO_QUALITY_ALLOWED_LATIN_WORDS:-}" \
+		--format tsv \
+		--reverse
+}
+
+_radio_mixed_language_b64_decode() {
+	printf '%s' "$1" | python3 -c \
+		'import base64,sys; sys.stdout.write(base64.urlsafe_b64decode(sys.stdin.read().encode()).decode("utf-8"))'
+}
+
+_radio_is_valid_mixed_language_repair_candidate() {
+	local candidate="$1"
+	[ -n "$candidate" ] || return 1
+	_contains_provider_error_text "$candidate" && return 1
+	# 局所置換の返答に説明・コードフェンス・メタ見出しを混ぜさせない。
+	if printf '%s' "$candidate" | grep -Eiq \
+		'(^|[[:space:]])(```|修正後[：:]|置換後[：:]|説明[：:]|以下の?文|Here is|I have |The replacement)' ; then
+		return 1
+	fi
+	[ "${#candidate}" -le 1600 ] || return 1
+	printf '%s' "$candidate" | python3 -c \
+		'import re,sys; text=sys.stdin.read().strip(); sys.exit(0 if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text) else 1)'
+}
+
+# _radio_repair_mixed_language <talk_body> <corner_name> <agent_list> [metadata_file]
+#
+# mixed_language は原稿全体を捨てず、検出された文/行だけを現行のAIチェーンで
+# 置換する。元の数値・URLを保持できない返答は受け入れず、呼び出し側が必要なら
+# 既存の全文再生成へフォールバックする。
+_radio_repair_mixed_language() {
+	local talk_body="$1" corner_name="${2:-}" agent_list="${3:-}" metadata_file="${4:-}"
+	local helper tmp_dir body_file spans_file current_file next_file
+	local max_spans max_chars span_count=0 total_chars=0 repair_agents=""
+	helper=$(_radio_mixed_language_helper)
+	[ -r "$helper" ] || return 2
+
+	# config.sh でも除去するが、環境変数を直接上書きした場合にも fail-closed にする。
+	if declare -f _remove_retired_minimax_agents >/dev/null 2>&1; then
+		repair_agents=$(_remove_retired_minimax_agents "$agent_list")
+	else
+		repair_agents="$agent_list"
+	fi
+	[ -n "$repair_agents" ] || return 2
+
+	max_spans="${RADIO_QUALITY_REPAIR_MAX_SPANS:-3}"
+	case "$max_spans" in ''|*[!0-9]*) max_spans=3 ;; esac
+	max_chars="${RADIO_QUALITY_REPAIR_MAX_CHARS:-800}"
+	case "$max_chars" in ''|*[!0-9]*) max_chars=800 ;; esac
+
+	tmp_dir=$(mktemp -d /tmp/eloop_radio_mixed_repair_XXXXXXXX)
+	body_file="$tmp_dir/body.txt"
+	spans_file="$tmp_dir/spans.tsv"
+	current_file="$tmp_dir/current.txt"
+	printf '%s' "$talk_body" >"$body_file"
+	_radio_mixed_language_spans "$body_file" "$corner_name" >"$spans_file" 2>/dev/null || {
+		rm -rf "$tmp_dir"
+		return 2
+	}
+	[ -s "$spans_file" ] || {
+		rm -rf "$tmp_dir"
+		return 2
+	}
+
+	local start end encoded_segment encoded_before encoded_after segment before after
+	local prompt_file replacement_file original_segment_file last_agent_file replacement repair_agent
+	local repair_agents_used=""
+	local preflight_span_count=0 preflight_total_chars=0
+	# Check the complete span set before the first model call. Otherwise an input
+	# with four spans could spend three calls and only then discover MAX_SPANS=3.
+	while IFS=$'\t' read -r start end encoded_segment encoded_before encoded_after; do
+		[ -n "${start:-}" ] && [ -n "${end:-}" ] || continue
+		segment=$(_radio_mixed_language_b64_decode "$encoded_segment")
+		[ -n "$segment" ] || {
+			[ -n "$metadata_file" ] && printf 'status=invalid_span\nspans=%s\n' "$preflight_span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 2
+		}
+		preflight_span_count=$((preflight_span_count + 1))
+		preflight_total_chars=$((preflight_total_chars + ${#segment}))
+	done <"$spans_file"
+	if [ "$preflight_span_count" -gt "$max_spans" ] || [ "$preflight_total_chars" -gt "$max_chars" ]; then
+		[ -n "$metadata_file" ] && printf 'status=too_many_spans\nspans=%s\nchars=%s\n' \
+			"$preflight_span_count" "$preflight_total_chars" >"$metadata_file"
+		rm -rf "$tmp_dir"
+		return 2
+	fi
+	cp "$body_file" "$current_file"
+	local repair_total_budget=60
+	if declare -F _ai_radio_mixed_repair_total_budget_sec >/dev/null 2>&1; then
+		repair_total_budget=$(_ai_radio_mixed_repair_total_budget_sec)
+	fi
+	# This dynamically-scoped deadline is shared by every span-level chain below.
+	local AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH=$(( $(date +%s) + repair_total_budget ))
+	while IFS=$'\t' read -r start end encoded_segment encoded_before encoded_after; do
+		[ -n "${start:-}" ] && [ -n "${end:-}" ] || continue
+		segment=$(_radio_mixed_language_b64_decode "$encoded_segment")
+		before=$(_radio_mixed_language_b64_decode "$encoded_before")
+		after=$(_radio_mixed_language_b64_decode "$encoded_after")
+
+		if [ "$span_count" -ge "$max_spans" ] || [ $((total_chars + ${#segment})) -gt "$max_chars" ]; then
+			[ -n "$metadata_file" ] && printf 'status=too_many_spans\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 2
+		fi
+
+		prompt_file="$tmp_dir/prompt_${span_count}.txt"
+		cat >"$prompt_file" <<REPAIR_PROMPT
+あなたは日本語ラジオ原稿の局所修正担当です。
+本文全体を再生成せず、【修正対象】の文だけを自然な日本語に置き換えてください。
+
+厳守すること:
+- 出力は置き換え後の文だけ。説明、見出し、引用符、コードフェンスは付けない。
+- 元の事実、固有名詞、数値、日時、URLを変更・追加しない。
+- 英文や簡体字中国語は、意味を保った自然な日本語（必要ならカタカナ）に直す。
+- 前後の文脈とつながる語尾・時制を保つ。
+
+【前の文脈】
+${before}
+
+【修正対象】
+${segment}
+
+【後の文脈】
+${after}
+REPAIR_PROMPT
+
+		last_agent_file="$tmp_dir/last_agent_${span_count}.txt"
+		replacement=$(ai_generate_list \
+			"RADIO:${corner_name}:mixed_repair" \
+			"$prompt_file" \
+			"$repair_agents" \
+			"" \
+			"_radio_is_valid_mixed_language_repair_candidate" \
+			"$last_agent_file") || replacement=""
+		replacement=$(printf '%s' "$replacement" | _ai_guard_model_output)
+		if ! _radio_is_valid_mixed_language_repair_candidate "$replacement"; then
+			[ -n "$metadata_file" ] && printf 'status=invalid_replacement\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+
+		replacement_file="$tmp_dir/replacement_${span_count}.txt"
+		original_segment_file="$tmp_dir/original_${span_count}.txt"
+		printf '%s' "$replacement" >"$replacement_file"
+		printf '%s' "$segment" >"$original_segment_file"
+		if ! python3 "$helper" validate \
+			--original-file "$original_segment_file" \
+			--replacement-file "$replacement_file" 2>/dev/null; then
+			[ -n "$metadata_file" ] && printf 'status=changed_protected_token\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+
+		next_file="$tmp_dir/next_${span_count}.txt"
+		if ! python3 "$helper" replace \
+			--text-file "$current_file" \
+			--start "$start" \
+			--end "$end" \
+			--replacement-file "$replacement_file" \
+			--output-file "$next_file" 2>/dev/null; then
+			[ -n "$metadata_file" ] && printf 'status=replace_failed\nspans=%s\n' "$span_count" >"$metadata_file"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+		mv "$next_file" "$current_file"
+		repair_agent=$(cat "$last_agent_file" 2>/dev/null || true)
+		[ -n "$repair_agent" ] && repair_agents_used="${repair_agents_used:+${repair_agents_used},}${repair_agent}"
+		span_count=$((span_count + 1))
+		total_chars=$((total_chars + ${#segment}))
+	done <"$spans_file"
+
+	[ "$span_count" -gt 0 ] || {
+		[ -n "$metadata_file" ] && printf 'status=no_spans\nspans=0\n' >"$metadata_file"
+		rm -rf "$tmp_dir"
+		return 2
+	}
+	if [ -n "$metadata_file" ]; then
+		printf 'status=ok\nspans=%s\nchars=%s\nagents=%s\n' \
+			"$span_count" "$total_chars" "${repair_agents_used:-unknown}" >"$metadata_file"
+	fi
+	cat "$current_file"
+	rm -rf "$tmp_dir"
+}
+
 # ai_generate_list の候補判定。非空でも、実際の読み上げ本文へ変換した結果が
 # 短い・メタ出力・プロバイダエラーなら失敗として次モデルへ進める。
 _radio_is_valid_generation_candidate() {
@@ -1200,6 +1402,133 @@ _radio_build_overlay_detail() {
 	printf '%s' "$parts"
 }
 
+
+_radio_native_consumer_enabled_for() {
+	local corner_name="$1" topic="$2"
+	[ "${DOCICH_RADIO_NATIVE_CONSUMER_ENABLED:-0}" = "1" ] || return 1
+	[ -n "$topic" ] || return 1
+	local allowed="${DOCICH_RADIO_NATIVE_CORNERS:-}"
+	[ -n "$allowed" ] || return 1
+	allowed="${allowed//[[:space:]]/}"
+	case ",$allowed," in
+	*",$corner_name,"*) return 0 ;;
+	esac
+	return 1
+}
+
+_radio_native_generate_script() {
+	local topic="$1" body_file="$2" summary_file="$3"
+	local root="${DOCICH_RADIO_NATIVE_ROOT:-}"
+	local agents="${DOCICH_RADIO_NATIVE_AGENTS:-}"
+	local request_file result_file bridge_rc parse_meta parse_rc
+
+	case "$root" in
+	/*) ;;
+	*)
+		printf '%s' "invalid_root"
+		return 2
+		;;
+	esac
+	[ -f "$root/src/docich/radio/consumer.py" ] || {
+		printf '%s' "missing_bridge"
+		return 2
+	}
+	[ -n "$agents" ] || {
+		printf '%s' "missing_agents"
+		return 2
+	}
+
+	request_file=$(mktemp /tmp/eloop_radio_native_request_XXXXXXXX)
+	result_file=$(mktemp /tmp/eloop_radio_native_result_XXXXXXXX)
+	if ! printf '%s\0%s\0' "$topic" "$agents" | python3 -c '
+import json, sys
+parts = sys.stdin.buffer.read().split(b"\0")
+if len(parts) < 3:
+    raise SystemExit(2)
+topic = parts[0].decode("utf-8")
+agents = parts[1].decode("utf-8")
+json.dump({"topic": topic, "queries": [topic], "agents": agents}, sys.stdout, ensure_ascii=False)
+' >"$request_file"; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "request_encode_failed"
+		return 1
+	fi
+
+	local process_timeout="${DOCICH_RADIO_NATIVE_PROCESS_TIMEOUT_SEC:-50}"
+	case "$process_timeout" in
+	'' | *[!0-9]*)
+		rm -f "$request_file" "$result_file"
+		printf '%s' "invalid_process_timeout"
+		return 2
+		;;
+	esac
+	if [ "$process_timeout" -lt 1 ] || [ "$process_timeout" -gt 60 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "invalid_process_timeout"
+		return 2
+	fi
+	if ! command -v timeout >/dev/null 2>&1; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "missing_timeout"
+		return 2
+	fi
+
+	PYTHONPATH="$root/src" timeout --signal=TERM --kill-after=2 "${process_timeout}s" \
+		python3 -P -m docich.radio.consumer <"$request_file" >"$result_file"
+	bridge_rc=$?
+	if [ "$bridge_rc" -eq 124 ] || [ "$bridge_rc" -eq 137 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "process_timeout"
+		return 1
+	fi
+	if [ "$bridge_rc" -ne 0 ]; then
+		rm -f "$request_file" "$result_file"
+		printf '%s' "bridge_failed"
+		return 1
+	fi
+
+	parse_meta=$(python3 - "$result_file" "$body_file" "$summary_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    print("invalid_response")
+    raise SystemExit(1)
+
+status = data.get("status")
+scope = data.get("scope")
+if not isinstance(status, str) or not re.fullmatch(r"[a-z_]{1,40}", status):
+    print("invalid_status")
+    raise SystemExit(1)
+if not isinstance(scope, str) or not re.fullmatch(r"[a-z_]{1,40}", scope):
+    print("invalid_scope")
+    raise SystemExit(1)
+print(f"{status}:{scope}")
+if status not in {"ok", "partial"}:
+    raise SystemExit(1)
+
+body = data.get("body")
+summary = data.get("summary")
+if not isinstance(body, str) or not body or not isinstance(summary, str) or not summary:
+    raise SystemExit(1)
+Path(sys.argv[2]).write_text(body, encoding="utf-8")
+Path(sys.argv[3]).write_text(summary, encoding="utf-8")
+PY
+	)
+	parse_rc=$?
+	rm -f "$request_file" "$result_file"
+
+	if [ "$bridge_rc" -ne 0 ] || [ "$parse_rc" -ne 0 ]; then
+		printf '%s' "${parse_meta:-bridge_failed}"
+		return 1
+	fi
+	printf '%s' "$parse_meta"
+}
+
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
@@ -1279,6 +1608,7 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_prepass_agent="" radio_prepass_agents="" radio_agents_list=""
+	local radio_repair_agents=""
 	# claude は不使用方針（codex ハーネス統一）のためフォールバック無効。
 	local radio_allow_claude_fallback=false
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
@@ -1295,6 +1625,88 @@ _radio_generate_and_play() {
 		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode-go:deepseek-v4-flash}"
 		radio_second_agent="${RADIO_MAIN_FALLBACK:-amd:DeepSeek-V4-Flash}"
 	fi
+	if [ -n "${RADIO_QUALITY_REPAIR_AGENTS:-}" ]; then
+		radio_repair_agents="$RADIO_QUALITY_REPAIR_AGENTS"
+	elif [ "$host_mode_generated" = "soren91" ]; then
+		radio_repair_agents="${radio_primary_agent},${radio_second_agent}"
+	else
+		radio_repair_agents="$radio_agents_list"
+	fi
+	if _radio_native_consumer_enabled_for "$corner_name" "$topic"; then
+		local _native_body_file _native_summary_file _native_meta _native_body _native_summary
+		local _native_talk_file _native_deferred_file _native_history_line
+		_native_body_file=$(mktemp /tmp/eloop_radio_native_body_XXXXXXXX)
+		_native_summary_file=$(mktemp /tmp/eloop_radio_native_summary_XXXXXXXX)
+		if ! _native_meta=$(_radio_native_generate_script "$topic" "$_native_body_file" "$_native_summary_file"); then
+			log "[RADIO:${corner_name}] docich native hold/failure (${_native_meta:-bridge_failed})"
+			_write_radio_corner_status "native_generation_failed" "$corner_name" "$game_num" "$score" "$topic" "${_native_meta:-bridge_failed}" "$selected_news"
+			_radio_clear_state "$corner_name" "native_generation_failed"
+			rm -f "$_native_body_file" "$_native_summary_file" "$prompt_file" 2>/dev/null || true
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+
+		_native_body=$(cat "$_native_body_file" 2>/dev/null)
+		_native_summary=$(cat "$_native_summary_file" 2>/dev/null)
+		rm -f "$_native_body_file" "$_native_summary_file" "$prompt_file" 2>/dev/null || true
+		_native_body=$(_ensure_corner_announce "$_native_body" "$corner_name")
+		_native_body=$(printf '%s' "$_native_body" | _normalize_radio_tone)
+		local _native_quality
+		_native_quality=$(_radio_quality_check "$_native_body" "$corner_name" "")
+		if [ "$_native_quality" != "OK" ]; then
+			log "[RADIO:${corner_name}] docich native quality failed (${_native_quality})"
+			_write_radio_corner_status "native_quality_failed" "$corner_name" "$game_num" "$score" "$topic" "$_native_quality" "$selected_news"
+			_radio_clear_state "$corner_name" "native_quality_failed"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+		if ! _is_valid_radio_talk "$_native_body"; then
+			log "[RADIO:${corner_name}] docich native body invalid after presentation normalization"
+			_write_radio_corner_status "native_body_invalid" "$corner_name" "$game_num" "$score" "$topic" "native_body_invalid" "$selected_news"
+			_radio_clear_state "$corner_name" "native_body_invalid"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+
+		_native_talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
+		printf '%s\n' "$_native_body" >"$_native_talk_file"
+		_radio_store_generation_meta "$_native_talk_file" "$corner_name" "$host_mode_generated" "docich-native" "$game_num" "$score" "1" "$topic" "$selected_news" "docich-native" "" ""
+		_native_history_line="[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${_native_summary}"
+		_native_deferred_file=$(_enqueue_deferred_radio_talk "$_native_talk_file" "$game_num" "$corner_name" "$host_mode_generated" "$_native_history_line" || true)
+		if [ -n "$_native_deferred_file" ]; then
+			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+				printf '%s\n' "$selected_news" >"${_native_deferred_file%.txt}.news_title"
+				local _native_cc_text=""
+				_native_cc_text=$(_build_cc_attribution_text "$selected_news")
+				[ -n "$_native_cc_text" ] && printf '%s' "$_native_cc_text" >"${_native_deferred_file%.txt}.cc_text"
+			fi
+			_radio_mark_done "$done_marker"
+			_radio_set_state "queued" "$corner_name" "$(_radio_build_overlay_detail "$topic" "$selected_news" "docich-native")"
+			_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "deferred" "$selected_news" "{\"deferred_file\": \"$(basename "$_native_deferred_file")\", \"generator\": \"docich-native\"}"
+			log "[RADIO:${corner_name}] docich native -> deferred queue: $(basename "$_native_deferred_file")"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 0
+		fi
+
+		log "[RADIO:${corner_name}] docich native deferred enqueue failed"
+		_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "docich_native_deferred_enqueue_failed" "$selected_news"
+		_radio_clear_state "$corner_name" "deferred_enqueue_failed"
+		_radio_clear_generation_meta "$_native_talk_file" 2>/dev/null || true
+		rm -f "$_native_talk_file" 2>/dev/null || true
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
+
+	# The main host also speaks over other games. Discard legacy Soren score
+	# context before prepass, generation and repair snapshots are constructed.
+	local active_game_context
+	if ! active_game_context=$(python3 "${ELOOP_LIB_DIR:-.}/lib/radio_game_context.py" \
+		"$prompt_file" "${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"); then
+		log "[RADIO:${corner_name}] active game context failed; generation skipped"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
+	log "[RADIO:${corner_name}] active game context=${active_game_context}"
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
 	# --- attempt loop: 生成+パース+ノーマライズ を品質チェックのリライト分だけ繰り返す ---
@@ -1511,7 +1923,7 @@ PREPASS_APPEND
 
 		# 品質チェック（中国語/非日本語/無限ループ/文字化け/素材の丸読み）
 		if [ "${RADIO_QUALITY_CHECK_ENABLED:-1}" = "1" ]; then
-			local _qr
+			local _qr _repaired_body _repair_meta _post_repair_qr
 			_qr=$(_radio_quality_check "$talk_body" "$corner_name" "${RADIO_QUALITY_SOURCE_MATERIAL:-}")
 			if [ "$_qr" = "OK" ]; then
 				_quality_ok=true
@@ -1519,6 +1931,34 @@ PREPASS_APPEND
 			else
 				_quality_fail_reason="$_qr"
 				log "[RADIO:${corner_name}] 品質チェック失敗 attempt=${_radio_attempt}/${_radio_max_attempts}: ${_qr}"
+				if [ "$_qr" = "FAIL:mixed_language" ]; then
+					# 外国語混入だけは原稿全体を捨てず、検出された文/行を局所修正する。
+					# 局所修正が対象過多・不正返答・保護トークン変更になった場合だけ、
+					# 下の既存全文再生成へフォールバックする。
+					_repair_meta=$(mktemp /tmp/eloop_radio_mixed_repair_meta_XXXXXXXX)
+					if _repaired_body=$(_radio_repair_mixed_language \
+						"$talk_body" "$corner_name" "$radio_repair_agents" "$_repair_meta"); then
+						_repaired_body=$(printf '%s' "$_repaired_body" | _sanitize_onair_text)
+						if [ "${#_repaired_body}" -lt 100 ]; then
+							_post_repair_qr="FAIL:body_too_short"
+						else
+							_post_repair_qr=$(_radio_quality_check \
+								"$_repaired_body" "$corner_name" "${RADIO_QUALITY_SOURCE_MATERIAL:-}")
+						fi
+						if [ "$_post_repair_qr" = "OK" ]; then
+							talk_body="$_repaired_body"
+							_quality_ok=true
+							log "[RADIO:${corner_name}] mixed_languageを局所修正で回復 ($(tr '\n' ' ' <"$_repair_meta" 2>/dev/null))"
+							rm -f "$_repair_meta" 2>/dev/null || true
+							break
+						fi
+						_quality_fail_reason="$_post_repair_qr"
+						log "[RADIO:${corner_name}] mixed_language局所修正後も品質失敗: ${_post_repair_qr} → 全文再生成へfallback"
+					else
+						log "[RADIO:${corner_name}] mixed_language局所修正不可 ($(tr '\n' ' ' <"$_repair_meta" 2>/dev/null)) → 全文再生成へfallback"
+					fi
+					rm -f "$_repair_meta" 2>/dev/null || true
+				fi
 				if [ "$_radio_attempt" -lt "$_radio_max_attempts" ]; then
 					if [ -n "$provider_used" ]; then
 						# 品質/形式不正はモデルのレート制限ではないため、モデル別

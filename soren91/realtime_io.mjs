@@ -7,10 +7,53 @@ export function postDropProbeEnabled(env = process.env) {
   return !String(env.SOREN91_REMOTE_CDP_URL || '').trim();
 }
 
+export function captureImageFormat(env = process.env) {
+  const explicit = String(env?.SOREN91_CAPTURE_FORMAT || '').trim().toLowerCase();
+  if (explicit === 'jpg' || explicit === 'jpeg') return 'jpeg';
+  if (explicit === 'png') return 'png';
+  return String(env?.SOREN91_REMOTE_CDP_URL || '').trim() ? 'jpeg' : 'png';
+}
+
+export function captureJpegQuality(env = process.env) {
+  const raw = Number(env?.SOREN91_CAPTURE_JPEG_QUALITY);
+  return Number.isFinite(raw) ? Math.max(60, Math.min(95, Math.round(raw))) : 85;
+}
+
 export function boundedMs(value, fallback, min = 200, max = 5000) {
   const n = Number(value);
   return value != null && String(value).trim() !== '' && Number.isFinite(n)
     ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+// Per-capture wall-clock budget. Measured remote capture cost is ~1.9s p50 /
+// 4.6s p95 per frame, so the old 3s default tripped consecutive
+// capture-timeouts under load and the bot stopped for the rest of the corner
+// (2026-09-29). 6s default, env up to 9s.
+export function captureTimeoutMs(env = process.env, fallback = 6000) {
+  return boundedMs(env?.SOREN91_CAPTURE_TIMEOUT_MS, fallback, 200, 9000);
+}
+
+// Consecutive-error policy: transient remote-capture slowness must not end the
+// run. Back off exponentially (bounded) and only stop after a generous limit.
+export function captureErrorBackoffMs(consecutive, env = process.env) {
+  const max = boundedMs(env?.SOREN91_ERROR_BACKOFF_MAX_MS, 15000, 1000, 60000);
+  const step = Math.max(1, Number(consecutive) || 1);
+  return Math.min(1000 * 2 ** (step - 1), max);
+}
+
+export function captureErrorLimit(env = process.env) {
+  const raw = Number(env?.SOREN91_ERROR_LIMIT);
+  return Number.isFinite(raw) && raw >= 1 ? Math.min(Math.floor(raw), 200) : 30;
+}
+
+// How long a frame-verified canvas geometry stays the baseline for the next
+// frame. Each remote CDP round trip costs ~0.3s on the Mac link and the drop
+// cadence is dominated by them (docich#414 speed work): the geometry read
+// before the screenshot is reused from the previous frame's verified sample
+// while the post-screenshot read still runs every frame, so any change is
+// still caught before the frame is used. Env override: SOREN91_GEOMETRY_REUSE_MS.
+export function geometryReuseMs(env = process.env) {
+  return boundedMs(env?.SOREN91_GEOMETRY_REUSE_MS, 5000, 0, 60000);
 }
 
 /** A duration is a wall-clock budget, not a number of slow screenshots. */
@@ -23,6 +66,22 @@ export function probeBudget(durationMs, intervalMs, now = () => performance.now(
     remaining: () => Math.max(0, deadline - now()),
     sleepMs: () => Math.max(0, Math.min(interval, deadline - now())),
   };
+}
+
+// The remote renderer stages the game as a full-viewport canvas. Capture its
+// visible view in one CDP screenshot command, without surface-capture emulation.
+// An explicit 0 (or an invalid nonempty value) keeps the established backend.
+export function viewCaptureEnabled(env = process.env) {
+  const value = String(env?.SOREN91_VIEW_CAPTURE ?? '').trim();
+  if (value) return value === '1';
+  return !!String(env?.SOREN91_REMOTE_CDP_URL || '').trim();
+}
+
+export function viewCaptureEligible(g) {
+  return validGeometry(g) && g.visible === true
+    && g.x === 0 && g.y === 0 && g.scrollX === 0 && g.scrollY === 0
+    && Number.isInteger(g.width) && Number.isInteger(g.height)
+    && g.width === g.viewportWidth && g.height === g.viewportHeight;
 }
 
 // Runs in the dedicated game page; no requestAnimationFrame/font/actionability wait.
@@ -49,6 +108,7 @@ export function canvasGeometryInPage() {
     scrollX, scrollY, dpr: devicePixelRatio,
     viewportWidth: innerWidth, viewportHeight: innerHeight,
     viewportScale: visualViewport?.scale ?? 1,
+    visible: document.visibilityState === 'visible',
   };
 }
 
@@ -73,18 +133,57 @@ function pngSize(buffer) {
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
+function jpegSize(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    throw new Error('capture-invalid-jpeg');
+  }
+  let offset = 2;
+  while (offset + 4 <= buffer.length) {
+    if (buffer[offset] !== 0xff) throw new Error('capture-invalid-jpeg');
+    const marker = buffer[offset + 1];
+    if (marker === 0xff) { offset += 1; continue; }
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
+    const length = buffer.readUInt16BE(offset + 2);
+    const isSof = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isSof) {
+      if (offset + 9 > buffer.length) throw new Error('capture-invalid-jpeg');
+      return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+    }
+    if (length < 2 || offset + 2 + length > buffer.length) throw new Error('capture-invalid-jpeg');
+    offset += 2 + length;
+  }
+  throw new Error('capture-invalid-jpeg');
+}
+
+function imageSize(buffer, type) {
+  return type === 'jpeg' ? jpegSize(buffer) : pngSize(buffer);
+}
+
 /** One CDP session and at most one operation per game page. Timed-out sessions retire. */
 export function createCanvasIO({ now = () => performance.now() } = {}) {
   const sessions = new WeakMap();
+  // Sticky per page, including across session retirement. Never repeatedly try
+  // an unsupported native capture or publish a frame from a failed attempt.
+  const viewDisabled = new WeakSet();
+  // Last frame-verified canvas geometry per page. See geometryReuseMs().
+  const geometryBaseline = new WeakMap();
   const expression = `(${canvasGeometryInPage.toString()})()`;
 
   function retire(page, entry) {
     entry.retiring = true;
     // Do not start another attach if this one never completes. No orphan storm.
     void entry.pending.then(async session => {
-      await session.detach();
-      await entry.work?.catch(() => {});
-      if (sessions.get(page) === entry) sessions.delete(page);
+      try {
+        await session.detach();
+      } finally {
+        // A disconnected session may reject detach. Still retire it, but only
+        // after its in-flight operation settles so retries cannot overlap it.
+        await entry.work?.catch(() => {});
+        if (sessions.get(page) === entry) sessions.delete(page);
+      }
     }).catch(() => {});
   }
 
@@ -138,20 +237,49 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
   }
 
   return {
-    async capture(page, { timeoutMs = 3000 } = {}) {
+    async capture(page, { timeoutMs = 3000, type = 'png', quality = 85, view = viewCaptureEnabled() } = {}) {
+      if (!['png', 'jpeg'].includes(type)) throw new Error('capture-invalid-image');
+      let usedView = false;
       return run(page, timeoutMs, async (session, check, remaining) => {
-        const before = await geometry(session, check);
-        const capturedAt = now(); // Conservative age: request start, NOT transfer completion.
-        // Page-level clipping skips locator actionability/scroll/stability waits.
-        // Use Playwright's own screenshot session: raw capture on a NEW CDP
-        // session can reset DPR emulation belonging to the host's session.
-        const buffer = await page.screenshot({
-          type: 'png', scale: 'css', timeout: remaining(),
-          clip: { x: before.x, y: before.y, width: before.width, height: before.height },
-        });
+        const geometryBeforeStartedAt = now();
+        const cachedBaseline = geometryBaseline.get(page);
+        const reuseMs = geometryReuseMs();
+        const reusable = cachedBaseline && validGeometry(cachedBaseline.geometry)
+          && reuseMs > 0 && now() - cachedBaseline.at <= reuseMs;
+        const before = reusable ? cachedBaseline.geometry : await geometry(session, check);
+        const geometryBeforeEndedAt = now();
+        const capturedAt = geometryBeforeEndedAt; // Preserve existing freshness semantics.
+        const screenshotStartedAt = capturedAt;
+        usedView = view === true && !viewDisabled.has(page) && viewCaptureEligible(before);
+        let buffer;
+        if (usedView) {
+          // fromSurface:false returns the visible viewport and ignores clip.
+          // Only use it when that viewport IS the canvas. No clip, resize,
+          // Emulation command, bringToFront, native desktop crop or cached frame.
+          const options = { format: type, fromSurface: false, captureBeyondViewport: false };
+          if (type === 'jpeg') options.quality = Math.max(60, Math.min(95, Math.round(quality)));
+          const result = await session.send('Page.captureScreenshot', options)
+            .catch(() => { throw new Error('capture-invalid-image'); });
+          check();
+          if (typeof result?.data !== 'string' || result.data.length > 32 * 1024 * 1024) {
+            throw new Error('capture-invalid-image');
+          }
+          buffer = Buffer.from(result.data, 'base64');
+        } else {
+          // Keep Playwright's owning session for clipped/background canvases;
+          // raw surface capture on our session can reset the host's emulation.
+          const screenshotOptions = {
+            type, scale: 'css', timeout: remaining(),
+            clip: { x: before.x, y: before.y, width: before.width, height: before.height },
+          };
+          if (type === 'jpeg') screenshotOptions.quality = Math.max(60, Math.min(95, Math.round(quality)));
+          buffer = await page.screenshot(screenshotOptions);
+        }
         check();
+        const screenshotEndedAt = now();
+        const imageValidateStartedAt = screenshotEndedAt;
         if (!Buffer.isBuffer(buffer) || buffer.length > 24 * 1024 * 1024) throw new Error('capture-invalid-image');
-        const size = pngSize(buffer);
+        const size = imageSize(buffer, type);
         // Attached browsers may not expose their native DPR in context options.
         // CSS-pixel and native-DPR PNGs are both valid;
         // input maps from actual PNG dimensions instead of guessing from DPR.
@@ -160,10 +288,43 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
         if ((!matchesScale(1) && !matchesScale(before.dpr)) || size.width * size.height > 16_777_216) {
           throw new Error('capture-pixel-scale-mismatch');
         }
+        const imageValidateEndedAt = now();
+        const geometryAfterStartedAt = imageValidateEndedAt;
         const after = await geometry(session, check);
-        if (!sameGeometry(before, after)) throw new Error('capture-geometry-changed');
-        return { buffer, geometry: after, capturedAt, captureMs: now() - capturedAt, ...size };
+        const geometryAfterEndedAt = now();
+        if (!sameGeometry(before, after) || (usedView && !viewCaptureEligible(after))) {
+          // Never keep a baseline that no longer matches the page. The next
+          // frame re-reads it instead of reusing a stale sample.
+          geometryBaseline.delete(page);
+          throw new Error('capture-geometry-changed');
+        }
+        geometryBaseline.set(page, { geometry: after, at: geometryAfterEndedAt });
+        return {
+          buffer, format: type, captureBackend: usedView ? 'view' : 'playwright', geometry: after, capturedAt, captureMs: now() - capturedAt, ...size,
+          captureStageMs: {
+            geometryBefore: Math.max(0, geometryBeforeEndedAt - geometryBeforeStartedAt),
+            screenshot: Math.max(0, screenshotEndedAt - screenshotStartedAt),
+            imageValidate: Math.max(0, imageValidateEndedAt - imageValidateStartedAt),
+            geometryAfter: Math.max(0, geometryAfterEndedAt - geometryAfterStartedAt),
+          },
+        };
+      }).catch(error => {
+        if (usedView) viewDisabled.add(page);
+        // A geometry or scale divergence retires the reused baseline so the
+        // next frame re-reads the page instead of trusting an old sample.
+        if (error?.message === 'capture-invalid-geometry'
+            || error?.message === 'capture-pixel-scale-mismatch') {
+          geometryBaseline.delete(page);
+        }
+        throw error; // No input or second screenshot in this failed iteration.
       });
+    },
+    frameBox(frame, calibration) {
+      if (!frame || !validGeometry(frame.geometry)) throw new Error('input-geometry-changed');
+      if (calibration?.screen?.width !== frame.width || calibration?.screen?.height !== frame.height) {
+        throw new Error('input-calibration-mismatch');
+      }
+      return frame.geometry;
     },
     async validateInput(page, frame, calibration, { timeoutMs = 1500, maxAgeMs = null } = {}) {
       // A slow host must not have every drop fail-closed: the budget grows with
@@ -180,7 +341,10 @@ export function createCanvasIO({ now = () => performance.now() } = {}) {
       return run(page, timeoutMs, async (session, check) => {
         const current = await geometry(session, check);
         fresh();
-        if (!sameGeometry(frame.geometry, current)) throw new Error('input-geometry-changed');
+        if (!sameGeometry(frame.geometry, current)
+            || (frame.captureBackend === 'view' && !viewCaptureEligible(current))) {
+          throw new Error('input-geometry-changed');
+        }
         return current;
       });
     },

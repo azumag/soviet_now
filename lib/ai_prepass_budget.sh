@@ -4,12 +4,13 @@
 # ai_generate_list() tries multiple providers sequentially and the OpenCode backend can
 # retry one provider internally. Because each dispatch owns the shared radio lane while
 # its provider command runs, a required main generation can otherwise occupy that lane
-# for several minutes. Optional prepass already has a short total budget; live main
-# generation now gets a separate, more generous total wall-clock budget.
+# for several minutes. Optional prepass and mixed-language repair have short total
+# budgets; live main generation gets a separate, more generous total wall-clock budget.
 #
-# The budget applies only to the normal on-air main-generation call, identified by the
-# existing _radio_is_valid_generation_candidate validator. Other RADIO users (batch,
-# polls, etc.), COMMENT and improvement chains retain their existing policy.
+# The live-main budget applies to the normal on-air main-generation call, identified by
+# the existing _radio_is_valid_generation_candidate validator. Mixed-language repair
+# uses its own short budget. Other RADIO users (batch, polls, etc.), COMMENT and
+# improvement chains retain their existing policy.
 
 _ai_prepass_total_budget_sec() {
 	local value="${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}"
@@ -30,6 +31,18 @@ _ai_radio_main_total_budget_sec() {
 	# Keep required generation below the default 300s radio queue wait while still
 	# allowing a slow-but-healthy backend substantially more time than prepass.
 	[ "$value" -gt 240 ] && value=240
+	printf '%s\n' "$value"
+}
+
+_ai_radio_mixed_repair_total_budget_sec() {
+	# Local repair defaults to the existing prepass budget. It must remain short
+	# because a failed repair immediately falls back to the normal full rewrite.
+	local value="${RADIO_QUALITY_REPAIR_TOTAL_BUDGET_SEC:-${RADIO_PREPASS_TOTAL_BUDGET_SEC:-60}}"
+	case "$value" in
+	'' | *[!0-9]*) value=60 ;;
+	esac
+	[ "$value" -lt 1 ] && value=60
+	[ "$value" -gt 120 ] && value=120
 	printf '%s\n' "$value"
 }
 
@@ -62,11 +75,16 @@ fi
 
 _ai_dispatch() {
 	local label="${1:-AI}" agent="${2:-}" prompt_file="${3:-}" timeout_override="${4:-}"
-	local deadline="" budget_kind="" now remaining
+	local deadline="" cap="" budget_kind="" now remaining effective
 
 	case "${label,,}" in
+	radio:*:mixed_repair*)
+		deadline="${AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH:-}"
+		budget_kind="mixed_repair"
+		;;
 	radio:*:prepass*)
 		deadline="${AI_PREPASS_CHAIN_DEADLINE_EPOCH:-}"
+		cap="${AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_SEC:-}"
 		budget_kind="prepass"
 		;;
 	radio:*)
@@ -95,11 +113,26 @@ _ai_dispatch() {
 		fi
 		# Capture the remaining chain budget at the moment a real provider dispatch
 		# begins. This is bounded by the reviewed 120s/240s chain caps and contains no
-		# provider/model/prompt data.
+		# provider/model/prompt data. Observability keeps reporting this chain-level
+		# value, not the per-candidate effective timeout below.
 		_ai_radio_budget_detail_append executed "$remaining"
+		# A single slow prepass candidate used to receive the whole remaining chain
+		# budget, so it could burn the window before the fallback list was ever
+		# dispatched (azumag/docich#993). The chain deadline above is untouched --
+		# the total wall-clock budget still bounds the run -- this only caps one
+		# dispatch so later candidates keep a real chance to reach the provider.
+		# The cap is a *duration*, not an absolute deadline: every candidate is
+		# allowed the same per-candidate budget, so a slow first candidate cannot
+		# shrink (or clamp to 1s) the window the second one receives. Live main and
+		# mixed-language repair deliberately carry no cap: their own budgets are
+		# their reviewed contract (azumag/docich#993 要件5).
+		effective="$remaining"
+		if [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -ge 1 ] && [ "$cap" -lt "$effective" ]; then
+			effective="$cap"
+		fi
 		case "$timeout_override" in
-		'' | *[!0-9]*) timeout_override="$remaining" ;;
-		*) [ "$timeout_override" -gt "$remaining" ] && timeout_override="$remaining" ;;
+		'' | *[!0-9]*) timeout_override="$effective" ;;
+		*) [ "$timeout_override" -gt "$effective" ] && timeout_override="$effective" ;;
 		esac
 		[ "$timeout_override" -lt 1 ] && timeout_override=1
 	fi
@@ -130,7 +163,7 @@ _ai_generate_list_with_radio_budget() {
 	local previous_retry="" previous_retry_set=0 rc
 	local budget_marker="" budget_detail_marker="" budget_exhausted=0
 	local budget_executed=0 budget_skipped=0 budget_last_remaining=0
-	local detail_kind detail_remaining
+	local detail_kind detail_remaining shared_deadline=""
 	if [ "${!deadline_var+x}" = x ]; then
 		previous_deadline_set=1
 		previous_deadline="${!deadline_var}"
@@ -159,7 +192,27 @@ _ai_generate_list_with_radio_budget() {
 	# the chain deadline while holding the lane. Use one attempt per candidate inside
 	# a bounded chain; normal retry behavior is restored immediately afterwards.
 	export OPENCODE_ABORT_RETRY=0
-	export "$deadline_var=$(( $(date +%s) + budget ))"
+	# mixed-language repair invokes one bounded chain per span. The caller supplies
+	# one dynamically-scoped deadline for the whole repair, so each span cannot
+	# silently receive a fresh budget.
+	if [ "$deadline_var" = "AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH" ]; then
+		shared_deadline="${AI_RADIO_MIXED_REPAIR_TOTAL_DEADLINE_EPOCH:-}"
+	fi
+	if [[ "$shared_deadline" =~ ^[0-9]+$ ]]; then
+		export "$deadline_var=$shared_deadline"
+	else
+		export "$deadline_var=$(( $(date +%s) + budget ))"
+	fi
+	if [ "$deadline_var" = "AI_PREPASS_CHAIN_DEADLINE_EPOCH" ]; then
+		# A duration (not an epoch) shared by every candidate of this chain: one
+		# slow prepass candidate cannot spend the window the fallback list needs
+		# (azumag/docich#993 要件2), and later candidates still get the full
+		# per-candidate budget rather than whatever wall-clock is left. Scoped to
+		# this chain only (local + export: visible to the command-substitution
+		# _ai_dispatch below, restored on return); prepass-only, so main and
+		# mixed repair budgets are unchanged (要件5).
+		local -x AI_PREPASS_CHAIN_PER_CANDIDATE_CAP_SEC=$(( (budget + 1) / 2 ))
+	fi
 	if _ai_generate_list_without_radio_budget "$@"; then
 		rc=0
 	else
@@ -200,7 +253,16 @@ _ai_generate_list_with_radio_budget() {
 ai_generate_list() {
 	local label="${1:-AI}" validator="${5:-}" budget
 	case "${label,,}" in
-	radio:*:prepass*)
+		radio:*:mixed_repair*)
+		# Local mixed-language repair is an on-air radio chain too, but it uses a
+		# short independent deadline so up to three spans cannot starve the lane.
+		if [ "$validator" = "_radio_is_valid_mixed_language_repair_candidate" ]; then
+			budget=$(_ai_radio_mixed_repair_total_budget_sec)
+			_ai_generate_list_with_radio_budget AI_RADIO_MIXED_REPAIR_CHAIN_DEADLINE_EPOCH "$budget" "$@"
+			return $?
+		fi
+		;;
+		radio:*:prepass*)
 		budget=$(_ai_prepass_total_budget_sec)
 		_ai_generate_list_with_radio_budget AI_PREPASS_CHAIN_DEADLINE_EPOCH "$budget" "$@"
 		return $?

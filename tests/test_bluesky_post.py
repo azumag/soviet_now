@@ -284,6 +284,37 @@ class MainTest(unittest.TestCase):
         self.assertEqual(rec["text"], "テスト投稿 https://example.com/a")
         self.assertNotIn("embed", rec)
 
+    def test_clip_mode_records_state_and_is_idempotent(self):
+        state_dir = self.out / "clips"
+        args = ("--text", "☭ ソ連建国! score=100 (Game #1)",
+                "--link", "https://clips.twitch.tv/ExampleClip",
+                "--card-title", "☭ ソ連建国! score=100 (Game #1)",
+                "--card-description", "ソ連建国のTwitchクリップ",
+                "--tags", "ソ連建国", "--clip-id", "ExampleClip-123",
+                "--state-dir", str(state_dir))
+        rc = self.run_main(*args)
+        self.assertEqual(rc, 0)
+        state = json.loads((state_dir / "ExampleClip-123.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["kind"], "twitch_clip")
+        self.assertEqual(state["clip_id"], "ExampleClip-123")
+        rec = self.fake.record()
+        self.assertEqual(rec["embed"]["external"]["title"],
+                         "☭ ソ連建国! score=100 (Game #1)")
+        self.assertIn("#ソ連建国", rec["text"])
+
+        calls_after_first = len(self.fake.calls)
+        self.assertEqual(self.run_main(*args), 0)
+        self.assertEqual(len(self.fake.calls), calls_after_first,
+                         "同じTwitch clip IDは二重投稿しない")
+
+        self.assertEqual(self.run_main(*args, "--force"), 0)
+        self.assertGreater(len(self.fake.calls), calls_after_first,
+                           "--forceなら同じclip IDでも再投稿する")
+
+    def test_clip_id_rejects_path_traversal(self):
+        with self.assertRaises(ValueError):
+            bp.clip_state_path(self.out, "../outside")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

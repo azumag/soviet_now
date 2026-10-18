@@ -25,6 +25,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from game_terminal import is_terminal as is_terminal_game_state
+from game_founding_boundary import founding_boundary_token
+
 
 SCHEMA_VERSION = 1
 LIFECYCLE_DIR = Path("tmp/state/game_lifecycle")
@@ -32,6 +35,9 @@ REQUEST_FILE = "request.json"
 ACK_FILE = "ack.json"
 CONTROL_FILE = "control.json"
 RESOURCE_FILE = "game_resource.json"
+PLAYER_STATE_FILE = "player_state.json"
+PLAYER_CAPABILITIES_FILE = "player_capabilities.json"
+JEV_ONE_GAME_FILE = "jev_one_game.json"
 LOCK_FILE = "broker.lock"
 HISTORY_DIR = "history"
 
@@ -42,11 +48,22 @@ TERMINAL_STATUSES = frozenset({
     "timeout",
     "unsupported",
     "resumed",
+    "committed",
 })
 STOPPING_STATUS = "stopping"
 BOUNDARY_STATUSES = frozenset({"boundary", "stop_requested", "resume_requested"})
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+PLAYER_POLICIES = frozenset({"existing", "jev"})
+PLAYER_CAPABILITY = "player_policy_v1"
+PLAYER_REQUEST_FIELDS = (
+    "operation",
+    "target_policy",
+    "run_id",
+    "expected_player_generation",
+    "config_hash",
 )
 
 RC_OK = 0
@@ -83,6 +100,21 @@ def _json_object(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _marker_owner(path: Path) -> str:
+    """The lifecycle request a pause marker belongs to, or "" when it is not ours.
+
+    A marker another writer created (operator stop, legacy file) never carries
+    the ``lifecycle:<request_id>`` form, so it is reported as ownerless rather
+    than adopted by whichever request happens to read it.
+    """
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    prefix = "lifecycle:"
+    return value[len(prefix):] if value.startswith(prefix) else ""
+
+
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -109,11 +141,16 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _read_game_snapshot(root: Path) -> dict[str, Any]:
-    state = _json_object(root / "game_state.json") or {}
+    state_path = root / "game_state.json"
+    state = _json_object(state_path) or {}
+    try:
+        state_mtime = state_path.stat().st_mtime
+    except OSError:
+        state_mtime = None
     runner = _json_object(root / "tmp/state/main_strategy_runner_active.json") or {}
     pid = runner.get("pid")
     runner_alive = False
-    if isinstance(pid, int) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.kill(pid, 0)
             runner_alive = True
@@ -124,8 +161,25 @@ def _read_game_snapshot(root: Path) -> dict[str, Any]:
         game_count = int((root / "game_count.txt").read_text(encoding="utf-8").strip())
     except (FileNotFoundError, OSError, ValueError):
         pass
+    count = state.get("makeSorenCount")
+    valid_count = (type(count) in (int, float) and abs(count) <= 2**53 - 1 and math.isfinite(count))
+    founding_seen = (root / "tmp/markers/.soviet_created").exists()
+    founding_token = founding_boundary_token(root, state)
+    stale_founding_stop = founding_token is not None
     return {
         "state": str(state.get("state", "")),
+        "terminal": is_terminal_game_state(
+            state,
+            state_mtime=state_mtime,
+            founding_seen=founding_seen,
+        ),
+        "stale_founding_stop": stale_founding_stop,
+        "founding_boundary_token": founding_token,
+        "founding_boundary_board": {key: state.get(key) for key in
+                                   ("state", "score", "makeSorenCount", "pieces")}
+        if stale_founding_stop else None,
+        "founding_seen": founding_seen,
+        "make_soren_count": count if valid_count else None,
         "score": state.get("score"),
         "pieces": len(state.get("pieces", [])) if isinstance(state.get("pieces"), list) else None,
         "game_count": game_count,
@@ -148,6 +202,7 @@ def _identity(request: dict[str, Any]) -> tuple[Any, ...]:
         request.get("request_id"),
         request.get("game"),
         request.get("generation"),
+        *(request.get(field) for field in PLAYER_REQUEST_FIELDS),
     )
 
 
@@ -163,6 +218,9 @@ class LifecycleStore:
         self.ack_path = self.directory / ACK_FILE
         self.control_path = self.directory / CONTROL_FILE
         self.resource_path = self.directory / RESOURCE_FILE
+        self.player_state_path = self.directory / PLAYER_STATE_FILE
+        self.player_capabilities_path = self.directory / PLAYER_CAPABILITIES_FILE
+        self.jev_one_game_path = self.directory / JEV_ONE_GAME_FILE
         self.lock_path = self.directory / LOCK_FILE
         self.history_dir = self.directory / HISTORY_DIR
 
@@ -195,6 +253,15 @@ class LifecycleStore:
     def resource(self) -> dict[str, Any] | None:
         return _json_object(self.resource_path)
 
+    def player_state(self) -> dict[str, Any] | None:
+        return _json_object(self.player_state_path)
+
+    def player_capabilities(self) -> dict[str, Any] | None:
+        return _json_object(self.player_capabilities_path)
+
+    def jev_one_game(self) -> dict[str, Any] | None:
+        return _json_object(self.jev_one_game_path)
+
     def save_request(self, value: dict[str, Any]) -> None:
         _atomic_json(self.request_path, value)
 
@@ -206,6 +273,15 @@ class LifecycleStore:
 
     def save_resource(self, value: dict[str, Any]) -> None:
         _atomic_json(self.resource_path, value)
+
+    def save_player_state(self, value: dict[str, Any]) -> None:
+        _atomic_json(self.player_state_path, value)
+
+    def save_jev_one_game(self, value: dict[str, Any]) -> None:
+        _atomic_json(self.jev_one_game_path, value)
+
+    def clear_jev_one_game(self) -> None:
+        self.jev_one_game_path.unlink(missing_ok=True)
 
     def archive_current(self) -> None:
         request = self.request()
@@ -229,7 +305,7 @@ class LifecycleStore:
 
 
 def _base_ack(request: dict[str, Any], status: str, **extra: Any) -> dict[str, Any]:
-    return {
+    value = {
         "schema": SCHEMA_VERSION,
         "request_id": request["request_id"],
         "game": request.get("game"),
@@ -240,6 +316,10 @@ def _base_ack(request: dict[str, Any], status: str, **extra: Any) -> dict[str, A
         "updated_at": _utc_now(),
         **extra,
     }
+    for field in PLAYER_REQUEST_FIELDS:
+        if field in request:
+            value[field] = request[field]
+    return value
 
 
 def _record_matches_request(record: dict[str, Any] | None, request: dict[str, Any]) -> bool:
@@ -250,6 +330,10 @@ def _record_matches_request(record: dict[str, Any] | None, request: dict[str, An
     for field in ("request_id", "game", "generation", "deadline_epoch", "deadline_at"):
         if field not in record or field not in request or record.get(field) != request.get(field):
             return False
+    if request.get("operation") == "player_change":
+        for field in PLAYER_REQUEST_FIELDS:
+            if field not in record or record.get(field) != request.get(field):
+                return False
     return True
 
 
@@ -262,7 +346,7 @@ def _resource_is_irreversible(resource: dict[str, Any] | None) -> bool:
 
 
 def _control_for(request: dict[str, Any], action: str) -> dict[str, Any]:
-    return {
+    value = {
         "schema": SCHEMA_VERSION,
         "action": action,
         "request_id": request["request_id"],
@@ -272,6 +356,10 @@ def _control_for(request: dict[str, Any], action: str) -> dict[str, Any]:
         "deadline_at": request.get("deadline_at"),
         "created_at": _utc_now(),
     }
+    for field in PLAYER_REQUEST_FIELDS:
+        if field in request:
+            value[field] = request[field]
+    return value
 
 
 def _emit(value: dict[str, Any], rc: int) -> int:
@@ -281,6 +369,74 @@ def _emit(value: dict[str, Any], rc: int) -> int:
 
 def _check_request_id(args: argparse.Namespace) -> str:
     return _valid_request_id(args.request_id)
+
+
+def _validate_player_change(store: LifecycleStore, args: argparse.Namespace) -> dict[str, Any] | None:
+    """Validate the opt-in player transaction without changing runtime state."""
+
+    if getattr(args, "operation", None) != "player_change":
+        return None
+    if args.game != "sorengame":
+        raise LifecycleError("player_change is supported only for sorengame")
+    if type(args.generation) is not int or args.generation < 1 or args.generation > 2**31 - 1:
+        raise LifecycleError("game_generation is required for player_change")
+    target_policy = str(getattr(args, "target_policy", "") or "").strip().lower()
+    if target_policy not in PLAYER_POLICIES:
+        raise LifecycleError("target_policy must be existing or jev")
+    run_id = _valid_request_id(getattr(args, "run_id", ""))
+    expected = getattr(args, "expected_player_generation", None)
+    if type(expected) is not int or expected < 0 or expected > 2**31 - 1:
+        raise LifecycleError("expected_player_generation is invalid")
+    config_hash = str(getattr(args, "config_hash", "") or "").strip().lower()
+    if not SHA256_RE.fullmatch(config_hash):
+        raise LifecycleError("config_hash must be a lowercase sha256")
+    capabilities = store.player_capabilities() or {}
+    advertised = capabilities.get("capabilities")
+    if not isinstance(advertised, list) or PLAYER_CAPABILITY not in advertised or not _live_player_capability(capabilities):
+        raise LifecycleError("player_policy_v1 capability is not advertised by a live bridge")
+    current = store.player_state() or {
+        "schema": SCHEMA_VERSION,
+        "game": "sorengame",
+        "game_generation": args.generation,
+        "policy": "existing",
+        "player_generation": 0,
+    }
+    if current.get("game") not in (None, "sorengame"):
+        raise LifecycleError("active player state belongs to another game")
+    if current.get("game_generation") not in (None, args.generation):
+        raise LifecycleError("game_generation does not match player state")
+    if current.get("player_generation") != expected:
+        raise LifecycleError("expected_player_generation does not match active player")
+    if current.get("policy") == target_policy:
+        raise LifecycleError("target player policy is already active")
+    return {
+        "operation": "player_change",
+        "target_policy": target_policy,
+        "run_id": run_id,
+        "expected_player_generation": expected,
+        "config_hash": config_hash,
+        "capability": PLAYER_CAPABILITY,
+    }
+
+
+def _live_player_capability(capabilities: dict[str, Any]) -> bool:
+    """Reject a capability file left by a dead bridge process."""
+
+    pid = capabilities.get("pid")
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.exists():
+        try:
+            if "soviet_local.mjs" not in proc_cmdline.read_bytes().decode(errors="replace"):
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def command_request(store: LifecycleStore, args: argparse.Namespace) -> int:
@@ -309,6 +465,17 @@ def command_request(store: LifecycleStore, args: argparse.Namespace) -> int:
         "snapshot": _read_game_snapshot(store.root),
     }
     with store.lock():
+        try:
+            player_fields = _validate_player_change(store, args)
+        except (LifecycleError, ValueError) as exc:
+            message = str(exc)
+            if "capability" in message:
+                return _emit({"status": "unsupported", "error": message}, RC_INVALID)
+            if any(marker in message for marker in ("expected_player_generation", "game_generation does not match", "already active")):
+                return _emit({"status": "conflict", "error": message}, RC_CONFLICT)
+            return _emit({"status": "invalid", "error": message}, RC_INVALID)
+        if player_fields:
+            requested.update(player_fields)
         current = store.request()
         current_ack = store.ack()
         if current is not None and current.get("request_id") != request_id:
@@ -343,6 +510,115 @@ def command_request(store: LifecycleStore, args: argparse.Namespace) -> int:
         return _emit({"status": "accepted", "request": requested, "ack": ack}, RC_OK)
 
 
+def command_commit_player(store: LifecycleStore, args: argparse.Namespace) -> int:
+    """Commit a prepared player change with a CAS on player_generation."""
+
+    request_id = _check_request_id(args)
+    with store.lock():
+        try:
+            request, ack = _load_matching_request(store, request_id)
+        except LifecycleError as exc:
+            return _emit({"status": "conflict", "error": str(exc)}, RC_CONFLICT)
+        if request is None or ack is None:
+            return _emit({"status": "missing", "request_id": request_id}, RC_INVALID)
+        if request.get("operation") != "player_change":
+            return _emit({"status": "conflict", "error": "request is not a player_change"}, RC_CONFLICT)
+        if ack.get("status") != "prepared":
+            return _emit({"status": "waiting", "error": "player boundary is not prepared", "ack": ack}, RC_WAITING)
+        if _deadline_expired(request):
+            expired = _base_ack(request, "timeout", reason="player commit deadline expired")
+            store.save_ack(expired)
+            return _emit({"request": request, "ack": expired}, RC_EXPIRED)
+        capabilities = store.player_capabilities() or {}
+        advertised = capabilities.get("capabilities")
+        if not isinstance(advertised, list) or PLAYER_CAPABILITY not in advertised or not _live_player_capability(capabilities):
+            unsupported = _base_ack(request, "unsupported", reason="player_policy_v1 capability disappeared")
+            store.save_ack(unsupported)
+            return _emit({"request": request, "ack": unsupported}, RC_CONFLICT)
+        current = store.player_state() or {
+            "schema": SCHEMA_VERSION,
+            "game": request.get("game"),
+            "game_generation": request.get("generation"),
+            "policy": "existing",
+            "player_generation": 0,
+        }
+        if (
+            current.get("game") != request.get("game")
+            or current.get("game_generation") != request.get("generation")
+            or current.get("player_generation") != request.get("expected_player_generation")
+        ):
+            return _emit({"status": "conflict", "error": "player CAS no longer matches active state"}, RC_CONFLICT)
+        next_generation = int(current["player_generation"]) + 1
+        player_state = {
+            "schema": SCHEMA_VERSION,
+            "game": request["game"],
+            "game_generation": request["generation"],
+            "policy": request["target_policy"],
+            "player_generation": next_generation,
+            "run_id": request["run_id"],
+            "config_hash": request["config_hash"],
+            "source_request_id": request["request_id"],
+            "updated_at": _utc_now(),
+        }
+        store.save_player_state(player_state)
+        # A completed JEV one-game park belongs to the previous committed
+        # policy. Clear it only after the new player snapshot is durable. If
+        # this process dies before the clear, the supervisor still verifies
+        # the marker against player_state before suppressing a respawn.
+        store.clear_jev_one_game()
+        committed = _base_ack(
+            request,
+            "committed",
+            player_generation=next_generation,
+            player_state=player_state,
+        )
+        store.save_ack(committed)
+        store.archive_current()
+        store.request_path.unlink(missing_ok=True)
+        store.ack_path.unlink(missing_ok=True)
+        store.control_path.unlink(missing_ok=True)
+        return _emit({"status": "committed", "player_state": player_state, "ack": committed}, RC_OK)
+
+
+def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) -> int:
+    """Durably park the supervisor after the explicitly requested JEV game."""
+
+    with store.lock():
+        # A pending player transaction owns the boundary. The loop must let
+        # game_lifecycle_after_game() prepare that request instead of marking
+        # a completed park that could race the operator's finish operation.
+        if store.request() is not None or store.ack() is not None:
+            return _emit({"status": "conflict", "error": "player transaction is still active"}, RC_CONFLICT)
+        player_state = store.player_state() or {}
+        run_id = player_state.get("run_id")
+        if (
+            player_state.get("schema") != SCHEMA_VERSION
+            or player_state.get("game") != "sorengame"
+            or player_state.get("policy") != "jev"
+            or not isinstance(run_id, str)
+            or not UUID_RE.fullmatch(run_id)
+            or type(player_state.get("game_generation")) is not int
+            or player_state.get("game_generation") < 1
+            or type(player_state.get("player_generation")) is not int
+            or player_state.get("player_generation") < 0
+        ):
+            return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
+        snapshot = _read_game_snapshot(store.root)
+        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
+            return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
+        marker = {
+            "schema": SCHEMA_VERSION,
+            "game": "sorengame",
+            "policy": "jev",
+            "run_id": run_id,
+            "game_generation": player_state["game_generation"],
+            "player_generation": player_state["player_generation"],
+            "completed_at": _utc_now(),
+        }
+        store.save_jev_one_game(marker)
+        return _emit({"status": "parked", "marker": marker}, RC_OK)
+
+
 def _load_matching_request(store: LifecycleStore, request_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     request = store.request()
     if request is None:
@@ -373,6 +649,8 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
             # A stop claim is an atomic no-cancel fence.  A late boundary poll
             # must never downgrade it back to boundary/stop_requested.
             return _emit({"request": request, "ack": ack, "control": store.control()}, RC_OK)
+        if request.get("operation") == "player_change" and ack.get("status") == "prepared":
+            return _emit({"request": request, "ack": ack}, RC_OK)
         if _deadline_expired(request):
             next_ack = _base_ack(request, "timeout", reason="boundary deadline expired", snapshot=_read_game_snapshot(store.root))
             store.save_ack(next_ack)
@@ -382,7 +660,15 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
             return _emit({"request": request, "ack": next_ack}, RC_EXPIRED)
 
         snapshot = _read_game_snapshot(store.root)
-        if snapshot.get("state") not in {"GAMEOVER", "STOP"} or snapshot.get("runner_alive"):
+        # A quiet non-founding STOP is also a boundary.  Fresh STOP remains
+        # protected because it can precede the founding counter increment.
+        founded_boundary = (
+            request.get("game") == "sorengame"
+            and request.get("operation") != "player_change"
+            and snapshot.get("runner_alive")
+            and snapshot.get("stale_founding_stop")
+        )
+        if not founded_boundary and (not snapshot.get("terminal") or snapshot.get("runner_alive")):
             next_ack = _base_ack(
                 request,
                 "waiting",
@@ -391,6 +677,16 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
             )
             store.save_ack(next_ack)
             return _emit({"request": request, "ack": next_ack}, RC_WAITING)
+
+        if request.get("operation") == "player_change":
+            next_ack = _base_ack(
+                request,
+                "prepared",
+                boundary_snapshot=snapshot,
+                player_change_ready=True,
+            )
+            store.save_ack(next_ack)
+            return _emit({"request": request, "ack": next_ack}, RC_OK)
 
         if ack.get("status") not in BOUNDARY_STATUSES:
             next_ack = _base_ack(
@@ -403,6 +699,23 @@ def command_boundary(store: LifecycleStore, args: argparse.Namespace) -> int:
         else:
             next_ack = ack
         return _emit({"request": request, "ack": next_ack}, RC_OK)
+
+
+def _founding_boundary_still_current(store, request, ack):
+    previous = ack.get("boundary_snapshot") or {}
+    if not previous.get("stale_founding_stop"):
+        return True
+    snapshot = _read_game_snapshot(store.root)
+    if (previous.get("founding_boundary_token")
+            and snapshot.get("runner_alive")
+            and snapshot.get("stale_founding_stop")
+            and snapshot.get("founding_boundary_token") == previous.get("founding_boundary_token")):
+        return True
+    store.save_ack(_base_ack(request, "waiting", reason="founding boundary observation expired", snapshot=snapshot))
+    control = store.control()
+    if control and _record_matches_request(control, request):
+        store.control_path.unlink(missing_ok=True)
+    return False
 
 
 def command_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
@@ -440,6 +753,8 @@ def command_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
                 RC_WAITING,
             )
 
+        if not _founding_boundary_still_current(store, request, ack):
+            return _emit({"request": request, "ack": store.ack()}, RC_WAITING)
         control = store.control()
         if control is not None:
             if not _record_matches_request(control, request):
@@ -486,7 +801,20 @@ def command_claim_stop(store: LifecycleStore, args: argparse.Namespace) -> int:
                 {"request": request, "ack": ack, "status": "waiting", "error": "stop request acknowledgement is required before claim"},
                 RC_WAITING,
             )
-        if _deadline_expired(request):
+        if not _founding_boundary_still_current(store, request, ack):
+            return _emit({"request": request, "ack": store.ack()}, RC_WAITING)
+        # Once the writer-side stop request and matching control are already
+        # durable, allow the bridge to cross the irreversible claim fence even
+        # if the wall-clock deadline elapsed between subprocess calls.  A
+        # later stop request still expires normally; this only prevents a
+        # half-committed stop from being downgraded into a false restore path.
+        stop_control_claimed = (
+            status == "stop_requested"
+            and control is not None
+            and _record_matches_request(control, request)
+            and control.get("action") == "stop"
+        )
+        if _deadline_expired(request) and not stop_control_claimed:
             next_ack = _base_ack(request, "timeout", reason="stop claim deadline expired")
             store.save_ack(next_ack)
             if control and _record_matches_request(control, request):
@@ -639,6 +967,9 @@ def command_status(store: LifecycleStore, _args: argparse.Namespace) -> int:
                 "ack": store.ack(),
                 "control": store.control(),
                 "resource": store.resource(),
+                "player_state": store.player_state(),
+                "player_capabilities": store.player_capabilities(),
+                "jev_one_game": store.jev_one_game(),
             },
             RC_OK,
         )
@@ -691,17 +1022,27 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
             (store.directory / "loop_pause.json", store.root / "tmp/state/soren_loop.paused"),
             (store.directory / "watchdog_pause.json", store.root / "tmp/state/soviet_watchdog.paused"),
         )
+        # A pause record is the only proof of which lifecycle request created
+        # its marker.  Deleting a record while its marker survives would leave
+        # the marker ownerless, and a later resume could never clear that pause
+        # (issue #2061: candidate cleanup archived the ownership record of the
+        # switch that parked the loop, so readiness and rollback timed out).
+        # Keep a foreign record exactly as long as the marker it proves.
+        keep_records: list[Path] = []
         for record_path, marker_path in pause_specs:
             record = _json_object(record_path)
-            if record and record.get("request_id") == request_id:
-                owned = bool(record.get("improvement_marker_created") or record.get("loop_marker_created"))
-                marker_value = ""
-                try:
-                    marker_value = marker_path.read_text(encoding="utf-8").strip()
-                except OSError:
-                    pass
-                if owned and marker_value == f"lifecycle:{request_id}":
-                    marker_path.unlink(missing_ok=True)
+            if not record:
+                continue
+            owner = record.get("request_id")
+            owns_marker = bool(
+                record.get("improvement_marker_created") or record.get("loop_marker_created")
+            ) and bool(owner) and _marker_owner(marker_path) == owner
+            if owner != request_id:
+                if owns_marker:
+                    keep_records.append(record_path)
+                continue
+            if owns_marker:
+                marker_path.unlink(missing_ok=True)
         if not resuming:
             prior = {
                 "schema": 1,
@@ -717,7 +1058,7 @@ def command_fresh_start(store: LifecycleStore, args: argparse.Namespace) -> int:
         store.archive_current()
         for path in (
             store.ack_path, store.control_path, store.resource_path,
-            *(record for record, _marker in pause_specs),
+            *(record for record, _marker in pause_specs if record not in keep_records),
             # Delete request last.  The receipt remains a durable journal if
             # any earlier unlink fails, and a retry validates and resumes all
             # remaining cleanup before reporting success.
@@ -737,10 +1078,19 @@ def build_parser() -> argparse.ArgumentParser:
     request.add_argument("--game", required=True)
     request.add_argument("--generation", type=int)
     request.add_argument("--deadline-sec", type=float, default=900.0)
+    request.add_argument("--operation", choices=("player_change",))
+    request.add_argument("--target-policy")
+    request.add_argument("--run-id")
+    request.add_argument("--expected-player-generation", type=int)
+    request.add_argument("--config-hash")
 
     for name in ("boundary", "stop", "claim-stop", "cancel", "finish", "restore", "resume-complete", "fresh-start"):
         item = sub.add_parser(name)
         item.add_argument("--request-id", required=True)
+    commit = sub.add_parser("commit-player")
+    commit.add_argument("--request-id", required=True)
+    sub.add_parser("mark-jev-one-game")
+    sub.add_parser("capabilities")
     sub.add_parser("status")
     return parser
 
@@ -751,6 +1101,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "request":
             return command_request(store, args)
+        if args.command == "commit-player":
+            return command_commit_player(store, args)
+        if args.command == "mark-jev-one-game":
+            return command_mark_jev_one_game(store, args)
+        if args.command == "capabilities":
+            with store.lock():
+                return _emit(store.player_capabilities() or {"capabilities": []}, RC_OK)
         if args.command == "boundary":
             return command_boundary(store, args)
         if args.command == "stop":

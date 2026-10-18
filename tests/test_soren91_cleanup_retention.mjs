@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, utimesSync, readdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +16,7 @@ function fixture() {
   mkdirSync(join(dir, 'tmp', 'summaries'), { recursive: true });
   mkdirSync(join(dir, 'game_history'), { recursive: true });
   mkdirSync(join(dir, 'tmp', 'game_screenshots', 'game_0001'), { recursive: true });
+  mkdirSync(join(dir, 'tmp', 'rejected_frame_diagnostics', 'run_00000000-0000-4000-8000-000000000001'), { recursive: true });
   mkdirSync(join(dir, 'tmp', 'state'), { recursive: true });
 
   const oldArtifacts = [
@@ -29,6 +30,8 @@ function fixture() {
     utimesSync(path, old, old);
   }
   writeFileSync(join(dir, 'tmp', 'game_screenshots', 'game_0001', 'a.png'), 'x');
+  writeFileSync(join(dir, 'tmp', 'rejected_frame_diagnostics', 'run_00000000-0000-4000-8000-000000000001', 'frame_00.png'), 'x');
+  utimesSync(join(dir, 'tmp', 'rejected_frame_diagnostics', 'run_00000000-0000-4000-8000-000000000001'), old, old);
   utimesSync(join(dir, 'tmp', 'game_screenshots', 'game_0001'), old, old);
 
   const freshSummary = join(dir, 'tmp', 'summaries', 'game_0002.json');
@@ -43,9 +46,10 @@ test('cleanupRetention removes old managed evidence by age without improve_daily
   const { dir, now, oldArtifacts, freshSummary } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now });
-    assert.equal(r.removed, 5);
+    assert.equal(r.removed, 6);
     for (const path of oldArtifacts) assert.equal(existsSync(path), false);
     assert.equal(existsSync(join(dir, 'tmp', 'game_screenshots', 'game_0001')), false);
+    assert.equal(existsSync(join(dir, 'tmp', 'rejected_frame_diagnostics', 'run_00000000-0000-4000-8000-000000000001')), false);
     assert.equal(existsSync(freshSummary), true);
     assert.equal(r.errors, 0);
   } finally {
@@ -57,7 +61,7 @@ test('cleanupRetention dry-run reports removals but keeps files', () => {
   const { dir, now } = fixture();
   try {
     const r = cleanupRetention({ runtimeDir: dir, days: 3, now, dryRun: true });
-    assert.equal(r.removed, 5);
+    assert.equal(r.removed, 6);
     assert.equal(readdirSync(join(dir, 'tmp', 'summaries')).length, 3);
     assert.equal(existsSync(join(dir, 'game_history', 'game_0001.jsonl')), true);
     assert.equal(existsSync(join(dir, 'game_history', 'abandoned_0001_1789000000000_0.jsonl')), true);
@@ -89,7 +93,33 @@ test('global tmp cleanup does not bypass the Soren91 retention owner', () => {
   const source = readFileSync(new URL('../infra/cleanup.sh', import.meta.url), 'utf8');
   assert.doesNotMatch(
     source,
-    /soren91\/tmp\/(?:summaries|screenshots|game_screenshots|strategy_snapshots)/,
+    /soren91\/tmp\/(?:summaries|screenshots|game_screenshots|strategy_snapshots|rejected_frame_diagnostics)/,
   );
   assert.match(source, /soren91\/cleanup_retention\.mjs/);
+});
+
+test('rejected-frame retention fails closed on symlinked roots and game entries', () => {
+  const { dir, now } = fixture();
+  const external = mkdtempSync(join(tmpdir(), 'soren91-retention-outside-'));
+  try {
+    const managed = join(dir, 'tmp', 'rejected_frame_diagnostics');
+    rmSync(managed, { recursive: true, force: true });
+    writeFileSync(join(external, 'keep.txt'), 'keep');
+    symlinkSync(external, managed);
+    let result = cleanupRetention({ runtimeDir: dir, days: 3, now });
+    assert.equal(result.errors, 1);
+    assert.equal(existsSync(join(external, 'keep.txt')), true);
+
+    rmSync(managed, { force: true });
+    mkdirSync(managed);
+    mkdirSync(join(external, 'run_00000000-0000-4000-8000-000000000002'));
+    writeFileSync(join(external, 'run_00000000-0000-4000-8000-000000000002', 'keep.txt'), 'keep');
+    symlinkSync(join(external, 'run_00000000-0000-4000-8000-000000000002'), join(managed, 'run_00000000-0000-4000-8000-000000000002'));
+    result = cleanupRetention({ runtimeDir: dir, days: 3, now });
+    assert.equal(result.errors, 1);
+    assert.equal(existsSync(join(external, 'run_00000000-0000-4000-8000-000000000002', 'keep.txt')), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(external, { recursive: true, force: true });
+  }
 });

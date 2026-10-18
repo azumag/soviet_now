@@ -1,28 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildCanvasFfmpegArgs,
   buildCanvasVideoFilter,
   buildChromeArgs,
   canvasSamplesMatch,
+  childExitOutcome,
   computeDriverDeadline,
   computeSessionDeadline,
   evaluateGeometryDrift,
+  FFMPEG_EXIT_WAIT_MS,
   findGameTarget,
   isAllowedCdpPeer,
   isExactGameTargetUrl,
+  main,
   normalizeRemoteAddress,
+  OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES,
+  OFFSCREEN_WATCH_MAX_REASSERTS,
   parseCanvasGeometry,
   PROFILE_DIR_PREFIX,
   reapStaleProfileDirs,
   resolveCanvasCropFrame,
+  runGeometryWatchTick,
   signalExitCode,
   STALE_PROFILE_DIR_MS,
   startAudioTapWithRetry,
   validateOptions,
   waitForStableCanvasGeometry,
 } from '../tools/soren91_macos_cdp_host.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function validOptions(overrides = {}) {
   return {
@@ -134,6 +147,52 @@ test('signal shutdown uses conventional exit codes', () => {
   assert.equal(signalExitCode('SIGTERM'), 143);
   assert.equal(signalExitCode('SIGINT'), 130);
   assert.equal(signalExitCode('other'), 143);
+});
+
+test('an already-exited capture/ffmpeg child is never missed by the session race', async () => {
+  // A child that died before the race was armed must resolve immediately:
+  // otherwise a dead capture helper would leave the host waiting for the
+  // session deadline with the broadcast stream frozen (Issue #486).
+  assert.deepEqual(
+    await childExitOutcome({ exitCode: 0, signalCode: null }, 'capture-exit'),
+    { kind: 'capture-exit', value: { code: 0, signal: null } },
+  );
+  assert.deepEqual(
+    await childExitOutcome({ exitCode: null, signalCode: 'SIGKILL' }, 'capture-exit'),
+    { kind: 'capture-exit', value: { code: null, signal: 'SIGKILL' } },
+  );
+});
+
+test('session racers resolve on the requested event (ffmpeg waits for close)', async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const pending = childExitOutcome(child, 'ffmpeg-exit', 'close');
+  // 'exit' fires before the stderr pipe is flushed; the racer must not
+  // settle on it (the tail must be complete when classification runs).
+  child.emit('exit', 1, null);
+  let settled = false;
+  pending.then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  child.emit('close', 1, null);
+  assert.deepEqual(await pending, { kind: 'ffmpeg-exit', value: { code: 1, signal: null } });
+});
+
+test('cdp-host fails the session closed when the capture pipeline dies (Issue #486)', () => {
+  const source = fs.readFileSync(path.join(root, 'tools/soren91_macos_cdp_host.mjs'), 'utf8');
+  // The session end must be classified by the reviewed legacy-session
+  // contract (only an explicit receiver-close signature is a normal end).
+  assert.match(source, /resolveSessionEnd\(/);
+  assert.match(source, /childExitOutcome\(ffmpeg, 'ffmpeg-exit', 'close'\)/);
+  assert.match(source, /childExitOutcome\(capture, 'capture-exit'\)/);
+  assert.match(source, /SOREN91_CDP_HOST_END=\$\{verdict\}/);
+  assert.match(source, /getFfmpegExit: \(\) => ffmpegExit/);
+  // The pre-#486 behavior (log the exit, then keep the host up until the
+  // deadline) must not come back: a dead pipeline has to end the session.
+  assert.doesNotMatch(source, /host continues until deadline\/SIGTERM/);
+  assert.doesNotMatch(source, /await sleep\(Math\.max\(0, sessionDeadline - Date\.now\(\)\)\)/);
+  assert.ok(FFMPEG_EXIT_WAIT_MS > 0);
 });
 
 test('cdp-host output is fixed at 960x540 (full-page 1280x720 is rejected)', () => {
@@ -422,6 +481,192 @@ test('geometry watchdog fails closed when the virtual display is absent from the
   );
 });
 
+// --- Runtime geometry watchdog failure paths are all fail-closed (Issue #319) ---
+
+function watchTick(overrides = {}) {
+  const failures = [];
+  const logs = [];
+  const state = { reasserts: 0, observeFailures: 0 };
+  const tick = {
+    getWindowBounds: async () => ({ ...WATCH_CALIBRATED_RECT }),
+    getContentGeometry: async () => ({ ...WATCH_CONTENT }),
+    listDisplays: () => WATCH_DISPLAYS.map((d) => ({ id: d.id, bounds: { ...d.bounds } })),
+    setWindowBounds: async () => {},
+    calibratedRect: { ...WATCH_CALIBRATED_RECT },
+    calibratedContent: { ...WATCH_CONTENT },
+    virtualDisplayId: WATCH_VIRTUAL_ID,
+    state,
+    failClosed: (reason) => { failures.push(reason); },
+    log: (message) => { logs.push(message); },
+    ...overrides,
+  };
+  return { tick, failures, logs, state };
+}
+
+test('geometry watchdog stops the stream when re-asserting the window fails (Issue #319)', async () => {
+  // The window is confirmed on a physical display and the repair move
+  // itself rejects: streaming on would risk an on-screen frame, so the
+  // host must stop instead of logging best-effort and continuing.
+  const { tick, failures } = watchTick({
+    getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+    setWindowBounds: async () => { throw new Error('Protocol error: Target closed'); },
+  });
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /re-assert failed \(fail-closed\)/);
+});
+
+test('geometry watchdog fails closed when window bounds cannot be observed (Issue #319)', async () => {
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => { throw new Error('Protocol error: Not connected'); },
+  });
+  assert.ok(OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES >= 2, 'retry budget must allow a transient failure');
+  // Transient single failures only retry — the stream keeps running.
+  assert.equal(await runGeometryWatchTick(tick), 'retrying');
+  assert.equal(failures.length, 0);
+  assert.equal(state.observeFailures, 1);
+  // ... until the bounded budget is reached, then the stream stops: a
+  // blind watchdog can no longer prove the window is still offscreen.
+  for (let n = 2; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+    assert.equal(await runGeometryWatchTick(tick), 'retrying');
+  }
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /observation failed \(fail-closed\): window-bounds/);
+});
+
+test('geometry watchdog fails closed when page geometry cannot be observed (Issue #319)', async () => {
+  const { tick, failures } = watchTick({
+    getContentGeometry: async () => { throw new Error('page.evaluate failed: Execution context destroyed'); },
+  });
+  let result = null;
+  for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+    result = await runGeometryWatchTick(tick);
+  }
+  assert.equal(result, 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /observation failed \(fail-closed\): content-geometry/);
+});
+
+test('geometry watchdog fails closed when the display list cannot be fetched or parsed (Issue #319)', async () => {
+  // Fetch failure (the runtime closure throws spawnSync's error).
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => { throw new Error('spawnSync soren91_virtual_display ENOENT'); },
+    });
+    let result = null;
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      result = await runGeometryWatchTick(tick);
+    }
+    assert.equal(result, 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /observation failed \(fail-closed\): display-list/);
+  }
+  // Parse failure (the runtime closure throws out of parseVDisplayList on
+  // garbage output) takes the same fail-closed path.
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => { throw new Error('virtual display --list emitted non-JSON: <garbage>'); },
+    });
+    let result = null;
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      result = await runGeometryWatchTick(tick);
+    }
+    assert.equal(result, 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /observation failed \(fail-closed\): display-list/);
+  }
+  // A list that parses but excludes the virtual display is not transient:
+  // the drift decision itself throws, so the stream stops immediately.
+  {
+    const { tick, failures } = watchTick({
+      listDisplays: () => [{ id: 2, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }],
+    });
+    assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /drift check failed \(fail-closed\)/);
+  }
+});
+
+test('geometry watchdog stops after the bounded re-assert budget (Issue #319)', async () => {
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+  });
+  assert.ok(OFFSCREEN_WATCH_MAX_REASSERTS >= 2, 're-assert budget must allow a transient drift');
+  for (let n = 1; n < OFFSCREEN_WATCH_MAX_REASSERTS; n += 1) {
+    assert.equal(await runGeometryWatchTick(tick), 'reasserted');
+    assert.equal(failures.length, 0);
+  }
+  assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /offscreen window kept drifting/);
+  assert.equal(state.reasserts, OFFSCREEN_WATCH_MAX_REASSERTS);
+});
+
+test('geometry watchdog resets its budgets once geometry is healthy again', async () => {
+  let drifted = true;
+  const { tick, failures, state } = watchTick({
+    getWindowBounds: async () => (drifted
+      ? { x: -1800, y: 0, width: 1280, height: 807 }
+      : { ...WATCH_CALIBRATED_RECT }),
+  });
+  assert.equal(await runGeometryWatchTick(tick), 'reasserted');
+  assert.equal(state.reasserts, 1);
+  drifted = false;
+  assert.equal(await runGeometryWatchTick(tick), 'ok');
+  assert.equal(state.reasserts, 0);
+  assert.equal(state.observeFailures, 0);
+  assert.equal(failures.length, 0);
+});
+
+test('geometry watchdog fail-closed reasons never carry titles, URLs, or secrets (Issue #319)', async () => {
+  const SECRET_TITLE = 'Secret Game Title 9f8e7d6c';
+  const SECRET_URL = 'https://play.unityroom.com/games/secret-9f8e7d6c';
+  const SECRET = 'srt://user:secret-pass@100.70.0.3:9000?mode=caller';
+  const scenarios = [
+    { getWindowBounds: async () => { throw new Error(`bounds failed for ${SECRET_TITLE} ${SECRET_URL}`); } },
+    { getContentGeometry: async () => { throw new Error(`evaluate failed at ${SECRET_URL}: ${SECRET}`); } },
+    { listDisplays: () => { throw new Error(`list failed: ${SECRET}`); } },
+    {
+      getWindowBounds: async () => ({ x: 100, y: 100, width: 1280, height: 807 }),
+      setWindowBounds: async () => { throw new Error(`move failed for ${SECRET_TITLE}: ${SECRET}`); },
+    },
+  ];
+  const reasons = [];
+  for (const overrides of scenarios) {
+    const { tick, failures } = watchTick(overrides);
+    for (let n = 0; n < OFFSCREEN_WATCH_MAX_OBSERVE_FAILURES; n += 1) {
+      await runGeometryWatchTick(tick);
+    }
+    assert.ok(failures.length >= 1, 'each failure path must reach failClosed');
+    reasons.push(...failures);
+  }
+  // Content-size drift also fails closed; its reason is a fixed token.
+  {
+    const { tick, failures } = watchTick({
+      getContentGeometry: async () => ({ iw: 1000, ih: 600 }),
+    });
+    assert.equal(await runGeometryWatchTick(tick), 'fail-closed');
+    reasons.push(...failures);
+  }
+  assert.ok(reasons.length >= scenarios.length + 1);
+  for (const reason of reasons) {
+    assert.ok(!reason.includes(SECRET_TITLE), `reason leaks window title: ${reason}`);
+    assert.ok(!reason.includes(SECRET_URL), `reason leaks URL: ${reason}`);
+    assert.ok(!reason.includes(SECRET), `reason leaks secret: ${reason}`);
+    assert.ok(!reason.includes('secret-pass'), `reason leaks credential: ${reason}`);
+  }
+});
+
+test('runtime geometry watchdog has no best-effort escape hatch (Issue #319)', () => {
+  const source = fs.readFileSync(path.join(root, 'tools/soren91_macos_cdp_host.mjs'), 'utf8');
+  // The pre-#319 catch-all (log + keep streaming while blind) must not
+  // come back in the watchdog: every failure path reaches failClosed().
+  assert.doesNotMatch(source, /geometry watchdog error \(best-effort\)/);
+  assert.match(source, /await runGeometryWatchTick\(\{/);
+  assert.match(source, /geometry watchdog unexpected error \(fail-closed\)/);
+});
+
 test('audio gain adds a volume filter only when it differs from 1', () => {
   const capture = { outerWidth: 1280, outerHeight: 807, chromeTop: 87, chromeLeft: 0 };
   const crop = { x: 0, y: 87, w: 1280, h: 720 };
@@ -484,4 +729,201 @@ test('reapStaleProfileDirs never throws when listing or removing fails', () => {
     isInUse: () => false,
     rmImpl: () => { throw new Error('permission denied'); },
   }));
+});
+
+// --- main() smoke test (Issue #358) -------------------------------------
+// Runs driver ready -> streaming/watch setup -> full-session wait with every
+// process/CDP/hardware touchpoint stubbed: no Chrome, ScreenCaptureKit,
+// ffmpeg, SRT, Tailscale, or secrets. A #357-class wiring bug (e.g. an
+// undefined `deadline` reference on the ready path) throws out of main()
+// here instead of passing silently.
+
+const SMOKE_GAME_URL = 'https://74337.play.unityroom.com/games/smoke';
+const SMOKE_VDISPLAY_STATUS = { displayID: 7, bounds: { x: -3000, y: 0, width: 1600, height: 900 } };
+const SMOKE_LIST_LINE = JSON.stringify({
+  ok: true,
+  displays: [
+    { id: 7, bounds: { x: -3000, y: 0, width: 1600, height: 900 } },
+    { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+  ],
+});
+const SMOKE_WINDOW_BOUNDS = { left: -2980, top: 20, width: 1280, height: 807 };
+const SMOKE_STABLE_GEOMETRY = {
+  canvas: { x: 0, y: 0, width: 1280, height: 720, iw: 1280, ih: 720, dpr: 1 },
+  outerWidth: 1280, outerHeight: 807, chromeLeft: 0, chromeTop: 87,
+};
+
+class SmokeChild extends EventEmitter {
+  constructor() {
+    super();
+    this.pid = 20000 + Math.floor(Math.random() * 10000);
+    this.exitCode = null;
+    this.signalCode = null;
+    this.killed = false;
+    this.stdout = new EventEmitter();
+    this.stdout.pipe = () => {};
+    this.stdout.destroy = () => {};
+    this.stderr = new EventEmitter();
+    this.stdin = { destroy: () => {}, on: () => {}, write: () => true };
+    this.stdio = [null, this.stdout, this.stderr, new EventEmitter()];
+  }
+
+  kill() {
+    if (this.killed || this.exitCode != null) return false;
+    this.killed = true;
+    this.exitCode = 0;
+    setImmediate(() => this.emit('exit', 0, null));
+    return true;
+  }
+}
+
+function buildSmokeStubs(overrides = {}) {
+  const calls = {
+    spawn: 0, spawnSync: 0, fetchJsonList: 0, waitForStableCanvasGeometry: 0,
+    startCdpProxy: 0, connectOverCDP: 0, browserClose: 0,
+  };
+  const vdisplay = new SmokeChild();
+  const capture = new SmokeChild();
+  const deps = {
+    startVirtualDisplay: async () => ({ child: vdisplay, status: SMOKE_VDISPLAY_STATUS }),
+    reapStaleProfileDirs: () => {},
+    spawn: () => {
+      calls.spawn += 1;
+      return new SmokeChild();
+    },
+    spawnSync: (bin, args) => {
+      calls.spawnSync += 1;
+      if (args?.[0] === '--list') return { error: undefined, stdout: '', stderr: `${SMOKE_LIST_LINE}\n` };
+      return { status: 1 };
+    },
+    fetch: async () => ({ ok: true }),
+    fetchJsonList: async () => {
+      calls.fetchJsonList += 1;
+      return [{ type: 'page', url: SMOKE_GAME_URL }];
+    },
+    startCdpProxy: async () => {
+      calls.startCdpProxy += 1;
+      return { close: (cb) => { cb?.(); } };
+    },
+    connectOverCDP: async () => {
+      calls.connectOverCDP += 1;
+      const cdp = {
+        send: async (method) => {
+          if (method === 'Browser.getWindowForTarget') return { windowId: 1 };
+          if (method === 'Browser.getWindowBounds') return { bounds: { ...SMOKE_WINDOW_BOUNDS } };
+          return {};
+        },
+      };
+      const page = {
+        url: () => SMOKE_GAME_URL,
+        title: async () => {
+          if (overrides.pageTitleError) throw overrides.pageTitleError;
+          return 'smoke game';
+        },
+        evaluate: async () => ({ iw: 1280, ih: 720 }),
+      };
+      return {
+        close: async () => { calls.browserClose += 1; },
+        contexts: () => [{ pages: () => [page], newCDPSession: async () => cdp }],
+      };
+    },
+    waitForStableCanvasGeometry: async () => {
+      calls.waitForStableCanvasGeometry += 1;
+      return { ...SMOKE_STABLE_GEOMETRY };
+    },
+    startCaptureHelper: async () => ({ child: capture, status: { ok: true } }),
+    startAudioTapWithRetry: async () => { throw new Error('audio tap must be disabled in the smoke test'); },
+    ...overrides.deps,
+  };
+  return { calls, deps };
+}
+
+async function withSmokeEnv(vars, fn) {
+  const prev = new Map();
+  for (const [key, value] of Object.entries(vars)) {
+    prev.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of prev) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+function smokeEnv(resultPath, { sessionSec, driverWaitSec }) {
+  return {
+    SOREN91_LOCAL_SRT_URL: 'srt://100.70.0.3:9000?mode=caller',
+    SOREN91_CDP_BIND_IP: '100.70.0.2',
+    SOREN91_CDP_HOST_SESSION_SEC: String(sessionSec),
+    SOREN91_CDP_HOST_DRIVER_WAIT_SEC: String(driverWaitSec),
+    SOREN91_LOCAL_AUDIO_TAP: '0',
+    SOREN91_CDP_HOST_RESULT_PATH: resultPath,
+  };
+}
+
+test('cdp-host main() runs driver-ready to full-session deadline with stubs only (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  const { calls, deps } = buildSmokeStubs();
+  const outcome = await withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1, driverWaitSec: 5 }), () =>
+    main(['--execute'], { platform: 'darwin', deps }));
+  assert.deepEqual(outcome, { ok: true });
+  const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+  assert.equal(result.ok, true);
+  assert.equal(result.windowTitle, 'smoke game');
+  assert.deepEqual(result.canvasCrop, { x: 0, y: 86, w: 1280, h: 720 });
+  // The driver was observed, the watch-setup geometry ran, and exactly the
+  // chrome + ffmpeg children were spawned (nothing real).
+  assert.ok(calls.fetchJsonList >= 1);
+  assert.equal(calls.startCdpProxy, 1);
+  assert.equal(calls.connectOverCDP, 1);
+  assert.equal(calls.waitForStableCanvasGeometry, 1);
+  assert.equal(calls.spawn, 2);
+  assert.equal(calls.browserClose, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cdp-host main() keeps the full-session deadline when the driver wait is short (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  let requestedMs = null;
+  const { deps } = buildSmokeStubs({
+    deps: {
+      createSessionDeadline: (ms) => {
+        requestedMs = ms;
+        return { promise: Promise.resolve({ kind: 'deadline' }), cancel() {} };
+      },
+    },
+  });
+  const outcome = await withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1500, driverWaitSec: 5 }), () =>
+    main(['--execute'], { platform: 'darwin', deps }));
+  assert.deepEqual(outcome, { ok: true });
+  // The 5s driver window must not shorten the 1500s full session in main()'s
+  // wiring (the session race waits on computeSessionDeadline, not the
+  // driver deadline).
+  assert.ok(requestedMs > 5 * 1000, `session wait must exceed the driver window (got ${requestedMs}ms)`);
+  assert.ok(
+    Math.abs(requestedMs - 1500 * 1000) < 60_000,
+    `session wait must be the full session (got ${requestedMs}ms)`,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('cdp-host main() surfaces runtime-only exceptions instead of passing silently (Issue #358)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-host-smoke-'));
+  const resultPath = path.join(dir, 'result.json');
+  // A #357-class ReferenceError thrown anywhere on the ready path must fail
+  // the smoke run instead of being swallowed.
+  const { deps } = buildSmokeStubs({ pageTitleError: new ReferenceError('deadline is not defined') });
+  await assert.rejects(
+    () => withSmokeEnv(smokeEnv(resultPath, { sessionSec: 1, driverWaitSec: 5 }), () =>
+      main(['--execute'], { platform: 'darwin', deps })),
+    /deadline is not defined/,
+  );
+  fs.rmSync(dir, { recursive: true, force: true });
 });

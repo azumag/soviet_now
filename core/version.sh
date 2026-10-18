@@ -69,42 +69,71 @@ update_best() {
 }
 
 # Twitch クリップ作成（キュー書き込み → clip_worker が処理）
-# 同一ゲームで複数イベント発火時は最初の1回のみ
+# 同一ゲームは原則1回。ソ連建国だけは先行する一般イベントに抑止されない。
 CLIP_QUEUE_DIR="tmp/clip_queue"
 mkdir -p "$CLIP_QUEUE_DIR" 2>/dev/null || true
 _TWITCH_CLIP_GAME=""
+_TWITCH_CLIP_KIND=""
 _create_twitch_clip() {
-	local event_msg="$1" game_id="${2:-}" delay="${3:-0}"
-	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
-	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
-	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
-	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ]; then
+	local event_msg="$1" game_id="${2:-}" delay="${3:-0}" event_kind="${4:-generic}"
+	if [ "${TWITCH_CLIP_ENABLED:-0}" != "1" ]; then
+		log "[CLIP] skip: TWITCH_CLIP_ENABLED!=1"
+		return 0
+	fi
+	if [ -z "${TWITCH_CLIENT_ID:-}" ] || [ -z "${TWITCH_BROADCASTER_ID:-}" ]; then
+		log "[CLIP] skip: missing client/broadcaster configuration"
+		return 1
+	fi
+	# 建国後のハイスコアは抑止し、先行する一般イベントは建国を妨げない。
+	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ] && \
+		{ [ "$event_kind" != "soviet" ] || [ "$_TWITCH_CLIP_KIND" = "soviet" ]; }; then
 		log "[CLIP] skip: already clipped for game $game_id"
 		return 0
 	fi
-	[ -n "$game_id" ] && _TWITCH_CLIP_GAME="$game_id"
 	# キューにイベントファイルを書き込み (clip_worker が消化)
 	local ts
 	ts=$(date '+%s%N' 2>/dev/null || date '+%s')
-	local queue_file="${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.json"
-	printf '{"event_msg":"%s","game_id":"%s","delay":%s}\n' \
-		"$(printf '%s' "$event_msg" | sed 's/"/\\"/g')" \
-		"${game_id:-}" \
-		"${delay:-0}" \
-		> "$queue_file"
-	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s)"
+	local queue_file
+	queue_file=$(mktemp "${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.XXXXXX") || return 1
+	# JSONを完成させてから公開する。workerに書きかけを拾わせず、同時発火も上書きしない。
+	if ! python3 - "$event_msg" "$game_id" "$delay" "$event_kind" > "$queue_file" <<'PY'
+import json, sys
+message, game, delay, kind = sys.argv[1:]
+print(json.dumps(dict(event_msg=message, game_id=game, delay=int(delay), event_kind=kind), ensure_ascii=False))
+PY
+	then
+		rm -f "$queue_file"
+		return 1
+	fi
+	mv "$queue_file" "${queue_file}.json" || { rm -f "$queue_file"; return 1; }
+	if [ -n "$game_id" ]; then
+		_TWITCH_CLIP_GAME="$game_id"
+		_TWITCH_CLIP_KIND="$event_kind"
+	fi
+	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s, kind=${event_kind})"
 }
 
 archive_history() {
 	local score="$1"
-	local ts
+	# This invocation's successful copy only; never reuse a prior game's path.
+	LAST_CREATED_ARCHIVE_FILE=""
+	[ -f "$HISTORY_FILE" ] || return 1
+	local ts archive temporary
 	ts=$(date '+%Y%m%d_%H%M%S')
-	if [ -f "$HISTORY_FILE" ]; then
-		local archive
-		archive=$(printf "%s/%s_score%04d.jsonl" "$HISTORY_DIR" "$ts" "$score")
-		cp "$HISTORY_FILE" "$archive"
-			log "[ARCHIVE] $archive"
+	# Copy into a unique temporary file, then publish. Failed/partial copies
+	# cannot enter the archive glob or overwrite another game's evidence.
+	archive=$(printf '%s/%s_score%04d.jsonl' "$HISTORY_DIR" "$ts" "$score")
+	temporary=$(mktemp "${archive}.XXXXXX") || return 1
+	# Keep the legacy basename contract. ln publishes atomically and refuses
+	# a same-second/same-score collision instead of replacing old evidence.
+	if ! cp "$HISTORY_FILE" "$temporary" || ! ln "$temporary" "$archive"; then
+		rm -f "$temporary"
+		return 1
 	fi
+	rm -f "$temporary"
+	LAST_CREATED_ARCHIVE_FILE="$archive"
+	log "[ARCHIVE] $LAST_CREATED_ARCHIVE_FILE"
+	return 0
 }
 
 _history_gameover_asset_path() {

@@ -57,6 +57,17 @@ import json
 import os
 import sys
 
+# issue #132 Phase 1: 型ボーナス表は lib/objective.py の単一定義。以前はここに
+# `tb` の写しを持っていました。eloop.sh (試合中の EVAL_SCORE) と
+# wildcard_parallel.py (候補選抜) にも同じ写しがあり、repair だけが古いままだと
+# seed される current_strategy_run の scores が試合中の評価と違う目的空間の値に
+# なり、同じ hash の標本が混ざります。values は修正後と同一です。
+# この script は repo root から起動される (下の relpath/glob が相対パスを使う)
+# ので、cwd をそのまま import path に使います。
+if "" not in sys.path and "." not in sys.path:
+    sys.path.insert(0, ".")
+from lib.objective import eval_score as _objective_eval_score
+
 current_file, history_dir, limit_raw, current_hash = sys.argv[1:5]
 try:
     limit = max(1, min(50, int(limit_raw)))
@@ -73,8 +84,6 @@ try:
         first_known = min(archives)
 except Exception:
     pass
-
-tb = {1: 0, 2: 0, 3: 1, 4: 3, 5: 7, 6: 15, 7: 32, 8: 67, 9: 141, 10: 296, 11: 622, 12: 1306, 13: 2743, 14: 5760, 15: 12096, 16: 25402}
 
 def eval_score(path):
     last = None
@@ -108,10 +117,7 @@ def eval_score(path):
                 types.append(int(piece.get("type", 0) or 0))
             except Exception:
                 pass
-    bonus = sum(tb.get(t, 0) for t in types)
-    if last.get("soviet_created"):
-        bonus += 800
-    return raw_score + bonus
+    return _objective_eval_score(raw_score, types, bool(last.get("soviet_created")))
 
 def history_strategy_hash(path):
     try:

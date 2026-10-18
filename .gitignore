@@ -3,7 +3,8 @@ node_modules/
 .DS_Store
 ._*
 tmp/
-sorengame/
+sorengame/*
+!sorengame/patches/
 .claude/
 .cocoindex_code/
 __pycache__/
@@ -34,3 +35,4 @@ __pycache__/
 
 # Built ScreenCaptureKit capture helper (tools/soren91_window_capture_build.sh)
 tools/macos/bin/
+tools/windows/bin/

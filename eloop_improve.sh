@@ -1905,6 +1905,10 @@ import os
 import sys
 import time
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
+
 rolling_file, anchor_file, archive_dir, rejected_file, origin_file, cooldown_file, min_ratio_raw, max_candidates_raw, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw, allow_origin_retry_raw, cooldown_ttl_raw, min_russia_count_raw, min_russia_rate_raw, frontier_min_best_type_raw, objective_fail_permanent_raw = sys.argv[1:19]
 
 def load(path, default):
@@ -1959,26 +1963,18 @@ def metrics(scores):
     comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
     return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "n": n}
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 def boolish(value, default=True):
     if value is None:
         return default
     return str(value).strip().lower() not in {"0", "false", "no", "off"}
 
 def find_archive_path(h):
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+    dirs = []
+    if archive_dir:
+        dirs.append(archive_dir)
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    for path in paths:
-        if os.path.exists(path) and archive_is_runtime_stable(path):
-            return path
-    return ""
+        dirs.append(permanent_archive_dir)
+    return _sa_find_path(h, dirs, archive_is_runtime_stable)
 
 def is_cooled_down(h):
     if h not in cooldown:
@@ -2125,7 +2121,12 @@ PY
 	}
 		HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
-		cp "$archive_restart_path" "strategy.py.staging"
+		# Phase A: 選定候補が `.py.gz` なら平文へ展開してから staging へ置く。
+		if ! strategy_archive_copy "$archive_restart_path" "strategy.py.staging"; then
+			log "[ARCHIVE-RESTART] candidate copy failed: ${archive_restart_path}"
+			_improve_progress "archive_restart_fail" "100" "archive_copy_failed"
+			exit 1
+		fi
 		_ensure_strategy_runtime_params "strategy.py.staging"
 		if ! validate_strategy_with_helpers "strategy.py.staging" "strategy_helpers"; then
 		log "[ARCHIVE-RESTART] validation failed → abort"
@@ -2307,6 +2308,10 @@ import math
 import os
 import sys
 
+# Phase A (docich#392): `.py.gz` → `.py` を透過的に扱う共有 reader ヘルパー。
+sys.path.insert(0, os.environ.get("ELOOP_LIB_DIR") or os.getcwd())
+from lib.strategy_archive import find_path as _sa_find_path, is_runtime_stable as archive_is_runtime_stable
+
 origin_file, rolling_file, rejected_file, archive_dir, min_games_raw, min_best_type_raw, permanent_archive_dir, include_permanent_raw = sys.argv[1:9]
 include_permanent = str(include_permanent_raw).strip().lower() not in {"0", "false", "no", "off", ""}
 
@@ -2361,13 +2366,6 @@ def metrics_from_scores(scores):
     comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
     return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "n": n}
 
-def archive_is_runtime_stable(path):
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as f:
-            return "BEGIN DEADLINE GUARD" in f.read(200000)
-    except Exception:
-        return False
-
 origin = load(origin_file, {})
 rolling = load(rolling_file, {})
 rejected = load(rejected_file, {})
@@ -2381,10 +2379,12 @@ for h, meta in (origin or {}).items():
     origin_type = str((meta or {}).get("origin_type") or "wildcard")
     if origin_type != "wildcard":
         continue
-    paths = [os.path.join(archive_dir, f"{h}.py")]
+    dirs = []
+    if archive_dir:
+        dirs.append(archive_dir)
     if include_permanent and permanent_archive_dir:
-        paths.append(os.path.join(permanent_archive_dir, f"{h}.py"))
-    path = next((p for p in paths if os.path.exists(p) and archive_is_runtime_stable(p)), "")
+        dirs.append(permanent_archive_dir)
+    path = _sa_find_path(h, dirs, archive_is_runtime_stable)
     if not path:
         continue
     entry = rolling.get(h) or {}
@@ -2439,7 +2439,10 @@ PY
 		if [ -n "$escape_ai_seed_hash" ] && [ -f "$escape_ai_seed_path" ]; then
 			ESCAPE_AI_SEED_ORIGINAL_FILE="tmp/escape_ai_seed_original.py"
 			cp "$STRATEGY_FILE" "$ESCAPE_AI_SEED_ORIGINAL_FILE"
-			strategy_runtime_atomic_apply "$escape_ai_seed_path" "$STRATEGY_FILE"
+			# Phase A: seed が `.py.gz` なら平文へ展開してから適用する。
+			ESCAPE_AI_SEED_APPLY_FILE="tmp/escape_ai_seed_apply.py"
+			if strategy_archive_copy "$escape_ai_seed_path" "$ESCAPE_AI_SEED_APPLY_FILE" \
+				&& strategy_runtime_atomic_apply "$ESCAPE_AI_SEED_APPLY_FILE" "$STRATEGY_FILE"; then
 			ESCAPE_AI_SEED_HASH=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			ESCAPE_AI_SEED_APPLIED=1
 			export ESCAPE_AI_SEED_JSON ESCAPE_AI_SEED_HASH
@@ -2451,6 +2454,13 @@ PY
 				"改善フロー: seeded escape_ai candidate exists? yes。WILDCARD seed=${escape_ai_seed_hash:0:8} から構造変異します。" \
 				"warn"
 			_improve_progress "escape_ai" "28" "seed_from_wildcard_${ESCAPE_AI_SEED_HASH:-unknown}"
+			else
+				ESCAPE_AI_SEED_APPLIED=0
+				IMPROVE_REASON="normal"
+				export IMPROVE_REASON
+				log "[ESCAPE-AI] seed materialize failed: ${escape_ai_seed_path}"
+				_improve_progress "normal" "30" "escape_ai_seed_copy_failed"
+			fi
 		else
 			log "[ESCAPE-AI] WILDCARD seed candidate invalid: ${ESCAPE_AI_SEED_JSON:-empty}"
 			_improve_flow_notify \
@@ -3225,7 +3235,14 @@ for pf in "$STRATEGY_VERSIONS_DIR"/protected/*_strategy.py; do
 	fi
 done
 # ハッシュアーカイブ上位10件（スコア降順）
-for hf in $(ls -1t "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null | head -10); do
+# Phase A: `.py.gz` は同じディレクトリへ平文展開してから参照させる
+# （AI に渡す reference は平文ソースである必要がある）。
+for hf in $(ls -1t "$STRATEGY_HASH_ARCHIVE_DIR"/*.py "$STRATEGY_HASH_ARCHIVE_DIR"/*.py.gz 2>/dev/null | head -10); do
+	[ -f "$hf" ] || continue
+	if [ "${hf%.gz}" != "$hf" ]; then
+		strategy_archive_copy "$hf" "${hf%.gz}" || continue
+		hf="${hf%.gz}"
+	fi
 	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
 done
 # 全試合のJSONL（スクショはbest/worstのみ）
@@ -3412,6 +3429,8 @@ EOF
 	[ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ] && _improve_note "Stage1: user_review.md present; using as high-priority analysis input"
 	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
 	ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
+	_analysis_feedback_refs=()
+	_analysis_feedback_used=0
 	for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
 		_improve_wall_elapsed=$(($(date +%s) - _improve_wall_start))
 		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
@@ -3425,7 +3444,7 @@ EOF
 		log "[IMPROVE] effective agents: $IMPROVE_PEAK_CHAIN_ENABLED peak=$(_is_peak_hours && echo yes || echo no) agents=${_improve_effective_agents}" >&2
 		run_ai_list "ANALYZE(${_analysis_retry})" "$_improve_effective_agents" \
 			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
-			"${improve_ref_files[@]}"
+			"${improve_ref_files[@]}" "${_analysis_feedback_refs[@]}"
 		_analysis_rc=$?
         if [ "$_analysis_rc" -eq 80 ] || [ "$_analysis_rc" -eq 81 ]; then
             IMPROVE_FAILURE_CODE="${RUN_AI_LIST_FAILURE_KIND:-deadline_exhausted}"
@@ -3449,15 +3468,38 @@ EOF
                 IMPROVE_FAILURE_CODE=analysis_contract_invalid
                 [ "$_analysis_contract_rc" -ne 83 ] || IMPROVE_FAILURE_CODE=analysis_hold
                 VALIDATE_ERROR="$IMPROVE_FAILURE_CODE"
-                _improve_note "Stage1: $IMPROVE_FAILURE_CODE → stop before implementation"
                 analysis_ok=false
+                # Reuse at most one existing analysis slot. The host sends only
+                # fixed feedback, preserves the rejected receipt, and validates
+                # a newly generated document with the unchanged evidence gate.
+                if [ "$_analysis_contract_rc" -eq 82 ] &&
+                    [ "${_analysis_feedback_used:-0}" -eq 0 ] &&
+                    [ "$_analysis_retry" -lt "$ANALYSIS_MAX_RETRIES" ] &&
+                    python3 "$HOST_ROOT/strategy/analysis_contract.py" retry-feedback \
+                        --result "$IMPROVE_RUN_RECEIPT_DIR/analysis-check-${_analysis_retry}.json" \
+                        --output "$IMPROVE_RUN_RECEIPT_DIR/analysis-retry-feedback.md"; then
+                    _analysis_feedback_used=1
+                    _analysis_feedback_refs=("$IMPROVE_RUN_RECEIPT_DIR/analysis-retry-feedback.md")
+                    if ! rm -f -- "$ANALYSIS_RESULT_FILE"; then
+                        _improve_note "Stage1: rejected analysis could not be cleared → stop"
+                        break
+                    fi
+                    _improve_note "Stage1: unreachable_plan_condition → one bounded reanalysis with host feedback"
+                    continue
+                fi
+                _improve_note "Stage1: $IMPROVE_FAILURE_CODE → stop before implementation"
                 break
             fi
 			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
 			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
 			analysis_ok=true
+			IMPROVE_FAILURE_CODE=""
+			VALIDATE_ERROR=""
 			break
 		fi
+        # A feedback attempt never creates extra retries after a transport or
+        # empty-output failure, even when the configured analysis limit is higher.
+        [ "${_analysis_feedback_used:-0}" -eq 0 ] || break
 		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
 		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
 	done

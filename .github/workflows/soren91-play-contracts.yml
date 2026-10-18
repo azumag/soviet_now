@@ -9,15 +9,28 @@ on:
       - 'soren91/presentation_ready.mjs'
       - 'soren91/realtime_io.mjs'
       - 'soren91/loop_metrics.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/burial_evidence.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
+      - 'soren91/calibration_contract.mjs'
+      - 'soren91/sprite_perception.mjs'
+      - 'soren91/flag_templates.mjs'
+      - 'tools/build_soren91_flag_templates.mjs'
+      - 'soviet_now.png'
+      - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
+      - 'lib/mute_flag.py'
+      - 'lib/mute_flag_reader.mjs'
+      - 'soviet_local.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -31,15 +44,29 @@ on:
       - 'soren91/presentation_ready.mjs'
       - 'soren91/realtime_io.mjs'
       - 'soren91/loop_metrics.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/burial_evidence.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
       - 'soren91/observation_guard.mjs'
       - 'soren91/calibration.mjs'
+      - 'soren91/calibration_contract.mjs'
+      - 'soren91/sprite_perception.mjs'
+      - 'soren91/flag_templates.mjs'
+      - 'tools/build_soren91_flag_templates.mjs'
+      - 'soviet_now.png'
+      - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
+      - 'soren91/rejected_frame_diagnostics.mjs'
+      - 'lib/mute_flag.py'
+      - 'lib/mute_flag_reader.mjs'
+      - 'soviet_local.mjs'
+      - 'soren91_control.sh'
+      - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
       - 'package*.json'
@@ -64,17 +91,28 @@ jobs:
           node --version
           python3 --version
           bash -n soren91/run_player_loop.sh
+          bash -n soren91_control.sh
           python3 -m py_compile soren91/runtime_metrics.py
+          python3 -m py_compile lib/mute_flag.py
+          python3 -m py_compile tests/test_soren91_mute_flag.py
           node --check soren91/main.mjs
+          node --check soviet_local.mjs
+          node --check lib/mute_flag_reader.mjs
           node --check soren91/realtime_io.mjs
           node --check soren91/loop_metrics.mjs
+          node --check soren91/rejected_frame_diagnostics.mjs
           node --check soren91/summarize_drop_profile.mjs
           node --check soren91/strategy.mjs
+          node --check soren91/burial_evidence.mjs
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
           node --check soren91/observation_guard.mjs
+          node --check soren91/calibration.mjs
+          node --check soren91/calibration_contract.mjs
+          node --check soren91/sprite_perception.mjs
+          node --check soren91/flag_templates.mjs
           node --check soren91/critical_turn_screenshots.mjs
       - name: Run play and existing Soren91 regressions
         run: |
           node --test tests/test_soren91_*.mjs
-          python3 -m unittest tests.test_soren91_runtime_metrics
+          python3 -m unittest tests.test_soren91_runtime_metrics tests.test_soren91_mute_flag

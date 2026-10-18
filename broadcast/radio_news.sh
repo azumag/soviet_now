@@ -112,7 +112,9 @@ _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_URL_HASHES" "$news_tmp" <<'PY'
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_URL_HASHES" "$news_tmp" \
+		"${TMP_HISTORY_DIR:-tmp/history}/.past_jiji_titles.txt" \
+		"${TMP_HISTORY_DIR:-tmp/history}/.past_jiji_keys.txt" "${PAST_JIJI_URL_HASHES:-}" <<'PY'
 import hashlib
 import json
 import os
@@ -162,11 +164,25 @@ try:
     _topic_spec.loader.exec_module(_topic_mod)
     is_low_value_news_title = _topic_mod.is_low_value_news_title
     is_public_interest_news_title = _topic_mod.is_public_interest_news_title
+    is_uncontextualized_tragedy = _topic_mod.is_uncontextualized_tragedy
 except Exception:
-    def is_low_value_news_title(title: str) -> bool:
+    # Withhold candidates if the editorial policy cannot be loaded.
+    raise
+
+try:
+    _news_filter_dir = os.path.join(os.environ.get("ELOOP_LIB_DIR", ""), "lib")
+    if _news_filter_dir and os.path.isdir(_news_filter_dir) and _news_filter_dir not in sys.path:
+        sys.path.insert(0, _news_filter_dir)
+    from news_filter import event_dedup_enabled, event_tokens, generic_tokens, same_event
+except Exception:
+    def event_dedup_enabled() -> bool:
         return False
-    def is_public_interest_news_title(title: str) -> bool:
-        return True
+    def event_tokens(title: str) -> set:
+        return set()
+    def generic_tokens(titles) -> frozenset:
+        return frozenset()
+    def same_event(a: set, b: set, generic: frozenset = frozenset()) -> bool:
+        return False
 
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
@@ -248,6 +264,18 @@ if os.path.exists(past_url_hash_file):
         if k:
             past_url_hashes.add(k)
 
+# Compare both existing ledgers; keep their ownership and retention unchanged.
+def history_lines(path):
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        return [line.strip() for line in f if line.strip()]
+
+peer_titles = history_lines(sys.argv[6])
+past_keys.update(key(title) for title in peer_titles)
+past_keys.update(history_lines(sys.argv[7]))
+past_url_hashes.update(history_lines(sys.argv[8]))
+
 blocks = []
 current = []
 for line in news_text.splitlines():
@@ -260,19 +288,49 @@ for line in news_text.splitlines():
 if current:
     blocks.append(current)
 
+# 同じ事件の別媒体見出しを、jiji と同じ内容語判定で候補から除外する。
+past_titles_for_events = []
+if event_dedup_enabled() and os.path.exists(past_title_file):
+    try:
+        recent_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
+    except ValueError:
+        recent_limit = 60
+    past_titles_for_events = [
+        ln.strip()
+        for ln in open(past_title_file, encoding="utf-8", errors="ignore")
+        if ln.strip()
+    ][-recent_limit:]
+if event_dedup_enabled():
+    try:
+        peer_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
+    except ValueError:
+        peer_limit = 60
+    past_titles_for_events += peer_titles[-peer_limit:]
+past_event_tokens = [
+    tokens for tokens in (event_tokens(title) for title in past_titles_for_events) if tokens
+]
+generic_event_tokens = generic_tokens(
+    past_titles_for_events + [block[0][2:].strip() for block in blocks]
+) if event_dedup_enabled() else frozenset()
+
 seen = set()
 seen_topics = set()
 seen_url_hashes = set()
+seen_event_tokens = []
 out = []
 for b in blocks:
     title = b[0][2:].strip()
     if is_sports_title(title):
         continue
+    if is_uncontextualized_tragedy(title, "\n".join(b[1:])):
+        continue
     if is_low_value_news_title(title):
         continue
     item = meta.get(title, {}) if isinstance(meta, dict) else {}
     source_key = (item.get("source_key") or "").strip()
-    if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+    # 日本語Google Newsだけ公開関心のポジティブ判定を通す。英語WORLD/BUSINESS面は
+    # もともと国際情勢・経済面のため、日本語キーワード判定で落とさない。
+    if source_key.startswith("google_news_jp_") and not is_public_interest_news_title(title):
         continue
     k = key(title)
     tk = topic_key(title)
@@ -291,6 +349,16 @@ for b in blocks:
         continue
     if uh and uh in past_url_hashes:
         continue
+    tokens = event_tokens(title) if event_dedup_enabled() else set()
+    if tokens:
+        already_seen = any(same_event(tokens, previous, generic_event_tokens) for previous in seen_event_tokens)
+        # Keep rejected candidates in the chain so differently worded variants
+        # can still be connected through an intermediate headline.
+        seen_event_tokens.append(tokens)
+        if any(same_event(tokens, previous, generic_event_tokens) for previous in past_event_tokens):
+            continue
+        if already_seen:
+            continue
     seen.add(k)
     if tk:
         seen_topics.add(tk)

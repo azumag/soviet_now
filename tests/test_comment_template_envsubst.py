@@ -93,5 +93,55 @@ class TestCommentTemplateEnvsubst(unittest.TestCase):
         self.assertNotIn("${_comment_length_policy}", result.stdout, "リテラルが残っています")
 
 
+def _category_envsubst_lines():
+    """カテゴリ別テンプレートを処理する envsubst 行 (gacha_completion_note を含む行)。"""
+    lines = SRC.read_text(encoding="utf-8").split("\n")
+    return [(i + 1, ln) for i, ln in enumerate(lines)
+            if "envsubst '" in ln and "${gacha_completion_note}" in ln]
+
+
+class TestSelfChatContextTemplateWiring(unittest.TestCase):
+    """#2373: 自分自身の投稿セクションが全カテゴリのテンプレートで展開されること。"""
+
+    def test_category_templates_only_reference_allowed_variables(self):
+        lists = _category_envsubst_lines()
+        self.assertTrue(lists, "カテゴリ別プロンプトの envsubst 行が見つかりません")
+        for template in sorted((REPO_ROOT / "prompts").glob("comment_response_*.md")):
+            template_vars = set(VAR_RE.findall(template.read_text(encoding="utf-8")))
+            for lineno, ln in lists:
+                allowed = set(VAR_RE.findall(ln))
+                missing = sorted(template_vars - allowed)
+                self.assertEqual(
+                    missing, [],
+                    f"comment.sh:{lineno} の envsubst 許可リストに無い変数 ({template.name}): {missing}",
+                )
+
+    def test_self_chat_context_is_referenced_and_allowed(self):
+        templates = sorted((REPO_ROOT / "prompts").glob("comment_response_*.md"))
+        templates.append(TEMPLATE)
+        for template in templates:
+            self.assertIn(
+                "${self_chat_context}", template.read_text(encoding="utf-8"),
+                f"{template.name} に自分自身の投稿セクションがありません",
+            )
+        for _, ln in _category_envsubst_lines() + _template_envsubst_lines():
+            self.assertIn("${self_chat_context}", ln, "envsubst 許可リストに self_chat_context がありません")
+
+    @unittest.skipIf(shutil.which("envsubst") is None, "envsubst not available")
+    def test_self_chat_context_expands_without_leaving_literals(self):
+        marker = "SELFCHAT-MARKER-自分の投稿"
+        lineno, ln = _category_envsubst_lines()[0]
+        varlist = ln.split("envsubst '")[1].split("'")[0]
+        env = dict(os.environ)
+        env["self_chat_context"] = marker
+        env["_comment_persona"] = "persona"
+        template = (REPO_ROOT / "prompts/comment_response_default.md").read_text(encoding="utf-8")
+        result = subprocess.run(["envsubst", varlist], input=template,
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(marker, result.stdout, "自分自身の投稿セクションが展開されていません")
+        self.assertNotIn("${self_chat_context}", result.stdout, "リテラルが残っています")
+
+
 if __name__ == "__main__":
     unittest.main()

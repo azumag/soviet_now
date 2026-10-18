@@ -7,9 +7,27 @@ on:
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
       - 'lib/shared_overlay.mjs'
+      - 'lib/direct_overlay.mjs'
+      - 'lib/direct_broadcast_overlay.mjs'
+      - 'lib/direct_stream.py'
+      - 'overlays/direct_broadcast_overlay.html'
+      - 'tests/test_direct_stream.py'
+      - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_overlay_monitor_animation_throttle.mjs'
+      - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_soren_monitor_browser.mjs'
+      - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_game_gap_webgl_browser.mjs'
+      - 'lib/twica_overlay_proxy.mjs'
+      - 'lib/twica_legacy_owner.mjs'
+      - 'direct_stream.sh'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_direct_overlay.mjs'
+      - 'tests/test_twica_overlay_layout.mjs'
+      - 'tests/test_twica_overlay_proxy.mjs'
+      - 'tests/test_twica_legacy_owner.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
   push:
@@ -19,9 +37,27 @@ on:
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
       - 'lib/shared_overlay.mjs'
+      - 'lib/direct_overlay.mjs'
+      - 'lib/direct_broadcast_overlay.mjs'
+      - 'lib/direct_stream.py'
+      - 'overlays/direct_broadcast_overlay.html'
+      - 'tests/test_direct_stream.py'
+      - 'tests/test_direct_broadcast_overlay.mjs'
+      - 'tests/test_overlay_monitor_animation_throttle.mjs'
+      - 'tests/test_direct_broadcast_overlay_browser.mjs'
+      - 'tests/test_soren_monitor_browser.mjs'
+      - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_game_gap_webgl_browser.mjs'
+      - 'lib/twica_overlay_proxy.mjs'
+      - 'lib/twica_legacy_owner.mjs'
+      - 'direct_stream.sh'
       - 'game_lifecycle_control.sh'
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
+      - 'tests/test_direct_overlay.mjs'
+      - 'tests/test_twica_overlay_layout.mjs'
+      - 'tests/test_twica_overlay_proxy.mjs'
+      - 'tests/test_twica_legacy_owner.mjs'
       - 'tests/test_shared_overlay_service.sh'
       - 'tests/test_game_lifecycle.sh'
 
@@ -43,12 +79,53 @@ jobs:
         run: |
           bash -n start_shared_overlay_service.sh
           bash -n game_lifecycle_control.sh
+          bash -n direct_stream.sh
           bash -n tests/test_shared_overlay_service.sh
           node --check shared_overlay.mjs
           node --check lib/shared_overlay.mjs
-      - name: Run shared overlay regression
-        run: node --test tests/test_shared_overlay.mjs
+          node --check lib/direct_overlay.mjs
+          node --check lib/twica_legacy_owner.mjs
+      - name: Run shared and TwiCa overlay regressions
+        run: >-
+          node --test
+          tests/test_shared_overlay.mjs
+          tests/test_direct_overlay.mjs
+          tests/test_direct_broadcast_overlay.mjs
+          tests/test_overlay_monitor_animation_throttle.mjs
+          tests/test_twica_overlay_layout.mjs
+          tests/test_twica_overlay_proxy.mjs
+          tests/test_twica_legacy_owner.mjs
+      - name: Run direct stream status metrics regressions
+        run: python3 -m unittest tests.test_direct_stream
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
+      - name: Install isolated Chromium for overlay geometry regression
+        run: npx playwright install --with-deps chromium
+      - name: Check approved design with synthetic states and cropped surfaces
+        env:
+          SOREN_OVERLAY_BROWSER_TESTS: '1'
+          SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
+        run: node --test tests/test_direct_broadcast_overlay_browser.mjs tests/test_soren_monitor_browser.mjs tests/test_hanjuku_gap_browser.mjs tests/test_game_gap_webgl_browser.mjs
+      - name: Check actual Xvfb WebGL input across gap transitions
+        env:
+          SOREN_OVERLAY_XVFB_TESTS: '1'
+          SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg openbox
+          xvfb-run -a -s '-screen 0 1280x720x24' bash <<'SH'
+          set -e
+          openbox --sm-disable >/dev/null 2>&1 &
+          test_wm_pid=$!
+          trap 'kill "$test_wm_pid" 2>/dev/null || true' EXIT
+          node --test tests/test_game_gap_webgl_browser.mjs
+          SH
+      - name: Save synthetic rendering evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: overlay-v2-synthetic-screens
+          path: ${{ runner.temp }}/overlay-v2-screens
+          if-no-files-found: error
       - name: Run game lifecycle shell regression
         run: bash tests/test_game_lifecycle.sh

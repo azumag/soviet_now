@@ -16,8 +16,10 @@
 # macOS代替: このリポジトリの開発機はmacOSで /proc が無いため、
 #   - argv (/proc/*/cmdline 相当) の代替検証には `ps -o command= -p PID` を使う
 #     (Linux/macOS共通のオプションで、プロセスのargvを文字列化して見せる)。
-#   - process environment の代替検証には BSD ps の `eww` 拡張
-#     (`ps eww -p PID`) を使う。Linuxでは `/proc/PID/environ` が使える。
+#   - process environment は macOS の ps (`eww`/`-E` を含む) では他プロセスの
+#     environを観測できない (docich#71 で実測)。macOSでは ps による environ
+#     検証を skip し、代わりに `_curl_secure_exec env` による portable な
+#     子プロセス自己申告 (セクションC) で検証する。Linuxでは `/proc/PID/environ` が使える。
 # 実行中の curl プロセスを ps/proc で覗くには生きている必要があるため、
 # mock サーバはわざと応答を遅延させ、その間に snapshot を取る。
 
@@ -55,13 +57,14 @@ _snapshot_argv() {
 }
 
 # _snapshot_env PID -> stdout: そのPIDのprocess environmentを出す。
-# Linux: /proc/PID/environ。macOS等: `ps eww` (BSD ps の環境変数表示拡張)。
+# Linux: /proc/PID/environ。macOS等: 観測不可のため空を返し、呼び出し側で skip 扱いにする
+# (docich#71: `ps eww`/`-E`/`auxeww` のいずれでも他プロセス environ は見えないことを実測)。
 _snapshot_env() {
 	local pid="$1"
 	if [ "$IS_LINUX" = "1" ] && [ -r "/proc/$pid/environ" ]; then
 		tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null
 	else
-		ps eww -p "$pid" 2>/dev/null
+		return 1
 	fi
 }
 
@@ -119,13 +122,18 @@ sleep 0.4
 CURL_PID=$(pgrep -n -f "curl.*127.0.0.1:$PORT" 2>/dev/null || true)
 if [ -n "$CURL_PID" ]; then
 	argv_snapshot=$(_snapshot_argv "$CURL_PID")
-	env_snapshot=$(_snapshot_env "$CURL_PID")
 	check "! printf '%s' \"\$argv_snapshot\" | grep -q '$SENTINEL'" \
 		"twitch_polls.sh: 実行中curlのargvにTOKENが現れない (実測argv: ${argv_snapshot:0:200})"
 	check "! printf '%s' \"\$argv_snapshot\" | grep -q '$SENTINEL_SECRET2'" \
 		"twitch_polls.sh: 実行中curlのargvにCLIENT_IDが現れない"
-	check "! printf '%s' \"\$env_snapshot\" | grep -q '$SENTINEL'" \
-		"twitch_polls.sh: 実行中curlのprocess environmentにTOKENが現れない (代替: $([ "$IS_LINUX" = 1 ] && echo '/proc/PID/environ' || echo 'ps eww'))"
+	if [ "$IS_LINUX" = "1" ]; then
+		env_snapshot=$(_snapshot_env "$CURL_PID" || true)
+		check "! printf '%s' \"\$env_snapshot\" | grep -q '$SENTINEL'" \
+			"twitch_polls.sh: 実行中curlのprocess environmentにTOKENが現れない (/proc/PID/environ)"
+	else
+		check "true" \
+			"twitch_polls.sh: process environmentはmacOSのpsで観測不可のためskip (セクションCのportable検証で代替)"
+	fi
 else
 	check "false" "twitch_polls.sh: 遅延中のcurlプロセスをpgrepで捕捉できた (捕捉できず、この2件は未実測)"
 	check "false" "(argv/env snapshotは前項の捕捉失敗により未実測)"
@@ -156,29 +164,39 @@ source "$ROOT/lib/curl_secure.sh"
 : >"$LOG_FILE"
 YT_BEARER="$SENTINEL"
 YT_API_KEY="SENTINEL_YT_API_KEY_4471aa"
+# docich#71: 親workerの `set -a` を模し、secretをexportした状態で子curlの
+# environ継承を検証する (exportしなければ継承自体が起きず検証にならない)。
+export YT_BEARER YT_API_KEY
 yt_url="http://127.0.0.1:$PORT/youtube/v3/videos?part=snippet&key=${YT_API_KEY}"
 yt_cfg=$(_curl_cfg_build url "$yt_url" header "Authorization: Bearer ${YT_BEARER}")
 (
-	printf '%s' "$yt_cfg" | curl -fsS --max-time 5 -K - >"$TMP/yt_api_get.out" 2>"$TMP/yt_api_get.err"
+	printf '%s' "$yt_cfg" | _curl_secure_run -fsS --max-time 5 -K - >"$TMP/yt_api_get.out" 2>"$TMP/yt_api_get.err"
 ) &
 YT_PID=$!
 sleep 0.4
 CURL_PID2=$(pgrep -n -f "curl -fsS --max-time 5 -K -" 2>/dev/null || true)
 if [ -n "$CURL_PID2" ]; then
 	argv2=$(_snapshot_argv "$CURL_PID2")
-	env2=$(_snapshot_env "$CURL_PID2")
 	check "! printf '%s' \"\$argv2\" | grep -q '$YT_BEARER'" \
 		"youtube _api_get相当: 実行中curlのargvにAuthorizationトークンが現れない"
 	check "! printf '%s' \"\$argv2\" | grep -q '$YT_API_KEY'" \
 		"youtube _api_get相当: 実行中curlのargvにURLクエリ内APIキーが現れない"
-	check "! printf '%s' \"\$env2\" | grep -q '$YT_BEARER'" \
-		"youtube _api_get相当: 実行中curlのprocess environmentにトークンが現れない"
+	if [ "$IS_LINUX" = "1" ]; then
+		env2=$(_snapshot_env "$CURL_PID2" || true)
+		check "! printf '%s' \"\$env2\" | grep -q '$YT_BEARER'" \
+			"youtube _api_get相当: 実行中curlのprocess environmentにトークンが現れない (/proc/PID/environ)"
+	else
+		check "true" \
+			"youtube _api_get相当: process environmentはmacOSのpsで観測不可のためskip (セクションCで代替)"
+	fi
 else
 	check "false" "youtube _api_get相当: 遅延中のcurlプロセスを捕捉できた (未実測)"
 	check "false" "(URLクエリAPIキーのargv不在は前項の捕捉失敗により未実測)"
 	check "false" "(process environment不在は前項の捕捉失敗により未実測)"
 fi
 wait "$YT_PID" 2>/dev/null
+# export属性だけ外し、値は後続の機能検証に残す。
+export -n YT_BEARER YT_API_KEY 2>/dev/null || true
 
 yt_auth_header=$(last_request_field "headers.Authorization")
 yt_path=$(last_request_field "path")
@@ -188,6 +206,7 @@ check "printf '%s' \"\$yt_path\" | grep -q \"key=${YT_API_KEY}\"" \
 	"youtube _api_get相当: mockサーバにAPIキー付きURLが正しく届く (実測path: ${yt_path})"
 
 # OAuth refresh (client_id/client_secret/refresh_token を data-urlencode で渡す形)
+# 本番 (`youtube_chat.sh::_oauth_access_token`) と同一パターンで検証する。
 : >"$LOG_FILE"
 oauth_cfg=$(_curl_cfg_build \
 	url "http://127.0.0.1:$PORT/oauth2/token" \
@@ -196,7 +215,7 @@ oauth_cfg=$(_curl_cfg_build \
 	data-urlencode "refresh_token=${SENTINEL_REFRESH}" \
 	data "grant_type=refresh_token")
 (
-	printf '%s' "$oauth_cfg" | curl -sS --max-time 5 -o "$TMP/oauth.out" -w '%{http_code}' -K - >"$TMP/oauth_code.out" 2>"$TMP/oauth.err"
+	printf '%s' "$oauth_cfg" | _curl_secure_run -sS --max-time 5 -o "$TMP/oauth.out" -w '%{http_code}' -K - >"$TMP/oauth_code.out" 2>"$TMP/oauth.err"
 ) &
 OAUTH_PID=$!
 sleep 0.4
@@ -218,6 +237,37 @@ check "printf '%s' \"\$oauth_body\" | grep -q 'client_secret=${SENTINEL_SECRET2}
 	"youtube _oauth_access_token相当: mockサーバにclient_secretが正しく届く(form body)"
 check "printf '%s' \"\$oauth_body\" | grep -q 'refresh_token=${SENTINEL_REFRESH}'" \
 	"youtube _oauth_access_token相当: mockサーバにrefresh_tokenが正しく届く(form body)"
+
+# ---------------------------------------------------------------------------
+# C. docich#71 portable: `_curl_secure_exec` が export済みsecretを子へ継承しないこと。
+#    macOSのpsでは他プロセスenvironを観測できないため、子プロセス自身の自己申告
+#    (`env` 出力) で検証する。Linux/macOS共通で動作する。
+# ---------------------------------------------------------------------------
+export CURL_SECURE_TEST_SENTINEL="SENTINEL_ENV_INHERIT_5f2a91"
+export CURL_SECURE_TEST_UNRELATED="unrelated-value-77"
+# positive control: 親環境には sentinel が存在する。
+check "env | grep -q 'CURL_SECURE_TEST_SENTINEL=SENTINEL_ENV_INHERIT_5f2a91'" \
+	"portable前提: 親プロセスの環境にはsentinelが存在する"
+# wrapper経由の子は sentinel を持たない。
+child_env=$(_curl_secure_exec env)
+check "! printf '%s' \"\$child_env\" | grep -q 'SENTINEL_ENV_INHERIT_5f2a91'" \
+	"portable: _curl_secure_exec経由の子環境にexport済みsecretが現れない"
+check "! printf '%s' \"\$child_env\" | grep -q 'TWITCH_POLLS_TOKEN'" \
+	"portable: _curl_secure_exec経由の子環境にTWITCH secret名が現れない"
+# 最小allowlistは維持される: PATH は必ず存在する。
+check "printf '%s' \"\$child_env\" | grep -q '^PATH='" \
+	"portable: _curl_secure_exec経由の子環境にPATHが維持される"
+# proxyは設定時のみ継承される (要否の実測: docich#71対策候補(a))。
+export http_proxy="http://127.0.0.1:9"
+child_env_proxy=$(_curl_secure_exec env)
+check "printf '%s' \"\$child_env_proxy\" | grep -q 'http_proxy=http://127.0.0.1:9'" \
+	"portable: http_proxy設定時は子へ継承される"
+unset http_proxy
+child_env_noproxy=$(_curl_secure_exec env)
+check "! printf '%s' \"\$child_env_noproxy\" | grep -q 'http_proxy='" \
+	"portable: http_proxy未設定時は子に現れない"
+unset CURL_SECURE_TEST_SENTINEL CURL_SECURE_TEST_UNRELATED
+export -n TWITCH_POLLS_TOKEN TWITCH_CLIENT_ID 2>/dev/null || true
 
 kill "$SERVER_PID" 2>/dev/null
 wait "$SERVER_PID" 2>/dev/null

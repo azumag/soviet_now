@@ -11,6 +11,7 @@ PREREQS = REPO_ROOT / "wait_soren_runtime_prereqs.sh"
 INSTALLER = REPO_ROOT / "install_soren_runtime_service.sh"
 UNIT = REPO_ROOT / "deploy" / "soren-runtime" / "soren-runtime.service"
 OBS_DROPIN = REPO_ROOT / "deploy" / "soren-runtime" / "obs-backend.conf"
+CHAT_WORKER = REPO_ROOT / "workers" / "chat_worker.sh"
 
 
 class SorenRuntimeServiceTests(unittest.TestCase):
@@ -134,6 +135,78 @@ esac
         self.assertIn("exit 0", handler)
         self.assertNotIn("exit 130", handler)
 
+    def test_chat_worker_reexecs_with_current_classifier_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "workers").mkdir()
+            (root / "tmp" / "state").mkdir(parents=True)
+            (root / "workers" / "chat_worker.sh").write_text(
+                CHAT_WORKER.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            (root / "lib").mkdir()
+            (root / "lib" / "chat_clip_queue.sh").write_text(
+                (REPO_ROOT / "lib" / "chat_clip_queue.sh").read_text(), encoding="utf-8"
+            )
+            (root / "eloop_lib.sh").write_text(
+                'printf \'backend=%s key=%s\\n\' "${COMMENT_CLASSIFIER_BACKEND:-empty}" '
+                '"${TYPESAFE_API_KEY:+present}" >>"$PWD/tmp/env_seen"\n',
+                encoding="utf-8",
+            )
+            (root / "tmp" / "stop").touch()
+            (root / "tmp" / "state" / "chat_worker.paused").touch()
+            env = os.environ.copy()
+            env.update(
+                {
+                    "COMMENT_CLASSIFIER_BACKEND": "jev",
+                    "TYPESAFE_API_KEY": "stale-inherited-value",
+                }
+            )
+            env.pop("CHAT_WORKER_ENV_REEXEC", None)
+
+            (root / ".env").write_text(
+                "COMMENT_CLASSIFIER_BACKEND=jev\n"
+                "TYPESAFE_API_KEY=fresh-test-value\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(root / "workers" / "chat_worker.sh"), "test"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
+                ["backend=jev key=present"],
+            )
+
+            (root / "tmp" / "env_seen").unlink()
+            (root / ".env").write_text("COMMENT_CLASSIFIER_BACKEND=\n", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(root / "workers" / "chat_worker.sh"), "test"],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "tmp" / "env_seen").read_text(encoding="utf-8").splitlines(),
+                ["backend=empty key="],
+            )
+
+    def test_chat_respawn_refreshes_managed_classifier_environment(self) -> None:
+        source = (REPO_ROOT / "start_all.sh").read_text(encoding="utf-8")
+        refresh = source.split("_refresh_chat_worker_env() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("COMMENT_CLASSIFIER_BACKEND", refresh)
+        self.assertIn("TYPESAFE_API_KEY", refresh)
+        self.assertIn('if [ "$name" = "chat_worker" ]; then', source)
+        self.assertIn("_refresh_chat_worker_env", source)
+        self.assertIn("exec $cmd", source)
+
     def test_installer_requires_explicit_migration_confirmation(self) -> None:
         result = subprocess.run(
             ["bash", str(INSTALLER), "--install"],
@@ -191,6 +264,20 @@ esac
         self.assertNotIn('stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c', source)
         self.assertIn('|| lk=$(stat -c %Y "$RR_LOCK"', source)
         self.assertIn('|| mt=$(stat -c %Y "$LOCK_DIR"', source)
+
+
+    def test_soren_loop_reloads_committed_player_policy_per_game(self) -> None:
+        source = (REPO_ROOT / "soren_loop.sh").read_text(encoding="utf-8")
+        # The startup read stays as the process-wide fail-closed default.
+        self.assertIn("game_lifecycle_load_player_policy", source)
+        # A player_change is committed at a game boundary while this loop keeps
+        # running, so the main loop must re-read the committed snapshot after
+        # the per-match .env reload; otherwise the next game never adopts the
+        # new policy (the JEV corner activation silently no-ops).
+        main_loop = source.split("# --- メインループ: 1試合ずつ ---", 1)[1]
+        env_reload = main_loop.index("# .env を毎試合再読込")
+        reload_call = main_loop.index("game_lifecycle_load_player_policy")
+        self.assertGreater(reload_call, env_reload)
 
 
 if __name__ == "__main__":

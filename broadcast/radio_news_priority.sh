@@ -5,5 +5,5 @@
 _random_pick_news_block() {
 	local blocks_text="$1"
 	local root="${ELOOP_LIB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-	python3 "$root/lib/news_priority.py" "$PAST_NEWS_READ_SOURCES" "$blocks_text"
+	python3 "$root/lib/news_priority.py" "$PAST_NEWS_READ_SOURCES" "$blocks_text" "${PAST_NEWS_READ:-}"
 }

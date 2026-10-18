@@ -3,7 +3,7 @@
 
 Usage:
     python3 news_filter.py title_key <title>
-    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file> [past_url_hash_file] [meta_file]
+    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file> [past_url_hash_file] [meta_file] [peer_titles] [peer_keys] [peer_urls]
     python3 news_filter.py resolve_title <selected_title> <news_file>
 """
 import hashlib
@@ -23,13 +23,10 @@ except Exception:  # fallback
     def is_sports_title(title: str) -> bool:  # type: ignore
         return False
 
-try:
-    from news_topic_filter import is_low_value_news_title, is_public_interest_news_title  # type: ignore
-except Exception:  # fallback
-    def is_low_value_news_title(title: str) -> bool:  # type: ignore
-        return False
-    def is_public_interest_news_title(title: str) -> bool:  # type: ignore
-        return True
+# Editorial policy must not silently disappear if its module cannot load.
+from news_topic_filter import (
+    is_low_value_news_title, is_public_interest_news_title, is_uncontextualized_tragedy,
+)
 
 
 def key(s: str) -> str:
@@ -39,6 +36,88 @@ def key(s: str) -> str:
     s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
     s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
     return s[:240]
+
+
+_STORM_ID_RE = re.compile(
+    r"(?:台風|typhoon|hurricane|cyclone)\s*(?:第\s*)?([0-9]{1,3})\s*号?",
+    flags=re.IGNORECASE,
+)
+
+
+def _storm_id_tokens(text: str) -> set[str]:
+    """Return stable identifiers for numbered storms in a headline."""
+    tokens: set[str] = set()
+    for match in _STORM_ID_RE.finditer(text or ""):
+        raw = match.group(0).lower()
+        kind = "台風" if "台風" in raw else raw.split()[0]
+        tokens.add(f"storm:{kind}:{int(match.group(1))}")
+    return tokens
+
+
+_TOPIC_FAMILY_TERMS = (
+    (
+        "weather_disaster",
+        (
+            "台風", "豪雨", "大雨", "洪水", "氾濫", "浸水", "土砂災害", "地震", "津波",
+            "山火事", "噴火", "大雪", "熱波", "災害", "避難", "被災", "停電",
+            "typhoon", "hurricane", "cyclone", "flood", "earthquake", "wildfire",
+            "disaster", "evacuat",
+        ),
+    ),
+    (
+        "domestic_politics",
+        (
+            "政府", "国会", "首相", "総理", "内閣", "政党", "選挙", "知事", "市長", "議会",
+            "法案", "政策", "行政", "自治体", "省庁", "予算", "税制", "government",
+            "parliament", "election", "policy", "budget",
+        ),
+    ),
+    (
+        "international_security",
+        (
+            "外交", "外相", "首脳", "停戦", "戦争", "軍", "防衛", "制裁", "国連", "紛争",
+            "中国", "ロシア", "ウクライナ", "中東", "diplomacy", "war ", "military",
+            "sanction", "ceasefire", "conflict", "security",
+        ),
+    ),
+    (
+        "economy_business",
+        (
+            "経済", "景気", "物価", "インフレ", "金利", "為替", "株価", "決算", "企業", "会社",
+            "工場", "投資", "関税", "貿易", "銀行", "economy", "inflation", "interest rate",
+            "business", "company", "trade", "tariff",
+        ),
+    ),
+    (
+        "society_crime",
+        (
+            "事件", "事故", "逮捕", "容疑", "裁判", "判決", "警察", "犯罪", "医療", "病院",
+            "感染", "教育", "学校", "労働", "雇用", "福祉", "crime", "court", "police",
+            "hospital", "health", "education", "labor",
+        ),
+    ),
+    (
+        "environment_energy",
+        (
+            "気候変動", "温暖化", "脱炭素", "排出", "エネルギー", "原発", "環境", "climate",
+            "emissions", "energy",
+        ),
+    ),
+)
+
+
+def topic_family(title: str, source_key: str = "") -> str:
+    """Classify a headline coarsely for rotation, not for factual filtering."""
+    source = (source_key or "").strip().lower()
+    if source in {"nhk_politics", "google_news_jp_politics"}:
+        return "domestic_politics"
+    norm = unicodedata.normalize("NFKC", title or "").strip().lower()
+    if not norm:
+        return "other"
+    for family, terms in _TOPIC_FAMILY_TERMS:
+        if any(term in norm for term in terms):
+            return family
+    return "other"
 
 
 def url_hash(url: str) -> str:
@@ -83,7 +162,8 @@ def event_tokens(title: str) -> set:
     s = unicodedata.normalize("NFKC", s).lower()
     s = s.replace("\u2019", "'")
     s = re.sub(r"'s\b", "", s)
-    tokens = set()
+    tokens = _storm_id_tokens(s)
+    tokens.update(_electricity_support_tokens(s))
     for w in re.findall(r"[a-z]+", s):
         if len(w) >= 3 and w not in _EVENT_STOPWORDS:
             tokens.add(w)
@@ -91,6 +171,47 @@ def event_tokens(title: str) -> set:
     for w in re.findall(r"[\u30a1-\u30f6\u30fc]{2,}|[\u4e00-\u9fff]{2,}", s):
         tokens.add(w)
     return tokens
+
+
+def _electricity_support_tokens(s: str) -> set:
+    """Conservative synonym identity; not a general semantic news classifier.
+
+    Require both government and electricity support. Retain explicit stage,
+    amount and month changes so a real follow-up is not treated as a rewording.
+    """
+    if not re.search(r"政府|首相|内閣", s):
+        return set()
+    if not re.search(r"電気(?:料金|代)", s) or not re.search(r"補助|支援", s):
+        return set()
+    # Do not merge different national governments, or opposition with adoption.
+    actor = re.search(r"([\u4e00-\u9fffァ-ヶー]+)(?:の)?政府", s)
+    country = actor.group(1) if actor else "日本"
+    country = {"米": "米国", "アメリカ": "米国", "英": "英国",
+               "イギリス": "英国"}.get(country, country)
+    stages = [name for name, pattern in (
+        ("ended", r"終了|打ち切り|廃止|中止"),
+        ("started", r"開始|実施|再開"),
+        ("extended", r"延長|継続"),
+    ) if re.search(pattern, s)]
+    if re.search(r"反対|否定|撤回|見送り", s):
+        stages = ["opposed"]
+    # Ambiguous or unrelated electricity-policy headlines use lexical matching.
+    if len(stages) != 1:
+        return set()
+    tokens = {"electricity-support:actor:" + country, "electricity-support:subsidy",
+              "electricity-support:stage:" + stages[0]}
+    for detail in re.findall(r"\d+(?:\.\d+)?(?:円|月|年|%)", s):
+        unit = re.search(r"円|月|年|%", detail).group()
+        tokens.add("electricity-support:detail:" + unit + ":" + detail)
+    return tokens
+
+
+def history_lines(path: str) -> list:
+    """Read an existing lane ledger without migrating or modifying it."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        return [line.strip() for line in f if line.strip()]
 
 
 def generic_tokens(titles, ratio: float = 0.10, min_corpus: int = 80) -> frozenset:
@@ -121,6 +242,22 @@ def generic_tokens(titles, ratio: float = 0.10, min_corpus: int = 80) -> frozens
 
 def same_event(a: set, b: set, generic: frozenset = frozenset()) -> bool:
     """内容語の重なりで同一事件かを判定する。"""
+    prefix = "electricity-support:"
+    a_support = {token for token in a if token.startswith(prefix)}
+    b_support = {token for token in b if token.startswith(prefix)}
+    if a_support and b_support:
+        for field in ("actor:", "stage:", "detail:円:", "detail:月:", "detail:年:", "detail:%:"):
+            left = {t for t in a_support if t.startswith(prefix + field)}
+            right = {t for t in b_support if t.startswith(prefix + field)}
+            if left and right and left != right:
+                return False
+        return True
+    # A numbered storm is an explicit event identity. Do this before removing
+    # period-generic tokens so a busy typhoon day cannot erase 台風17号's ID.
+    a_storm_ids = {token for token in a if token.startswith("storm:")}
+    b_storm_ids = {token for token in b if token.startswith("storm:")}
+    if a_storm_ids and b_storm_ids:
+        return bool(a_storm_ids & b_storm_ids)
     if generic:
         a = a - generic
         b = b - generic
@@ -147,6 +284,9 @@ def cmd_filter_unread():
     news_file = sys.argv[4]
     past_url_hash_file = sys.argv[5] if len(sys.argv) > 5 else ""
     meta_file = sys.argv[6] if len(sys.argv) > 6 else ""
+    peer_title_file = sys.argv[7] if len(sys.argv) > 7 else ""
+    peer_key_file = sys.argv[8] if len(sys.argv) > 8 else ""
+    peer_url_file = sys.argv[9] if len(sys.argv) > 9 else ""
 
     news_text = ""
     if os.path.exists(news_file):
@@ -182,6 +322,11 @@ def cmd_filter_unread():
             if k:
                 past_url_hashes.add(k)
 
+    peer_titles = history_lines(peer_title_file)
+    past_keys.update(key(title) for title in peer_titles)
+    past_keys.update(history_lines(peer_key_file))
+    past_url_hashes.update(history_lines(peer_url_file))
+
     blocks = []
     current = []
     for line in news_text.splitlines():
@@ -197,16 +342,13 @@ def cmd_filter_unread():
     # 既読見出しの内容語集合 (直近分のみ。古すぎる事件まで弾くと候補が枯れる)
     past_event_tokens = []
     past_titles_for_events: list = []
-    if event_dedup_enabled() and os.path.exists(past_title_file):
+    if event_dedup_enabled():
         try:
             recent_limit = max(1, int(os.environ.get("NEWS_EVENT_HISTORY_LIMIT", "60")))
         except ValueError:
             recent_limit = 60
-        past_titles_for_events = [
-            ln.strip()
-            for ln in open(past_title_file, encoding="utf-8", errors="ignore")
-            if ln.strip()
-        ][-recent_limit:]
+        past_titles_for_events = history_lines(past_title_file)[-recent_limit:]
+        past_titles_for_events += peer_titles[-recent_limit:]
         past_event_tokens = [
             t for t in (event_tokens(t) for t in past_titles_for_events) if t
         ]
@@ -227,11 +369,15 @@ def cmd_filter_unread():
         # sports filter: exclude baseball/sports topics per user request
         if is_sports_title(title):
             continue
+        if is_uncontextualized_tragedy(title, "\n".join(b[1:])):
+            continue
         if is_low_value_news_title(title):
             continue
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_key = (item.get("source_key") or "").strip()
-        if source_key.startswith("google_news_") and not is_public_interest_news_title(title):
+        # 英語のWORLD/BUSINESS面は国際情勢・経済面のため、日本語見出し向けの
+        # 公開関心キーワード判定は適用しない (日本語Google Newsのみ)。
+        if source_key.startswith("google_news_jp_") and not is_public_interest_news_title(title):
             continue
         k = key(title)
         uh = url_hash(item.get("url", ""))

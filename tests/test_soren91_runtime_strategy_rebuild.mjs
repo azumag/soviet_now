@@ -19,7 +19,7 @@ const board = (pieces = [], next = piece(1), extra = {}) => ({
   garbage: { ratio: 0, height: -5, gauge: 0, columns: [] }, ...extra,
 });
 const cal = () => ({
-  screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'profile',
+  screen: { width: 1280, height: 720 }, confidence: 0.82, method: 'deadline-floor', coordinateSchema: 2, arena: { left: 450, right: 800, top: 130, bottom: 636, width: 350, height: 506 }, hud: { top: 0, bottom: 130 },
   board: { left: 450, right: 800, top: 220, bottom: 636, width: 350, height: 416 },
 });
 
@@ -34,7 +34,7 @@ function withRemoteCdp(fn) {
 }
 
 test('remote slow-cadence queue shift can confirm a new turn in one observation', () => withRemoteCdp(() => {
-  assert.equal(DEFAULT_SINGLE_FRAME_ADVANCE_MS, 2500);
+  assert.equal(DEFAULT_SINGLE_FRAME_ADVANCE_MS, 1200);
   assert.equal(slowCadenceFastPathEnabled(), true);
   const c = cal();
   const q = [piece(1), piece(2), piece(3)];
@@ -47,6 +47,58 @@ test('remote slow-cadence queue shift can confirm a new turn in one observation'
   assert.equal(next.nextPieces[1].type, 3);
   assert.equal(next.nextPieces[1].temporalSource, 'shifted');
   assert.equal(next.holdKnownEmpty, true);
+}));
+
+test('remote slow-cadence fast path fires across the measured ~2.4s capture gap', () => withRemoteCdp(() => {
+  // The old 2500ms guard sat just above the measured remote capture gap
+  // (~2.2-2.4s), so the fast path never fired and the strict two-frame gate
+  // re-observed 4-6 times per drop. An advance with >=1.2s must confirm.
+  const c = cal();
+  const q = [piece(1), piece(2), piece(3)];
+  gateObservation(board([], q[0], { nextPieces: q }), c, 1000);
+  const advanced = board([piece(1)], piece(2), { nextPieces: [piece(2), null, piece(4)] });
+  const fast = gateObservation(advanced, c, 2300); // gap 1300ms
+  assert.equal(fast.state, 'MOVE', JSON.stringify(fast.perception));
+  assert.equal(fast.perception.reason, 'stable-slow-advance-temporal-next-hold-empty');
+
+  const cSlow = cal();
+  gateObservation(board([], q[0], { nextPieces: q }), cSlow, 1000);
+  const tooEarly = gateObservation(advanced, cSlow, 2100); // gap 1100ms < floor
+  assert.equal(tooEarly.state, 'DROP');
+}));
+
+test('remote single-evidence advance confirms when only queue[0] is freshly read', () => withRemoteCdp(() => {
+  // The strict cross-slot evidence is often unavailable on the remote cadence
+  // (only queue[0] detected per frame): a conflict-free queue[0] change after
+  // >=1.2s must still confirm the new turn in one observation.
+  const c = cal();
+  const prev = board([], piece(1), { nextPieces: [piece(1), null, null] });
+  gateObservation(prev, c, 1000);
+  const cur = board([piece(1)], piece(2), { nextPieces: [piece(2), null, null] });
+  const fast = gateObservation(cur, c, 2400); // gap 1400ms, evidence 1, no conflict
+  assert.equal(fast.state, 'MOVE', JSON.stringify(fast.perception));
+  assert.match(fast.perception.reason, /^stable-slow-advance/);
+}));
+
+test('remote single-evidence advance is rejected on conflicting slots or when disabled', () => withRemoteCdp(() => {
+  const conflictCal = cal();
+  gateObservation(board([], piece(1), { nextPieces: [piece(1), piece(2), null] }), conflictCal, 1000);
+  const conflicting = board([piece(1)], piece(3), { nextPieces: [piece(3), null, null] });
+  const blocked = gateObservation(conflicting, conflictCal, 2400); // p[1]=2 vs c[0]=3 -> conflict
+  assert.equal(blocked.state, 'DROP');
+
+  const old = process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE;
+  process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE = '0';
+  try {
+    const offCal = cal();
+    gateObservation(board([], piece(1), { nextPieces: [piece(1), null, null] }), offCal, 1000);
+    const single = gateObservation(
+      board([piece(1)], piece(2), { nextPieces: [piece(2), null, null] }), offCal, 2400);
+    assert.equal(single.state, 'DROP');
+  } finally {
+    if (old == null) delete process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE;
+    else process.env.SOREN91_ADVANCE_SINGLE_EVIDENCE = old;
+  }
 }));
 
 test('local fast cadence still requires stable board confirmation', () => {

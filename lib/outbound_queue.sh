@@ -161,6 +161,49 @@ _outbound_chat_source_is_youtube_mirror_excluded() {
 	return 1
 }
 
+
+# Split a mirror message before youtube_chat.sh so the sink never silently
+# truncates a multibyte result. The Twitch copy keeps its own, larger budget.
+_outbound_chat_split_utf8() {
+	local message="${1:-}"
+	local limit="${2:-200}"
+	[ -n "$message" ] || return 0
+	case "$limit" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$limit" -gt 0 ] || return 1
+	# youtube_chat.sh truncates at 200 bytes; an override may only lower it.
+	[ "$limit" -le 200 ] || limit=200
+	python3 - "$message" "$limit" <<'PY'
+import sys
+
+message = sys.argv[1].replace("\r", " ").replace("\n", " ")
+limit = int(sys.argv[2])
+remaining = message
+while remaining:
+    data = remaining.encode("utf-8")
+    if len(data) <= limit:
+        print(remaining)
+        break
+    piece = data[:limit].decode("utf-8", "ignore")
+    if not piece:
+        raise SystemExit(1)
+
+    # Prefer a complete sentence, then a clause/space, but do not make a tiny
+    # fragment merely because an early punctuation mark exists.
+    cut = 0
+    for marks in ("。！？!?", "、，, \t"):
+        candidate = max((piece.rfind(mark) for mark in marks), default=-1) + 1
+        if candidate > 0 and len(piece[:candidate].encode("utf-8")) >= limit // 2:
+            cut = candidate
+            break
+    if cut:
+        piece = piece[:cut]
+    print(piece)
+    remaining = remaining[len(piece):]
+PY
+}
+
 _outbound_chat_send_youtube_mirror() {
 	local message="$1"
 	local basename="$2"
@@ -173,14 +216,24 @@ _outbound_chat_send_youtube_mirror() {
 	source=$(_outbound_chat_source_from_basename "$basename")
 	_outbound_chat_source_is_youtube_mirror_excluded "$source" && return 0
 
-	local err_file
+	local err_file parts_file part
 	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_send_err_${RANDOM}")
-	if ./youtube_chat.sh send "$message" >/dev/null 2>"$err_file"; then
-		rm -f "$err_file"
+	parts_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.youtube_parts_${RANDOM}")
+	if ! _outbound_chat_split_utf8 "$message" "${OUTBOUND_CHAT_YOUTUBE_MAX_BYTES:-200}" >"$parts_file"; then
+		printf '%s\n' 'youtube mirror split failed' >"$err_file"
+		_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
+		rm -f "$err_file" "$parts_file"
 		return 0
 	fi
-	_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
-	rm -f "$err_file"
+	while IFS= read -r part || [ -n "$part" ]; do
+		[ -n "$part" ] || continue
+		if ! ./youtube_chat.sh send "$part" >/dev/null 2>"$err_file"; then
+			_outbound_chat_log_youtube_mirror_failure "$basename" "$err_file"
+			rm -f "$err_file" "$parts_file"
+			return 0
+		fi
+	done <"$parts_file"
+	rm -f "$err_file" "$parts_file"
 	return 0
 }
 
@@ -205,6 +258,7 @@ _outbound_chat_claim_enqueue_key() {
 	local message="$1"
 	local source="$2"
 	local priority="$3"
+	local delivery_key="${4:-}"
 	local ttl="${OUTBOUND_CHAT_ENQUEUE_DEDUP_TTL_SEC:-30}"
 	case "$ttl" in
 	''|*[!0-9]*) ttl=30 ;;
@@ -213,7 +267,13 @@ _outbound_chat_claim_enqueue_key() {
 
 	mkdir -p "$OUTBOUND_CHAT_DEDUP_DIR" 2>/dev/null || true
 	local key marker now mt age
-	key=$(_outbound_chat_hash "${source}"$'\037'"${priority}"$'\037'"${message}")
+	local identity="${source}"$'\037'"${priority}"$'\037'"${message}"
+	# Transport identity belongs only in dedup, never in the source category or
+	# visible body. Keep the legacy hash exactly unchanged when no key is given.
+	if [ -n "$delivery_key" ]; then
+		identity="${identity}"$'\037delivery_key\037'"${delivery_key}"
+	fi
+	key=$(_outbound_chat_hash "$identity")
 	[ -n "$key" ] || return 0
 	marker="$OUTBOUND_CHAT_DEDUP_DIR/$key"
 	now=$(date +%s)
@@ -286,10 +346,11 @@ _comment_audio_claim_enqueue_key() {
 	return 0
 }
 
-# enqueue_chat_message MESSAGE [SOURCE] [PRIORITY]
+# enqueue_chat_message MESSAGE [SOURCE] [PRIORITY] [DELIVERY_KEY]
 #   MESSAGE  : 投稿する本文 (1行)
 #   SOURCE   : 呼び出し元の識別子 (default: "unknown")
 #   PRIORITY : 数値 (小さいほど高優先, default: 5)
+#   DELIVERY_KEY : optional run/part identity used only for enqueue dedup
 #
 # ファイル名: {epoch_ns}_{source}_{priority}.msg
 # 内容: メッセージ本文のみ
@@ -303,6 +364,7 @@ enqueue_chat_message() {
 	local message="${1:-}"
 	local source="${2:-unknown}"
 	local priority="${3:-5}"
+	local delivery_key="${4:-}"
 
 	if [ -z "$message" ]; then
 		return 1
@@ -313,15 +375,30 @@ enqueue_chat_message() {
 		return 0
 	fi
 
-	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority"; then
+	if ! _outbound_chat_claim_enqueue_key "$message" "$source" "$priority" "$delivery_key"; then
 		return 0
 	fi
 
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true
 
-	# nanosecond timestamp for uniqueness (fallback to epoch + random)
+	# BSD date exits successfully while leaving %N literal. Validate its output
+	# before using it as a filename, or all same-second parts overwrite one file.
 	local ts
-	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
+	ts=$(date +%s%N 2>/dev/null || true)
+	case "$ts" in
+	''|*[!0-9]*)
+		ts=$(python3 -c 'import time; print(time.time_ns())' 2>/dev/null) \
+			|| ts="$(date +%s)${RANDOM}${RANDOM}"
+		;;
+	esac
+	# Distinct keyed passages must also have distinct filenames if the clock
+	# returns the same timestamp. Keep the source/priority fields unchanged.
+	if [ -n "$delivery_key" ]; then
+		local delivery_id
+		delivery_id=$(_outbound_chat_hash "${message}"$'\037'"${delivery_key}")
+		[ -n "$delivery_id" ] || return 1
+		ts="${ts}-${delivery_id}"
+	fi
 
 	local filename="${ts}_${source}_${priority}.msg"
 	local tmpfile="${OUTBOUND_CHAT_PENDING_DIR}/.${filename}.tmp"
@@ -337,7 +414,7 @@ enqueue_chat_message() {
 #   pending/ から最も古い1件を取得して送信し、sent/ に移動する。
 #   Twitch 送信には ./twitch_chat.sh send を使用。
 #   YOUTUBE_CHAT_SEND_ENABLED=1 か OUTBOUND_CHAT_YOUTUBE_MIRROR_ENABLED=1 の場合、
-#   Twitch 送信成功後に ./youtube_chat.sh send にも同じ本文を送る。
+#   Twitch 送信成功後に YouTube の安全な送信予算へ意味単位で分割して mirror する。
 #   戻り値: 0=送信成功, 1=キューが空 or 送信失敗
 outbound_queue_consume_once() {
 	mkdir -p "$OUTBOUND_CHAT_PENDING_DIR" "$OUTBOUND_CHAT_PROCESSING_DIR" "$OUTBOUND_CHAT_SENT_DIR" 2>/dev/null || true
@@ -384,12 +461,20 @@ outbound_queue_consume_once() {
 # soren_loop / eloop / improve から直接 say_enqueue.sh を呼ばず、
 # この関数で queue に書いて audio_worker に再生を委譲する。
 
-# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE]
+# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE] [RUNTIME_FENCE_JSON]
+# Hanjuku-only fence: game/runtime_id/generation/lease_id/expires_at (<=120s).
 #   テキストを comment queue に積む。audio_worker の _play_comment_queue が再生する。
 enqueue_audio_text() {
 	local text="${1:-}"
 	local source="${2:-unknown}"
 	local speaker_override="${3:-}"
+	local runtime_fence="${4:-}" encoded_fence=""
+	# Source becomes a filename component; never accept paths or shell syntax.
+	case "$source" in ''|hanjuku:commentary|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
+	if [ -n "$runtime_fence" ] || [ "$source" = hanjuku_commentary ]; then
+		[ "$source" = hanjuku_commentary ] && [ -n "$runtime_fence" ] || return 1
+		encoded_fence=$(python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" encode "$runtime_fence") || return 1
+	fi
 	[ -n "$text" ] || return 1
 	if ! _comment_audio_claim_enqueue_key "$text"; then
 		return 0
@@ -400,18 +485,43 @@ enqueue_audio_text() {
 
 	local ts
 	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
-	local filename="comment_announce_${ts}_${source}.txt"
+	local filename="comment_announce_${ts}_${BASHPID:-$$}_${RANDOM}_${source}.txt"
 	local tmpfile="${queue_dir}/.${filename}.tmp"
 	local destfile="${queue_dir}/${filename}"
 
-	printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || return 1
-	mv "$tmpfile" "$destfile" 2>/dev/null || return 1
-
-	# speaker override が指定されていたらサイドカーファイルに保存
+	local fencefile="${destfile%.txt}.runtime_fence.json"
+	# Publish metadata first: a consumer must never see unfenced Hanjuku text.
+	if [ -n "$encoded_fence" ]; then
+		printf '%s\n' "$encoded_fence" > "$fencefile" 2>/dev/null || return 1
+	fi
 	if [ -n "$speaker_override" ]; then
 		printf '%s' "$speaker_override" > "${destfile}.speaker" 2>/dev/null || true
 	fi
+	if ! printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || ! mv "$tmpfile" "$destfile" 2>/dev/null; then
+		rm -f "$tmpfile" "$fencefile" "${destfile}.speaker"
+		return 1
+	fi
 	return 0
+}
+
+# enqueue_weather_audio_request REQUEST_JSON
+#   Weather-corner only entrypoint. The consumer validates the request and
+#   GameSwitch identity before publishing into the shared comment queue.
+#   Its receipt ledger is metadata in that queue, not a second playback queue.
+enqueue_weather_audio_request() {
+	local request_json="${1:-}"
+	[ -n "$request_json" ] || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" enqueue \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$request_json"
+}
+
+# get_weather_audio_receipt ITEM_KEY
+#   Return the durable per-item consumer receipt, or JSON null before enqueue.
+get_weather_audio_receipt() {
+	local item_key="${1:-}"
+	[ -n "$item_key" ] || return 1
+	python3 "${ELOOP_LIB_DIR:-.}/lib/weather_audio_consumer.py" get \
+		--queue-dir "${COMMENT_QUEUE_DIR:-tmp/.comment_queue}" "$item_key"
 }
 
 # enqueue_audio_file FILE [SOURCE] [SPEAKER_OVERRIDE]

@@ -126,14 +126,22 @@ else
 fi
 
 # 3. 同一スコープ内では generic failure の短期 circuit breaker を維持する。
+# 2回目は provider dispatch 0件なので、新しい all_failed / chain_summary として
+# 二重計上しない。最初の実失敗のtelemetryだけを残す。
 reset_state
 TEST_MODE=always_fail
 ai_generate_list 'RADIO:weather:prepass' "$prompt" "$agent" >/dev/null 2>&1 || true
+all_failed_before=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+chain_before=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
 ai_generate_list 'RADIO:weather:prepass' "$prompt" "$agent" >/dev/null 2>&1 || true
-if [ "$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')" -eq 1 ]; then
-	pass 'prepass provider failure still suppresses repeated dead-provider attempts'
+all_failed_after=$(grep -h -c '"event":"all_failed"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+chain_after=$(grep -h -c '"event":"chain_summary"' "$AI_STATS_DIR"/*.jsonl 2>/dev/null || true)
+if [ "$(wc -l <"$ATTEMPT_LOG" | tr -d ' ')" -eq 1 ] \
+	&& [ "$all_failed_before" -eq 1 ] && [ "$all_failed_after" -eq 1 ] \
+	&& [ "$chain_before" -eq 1 ] && [ "$chain_after" -eq 1 ]; then
+	pass 'prepass provider failure suppresses retries without double-counting all-failed telemetry'
 else
-	fail_case 'prepass provider failure still suppresses repeated dead-provider attempts'
+	fail_case "backoff-only retry telemetry: attempts=$(wc -l <"$ATTEMPT_LOG" | tr -d ' ') all_failed=${all_failed_before}->${all_failed_after} chain=${chain_before}->${chain_after}"
 fi
 
 # 4. 明示的 429/rate-limit は global backoff として本文にも共有する。
