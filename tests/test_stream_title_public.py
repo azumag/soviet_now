@@ -1,13 +1,45 @@
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from lib.stream_title_public import (
     DEFAULT_FALLBACK,
+    ViewerCandidate,
+    adoptable_candidate,
     choose_body,
     compose_title,
     looks_internal,
+    parse_viewer_candidate,
 )
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def candidate_text(
+    *,
+    title="AIの取引コーナーからゲームへ、画面切替を改善",
+    rationale="画面復帰を運用で確認",
+    status="deployed",
+    generated_at=None,
+    valid_scope=None,
+) -> str:
+    lines = [f"viewer_title: {title}"]
+    if rationale is not None:
+        lines.append(f"rationale: {rationale}")
+    if status is not None:
+        lines.append(f"status: {status}")
+    lines.append(f"generated_at: {generated_at if generated_at is not None else now_iso()}")
+    if valid_scope is not None:
+        lines.append(f"valid_scope: {valid_scope}")
+    return "\n".join(lines) + "\n"
 
 
 class StreamTitlePublicTest(unittest.TestCase):
@@ -15,6 +47,8 @@ class StreamTitlePublicTest(unittest.TestCase):
         path = root / "viewer_title.md"
         path.write_text(body, encoding="utf-8")
         return str(path)
+
+    # --- 内部識別子の検出 ---
 
     def test_internal_development_logs_are_rejected(self):
         samples = [
@@ -60,24 +94,79 @@ class StreamTitlePublicTest(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertFalse(looks_internal(sample))
 
-    def test_compose_falls_back_on_unspaced_internal_activity(self):
-        title = compose_title(
-            day="249",
-            activity="PR #899を統合・現行mainへVM反映",
-            strategy="root v900 継続",
-            candidate_file=None,
-            fallback=None,
-        )
-        self.assertEqual(title, f"[day249] {DEFAULT_FALLBACK}")
-        self.assertNotIn("899", title)
-        self.assertNotIn("v900", title)
+    # --- 候補メタデータ契約 (docich#789 §1) ---
 
-    def test_explicit_viewer_title_wins(self):
+    def test_deployed_and_verified_candidates_parse(self):
+        for status in ("deployed", "verified"):
+            with self.subTest(status=status):
+                with tempfile.TemporaryDirectory() as d:
+                    path = self.candidate_file(Path(d), candidate_text(status=status))
+                    candidate = parse_viewer_candidate(path)
+                    self.assertIsNotNone(candidate)
+                    self.assertEqual(candidate.status, status)
+                    self.assertTrue(candidate.is_publishable_stage)
+
+    def test_implemented_and_merged_parse_but_are_not_publishable(self):
+        for status in ("implemented", "merged"):
+            with self.subTest(status=status):
+                with tempfile.TemporaryDirectory() as d:
+                    path = self.candidate_file(Path(d), candidate_text(status=status))
+                    candidate = parse_viewer_candidate(path)
+                    self.assertIsNotNone(candidate)
+                    self.assertFalse(candidate.is_publishable_stage)
+                    self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_expired_candidate_is_not_adopted(self):
         with tempfile.TemporaryDirectory() as d:
-            path = self.candidate_file(
-                Path(d),
-                "# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n",
-            )
+            path = self.candidate_file(Path(d), candidate_text(generated_at=iso_days_ago(8)))
+            self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_future_dated_candidate_is_not_adopted(self):
+        future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(timespec="seconds")
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), candidate_text(generated_at=future))
+            self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_ttl_env_override_expires_immediately(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), candidate_text())
+            with mock.patch.dict("os.environ", {"STREAM_VIEWER_TITLE_TTL_DAYS": "0"}):
+                self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_missing_or_invalid_metadata_is_fail_closed(self):
+        cases = [
+            "# generated\n- 裸のタイトル行は契約メタデータを持たない\n",
+            "viewer_title: タイトルのみ\n",
+            "viewer_title: タイトル\nstatus: shipped\n",
+            "viewer_title: タイトル\nstatus: deployed\n",
+            f"viewer_title: タイトル\nstatus: deployed\ngenerated_at: not-a-date\n",
+            f"viewer_title: タイトル\nstatus: unknown\ngenerated_at: {now_iso()}\n",
+        ]
+        for body in cases:
+            with self.subTest(body=body):
+                with tempfile.TemporaryDirectory() as d:
+                    path = self.candidate_file(Path(d), body)
+                    self.assertIsNone(parse_viewer_candidate(path))
+                    self.assertIsNone(adoptable_candidate(path, None))
+
+    def test_scope_contract(self):
+        scoped = candidate_text(valid_scope="NetHack")
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), scoped)
+            self.assertIsNotNone(adoptable_candidate(path, "NetHack"))
+            self.assertIsNone(adoptable_candidate(path, "Puyo Puyo"))
+            self.assertIsNone(adoptable_candidate(path, None))
+        unscoped = candidate_text(valid_scope=None)
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), unscoped)
+            self.assertIsNotNone(adoptable_candidate(path, None))
+            self.assertIsNotNone(adoptable_candidate(path, "Soviet Game"))
+
+    # --- 選択経路 ---
+
+    def test_explicit_valid_candidate_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self.candidate_file(Path(d), candidate_text())
             self.assertEqual(
                 choose_body(
                     current="[day190] 以前の一般向けタイトル",
@@ -100,46 +189,86 @@ class StreamTitlePublicTest(unittest.TestCase):
     def test_internal_current_title_falls_back(self):
         self.assertEqual(
             choose_body(
-                current="[day190] PR770をmainへマージ",
+                current="[day190] PR770をmainへマージ、VM反映と実機状態を確認",
                 candidate_file="/definitely/missing",
                 fallback=None,
             ),
             DEFAULT_FALLBACK,
         )
 
-    def test_internal_candidate_does_not_replace_safe_current(self):
+    def test_unusable_candidate_does_not_replace_safe_current(self):
+        cases = [
+            candidate_text(status="implemented"),
+            candidate_text(status="merged"),
+            candidate_text(generated_at=iso_days_ago(8)),
+            candidate_text(valid_scope="NetHack"),
+            "# generated\n- 裸のタイトル行は契約メタデータを持たない\n",
+        ]
+        for body in cases:
+            with self.subTest(body=body.splitlines()[1] if len(body.splitlines()) > 1 else body):
+                with tempfile.TemporaryDirectory() as d:
+                    path = self.candidate_file(Path(d), body)
+                    self.assertEqual(
+                        choose_body(
+                            current="[day190] AIたちがゲームに挑戦中",
+                            candidate_file=path,
+                            fallback=None,
+                        ),
+                        "AIたちがゲームに挑戦中",
+                    )
+
+    # --- 組成 ---
+
+    def test_compose_uses_valid_candidate_from_file(self):
         with tempfile.TemporaryDirectory() as d:
-            path = self.candidate_file(Path(d), "- PR #770をmainへマージ\n")
-            self.assertEqual(
-                choose_body(
-                    current="[day190] AIたちがゲームに挑戦中",
-                    candidate_file=path,
-                    fallback=None,
-                ),
-                "AIたちがゲームに挑戦中",
+            path = self.candidate_file(Path(d), candidate_text())
+            title = compose_title(
+                day="249",
+                activity=None,
+                strategy="決めていきます",
+                candidate_file=path,
+                fallback=None,
             )
+            self.assertEqual(
+                title,
+                "[day249] AIの取引コーナーからゲームへ、画面切替を改善 決めていきます",
+            )
+
+    def test_compose_ignores_unpublishable_candidate_from_file(self):
+        for status in ("implemented", "merged"):
+            with self.subTest(status=status):
+                with tempfile.TemporaryDirectory() as d:
+                    path = self.candidate_file(Path(d), candidate_text(status=status))
+                    title = compose_title(
+                        day="249",
+                        activity=None,
+                        strategy="",
+                        candidate_file=path,
+                        fallback=None,
+                    )
+                    self.assertEqual(title, f"[day249] {DEFAULT_FALLBACK}")
 
     def test_compose_rejects_internal_activity_and_strategy(self):
         title = compose_title(
-            day="190",
-            activity="PR770をmainへマージ",
-            strategy="root v763 継続",
+            day="249",
+            activity="PR #899を統合・現行mainへVM反映",
+            strategy="root v900 継続",
             candidate_file=None,
             fallback=None,
         )
-        self.assertEqual(title, f"[day190] {DEFAULT_FALLBACK}")
-        self.assertNotIn("PR770", title)
-        self.assertNotIn("v763", title)
+        self.assertEqual(title, f"[day249] {DEFAULT_FALLBACK}")
+        self.assertNotIn("899", title)
+        self.assertNotIn("v900", title)
 
     def test_compose_keeps_public_names_and_limit(self):
         title = compose_title(
-            day="190",
+            day="249",
             activity="NetHackでAIが長期攻略に挑戦 " + "あ" * 200,
             strategy="慎重に探索中",
             candidate_file=None,
             fallback=None,
         )
-        self.assertTrue(title.startswith("[day190] NetHack"))
+        self.assertTrue(title.startswith("[day249] NetHack"))
         self.assertIn("慎重に探索中", title)
         self.assertLessEqual(len(title), 140)
         self.assertNotIn("\n", title)

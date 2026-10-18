@@ -96,7 +96,9 @@ category_id = "abc"
 category_name = "X"
 title_prefix = "[X]"
 TOML
-printf '# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n' >"$TMP/viewer_title.md"
+# 候補は契約メタデータ（確認段階=deployed・生成日時=現在）付きで生成する。
+# 裸のタイトル行は selector の契約外のため採用されない（docich#789）。
+printf 'viewer_title: AIの取引コーナーからゲームへ、画面切替を改善\nstatus: deployed\ngenerated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TMP/viewer_title.md"
 
 export TWITCH_CLIENT_ID=test-client TWITCH_BROADCASTER_ID=test-bid
 export TWITCH_GAME_TOKEN=test-token
@@ -116,6 +118,12 @@ out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games
 echo "$out" | grep -q '^\[day[0-9]*\] AIの取引コーナーからゲームへ、画面切替を改善 root継続$' && ok "compose public title" || not_ok "compose public title: $out"
 echo "$out" | grep -q '\[Robots\]' && not_ok "game prefix leaked into title: $out" || ok "game prefix omitted"
 [ -f "$STUB_PATCH_COUNT" ] && not_ok "dry-run must not PATCH" || ok "dry-run no PATCH"
+
+# 1b. 契約メタデータのない旧形式（裸の1行）は採用せず、一般向けfallbackへ落とす。
+printf '# generated\n- 裸のタイトル行\n' >"$TMP/viewer_title.md"
+out="$(TWITCH_GAME_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" --dry-run 2>/dev/null)"
+echo "$out" | grep -q '^\[day[0-9]*\] AIたちがゲーム・ニュース・会話に挑戦する実験配信$' && ok "bare candidate rejected" || not_ok "bare candidate adopted: $out"
+printf 'viewer_title: AIの取引コーナーからゲームへ、画面切替を改善\nstatus: deployed\ngenerated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$TMP/viewer_title.md"
 
 # 2. 実PATCH: body に title+game_id が入る
 rm -f "$STUB_PATCH_OUT" "$STUB_PATCH_COUNT"

@@ -1,12 +1,36 @@
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def viewer_candidate(
+    *,
+    title="AIの取引コーナーからゲームへ、画面切替を改善",
+    status="deployed",
+    generated_at=None,
+    valid_scope=None,
+) -> str:
+    lines = [f"viewer_title: {title}", f"status: {status}"]
+    lines.append(f"generated_at: {generated_at if generated_at is not None else now_iso()}")
+    if valid_scope is not None:
+        lines.append(f"valid_scope: {valid_scope}")
+    return "\n".join(lines) + "\n"
 
 
 class TitleDayTest(unittest.TestCase):
@@ -110,14 +134,36 @@ esac
         self.assertEqual(self.run_script("999").returncode, 3)
 
     def test_body_updates_from_viewer_title(self):
-        r = self.run_script(
-            viewer="# generated\n- AIの取引コーナーからゲームへ、画面切替を改善\n"
-        )
+        r = self.run_script(viewer=viewer_candidate())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(
             r.stdout,
             r"^\[day\d+\] AIの取引コーナーからゲームへ、画面切替を改善\n$",
         )
+
+    def test_bare_viewer_line_is_not_adopted(self):
+        # 契約メタデータ（確認段階・生成日時）のない旧形式は採用しない。
+        r = self.run_script(viewer="# generated\n- 裸のタイトル行\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
+
+    def test_unpublishable_viewer_title_preserves_body(self):
+        for status in ("implemented", "merged"):
+            with self.subTest(status=status):
+                r = self.run_script(viewer=viewer_candidate(status=status))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
+
+    def test_expired_viewer_title_preserves_body(self):
+        r = self.run_script(viewer=viewer_candidate(generated_at=iso_days_ago(8)))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
+
+    def test_scoped_viewer_title_requires_matching_game(self):
+        # curl stub は game_name を返さないため、scope付き候補は fail-closed で不採用。
+        r = self.run_script(viewer=viewer_candidate(valid_scope="NetHack"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^\[day\d+\] Keep Title intact\n$")
 
     def test_ops_brief_is_not_a_title_source(self):
         r = self.run_script(

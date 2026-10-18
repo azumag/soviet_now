@@ -61,14 +61,29 @@ Twitch のカテゴリーは IGDB が正本。`--resolve` で候補を引き、
   (`STREAM_DAY_EPOCH`、既定 2026-03-14) で算出する。
 - `viewer activity` の既定: `prompts/viewer_title.md` の明示候補。
   このファイルは `tools/build_ops_brief.sh` がdocichの正本handoff最新節から生成する。
-  handoffには、変更内容と確認段階に合った一般向け文面を次のように明示する。
+  handoffには、候補のメタデータを次のように明示する。
 
   ```markdown
   ## 2026-09-20 ... — 内部向けの作業見出し
   - 視聴者向けタイトル: AIの取引コーナーからゲームへ、画面切替を改善
+  - 確認段階: verified
+  - 根拠: 画面復帰を運用で確認
+  - 有効範囲: NetHack
   ```
 
-  `viewer_title:` も同義で使える。最新節に明示が無ければ古い節の候補を再利用しない。
+  候補採用の契約（すべて満たす候補だけを公開し、それ以外は fail-closed で
+  安全な現タイトルまたはfallbackへ落ちる）:
+
+  - `確認段階` (`status`) は `implemented` / `merged` / `deployed` / `verified`。
+    **`deployed` / `verified` のみ公開採用**する（未確認段階の候補は公開しない）。
+    省略時の既定は `implemented`。
+  - `生成日時` (`generated_at`) は build 時刻で自動付与（明記時はそれを優先）。
+    TTL（`STREAM_VIEWER_TITLE_TTL_DAYS`、既定7日）を過ぎた・未来日付の候補は不採用。
+  - `有効範囲` (`valid_scope`) は省略可。指定した場合は現在（ゲーム切替時は切替先）の
+    Twitchカテゴリ名に含まれるときだけ採用する。
+  - `根拠` (`rationale`) は内部メタデータで、公開文字列には出ない。
+  - 旧形式の裸の1行（メタデータなし）は契約外のため採用しない。
+  - 最新節に明示が無ければ古い節の候補を再利用しない。
 - `prompts/ops_brief.md` はコメント返し等の内部運用メモとして残すが、
   Twitchタイトルの入力には使わない。
 - 日次更新では、明示候補が無ければ現在のタイトル本文が一般向けかを確認して維持する。
