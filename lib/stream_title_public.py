@@ -26,8 +26,8 @@ _FREE_DAY = re.compile(r"(?i)\bday\s*\d+\b")
 _ASCII_L = r"(?<![0-9A-Za-z_])"
 _ASCII_R = r"(?![0-9A-Za-z_])"
 _INTERNAL_PATTERNS = (
-    re.compile(r"(?i)" + _ASCII_L + r"(?:PR|MR)\s*#?\s*\d+" + _ASCII_R),
-    re.compile(r"(?i)" + _ASCII_L + r"(?:issue|pull\s*request)\s*#?\s*\d+" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:PR|MR)[\s#\-]*\d+" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:issue|pull\s*request)[\s#\-]*\d+" + _ASCII_R),
     re.compile(r"(?i)" + _ASCII_L + r"[\w.-]+#\d+" + _ASCII_R),
     re.compile(r"(?i)" + _ASCII_L + r"(?:main|master|HEAD|SHA|CI|VM)" + _ASCII_R),
     re.compile(r"(?i)" + _ASCII_L + r"root\s+v\d+" + _ASCII_R),

@@ -17,10 +17,12 @@ class TitleDayTest(unittest.TestCase):
         title="Keep Title DAY 177 intact",
         ops_brief=None,
         channel_failure=False,
+        mode="--dry-run",
     ):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)
             self.last_skip_log = ""
+            self.last_patch_log = ""
             (p / "lib").mkdir()
             shutil.copy(ROOT / "lib/stream_title_public.py", p / "lib/stream_title_public.py")
             (p / "lib/stream_title_sync.py").write_text(
@@ -33,6 +35,7 @@ class TitleDayTest(unittest.TestCase):
                 encoding="utf-8",
             )
             skip_log = p / "skip.log"
+            patch_log = p / "patch.log"
             shutil.copy(ROOT / "update_stream_title_day.sh", p)
 
             if viewer is not None or ops_brief is not None:
@@ -44,6 +47,11 @@ class TitleDayTest(unittest.TestCase):
 
             (p / "curl").write_text(
                 r'''#!/bin/bash
+if [ -n "${PATCH_LOG:-}" ]; then
+  case "$*" in
+   *"-X PATCH"*) printf '%s\n' "$*" >>"$PATCH_LOG" ;;
+  esac
+fi
 case "$*" in
  *oauth2/validate*)
   case "$*" in
@@ -71,15 +79,18 @@ esac
                 "TEST_TITLE": title,
                 "TEST_CHANNEL_FAILURE": "1" if channel_failure else "0",
                 "SYNC_SKIP_LOG": str(skip_log),
+                "PATCH_LOG": str(patch_log),
             }
             result = subprocess.run(
-                ["bash", str(p / "update_stream_title_day.sh"), "--dry-run"],
+                ["bash", str(p / "update_stream_title_day.sh"), mode],
                 env=env,
                 text=True,
                 capture_output=True,
             )
             if skip_log.exists():
                 self.last_skip_log = skip_log.read_text(encoding="utf-8")
+            if patch_log.exists():
+                self.last_patch_log = patch_log.read_text(encoding="utf-8")
             return result
 
     def test_scope_fallback_normalizes_day_prefix(self):
@@ -143,6 +154,12 @@ esac
         r = self.run_script(title="Counter disappeared")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(r.stdout, r"^\[day\d+\] Counter disappeared\n$")
+
+    def test_show_mode_never_patches(self):
+        r = self.run_script(mode="--show")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("new    :", r.stdout)
+        self.assertEqual(self.last_patch_log, "")
 
     def test_legacy_game_prefix_is_removed(self):
         r = self.run_script(title="[Robots] day177 play status")

@@ -34,6 +34,7 @@ class StreamTitlePublicTest(unittest.TestCase):
         samples = [
             "PR #899を統合・現行mainへVM反映、Snake復帰カテゴリのlive境界を確認",
             "PR770を統合",
+            "PR-770を修正",
             "docich#770の参照更新",
             "5ec6fdd88909aa554e02859170b4d8d711be0db4へデプロイ",
             "tests/test_title_day.pyのCI成功",
