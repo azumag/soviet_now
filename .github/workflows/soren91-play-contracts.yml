@@ -13,6 +13,7 @@ on:
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/burial_evidence.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -47,6 +48,7 @@ on:
       - 'soren91/summarize_drop_profile.mjs'
       - 'soren91/run_player_loop.sh'
       - 'soren91/runtime_metrics.py'
+      - 'soren91/burial_evidence.mjs'
       - 'soren91/strategy.mjs'
       - 'soren91/strategy_contract.mjs'
       - 'soren91/screenshot_analyzer.mjs'
@@ -101,6 +103,7 @@ jobs:
           node --check soren91/rejected_frame_diagnostics.mjs
           node --check soren91/summarize_drop_profile.mjs
           node --check soren91/strategy.mjs
+          node --check soren91/burial_evidence.mjs
           node --check soren91/strategy_contract.mjs
           node --check soren91/screenshot_analyzer.mjs
           node --check soren91/observation_guard.mjs
