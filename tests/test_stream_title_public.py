@@ -28,6 +28,49 @@ class StreamTitlePublicTest(unittest.TestCase):
             with self.subTest(sample=sample):
                 self.assertTrue(looks_internal(sample))
 
+    def test_internal_logs_adjacent_to_japanese_are_rejected(self):
+        # 助詞・漢字かながASCII識別子に直接隣接する実運用形式（空白なし）。
+        # Unicode \b はこの境界で成立しないため、ASCII構成文字ベースの境界で検出する。
+        samples = [
+            "PR #899を統合・現行mainへVM反映、Snake復帰カテゴリのlive境界を確認",
+            "PR770を統合",
+            "docich#770の参照更新",
+            "5ec6fdd88909aa554e02859170b4d8d711be0db4へデプロイ",
+            "tests/test_title_day.pyのCI成功",
+            "現行mainへ反映済み",
+            "VM上で稼働中",
+            "root v763 継続中の攻略",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertTrue(looks_internal(sample))
+
+    def test_viewer_wording_is_not_flagged_internal(self):
+        samples = [
+            "AIの取引コーナーからゲームへ、画面切替を改善",
+            "NetHackでAIが長期攻略に挑戦",
+            "視聴者参加のAI探偵ミステリーコーナーを追加",
+            "半熟英雄でAIが王国を運営",
+            "ペーパートレード AIの検証配信",
+            "ソ連ゲーム AIプレイ配信",
+            "ゲームのmaintainではなく体験を改善する",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertFalse(looks_internal(sample))
+
+    def test_compose_falls_back_on_unspaced_internal_activity(self):
+        title = compose_title(
+            day="249",
+            activity="PR #899を統合・現行mainへVM反映",
+            strategy="root v900 継続",
+            candidate_file=None,
+            fallback=None,
+        )
+        self.assertEqual(title, f"[day249] {DEFAULT_FALLBACK}")
+        self.assertNotIn("899", title)
+        self.assertNotIn("v900", title)
+
     def test_explicit_viewer_title_wins(self):
         with tempfile.TemporaryDirectory() as d:
             path = self.candidate_file(

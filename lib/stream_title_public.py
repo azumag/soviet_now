@@ -18,15 +18,28 @@ TITLE_LIMIT = 140
 _DAY_PREFIX = re.compile(r"(?i)^\s*\[\s*day\s*\d+\s*\]\s*")
 _LEGACY_PREFIX = re.compile(r"(?i)^\s*\[[^\]]+\]\s*day\s*\d+\b\s*")
 _FREE_DAY = re.compile(r"(?i)\bday\s*\d+\b")
+# Python の \b は Unicode \w を使うため、日本語の助詞・漢字かなが ASCII 識別子に
+# 直接隣接すると境界が成立しない（例: 「現行mainへ」「#899を」）。そこで識別子系の
+# パターンは、ASCII の英数字とアンダースコアだけを語構成文字とする lookaround で
+# 境界を定義する。これで「PR #899を統合・現行mainへVM反映」のような実運用形式も
+# 漏れなく検出しつつ、"maintain" のような語中の一致は拒否する。
+_ASCII_L = r"(?<![0-9A-Za-z_])"
+_ASCII_R = r"(?![0-9A-Za-z_])"
 _INTERNAL_PATTERNS = (
-    re.compile(r"(?i)\b(?:PR|MR)\s*#?\s*\d+\b"),
-    re.compile(r"(?i)\b(?:issue|pull\s*request)\s*#?\s*\d+\b"),
-    re.compile(r"(?i)\b[\w.-]+#\d+\b"),
-    re.compile(r"(?i)\b(?:main|master|HEAD|SHA|CI|VM)\b"),
-    re.compile(r"(?i)\broot\s+v\d+\b"),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:PR|MR)\s*#?\s*\d+" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:issue|pull\s*request)\s*#?\s*\d+" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"[\w.-]+#\d+" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:main|master|HEAD|SHA|CI|VM)" + _ASCII_R),
+    re.compile(r"(?i)" + _ASCII_L + r"root\s+v\d+" + _ASCII_R),
     re.compile(r"(?i)(?:マージ|merge(?:d)?|デプロイ|deploy(?:ed)?|コミット|commit(?:ted)?|本番反映|参照更新)"),
-    re.compile(r"(?i)\b(?=[0-9a-f]{7,40}\b)(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b"),
-    re.compile(r"(?i)(?:^|\s)(?:[\w.-]+/)+[\w.-]+\.(?:py|sh|toml|ya?ml|json|md)\b"),
+    re.compile(
+        r"(?i)"
+        + _ASCII_L
+        + r"(?=[0-9a-f]{7,40}"
+        + _ASCII_R
+        + r")(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}"
+    ),
+    re.compile(r"(?i)" + _ASCII_L + r"(?:[\w.-]+/)+[\w.-]+\.(?:py|sh|toml|ya?ml|json|md)" + _ASCII_R),
 )
 
 
