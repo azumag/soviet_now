@@ -160,6 +160,32 @@ class PatchPredictionCancelTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "rc=1")
         self.assertEqual(args, [])
 
+    def test_the_response_body_is_saved_to_the_requested_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = Path(directory) / "cancel.body"
+            script = (
+                f"{self.function}\n"
+                "TOKEN=token\nCLIENT_ID=client\nBROADCASTER_ID=broadcaster\n"
+                "curl() {\n"
+                "  local out=/dev/null\n"
+                "  while [ \"$#\" -gt 0 ]; do\n"
+                '    if [ "$1" = "-o" ]; then out="$2"; shift 2; continue; fi\n'
+                "    shift\n"
+                "  done\n"
+                "  printf '%s' '{\"data\":[{\"id\":\"prediction-1\",\"status\":\"CANCELED\"}]}' > \"$out\"\n"
+                "  return 0\n"
+                "}\n"
+                f"_patch_prediction_cancel prediction-1 {shlex.quote(str(body))}\n"
+                "printf 'rc=%s\\n' \"$?\"\n"
+            )
+            result = subprocess.run(["bash", "-c", script], cwd=str(ROOT),
+                                    capture_output=True, text=True)
+
+            self.assertEqual(result.stdout.strip(), "rc=0", result.stderr)
+            saved = json.loads(body.read_text(encoding="utf-8"))["data"][0]
+            self.assertEqual((saved["id"], saved["status"]),
+                             ("prediction-1", "CANCELED"))
+
 
 class ResolveBranchWiringTests(unittest.TestCase):
     @classmethod
@@ -183,6 +209,21 @@ class ResolveBranchWiringTests(unittest.TestCase):
     def test_cancel_reuses_the_shared_patch_helper(self):
         self.assertIn('_patch_prediction_cancel "$PREDICTION_ID"', self.cancel)
         self.assertNotIn('"status": "CANCELED"', self.cancel)
+
+    def test_resolve_hands_the_canceled_row_over_after_a_no_contest_cancel(self):
+        self.assertIn('_patch_prediction_cancel "$PREDICTION_ID" "$cancel_response_file"',
+                      self.resolve)
+        self.assertIn('_record_canceled_prediction_handoff "$cancel_response_file"',
+                      self.resolve)
+        # The participation evidence is handed over before the cancel is reported,
+        # and the response file is always cleaned up on both outcomes.
+        self.assertLess(self.resolve.index("_record_canceled_prediction_handoff"),
+                        self.resolve.index("prediction canceled: no contest"))
+        self.assertEqual(self.resolve.count('rm -f "$cancel_response_file"'), 2)
+
+    def test_the_manual_cancel_command_never_hands_a_refund_over(self):
+        # 手動 cancel は不成立返金ではないため、参加実績としては引き渡さない。
+        self.assertNotIn("_record_canceled_prediction_handoff", self.cancel)
 
 
 if __name__ == "__main__":
