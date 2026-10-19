@@ -459,6 +459,161 @@ class TrpgRuntimeAudioFenceTests(unittest.TestCase):
         self.assertEqual(other.returncode, 0, other.stderr)
         self.assertEqual(len(list((self.root / 'queue').glob('*.txt'))), 2)
 
+    # --- Consumer and final-launcher regressions (#2548 reviews 2-3) --------
+
+    def consume_queue(self, after_claim=''):
+        # Real consumer (broadcast/comment_lib.sh::_play_comment_queue) with a
+        # recording player stub; unrelated TTS/mode/metadata boundaries stay
+        # inert, exactly like the Hanjuku suite's harness.
+        (self.root / 'tmp/.say_queue').mkdir(parents=True, exist_ok=True)
+        say = self.root / 'say_enqueue.sh'
+        say.write_text('#!/bin/bash\nprintf \'%s\\n\' "$*" >> played.log\n')
+        say.chmod(0o755)
+        return self.shell('''source "$1/broadcast/comment_lib.sh"
+COMMENT_PLAYED_HASHES_FILE=hashes
+RADIO_SAY_RATE=120
+_cp_my_pid=$$
+_broadcast_read_expected_mode() { :; }
+_broadcast_host_mode() { echo main; }
+_broadcast_clear_expected_mode() { :; }
+_comment_clear_generation_meta() { :; }
+_comment_meta_sidecar_path() { echo nonexistent; }
+_comment_has_bilingual_speech() { return 1; }
+_comment_declares_bilingual_speech() { return 1; }
+_comment_generation_debug_summary() { %s :; }
+_remember_spoken_comment() { :; }
+_play_deferred_radio_queue_once() { :; }
+_play_comment_queue
+''' % after_claim, ROOT)
+
+    def played(self):
+        log = self.root / 'played.log'
+        return log.read_text().splitlines() if log.exists() else []
+
+    def _enqueue(self, text, scope):
+        return self.shell(
+            'source "$1/lib/outbound_queue.sh"; '
+            'enqueue_audio_text "$3" trpg:scene "" "$2" "$4"',
+            ROOT, json.dumps(self.identity), text, scope)
+
+    def test_consumer_keeps_same_occurrence_retry_and_other_scene(self):
+        # The enqueue claim is disabled with TTL=0, so a retried occurrence
+        # reaches the consumer as a second queue item.  The persisted dedup
+        # identity still suppresses that retry at playback, while the same
+        # text under another scene is spoken (PR #2552 review P2).
+        for scope in ('scene-1', 'scene-1', 'scene-2'):
+            result = self._enqueue('同じ文', scope)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(list((self.root / 'queue').glob('*.txt'))), 3)
+        result = self.consume_queue()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.played()), 2)
+        self.assertEqual(list((self.root / 'queue').glob('*.txt')), [])
+
+    def test_consumer_suppresses_trpg_items_after_the_session_ended(self):
+        # 停止後抑止 at the consumer: a fenced line queued by a session that
+        # has since reached a terminal phase is dropped without playback.
+        result = self._enqueue('旧runの実況です。', 'scene-1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.set_state(session_phase='END')
+        result = self.consume_queue()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.played(), [])
+        self.assertEqual(list((self.root / 'queue').glob('*.txt')), [])
+
+    def test_consumer_rechecks_trpg_fence_after_claim(self):
+        # A switch that lands between the claim and the say boundary must
+        # still suppress the line (identity replaced under the same lock).
+        result = self._enqueue('切替直後の実況です。', 'scene-9')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        moved = self.root / 'moved.json'
+        moved.write_text(json.dumps(dict(phase='ready', active={})))
+        result = self.consume_queue('cp moved.json "$SOREN_ACTIVE_GAME_CONTEXT_FILE";')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.played(), [])
+
+    def test_consumer_drops_legacy_unfenced_trpg_items(self):
+        # Old producer form: no fence sidecar.  The TRPG namespace is
+        # fence-required, so the consumer drops the item without ever
+        # reaching the player (a2c1b7ffa pinned the helper; this pins the
+        # consumer boundary).
+        legacy = self.root / 'queue' / 'comment_announce_123_trpg:scene.txt'
+        legacy.write_text('旧世代のTRPG実況です。')
+        Path(str(legacy) + '.speaker').write_text('7')
+        result = self.consume_queue()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.played(), [])
+        self.assertFalse(legacy.exists())
+        self.assertFalse(Path(str(legacy) + '.speaker').exists())
+
+    def test_legacy_trpg_items_cannot_launch_player_but_fenced_items_can(self):
+        # Final-launcher contrast (say_enqueue.sh extraction): the old
+        # unfenced TRPG form is refused at both launch helpers, while the
+        # new fenced item with a live session launches the player.
+        script = (ROOT / 'say_enqueue.sh').read_text()
+        launcher = script[script.index('_hanjuku_audio_allowed() {'):script.index('# Linux 専用: paplay')]
+        helper = self.root / 'lib'
+        helper.mkdir()
+        (helper / 'runtime_audio_fence.py').symlink_to(ROOT / 'lib/runtime_audio_fence.py')
+        for suffix in ('.txt', '.playing'):
+            with self.subTest(suffix=suffix):
+                target = self.root / ('comment_announce_123_trpg:scene' + suffix)
+                target.write_text('旧世代のTRPG実況です。')
+                self.assertTrue(fence.required(target))
+                allowed = self.shell(launcher + '\nCONTENT_FILE="$1"; _hanjuku_audio_allowed', target)
+                self.assertEqual(allowed.returncode, 75, allowed.stderr)
+                result = self.shell(launcher + '\nCONTENT_FILE="$1"; _launch_bg_exec "" touch started; wait "$!"', target)
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertFalse((self.root / 'started').exists())
+        allowed = self.shell(launcher + '\nCONTENT_FILE="$1"; _hanjuku_audio_allowed', self.target)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        result = self.shell(launcher + '\nCONTENT_FILE="$1"; _launch_bg_exec "" touch started; wait "$!"', self.target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'started').exists())
+        (self.root / 'started').unlink()
+
+    # --- Run-record size boundaries (#2548 review 2 P2) -----------------------
+
+    def _write_session(self, total_bytes):
+        record = {key: self.identity[key] for key in fence.KEYS}
+        record['state'] = {'phase': 'SCENE'}
+        record['pad'] = ''
+        record['pad'] = 'x' * max(0, total_bytes - len(json.dumps(record)))
+        return json.dumps(record)
+
+    def test_trpg_session_record_size_boundaries(self):
+        # A legal TRPG session embeds the scenario twice and can pass the old
+        # 64 KiB generic cap; the fence reads the same 2 MiB budget docich
+        # caps the session at, and still refuses one byte more.
+        for total in (65536, 65537, 2 * 1024 * 1024):
+            with self.subTest(total=total):
+                self.run_file.write_text(self._write_session(total), encoding='utf-8')
+                fence.active(self.canonical, self.identity)
+        self.run_file.write_text(self._write_session(2 * 1024 * 1024 + 1), encoding='utf-8')
+        with self.assertRaises(ValueError):
+            fence.active(self.canonical, self.identity)
+
+    def test_hanjuku_and_canonical_caps_are_not_loosened(self):
+        # The TRPG budget must not widen the Hanjuku run-record cap or the
+        # canonical state-file cap (Hanjuku safety guards stay as-is).
+        hanjuku = dict(self.identity, game='hanjuku-hero',
+                       runtime_id='g8-abcdef01', lease_id='lease-8')
+        active = {key: hanjuku[key] for key in fence.KEYS}
+        run = self.state / 'runtimes' / 'g8-abcdef01' / 'hanjuku_run.json'
+        run.parent.mkdir(parents=True)
+        canonical = self.state / 'hanjuku_switch.json'
+        canonical.write_text(json.dumps(dict(phase='ready', active=active)))
+        run.write_text(json.dumps(dict(active, playing=True)))
+        fence.active(canonical, hanjuku)      # a small record still passes
+        run.write_text(json.dumps(dict(active, playing=True, pad='x' * 70000)))
+        with self.assertRaises(ValueError):
+            fence.active(canonical, hanjuku)
+        run.write_text(json.dumps(dict(active, playing=True)))
+        canonical.write_text(json.dumps(dict(phase='ready', active=active,
+                                             filler='y' * 70000)))
+        with self.assertRaises(ValueError):
+            fence.active(canonical, hanjuku)
+
 
 if __name__ == '__main__':
     unittest.main()
