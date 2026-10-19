@@ -23,6 +23,7 @@
 #   STREAM_DAY_TZ           : 日付判定のタイムゾーン。既定 Asia/Tokyo
 #   STREAM_VIEWER_TITLE_FILE : 明示的な視聴者向けタイトル候補。既定 prompts/viewer_title.md
 #   STREAM_TITLE_PUBLIC_FALLBACK : 候補も安全な現タイトルも無い場合の一般向け本文
+#   STREAM_VIEWER_TITLE_TTL_DAYS : 候補の鮮度上限（日）。既定 7。期限切れ候補は採用しない
 #
 # 終了コード: 0=更新済/変化なし, 3=トークン/スコープ不足,
 #            4=API エラー, 1=設定不足
@@ -115,22 +116,26 @@ if [ -z "$TOKEN" ]; then
     exit 3
 fi
 
-# --- 現在のタイトルを取得 ---
+# --- 現在のタイトルとカテゴリ名を取得 (カテゴリ名は候補scope照合に使う) ---
 CH_JSON="$(curl -s --max-time 15 "https://api.twitch.tv/helix/channels?broadcaster_id=${BROADCASTER_ID}" \
 	-H "Authorization: Bearer ${TOKEN}" -H "Client-Id: ${EFFECTIVE_CLIENT_ID}")"
-CUR_TITLE="$(printf '%s' "$CH_JSON" | python3 -c "
+CH_OUT="$(printf '%s' "$CH_JSON" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin); it = (d.get('data') or [{}])[0]
     print(it.get('title') or '')
+    print(it.get('game_name') or '')
 except Exception:
     print('')
+    print('')
 ")"
+CUR_TITLE="$(printf '%s' "$CH_OUT" | sed -n '1p')"
+CUR_GAME_NAME="$(printf '%s' "$CH_OUT" | sed -n '2p')"
 if [ -z "$CUR_TITLE" ]; then
 	_record_title_sync_skip twitch_read_failed
 	_log "ERROR: failed to fetch current title (resp: $(printf '%s' "$CH_JSON" | head -c 200))"; exit 4
 fi
-_log "current title: $CUR_TITLE"
+_log "current title: $CUR_TITLE current game_name: ${CUR_GAME_NAME:-?}"
 
 # --- [dayN] と視聴者向け本文を更新。内部運用メモは公開タイトルへ流さない。 ---
 # The game-switch composer and this daily tick share the same public candidate
@@ -144,7 +149,8 @@ PUBLIC_FALLBACK="${STREAM_TITLE_PUBLIC_FALLBACK:-AIたちがゲーム・ニュ�
 PUBLIC_BODY="$(python3 "$TITLE_HELPER" choose \
     --current "$CUR_TITLE" \
     --candidate-file "$VIEWER_TITLE_FILE" \
-    --fallback "$PUBLIC_FALLBACK")" || {
+    --fallback "$PUBLIC_FALLBACK" \
+    --current-scope "$CUR_GAME_NAME")" || {
     _log "ERROR: failed to choose public title body"
     exit 1
 }

@@ -72,11 +72,33 @@ worker の reload（USR1/HUP）は `.env` とモジュールを再 source する
 ## 完了と引き継ぎ
 
 公開タイトルへ載せる価値がある変更をhandoff最新節へ残す場合は、内部向けの見出しとは別に
-`- 視聴者向けタイトル: <一般向けの短い説明>` を明示する。PR/Issue番号、SHA、main/VM/CI、
-merge/deploy等を主語にせず、何が変わったか・何を見られるかが初見の視聴者にも分かる文面にする。
-実装のみ・merge済み・本番確認済みを混同せず、未確認の効果を断定しない。視聴者向けの新情報が
-無い節ではこの行を省略する。 `tools/build_ops_brief.sh` はこの明示行だけを
-`prompts/viewer_title.md` へ生成し、内部見出しから公開文面を推測しない。
+candidate メタデータを明示する。PR/Issue番号、SHA、main/VM/CI、merge/deploy等を主語にせず、
+何が変わったか・何を見られるかが初見の視聴者にも分かる文面にする。実装のみ・merge済み・
+本番確認済みを混同せず、未確認の効果を断定しない。視聴者向けの新情報が無い節では省略する。
+
+```markdown
+## 2026-10-19 JST — 内部向けの作業見出し
+- 視聴者向けタイトル: AIの取引コーナーからゲームへ、画面切替を改善
+- 確認段階: verified
+- 根拠: 画面復帰を運用で確認
+- 有効範囲: NetHack
+```
+
+- `確認段階` は `implemented` / `merged` / `deployed` / `verified`。selector は
+  `deployed` / `verified` だけを公開へ採用する（未確認段階の候補は公開しない）。
+  省略時の既定は `implemented`。
+- `生成日時` は `tools/build_ops_brief.sh` が build 時刻で自動付与する。
+  TTL（既定7日、`STREAM_VIEWER_TITLE_TTL_DAYS`）を過ぎた候補は採用しない。
+- `有効範囲` は省略可。現在（または切替先）のTwitchカテゴリ名と一致しない候補は公開しない。
+- `根拠` は内部メタデータで、公開文字列には出ない。
+
+`tools/build_ops_brief.sh` はこの明示行だけを `prompts/viewer_title.md` へ
+構造化して生成する**ローカル検証用 builder** であり、配布経路ではない
+（スクリプト冒頭のとおり VM では生成しない）。`prompts/viewer_title.md` の
+正規配布は親 docich の projection gateway 経路に揃える必要があり、その拡張
+（ops_brief と同一 deploy transaction での viewer_title 投影）は docich 側の
+必須 follow-up。拡張が入るまでこのファイルは header のみで、selector は
+安全な現タイトルまたは fallback を使う（fail-closed、動作不変）。
 
 PRまたは既存の引き継ぎ先へ目的、対象コミット、実行したコマンドと結果、未確認事項、次の一手を残す。不具合・退行・安全性・CI破壊を必須指摘、可読性等を任意改善として分ける。最新HEADの必須チェック、マージ、VM同期、再起動、実測による復旧を別々の状態として報告し、未実施の検証を成功扱いしない。
 

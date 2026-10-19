@@ -48,6 +48,7 @@ viewer_out="prompts/viewer_title.md"
 python3 - "$src" "$items" "$out" "$viewer_out" <<'PY'
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 src = Path(sys.argv[1])
@@ -98,11 +99,35 @@ for t in topics:
     print(f"  - {t}")
 
 # 公開タイトルは内部見出しから推測しない。最新セクションに開発担当が
-# 明示した viewer_title / 視聴者向けタイトル だけを候補として抽出する。
-VIEWER = re.compile(
-    r"^\s*(?:[-*]\s*)?(?:viewer_title|視聴者向けタイトル)\s*[:：]\s*(.+?)\s*$",
-    re.IGNORECASE,
-)
+# 明示した candidate メタデータだけを抽出し、selector の契約入力を生成する。
+# - 視聴者向けタイトル (viewer_title): 公開文字列そのもの。必須。
+# - 根拠 (rationale): 文面の根拠。内部メタデータで公開しない。
+# - 確認段階 (status): implemented / merged / deployed / verified。
+#   既定は implemented（selector は deployed/verified だけ採用する）。
+# - 生成日時 (generated_at): 省略時は build 時刻 (UTC ISO-8601)。
+# - 有効範囲 (valid_scope): 省略可。現在カテゴリと不一致の候補は公開しない。
+META_FIELDS = {
+    "viewer_title": re.compile(
+        r"^\s*(?:[-*]\s*)?(?:viewer_title|視聴者向けタイトル)\s*[:：]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    "rationale": re.compile(
+        r"^\s*(?:[-*]\s*)?(?:rationale|根拠)\s*[:：]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    "status": re.compile(
+        r"^\s*(?:[-*]\s*)?(?:status|確認段階|viewer_title_status)\s*[:：]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    "generated_at": re.compile(
+        r"^\s*(?:[-*]\s*)?(?:generated_at|生成日時)\s*[:：]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    ),
+    "valid_scope": re.compile(
+        r"^\s*(?:[-*]\s*)?(?:valid_scope|有効範囲)\s*[:：]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    ),
+}
 latest_section = []
 seen_latest = False
 for raw in raw_lines:
@@ -114,19 +139,31 @@ for raw in raw_lines:
     if seen_latest:
         latest_section.append(raw)
 
-viewer_title = ""
+meta = {}
 for raw in latest_section:
-    m = VIEWER.match(raw.strip())
-    if not m:
-        continue
-    viewer_title = re.sub(r"\s+", " ", m.group(1)).strip()
-    break
+    for key, pattern in META_FIELDS.items():
+        if key in meta:
+            continue
+        m = pattern.match(raw.strip())
+        if m:
+            meta[key] = re.sub(r"\s+", " ", m.group(1)).strip()
+
+# status 既定は implemented（安全側: そのままでは公開されない）。
+if "viewer_title" in meta and "status" not in meta:
+    meta["status"] = "implemented"
+# 生成日時は build 時刻を既定とし、freshness はこの時刻から数える。
+if "viewer_title" in meta and "generated_at" not in meta:
+    meta["generated_at"] = (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
 
 viewer_lines = [
     "# 視聴者向け配信タイトル (tools/build_ops_brief.sh が handoff.md から自動生成。手で編集しない)"
 ]
-if viewer_title:
-    viewer_lines.append(f"- {viewer_title}")
+for key in ("viewer_title", "rationale", "status", "generated_at", "valid_scope"):
+    if meta.get(key):
+        viewer_lines.append(f"{key}: {meta[key]}")
 viewer_out.write_text("\n".join(viewer_lines) + "\n", encoding="utf-8")
-print(f"{viewer_out}: {'1 件' if viewer_title else '候補なし'}")
+present = [k for k in ("viewer_title", "rationale", "status", "generated_at", "valid_scope") if meta.get(k)]
+print(f"{viewer_out}: {len(present)} フィールド ({', '.join(present) if present else '候補なし'})")
 PY
