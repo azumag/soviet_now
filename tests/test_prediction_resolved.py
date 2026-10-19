@@ -190,5 +190,180 @@ class ShellHandoffTests(unittest.TestCase):
             self.assertEqual(json.loads(lines[0])["id"], "prediction-5")
 
 
+
+class CanceledRowTests(unittest.TestCase):
+    """A no-contest refund is handed over only with its asserted fixed reason."""
+
+    def test_a_no_contest_canceled_row_is_annotated(self):
+        tool = _load_tool()
+
+        row = tool.settled_row(_body(status="CANCELED", winning=None),
+                               cancel_reason="no-contest")
+
+        self.assertEqual(row["status"], "CANCELED")
+        self.assertEqual(row["cancel_reason"], "no-contest")
+        self.assertIsNone(row["winning_outcome_id"])
+
+    def test_without_the_reason_a_canceled_row_is_refused(self):
+        tool = _load_tool()
+
+        self.assertIsNone(tool.settled_row(_body(status="CANCELED", winning=None)))
+
+    def test_unknown_reasons_and_unrelated_rows_are_refused(self):
+        tool = _load_tool()
+        for body, reason in (
+            (_body(status="CANCELED", winning=None), "refund"),
+            (_body(status="CANCELED", winning=None), ""),
+            (_body(status="ACTIVE", winning=None), "no-contest"),
+            # A graded row must never be annotated as a refund.
+            (_body(), "no-contest"),
+        ):
+            self.assertIsNone(tool.settled_row(body, cancel_reason=reason), body[:40])
+        self.assertIsNone(tool.resolved_row(_body(status="CANCELED", winning=None)))
+
+    def test_a_canceled_row_must_not_name_a_winner(self):
+        tool = _load_tool()
+
+        self.assertIsNone(tool.settled_row(_body(status="CANCELED", winning="outcome-1"),
+                                           cancel_reason="no-contest"))
+
+    def test_malformed_canceled_bodies_are_refused(self):
+        tool = _load_tool()
+        for body in (
+            b"",
+            b"{not json",
+            json.dumps({"data": []}).encode("utf-8"),
+            json.dumps({"data": [{"id": "x"}, {"id": "y"}]}).encode("utf-8"),
+            _body(status="CANCELED", winning=None, rows=[{"id": "x"}]),
+            _body(status="CANCELED", winning=None,
+                  outcomes=[{"id": "outcome-0", "title": "a"}]),
+            _body(status="CANCELED", winning=None,
+                  outcomes=[{"id": "", "title": "a"}, {"id": "outcome-1", "title": "b"}]),
+        ):
+            self.assertIsNone(
+                tool.settled_row(body, cancel_reason="no-contest"), body[:40])
+
+    def test_main_appends_the_annotated_row_only_with_the_reason(self):
+        tool = _load_tool()
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            response = directory / "cancel.body"
+            target = directory / tool.FILE
+            response.write_bytes(_body(status="CANCELED", winning=None))
+
+            self.assertEqual(tool.main([str(response), "--target", str(target)]), 0)
+            self.assertFalse(target.exists())
+
+            self.assertEqual(tool.main([str(response), "--target", str(target),
+                                       "--cancel-reason", "no-contest"]), 0)
+            lines = target.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            row = json.loads(lines[0])
+            self.assertEqual((row["status"], row["cancel_reason"]),
+                             ("CANCELED", "no-contest"))
+
+    def test_main_rejects_an_unknown_reason_without_writing(self):
+        tool = _load_tool()
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            response = directory / "cancel.body"
+            response.write_bytes(_body(status="CANCELED", winning=None))
+
+            with mock.patch("sys.stderr"):
+                with self.assertRaises(SystemExit) as raised:
+                    tool.main([str(response), "--target", str(directory / tool.FILE),
+                               "--cancel-reason", "refund"])
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertFalse((directory / tool.FILE).exists())
+
+
+class CanceledHandoffShellTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.function = _extract_function(SCRIPT.read_text(encoding="utf-8"),
+                                         "_record_canceled_prediction_handoff")
+
+    def _run(self, response: Path, state_dir: Path):
+        script = (
+            f"{self.function}\n"
+            "_log() { :; }\n"
+            f"TMP_STATE_DIR={shlex.quote(str(state_dir))}\n"
+            'PREDICTION_RESOLVED_HANDOFF_FILE="${TMP_STATE_DIR}/prediction_resolved.jsonl"\n'
+            f"_record_canceled_prediction_handoff {shlex.quote(str(response))}\n"
+            "printf 'done\\n'\n"
+        )
+        return subprocess.run(["bash", "-c", script], cwd=str(ROOT),
+                              capture_output=True, text=True)
+
+    def test_a_no_contest_cancel_hands_the_annotated_row_over(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            response = directory / "cancel.body"
+            response.write_bytes(_body(status="CANCELED", winning=None))
+
+            result = self._run(response, directory)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "done")
+            handoff = directory / "prediction_resolved.jsonl"
+            lines = handoff.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            row = json.loads(lines[0])
+            self.assertEqual((row["status"], row["cancel_reason"]),
+                             ("CANCELED", "no-contest"))
+
+    def test_a_resolved_row_is_never_handed_over_as_a_refund(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            response = directory / "resolve.body"
+            response.write_bytes(_body())
+
+            result = self._run(response, directory)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((directory / "prediction_resolved.jsonl").exists())
+
+    def test_malformed_or_missing_bodies_leave_the_handoff_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            malformed = directory / "malformed.body"
+            malformed.write_bytes(b"<html>nope</html>")
+
+            result = self._run(malformed, directory)
+            empty = self._run(directory / "absent.body", directory)
+
+            self.assertEqual((result.returncode, empty.returncode), (0, 0))
+            self.assertFalse((directory / "prediction_resolved.jsonl").exists())
+
+    def test_the_canceled_handoff_shares_the_bounded_file_with_resolved_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            resolved = directory / "resolve.body"
+            canceled = directory / "cancel.body"
+            resolved.write_bytes(_body())
+            canceled.write_bytes(_body(status="CANCELED", winning=None))
+
+            resolved_function = _extract_function(SCRIPT.read_text(encoding="utf-8"),
+                                                 "_record_resolved_prediction_handoff")
+            script = (
+                f"{resolved_function}\n{self.function}\n"
+                "_log() { :; }\n"
+                f"TMP_STATE_DIR={shlex.quote(str(directory))}\n"
+                'PREDICTION_RESOLVED_HANDOFF_FILE="${TMP_STATE_DIR}/prediction_resolved.jsonl"\n'
+                f"_record_resolved_prediction_handoff {shlex.quote(str(resolved))}\n"
+                f"_record_canceled_prediction_handoff {shlex.quote(str(canceled))}\n"
+                "printf 'done\\n'\n"
+            )
+            result = subprocess.run(["bash", "-c", script], cwd=str(ROOT),
+                                    capture_output=True, text=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            lines = (directory / "prediction_resolved.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual([json.loads(line)["status"] for line in lines],
+                             ["RESOLVED", "CANCELED"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

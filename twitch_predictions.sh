@@ -66,8 +66,9 @@ if [ "${EXPLORE_MODE:-0}" = "1" ]; then
 fi
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
-# docich 予想王 (#933): resolve した Helix row を bounded に引き渡すファイル。
-# 台帳の所有者は docich 側で、ここは追記のみ。形式は tools/prediction_resolved.py と
+# docich 予想王 (#933): 確定した Helix row (RESOLVED、および不成立キャンセルの
+# CANCELED + no-contest) を bounded に引き渡すファイル。台帳の所有者は docich 側で、
+# ここは追記のみ。形式は tools/prediction_resolved.py と
 # docich src/docich/soren_predictions.py が同じ契約を読む。
 PREDICTION_RESOLVED_HANDOFF_FILE="${TMP_STATE_DIR}/prediction_resolved.jsonl"
 # MIN_GAMES_BEFORE_IMPROVE 解決: 環境変数 (soren_loop の hot-reload export) を
@@ -383,6 +384,22 @@ _record_resolved_prediction_handoff() {
 	return 0
 }
 
+_record_canceled_prediction_handoff() {
+	# 予想王 (#933 追記): 不成立キャンセルの PATCH 応答 row を参加実績として
+	# 引き渡す。理由は固定語彙 no-contest のみ (この関数を呼ぶのは賭けが成立して
+	# いないと判定した経路だけ)。失敗しても cancel 自体は成功のまま扱う (警告のみ)。
+	# 台帳の所有者は docich 側で、ここは追記のみ。
+	local response_file="$1"
+	[ -s "$response_file" ] || return 0
+	if python3 tools/prediction_resolved.py "$response_file" \
+		--target "$PREDICTION_RESOLVED_HANDOFF_FILE" \
+		--cancel-reason no-contest >/dev/null 2>&1; then
+		return 0
+	fi
+	_log "WARN: prediction canceled handoff unavailable"
+	return 0
+}
+
 _resolve_prediction_with_best_outcome() {
 	# stale な予想を best_outcome で resolve する (未記録なら「建国なし」= index 0)
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
@@ -569,6 +586,7 @@ PY
 # 成功時 0、失敗時 1 (状態の後始末は呼び出し側が行う)。
 _patch_prediction_cancel() {
 	local prediction_id="$1"
+	local response_file="${2:-/dev/null}"
 	[ -n "$prediction_id" ] || return 1
 	local payload=""
 	payload=$(
@@ -585,7 +603,7 @@ PY
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$payload" >/dev/null 2>&1 || return 1
+		-d "$payload" -o "$response_file" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -924,13 +942,19 @@ PY
 	if [ -z "$contested" ]; then
 		_log "WARN: prediction outcome counts unavailable; resolving as before"
 	elif [ "$contested" -le 1 ]; then
-		if _patch_prediction_cancel "$PREDICTION_ID"; then
+		cancel_response_file=$(mktemp "$PREDICTION_RETRY_DIR/cancel.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/cancel.$$")
+		if _patch_prediction_cancel "$PREDICTION_ID" "$cancel_response_file"; then
+			# 不成立キャンセルでも参加実績は残す (#933 追記)。記録に失敗しても
+			# cancel 自体は成功のまま扱う。
+			_record_canceled_prediction_handoff "$cancel_response_file"
+			rm -f "$cancel_response_file"
 			_log "prediction canceled: no contest (outcomes_with_bets=${contested})"
 			rm -f "$PREDICTION_STATE_FILE"
 			_prediction_retry_clear resolve
 			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
 			exit 0
 		fi
+		rm -f "$cancel_response_file"
 		if _sync_prediction_state_with_remote; then
 			_log "WARN: no-contest cancel failed, but remote sync cleared local state"
 			_prediction_retry_clear resolve
