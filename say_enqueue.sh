@@ -1418,7 +1418,7 @@ _hanjuku_audio_allowed() {
 	case "$CONTENT_FILE" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) required=1 ;; esac
 	[ -e "${base}.runtime_fence.json" ] || [ -L "${base}.runtime_fence.json" ] && required=1
 	[ "$required" -eq 1 ] || return 0
-	python3 ./lib/hanjuku_audio_fence.py check \
+	python3 ./lib/runtime_audio_fence.py check \
 		"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" "$CONTENT_FILE"
 }
 
@@ -1463,7 +1463,7 @@ _launch_bg_exec() {
 	elif [ "$fenced" -eq 1 ]; then
 		# The helper rechecks after TTS/queue waits immediately before spawning,
 		# and owns only its own player process group while monitoring the fence.
-		set -- python3 ./lib/hanjuku_audio_fence.py play \
+		set -- python3 ./lib/runtime_audio_fence.py play \
 			"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" \
 			"$CONTENT_FILE" -- "$@"
 	fi

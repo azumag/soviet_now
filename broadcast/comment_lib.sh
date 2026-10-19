@@ -39,7 +39,7 @@ _comment_runtime_fence_valid() {
 	case "$target" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) ;; *)
 		[ -e "$fence" ] || [ -L "$fence" ] || return 0 ;;
 	esac
-	python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" check \
+	python3 "${ELOOP_LIB_DIR:-.}/lib/runtime_audio_fence.py" check \
 		"${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}" "$target"
 }
 

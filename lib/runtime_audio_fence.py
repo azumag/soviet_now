@@ -1,4 +1,16 @@
-"""Fail-closed playback fence for Hanjuku commentary; never accepts runtime paths."""
+"""Fail-closed playback fence for runtime-bound narration; never accepts runtime paths.
+
+The fence binds one queued narration line to a single game-switch runtime
+identity (``game``, ``runtime_id``, ``generation``, ``lease_id``) plus a short
+wall-clock lifetime.  A line may only *start* while that runtime is still the
+canonical active one and still live, so narration queued by a stopped or
+superseded run can never be spoken after the corner moved on.
+
+Every game that wants runtime-bound narration registers here with the file
+that holds its live-run record inside ``<state_dir>/runtimes/<runtime_id>/``.
+The canonical state file and the runtime directory layout are the same for all
+of them, so one implementation covers them all.
+"""
 from __future__ import annotations
 
 import contextlib
@@ -15,17 +27,46 @@ import time
 
 KEYS = ('game', 'runtime_id', 'generation', 'lease_id')
 
+# The wall clock bounds when a queued line may *start*; see check().
+MAX_LIFETIME_S = 120
+
+RUNTIME_ID_PATTERN = re.compile(r'g[1-9][0-9]*-[a-f0-9]{6,32}')
+LEASE_ID_PATTERN = re.compile(r'[A-Za-z0-9_-]{1,128}')
+
+# Terminal phases of the TRPG session state machine.  A session that reached
+# one of them has ended, so its narration must not be spoken.
+TRPG_TERMINAL_PHASES = frozenset({'END', 'FAILED', 'TIMEOUT'})
+
+
+def _hanjuku_live(run):
+    if run.get('terminal_reason') or run.get('terminal_candidate') or run.get('playing') is not True:
+        raise ValueError('terminal or inactive run')
+
+
+def _trpg_live(run):
+    state = run.get('state')
+    phase = state.get('phase') if isinstance(state, dict) else None
+    if not isinstance(phase, str) or not phase or phase in TRPG_TERMINAL_PHASES:
+        raise ValueError('terminal or inactive run')
+
+
+# game -> (run record file name, liveness predicate)
+GAMES = {
+    'hanjuku-hero': ('hanjuku_run.json', _hanjuku_live),
+    'trpg-view': ('trpg_session.json', _trpg_live),
+}
+
 
 def validate(value, *, enforce_expiry=True):
     if not isinstance(value, dict) or set(value) != {*KEYS, 'expires_at'}:
         raise ValueError('invalid fence keys')
-    if value['game'] != 'hanjuku-hero':
+    if value['game'] not in GAMES:
         raise ValueError('unsupported game')
-    if not isinstance(value['runtime_id'], str) or not re.fullmatch(r'g[1-9][0-9]*-[a-f0-9]{6,32}', value['runtime_id']):
+    if not isinstance(value['runtime_id'], str) or not RUNTIME_ID_PATTERN.fullmatch(value['runtime_id']):
         raise ValueError('invalid runtime id')
     if type(value['generation']) is not int or value['generation'] < 1:
         raise ValueError('invalid generation')
-    if not isinstance(value['lease_id'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value['lease_id']):
+    if not isinstance(value['lease_id'], str) or not LEASE_ID_PATTERN.fullmatch(value['lease_id']):
         raise ValueError('invalid lease')
     expiry = value['expires_at']
     if type(expiry) not in (float, int) or not math.isfinite(expiry):
@@ -33,7 +74,7 @@ def validate(value, *, enforce_expiry=True):
     # The wall clock bounds when a queued line may *start*; see check().
     if enforce_expiry:
         now = time.time()
-        if not now < expiry <= now + 120:
+        if not now < expiry <= now + MAX_LIFETIME_S:
             raise ValueError('expired or excessive lifetime')
     return value
 
@@ -72,11 +113,11 @@ def active(canonical, value, *, enforce_expiry=True):
     directory = root / value['runtime_id']
     if root.is_symlink() or directory.is_symlink():
         raise ValueError('unsafe runtime')
-    run = read(directory / 'hanjuku_run.json')
+    run_file, live = GAMES[value['game']]
+    run = read(directory / run_file)
     if any(type(run.get(key)) is not type(value[key]) or run.get(key) != value[key] for key in KEYS):
         raise ValueError('run identity lost')
-    if run.get('terminal_reason') or run.get('terminal_candidate') or run.get('playing') is not True:
-        raise ValueError('terminal or inactive run')
+    live(run)
 
 
 def _switch_lock(canonical):
@@ -213,4 +254,4 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    sys.exit(main())

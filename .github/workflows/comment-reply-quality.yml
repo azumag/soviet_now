@@ -12,7 +12,7 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
-      - 'lib/hanjuku_audio_fence.py'
+      - 'lib/runtime_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
       - 'tests/test_radio_game_context.py'
@@ -21,7 +21,7 @@ on:
       - 'lib/outbound_queue.sh'
       - 'tests/test_outbound_queue_youtube_split.py'
       - 'say_enqueue.sh'
-      - 'tests/test_hanjuku_audio_fence.py'
+      - 'tests/test_runtime_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - 'tests/test_say_speaking_state.sh'
@@ -43,7 +43,7 @@ on:
       - 'prompts/comment*.md'
       - 'prompts/speech_vocabulary_rule.md'
       - 'lib/comment_*.py'
-      - 'lib/hanjuku_audio_fence.py'
+      - 'lib/runtime_audio_fence.py'
       - 'lib/weather_audio_consumer.py'
       - 'lib/radio_game_context.py'
       - 'tests/test_radio_game_context.py'
@@ -52,7 +52,7 @@ on:
       - 'lib/outbound_queue.sh'
       - 'tests/test_outbound_queue_youtube_split.py'
       - 'say_enqueue.sh'
-      - 'tests/test_hanjuku_audio_fence.py'
+      - 'tests/test_runtime_audio_fence.py'
       - 'tests/test_comment*'
       - 'tests/test_crypto_paper_playback_dedup_exempt.sh'
       - 'tests/test_say_speaking_state.sh'
@@ -80,7 +80,7 @@ jobs:
       - name: Outbound YouTube UTF-8 split and failure contracts
         run: python3 -m unittest discover -s tests -p test_outbound_queue_youtube_split.py -v
       - name: Hanjuku runtime-bound narration
-        run: python3 -m unittest -v tests.test_hanjuku_audio_fence tests.test_radio_game_context
+        run: python3 -m unittest -v tests.test_runtime_audio_fence tests.test_radio_game_context
       - name: Weather-corner shared audio consumer
         env:
           WEATHER_TEST_REQUIRE_PROCESS_GROUP_STOP: "1"
