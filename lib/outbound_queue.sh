@@ -486,6 +486,7 @@ enqueue_audio_text() {
 	local speaker_override="${3:-}"
 	local runtime_fence="${4:-}" encoded_fence=""
 	local dedup_scope="${5:-}"
+	local dedup_key="" dedup_key_file=""
 	# Source becomes a filename component; never accept paths or shell syntax.
 	case "$source" in ''|hanjuku:commentary|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
 	# A runtime-bound source must carry its fence, and a fence only belongs to
@@ -510,6 +511,11 @@ enqueue_audio_text() {
 	if ! _comment_audio_claim_enqueue_key "$text" "$dedup_scope"; then
 		return 0
 	fi
+	# Persist the dedup identity so the consumer can keep the same-text
+	# suppression scoped to this occurrence instead of comparing raw text.
+	if [ -n "$dedup_scope" ]; then
+		dedup_key=$(_outbound_chat_hash "$dedup_scope\n$text")
+	fi
 
 	local queue_dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
 	mkdir -p "$queue_dir" 2>/dev/null || true
@@ -521,6 +527,10 @@ enqueue_audio_text() {
 	local destfile="${queue_dir}/${filename}"
 
 	local fencefile="${destfile%.txt}.runtime_fence.json"
+	# Sidecar carrying the scoped dedup identity for the consumer.
+	if [ -n "$dedup_key" ]; then
+		dedup_key_file="${destfile%.txt}.dedup_key"
+	fi
 	# Publish metadata first: a consumer must never see unfenced Hanjuku text.
 	if [ -n "$encoded_fence" ]; then
 		printf '%s\n' "$encoded_fence" > "$fencefile" 2>/dev/null || return 1
@@ -528,8 +538,11 @@ enqueue_audio_text() {
 	if [ -n "$speaker_override" ]; then
 		printf '%s' "$speaker_override" > "${destfile}.speaker" 2>/dev/null || true
 	fi
+	if [ -n "$dedup_key_file" ]; then
+		printf '%s' "$dedup_key" > "$dedup_key_file" 2>/dev/null || true
+	fi
 	if ! printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || ! mv "$tmpfile" "$destfile" 2>/dev/null; then
-		rm -f "$tmpfile" "$fencefile" "${destfile}.speaker"
+		rm -f "$tmpfile" "$fencefile" "${destfile}.speaker" "$dedup_key_file"
 		return 1
 	fi
 	return 0

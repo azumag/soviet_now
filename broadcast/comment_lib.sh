@@ -114,6 +114,7 @@ _comment_read_speaker_override() {
 _comment_clear_speaker_sidecars() {
 	local target="$1" original="${2:-}" sidecar
 	rm -f "$(_comment_runtime_fence_path "$target")"
+	rm -f "${target%.*}.dedup_key" 2>/dev/null || true
 	while IFS= read -r sidecar; do
 		[ -n "$sidecar" ] || continue
 		rm -f "$sidecar" 2>/dev/null || true
@@ -357,6 +358,18 @@ _play_comment_queue() {
 			else
 				file_hash=$(md5sum "$qf" 2>/dev/null | awk '{print $1}' || true)
 			fi
+			# Scope-aware dedup: when the producer persisted a dedup identity
+			# (e.g. TRPG narration with a dedup_scope), use it instead of the raw
+			# content hash. This keeps same-text retry suppression within one
+			# occurrence while letting a legitimate repeat in a later scene/run be
+			# spoken instead of dropped as a duplicate.
+			local dedup_key="$file_hash"
+			local _dedup_key_sidecar="${qf%.*}.dedup_key"
+			if [ -r "$_dedup_key_sidecar" ]; then
+				local _stored_dedup_key
+				_stored_dedup_key=$(tr -d '[:space:]' < "$_dedup_key_sidecar" 2>/dev/null || true)
+				[ -n "$_stored_dedup_key" ] && dedup_key="$_stored_dedup_key"
+			fi
 			local _comment_context_label_for_dedupe=""
 			_comment_context_label_for_dedupe=$(_comment_playback_context_label "$qf" 2>/dev/null || printf '%s' "comment")
 			local _skip_duplicate_check=0
@@ -386,8 +399,8 @@ _play_comment_queue() {
 					rm -f "$qf"
 					continue
 				fi
-				if [ "$_skip_duplicate_check" -eq 0 ] && [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
-					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				if [ "$_skip_duplicate_check" -eq 0 ] && [ -n "$dedup_key" ] && grep -qF "$dedup_key" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$dedup_key)" >> tmp/.say_queue/debug.log
 					_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 					_comment_clear_generation_meta "$qf" 2>/dev/null || true
 					_comment_clear_speaker_sidecars "$qf" 2>/dev/null || true
@@ -421,7 +434,7 @@ _play_comment_queue() {
 					fi
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				if [ "$_skip_duplicate_check" -eq 0 ]; then
-					echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
+					echo "$dedup_key" >> "$COMMENT_PLAYED_HASHES_FILE"
 					# ハッシュファイルを最新50件に制限
 					tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 						mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
