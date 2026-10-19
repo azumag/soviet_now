@@ -79,8 +79,17 @@ def validate(value, *, enforce_expiry=True):
     return value
 
 
-def read(path):
-    if path.is_symlink() or path.stat().st_size > 65536:
+# Per-game byte cap on a run record.  Hanjuku records stay small, but a TRPG
+# session embeds the reviewed scenario at top level and inside its state, so a
+# valid session can exceed the generic 64 KiB budget (docich caps it at 2 MiB).
+MAX_RECORD_BYTES = {
+    'hanjuku-hero': 65536,
+    'trpg-view': 2 * 1024 * 1024,
+}
+
+
+def read(path, *, max_bytes=65536):
+    if path.is_symlink() or path.stat().st_size > max_bytes:
         raise ValueError('unsafe record')
     value = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(value, dict):
@@ -114,7 +123,7 @@ def active(canonical, value, *, enforce_expiry=True):
     if root.is_symlink() or directory.is_symlink():
         raise ValueError('unsafe runtime')
     run_file, live = GAMES[value['game']]
-    run = read(directory / run_file)
+    run = read(directory / run_file, max_bytes=MAX_RECORD_BYTES.get(value['game'], 65536))
     if any(type(run.get(key)) is not type(value[key]) or run.get(key) != value[key] for key in KEYS):
         raise ValueError('run identity lost')
     live(run)
