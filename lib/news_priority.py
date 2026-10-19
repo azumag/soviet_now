@@ -225,6 +225,17 @@ def _name_to_key(name: str) -> str:
     return {"Global Voices": "globalvoices"}.get(name, "")
 
 
+def _source_family(key: str) -> str:
+    """Fold a meta source_key into its family (fetch_news.source_family equivalent)."""
+    if key.startswith("wikinews"):
+        return "wikinews"
+    if key.startswith("globalvoices"):
+        return "globalvoices"
+    if key.startswith("google_news"):
+        return "google_news"
+    return key
+
+
 def _published_ts(meta: dict[str, Any], title: str) -> int:
     item = meta.get(title, {}) if isinstance(meta, dict) else {}
     try:
@@ -269,7 +280,13 @@ def _legacy_weights(
         title = _block_title(block)
         item = meta.get(title, {}) if isinstance(meta, dict) else {}
         source_name = (item.get("source") or "").strip()
-        source_key = _name_to_key(source_name)
+        # meta の source_key（fetch_news 付与の正本）を優先し、無ければ
+        # 従来の名前ベース変換へフォールバックする（docich#2468）。
+        source_key = (item.get("source_key") or "").strip()
+        if source_key:
+            source_key = _source_family(source_key)
+        else:
+            source_key = _name_to_key(source_name)
         freq = source_counts.get(source_key, 0) if source_key else 0
         published_ts = _published_ts(meta, title)
         if newest_ts > 0 and published_ts > 0:

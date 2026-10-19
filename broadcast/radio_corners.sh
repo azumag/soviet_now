@@ -200,11 +200,11 @@ start_radio_corner_news() {
 	fi
 
 	# 選定直後に既読記録（AI生成を待たずに確定）
-	local selected_key selected_topic_key selected_source_name selected_source_key selected_url_hash
+	local selected_key selected_topic_key selected_source_key selected_url_hash
 	selected_key=$(_news_title_key "$selected_news")
 	selected_topic_key=$(_news_topic_key "$selected_news")
-	selected_source_name=$(_news_source_name_for_title "$selected_news")
-	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	# meta の source_key を正本とし、無いときだけ名前ベースへフォールバック（docich#2468）
+	selected_source_key=$(_news_source_key_for_title "$selected_news")
 	selected_url_hash=$(_news_url_hash_for_title "$selected_news")
 	if [ -n "$selected_key" ]; then
 		echo "$selected_news" >>"$PAST_NEWS_READ"
