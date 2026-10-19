@@ -12,6 +12,66 @@ INSTALLER = REPO_ROOT / "install_soren_runtime_service.sh"
 UNIT = REPO_ROOT / "deploy" / "soren-runtime" / "soren-runtime.service"
 OBS_DROPIN = REPO_ROOT / "deploy" / "soren-runtime" / "obs-backend.conf"
 CHAT_WORKER = REPO_ROOT / "workers" / "chat_worker.sh"
+# docich #2008: the shared PulseAudio permanence surface.
+BGM_UNIT = REPO_ROOT / "deploy" / "soren-bgm" / "soren-bgm.service"
+BGM_PULSE_GUARD = REPO_ROOT / "wait_soren_bgm_pulse.sh"
+PULSE_CLIENT_CONF = REPO_ROOT / "deploy" / "pulse" / "client.conf"
+
+
+def write_fake_pactl(
+    fake_bin: Path,
+    *,
+    info_ready_marker: Path | None = None,
+    sink_present: bool = True,
+    log: Path | None = None,
+) -> None:
+    """Install a pactl stub for the prerequisite scripts.
+
+    ``info_ready_marker`` keeps ``pactl info`` failing until a helper creates
+    the marker, which models the canonical server not answering yet.
+    """
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    script = fake_bin / "pactl"
+    marker_check = (
+        f'if [ ! -f "{info_ready_marker}" ]; then exit 1; fi'
+        if info_ready_marker is not None
+        else "true"
+    )
+    sink_line = (
+        "printf '1\\tsoren_null\\tmodule-null-sink.c\\ts16le 2ch 48000Hz\\tIDLE\\n'"
+        if sink_present
+        else "true"
+    )
+    log_line = f'printf \'%s\\n\' "$*" >>"{log}"' if log is not None else "true"
+    script.write_text(
+        f"""#!/bin/bash
+set -eu
+{log_line}
+case "${{1:-}}" in
+info) {marker_check} ;;
+list) {sink_line} ;;
+load-module) : ;;
+set-default-sink) printf '%s\\n' "$2" >"$PWD/.fake-default-sink" ;;
+set-default-source) printf '%s\\n' "$2" >"$PWD/.fake-default-source" ;;
+get-default-sink) cat "$PWD/.fake-default-sink" ;;
+get-default-source) cat "$PWD/.fake-default-source" ;;
+*) exit 2 ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def write_fake_xdpyinfo(fake_bin: Path) -> None:
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    script = fake_bin / "xdpyinfo"
+    script.write_text(
+        "#!/bin/bash\nprintf '  dimensions:    1280x720 pixels (338x190 millimeters)\\n'\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
 
 
 class SorenRuntimeServiceTests(unittest.TestCase):
@@ -278,6 +338,167 @@ esac
         env_reload = main_loop.index("# .env を毎試合再読込")
         reload_call = main_loop.index("game_lifecycle_load_player_policy")
         self.assertGreater(reload_call, env_reload)
+
+    # ---- docich #2008: shared PulseAudio permanence -------------------------
+
+    def test_bgm_unit_pins_the_shared_pulse_and_fails_closed(self) -> None:
+        unit = BGM_UNIT.read_text(encoding="utf-8")
+        self.assertIn("Environment=HOME=/home/ubuntu", unit)
+        self.assertIn("Environment=XDG_RUNTIME_DIR=/run/user/1001", unit)
+        self.assertIn(
+            "Environment=PULSE_SERVER=unix:/run/user/1001/pulse/native", unit
+        )
+        self.assertIn(
+            "ExecStartPre=/home/ubuntu/soren/wait_soren_bgm_pulse.sh", unit
+        )
+        self.assertIn("ExecStart=/home/ubuntu/soren/bgm_worker.sh", unit)
+        # The unit must never own or start an audio server (the comments may
+        # name the incident, but no directive may enable autospawn).
+        self.assertNotIn("pulseaudio --start", unit)
+        self.assertNotIn("autospawn = yes", unit)
+        self.assertNotIn("autospawn=yes", unit)
+
+    def test_bgm_pulse_guard_never_starts_a_server(self) -> None:
+        source = BGM_PULSE_GUARD.read_text(encoding="utf-8")
+        self.assertIn("refusing to start BGM", source)
+        self.assertIn("this unit must not autospawn a private PulseAudio server", source)
+        self.assertNotIn("pulseaudio --start", source)
+        self.assertNotIn("systemctl", source)
+        self.assertNotIn("kill", source)
+
+    def test_bgm_pulse_guard_fails_closed_while_pulse_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin = root / "bin"
+            write_fake_pactl(
+                fake_bin, info_ready_marker=root / "never-created"
+            )
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:/usr/bin:/bin",
+                "SOREN_BGM_PULSE_WAIT_SEC": "5",
+            }
+            result = subprocess.run(
+                ["bash", str(BGM_PULSE_GUARD)],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("did not become ready", result.stderr)
+            self.assertIn("must not autospawn", result.stderr)
+
+    def test_bgm_pulse_guard_reports_ok_and_loads_the_sink_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin = root / "bin"
+            log = root / "pactl.log"
+            write_fake_pactl(fake_bin, sink_present=False, log=log)
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:/usr/bin:/bin",
+                "SOREN_BGM_PULSE_WAIT_SEC": "5",
+            }
+            result = subprocess.run(
+                ["bash", str(BGM_PULSE_GUARD)],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("soren_bgm_pulse=ok", result.stdout)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("load-module module-null-sink sink_name=soren_null", calls)
+            # The guard is a client only: it must not touch server defaults.
+            self.assertNotIn("set-default-sink", calls)
+            self.assertNotIn("set-default-source", calls)
+
+    def test_runtime_prereqs_start_the_user_pulse_units_when_socket_is_silent(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_bin = root / "bin"
+            marker = root / "pulse-ready"
+            systemctl_log = root / "systemctl.log"
+            write_fake_pactl(fake_bin, info_ready_marker=marker)
+            write_fake_xdpyinfo(fake_bin)
+            fake_systemctl = fake_bin / "systemctl"
+            fake_systemctl.write_text(
+                "#!/bin/bash\n"
+                f'printf \'%s\\n\' "$*" >>"{systemctl_log}"\n'
+                f': >"{marker}"\n',
+                encoding="utf-8",
+            )
+            fake_systemctl.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:/usr/bin:/bin",
+                "SOREN_RUNTIME_PREREQ_WAIT_SEC": "15",
+                "SOREN_RUNTIME_DISPLAY": ":99",
+            }
+            result = subprocess.run(
+                ["bash", str(PREREQS)],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("runtime_prereqs=ok", result.stdout)
+            calls = systemctl_log.read_text(encoding="utf-8")
+            self.assertIn("--user start pulseaudio.socket pulseaudio.service", calls)
+
+    def test_pulse_client_conf_disables_autospawn_and_pins_the_socket(self) -> None:
+        template = PULSE_CLIENT_CONF.read_text(encoding="utf-8")
+        self.assertIn("autospawn = no", template)
+        self.assertIn(
+            "default-server = unix:/run/user/1001/pulse/native", template
+        )
+
+    def test_installer_manages_pulse_permanence_assets(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn(
+            'PULSE_CLIENT_CONF_SOURCE="$SCRIPT_DIR/deploy/pulse/client.conf"', source
+        )
+        self.assertIn(
+            'PULSE_CLIENT_CONF_TARGET="/home/$EXPECTED_USER/.config/pulse/client.conf"',
+            source,
+        )
+        self.assertIn('"$PULSE_CLIENT_CONF_SOURCE" \\', source)
+        self.assertIn("PULSE_USER_UNITS=(pulseaudio.socket pulseaudio.service)", source)
+        self.assertIn('systemctl --user --machine="${EXPECTED_USER}@.host" enable "$unit"', source)
+        self.assertIn("pulse_client_conf=%s", source)
+        self.assertIn("pulse_user_units=%s", source)
+        self.assertIn("pulse_socket=%s", source)
+        # Permanence must be installed before the runtime migration mutates
+        # anything, and must never restart a live audio server.
+        self.assertLess(
+            source.index("PULSE_CLIENT_CONF_TARGET"),
+            source.index("MUTATION_STARTED=1"),
+        )
+        self.assertNotIn("pulseaudio --start", source)
+
+    def test_installer_print_config_publishes_pulse_target(self) -> None:
+        result = subprocess.run(
+            ["bash", str(INSTALLER), "--print-config"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"pulse_client_conf": "/home/ubuntu/.config/pulse/client.conf"', result.stdout)
+        self.assertIn('"pulse_user_units": ["pulseaudio.socket", "pulseaudio.service"]', result.stdout)
 
 
 if __name__ == "__main__":

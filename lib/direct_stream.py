@@ -186,6 +186,30 @@ class ReconnectConfig:
 
 
 @dataclass(frozen=True)
+class PulseWatchdogConfig:
+    """Audio-input watchdog policy for the live FFmpeg publish path.
+
+    When the PulseAudio input dies mid-publish (server restart, cgroup kill,
+    socket loss), FFmpeg logs a demux error and keeps encoding video only.
+    The publish looks green while the stream is silently mute (docich #2008,
+    2026-10-11). The watchdog polls the shared server for a source-output on
+    the configured monitor source and requests a publish restart through the
+    existing reconnect machinery once the input is confirmed lost.
+    """
+
+    enabled: bool
+    interval_sec: int
+    strikes: int
+
+    def public_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "interval_sec": self.interval_sec,
+            "strikes": self.strikes,
+        }
+
+
+@dataclass(frozen=True)
 class RunOutcome:
     """Result of one FFmpeg publish run."""
 
@@ -275,6 +299,19 @@ def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConf
             source, "SOREN_DIRECT_STREAM_RECONNECT_MAX_CONSECUTIVE", 10, 1, 100
         ),
         reload_relay=_strict_bool(source, "SOREN_DIRECT_STREAM_RECONNECT_RELOAD_RELAY", True),
+    )
+
+
+def load_pulse_watchdog_config(env: Mapping[str, str] | None = None) -> PulseWatchdogConfig:
+    source = os.environ if env is None else env
+    return PulseWatchdogConfig(
+        enabled=_strict_bool(source, "SOREN_DIRECT_STREAM_PULSE_WATCHDOG_ENABLED", True),
+        interval_sec=_strict_int(
+            source, "SOREN_DIRECT_STREAM_PULSE_WATCHDOG_INTERVAL_SEC", 5, 1, 60
+        ),
+        strikes=_strict_int(
+            source, "SOREN_DIRECT_STREAM_PULSE_WATCHDOG_STRIKES", 3, 1, 30
+        ),
     )
 
 
@@ -906,6 +943,149 @@ def _start_reconnect_monitor(
     return thread
 
 
+def pulse_source_output_present(pulse_source: str) -> bool | None:
+    """Report whether any client still captures the configured Pulse source.
+
+    Returns True when a source-output is attached to the configured source,
+    False when PulseAudio answers but the audio input is provably gone (the
+    monitor source itself is missing, or no source-output exists at all), and
+    None when the probe cannot decide (pactl missing, call failed, or the
+    long-form output cannot be parsed unambiguously). Only a confirmed False
+    may ever drive an automatic publish restart; ambiguity must stay silent.
+    """
+    pactl = shutil.which("pactl")
+    if pactl is None:
+        return None
+    try:
+        sources = subprocess.run(
+            [pactl, "list", "short", "sources"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        outputs = subprocess.run(
+            [pactl, "list", "source-outputs"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if sources.returncode != 0 or outputs.returncode != 0:
+        return None
+
+    source_index: str | None = None
+    for line in sources.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == pulse_source:
+            source_index = fields[0]
+            break
+    if source_index is None:
+        # The monitor source itself disappeared from the answering server:
+        # no client can be capturing audio through it.
+        return False
+
+    blocks = [
+        block
+        for block in re.split(
+            r"^Source Output #\d+", outputs.stdout, flags=re.MULTILINE
+        )[1:]
+        if block.strip()
+    ]
+    if not blocks:
+        # PulseAudio answers and lists no source-output at all.
+        return False
+    attached = 0
+    parseable = 0
+    for block in blocks:
+        match = re.search(r"^\s*Source:\s*(\S+)\s*$", block, re.MULTILINE)
+        if match is None:
+            continue
+        parseable += 1
+        if match.group(1) == source_index:
+            attached += 1
+    if parseable == 0:
+        # Long-form layout differs from what this parser expects; never
+        # restart a healthy publish over a parsing guess.
+        return None
+    return attached > 0
+
+
+def _start_pulse_watchdog(
+    config: DirectStreamConfig,
+    watchdog: PulseWatchdogConfig,
+    child: subprocess.Popen[str],
+    monitor_state: dict[str, object],
+) -> threading.Thread | None:
+    """Watch the PulseAudio audio input while FFmpeg runs and request a
+    publish restart (reason ``pulse_input_lost``) once the input is confirmed
+    gone. Video-only continuation is never treated as healthy."""
+
+    if shutil.which("pactl") is None:
+        print(
+            "direct_stream: pulse watchdog disabled (pactl is unavailable)",
+            file=sys.stderr,
+        )
+        return None
+
+    def snapshot(present: bool | None, strikes: int) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "pulse_source": config.pulse_source,
+            "present": present,
+            "missing_strikes": strikes,
+            "strikes_threshold": watchdog.strikes,
+            "checked_at": int(time.time()),
+        }
+
+    def monitor() -> None:
+        strikes = 0
+        monitor_state["pulse_watchdog"] = snapshot(None, strikes)
+        while True:
+            time.sleep(watchdog.interval_sec)
+            if monitor_state.get("stopping"):
+                return
+            if not _pid_alive(child.pid):
+                return
+            present = pulse_source_output_present(config.pulse_source)
+            if present is None:
+                # Transient probe failure: never count toward the strike total.
+                monitor_state["pulse_watchdog"] = snapshot(None, strikes)
+                continue
+            if present:
+                strikes = 0
+                monitor_state["pulse_watchdog"] = snapshot(True, strikes)
+                continue
+            strikes += 1
+            print(
+                f"direct_stream: pulse source-output missing "
+                f"strike={strikes}/{watchdog.strikes}",
+                file=sys.stderr,
+            )
+            monitor_state["pulse_watchdog"] = snapshot(False, strikes)
+            if strikes >= watchdog.strikes:
+                monitor_state["reconnect"] = True
+                monitor_state["reconnect_reason"] = "pulse_input_lost"
+                # SIGINT reaches the child's own handler, which asks FFmpeg to
+                # finish via stdin q so the RTMP session closes cleanly before
+                # the supervise loop restarts the publish.
+                try:
+                    child.send_signal(signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+                return
+
+    thread = threading.Thread(
+        target=monitor,
+        name="direct-stream-pulse-watchdog",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def _run_ffmpeg_once(
     config: DirectStreamConfig,
     command: Sequence[str],
@@ -913,6 +1093,7 @@ def _run_ffmpeg_once(
     mode: str,
     reconnect: ReconnectConfig | None,
     captions_active: bool = False,
+    pulse_watchdog: PulseWatchdogConfig | None = None,
 ) -> RunOutcome:
     """Run FFmpeg once and return the outcome of this single publish session."""
     started_at = int(time.time())
@@ -980,6 +1161,17 @@ def _run_ffmpeg_once(
             monitor_thread = _start_reconnect_monitor(
                 config, reconnect, child, monitor_state
             )
+        pulse_watchdog_thread: threading.Thread | None = None
+        if (
+            mode == "live"
+            and reconnect is not None
+            and reconnect.enabled
+        ):
+            watchdog_policy = pulse_watchdog or load_pulse_watchdog_config()
+            if watchdog_policy.enabled:
+                pulse_watchdog_thread = _start_pulse_watchdog(
+                    config, watchdog_policy, child, monitor_state
+                )
         batch: list[str] = []
         latest: dict[str, object] = {}
         try:
@@ -999,6 +1191,9 @@ def _run_ffmpeg_once(
                         "system_metrics": metrics,
                         "updated_at": int(time.time()),
                     }
+                    watchdog_snapshot = monitor_state.get("pulse_watchdog")
+                    if isinstance(watchdog_snapshot, dict):
+                        payload["pulse_watchdog"] = dict(watchdog_snapshot)
                     _atomic_json(config.state_dir / "status.json", payload)
             return_code = child.wait()
         finally:
@@ -1006,6 +1201,8 @@ def _run_ffmpeg_once(
             signal.signal(signal.SIGINT, previous_int)
             if monitor_thread is not None:
                 monitor_thread.join(timeout=5)
+            if pulse_watchdog_thread is not None:
+                pulse_watchdog_thread.join(timeout=5)
 
         if monitor_state.get("reconnect"):
             final_state = "reconnect"
@@ -1032,6 +1229,9 @@ def _run_ffmpeg_once(
             final_payload["ffmpeg_exit_code"] = return_code
         if monitor_state.get("reconnect_reason"):
             final_payload["reconnect_reason"] = monitor_state["reconnect_reason"]
+        watchdog_snapshot = monitor_state.get("pulse_watchdog")
+        if isinstance(watchdog_snapshot, dict):
+            final_payload["pulse_watchdog"] = dict(watchdog_snapshot)
         _atomic_json(config.state_dir / "status.json", final_payload)
         return RunOutcome(
             exit_code=runner_exit_code,
@@ -1085,6 +1285,10 @@ def _run_ffmpeg(
                 reconnect=None,
                 captions_active=captions_active,
             ).exit_code
+
+        # docich #2008: the audio-input watchdog runs only on the supervised
+        # live path (it requests a reconnect); the policy is loaded per run so
+        # the existing comment/call sites stay unchanged.
 
         # Live supervise loop: reconnect on Twitch-side cuts and unexpected
         # FFmpeg exits, mirroring OBS's automatic reconnect behaviour.

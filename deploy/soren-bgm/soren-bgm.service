@@ -1,11 +1,22 @@
 [Unit]
 Description=soren BGM loop during CLI games (game-aware, independent of supervisor)
+# docich #2008: the shared PulseAudio lives in the ubuntu user manager
+# (user@1001.service / session.slice), never inside this unit's cgroup. A
+# server autospawned here dies with this unit on every deploy restart, which
+# killed the shared stream audio on 2026-10-11. The managed client.conf
+# (deploy/pulse/client.conf, installed by install_soren_runtime_service.sh)
+# disables autospawn, and the ExecStartPre guard below fails closed when the
+# canonical server is not reachable.
 After=default.target
 
 [Service]
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/soren
+Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+Environment=PULSE_SERVER=unix:/run/user/1001/pulse/native
+ExecStartPre=/home/ubuntu/soren/wait_soren_bgm_pulse.sh
 ExecStart=/home/ubuntu/soren/bgm_worker.sh
 Restart=on-failure
 RestartSec=10

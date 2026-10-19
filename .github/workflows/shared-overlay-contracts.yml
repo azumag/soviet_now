@@ -12,6 +12,7 @@ on:
       - 'lib/direct_stream.py'
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_stream.py'
+      - 'tests/test_direct_stream_pulse_watchdog.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
@@ -42,6 +43,7 @@ on:
       - 'lib/direct_stream.py'
       - 'overlays/direct_broadcast_overlay.html'
       - 'tests/test_direct_stream.py'
+      - 'tests/test_direct_stream_pulse_watchdog.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
@@ -97,6 +99,8 @@ jobs:
           tests/test_twica_legacy_owner.mjs
       - name: Run direct stream status metrics regressions
         run: python3 -m unittest tests.test_direct_stream
+      - name: Run direct stream pulse watchdog regressions
+        run: python3 -m unittest tests.test_direct_stream_pulse_watchdog
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
       - name: Install isolated Chromium for overlay geometry regression
