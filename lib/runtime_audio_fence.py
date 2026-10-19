@@ -106,7 +106,7 @@ def sidecar(target):
 
 def required(target):
     name = Path(target).name
-    return (any(source in name for source in ('_hanjuku_commentary.', '_hanjuku:commentary.'))
+    return (any(source in name for source in ('_hanjuku_commentary.', '_hanjuku:commentary.', '_trpg:'))
             or sidecar(target).exists() or sidecar(target).is_symlink())
 
 

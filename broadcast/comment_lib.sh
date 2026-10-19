@@ -36,7 +36,7 @@ _comment_runtime_fence_valid() {
 		return $?
 	fi
 	fence=$(_comment_runtime_fence_path "$target")
-	case "$target" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing) ;; *)
+	case "$target" in *_hanjuku_commentary.txt|*_hanjuku_commentary.playing|*_hanjuku:commentary.txt|*_hanjuku:commentary.playing|*_trpg:*.txt|*_trpg:*.playing) ;; *)
 		[ -e "$fence" ] || [ -L "$fence" ] || return 0 ;;
 	esac
 	python3 "${ELOOP_LIB_DIR:-.}/lib/runtime_audio_fence.py" check \
