@@ -470,6 +470,53 @@ _news_url_hash_for_title() {
 	_news_url_hash_for_title_meta "$1" "tmp/news_meta.json"
 }
 
+# news_meta.json の source_key（fetch_news.py の source 定義で付与される正本キー、
+# 例: bbc_world / guardian_world / google_news_jp_politics）を返す。
+# 名前ベースの case 文（_news_source_key_from_name）では新規海外ソースが
+# 空キーになり past_news_read_sources に残らない（docich#2468）ため、
+# meta 参照を正本にする。フォールバックは _news_source_key_from_name に委ねる。
+_news_source_key_for_title_meta() {
+	local title="$1" meta_file="${2:-tmp/news_meta.json}"
+	[ -f "$meta_file" ] || return 0
+	python3 - "$title" "$meta_file" <<'PY'
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+meta_file = sys.argv[2] if len(sys.argv) > 2 else "tmp/news_meta.json"
+try:
+    with open(meta_file, encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title, {})
+key = (item.get("source_key") or "").strip()
+if key:
+    # fetch_news.source_family() と同じ正規化。既存の
+    # past_news_read_sources 履歴（wikinews / globalvoices / google_news）と
+    # news_priority._read_source_counts の集計キーを壊さないため。
+    for prefix, family in (
+        ("wikinews", "wikinews"),
+        ("globalvoices", "globalvoices"),
+        ("google_news", "google_news"),
+    ):
+        if key.startswith(prefix):
+            key = family
+            break
+    print(key)
+PY
+}
+
+_news_source_key_for_title() {
+	local title="$1" key
+	key=$(_news_source_key_for_title_meta "$title")
+	if [ -z "$key" ]; then
+		key=$(_news_source_key_from_name "$(_news_source_name_for_title "$title")")
+	fi
+	printf '%s\n' "$key"
+}
+
 _news_source_key_from_name() {
 	local name="$1"
 	case "$name" in
