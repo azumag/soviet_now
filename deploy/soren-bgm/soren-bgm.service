@@ -6,6 +6,13 @@ After=default.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/soren
+# This is a system service with no login session. Give every child (including
+# SDL/FFmpeg players) the fixed user PulseAudio endpoint so libpulse can never
+# autospawn a private server under this unit's cgroup: a deploy restart of
+# soren-bgm would otherwise kill that server and silently strip the broadcast
+# capture input (docich#2008).
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+Environment=PULSE_SERVER=unix:/run/user/1001/pulse/native
 ExecStart=/home/ubuntu/soren/bgm_worker.sh
 Restart=on-failure
 RestartSec=10

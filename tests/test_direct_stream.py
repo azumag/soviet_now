@@ -593,7 +593,7 @@ class DirectStreamTests(unittest.TestCase):
         ]
         calls: list[direct_stream.RunOutcome] = []
 
-        def fake_once(config_, command, *, mode, reconnect, captions_active=False):
+        def fake_once(config_, command, *, mode, reconnect, captions_active=False, audio_watchdog=None):
             calls.append(outcomes.pop(0))
             return calls[-1]
 
@@ -630,7 +630,7 @@ class DirectStreamTests(unittest.TestCase):
             }
         )
 
-        def fake_once(config_, command, *, mode, reconnect, captions_active=False):
+        def fake_once(config_, command, *, mode, reconnect, captions_active=False, audio_watchdog=None):
             return direct_stream.RunOutcome(
                 exit_code=0,
                 state="reconnect",
@@ -652,6 +652,243 @@ class DirectStreamTests(unittest.TestCase):
                     duration_sec=None,
                     reconnect=reconnect,
                 )
+
+    def test_audio_capture_watchdog_config_defaults_and_validation(self) -> None:
+        watchdog = direct_stream.load_audio_capture_watchdog_config({})
+        self.assertTrue(watchdog.enabled)
+        self.assertEqual(watchdog.probe_interval_sec, 10)
+        self.assertEqual(watchdog.loss_threshold, 2)
+        self.assertTrue(watchdog.pulse_server.startswith("unix:/run/user/"))
+
+        custom = direct_stream.load_audio_capture_watchdog_config(
+            {
+                "PULSE_SERVER": "unix:/run/user/1001/pulse/native",
+                "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_ENABLED": "0",
+                "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_PROBE_SEC": "30",
+                "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_LOSS_THRESHOLD": "3",
+            }
+        )
+        self.assertFalse(custom.enabled)
+        self.assertEqual(custom.probe_interval_sec, 30)
+        self.assertEqual(custom.loss_threshold, 3)
+        self.assertEqual(custom.pulse_server, "unix:/run/user/1001/pulse/native")
+
+        for bad_env in (
+            {"PULSE_SERVER": "tcp:127.0.0.1:4713"},
+            {"PULSE_SERVER": "unix:/run/user/../../etc/passwd"},
+            {"SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_LOSS_THRESHOLD": "0"},
+            {"SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_PROBE_SEC": "999"},
+            {"SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_ENABLED": "maybe"},
+        ):
+            with self.subTest(env=bad_env):
+                with self.assertRaises(direct_stream.ConfigError):
+                    direct_stream.load_audio_capture_watchdog_config(bad_env)
+
+    def test_probe_audio_capture_state_classifies_capture_streams(self) -> None:
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        listing = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.name = "ffmpeg"\n'
+            '\tapplication.process.id = "4321"\n'
+        )
+
+        def run_ok(command, *, env=None):
+            self.assertEqual(
+                env.get("PULSE_SERVER"), "unix:/run/user/1001/pulse/native"
+            )
+            self.assertTrue(env.get("PATH"))
+            return "" if command[1:] == ["info"] else listing
+
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run_ok
+            ),
+            "ok",
+        )
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 9999, run=run_ok
+            ),
+            "missing",
+        )
+
+        def run_down(command, *, env=None):
+            raise direct_stream.RuntimeCheckError("pulse down")
+
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run_down
+            ),
+            "unreachable",
+        )
+
+        def run_garbled(command, *, env=None):
+            return "" if command[1:] == ["info"] else "unexpected listing"
+
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run_garbled
+            ),
+            "unknown",
+        )
+
+    def test_audio_watchdog_restarts_ffmpeg_after_capture_loss(self) -> None:
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        states = ["ok", "missing", "missing"]
+
+        with mock.patch.object(direct_stream.time, "sleep"):
+            thread = direct_stream._start_audio_capture_monitor(
+                config,
+                watchdog,
+                child,
+                monitor_state,
+                probe=lambda *args, **kwargs: states.pop(0),
+                alive=lambda _pid: True,
+            )
+            thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(monitor_state["reconnect"])
+        self.assertEqual(monitor_state["reconnect_reason"], "pulse_capture_lost")
+        child.send_signal.assert_called_once_with(signal.SIGINT)
+        capture = monitor_state["audio_capture"]
+        self.assertEqual(capture["status"], "missing")
+        self.assertEqual(capture["source"], "soren_null.monitor")
+        self.assertGreaterEqual(capture["consecutive_unhealthy"], 2)
+        self.assertEqual(states, [])
+
+    def test_audio_watchdog_keeps_video_while_pulse_is_unreachable(self) -> None:
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= 4:
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: "unreachable",
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(monitor_state["reconnect"])
+        self.assertIsNone(monitor_state["reconnect_reason"])
+        child.send_signal.assert_not_called()
+        self.assertEqual(monitor_state["audio_capture"]["status"], "unreachable")
+
+    def test_audio_watchdog_never_restarts_without_an_observed_capture(self) -> None:
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=1,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= 3:
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: "missing",
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(monitor_state["reconnect"])
+        child.send_signal.assert_not_called()
+
+    def test_run_ffmpeg_passes_the_audio_watchdog_to_each_run(self) -> None:
+        config = direct_stream.load_config(
+            base_env(SOREN_DIRECT_STREAM_STATE_DIR=tempfile.mkdtemp())
+        )
+        reconnect = direct_stream.load_reconnect_config(
+            {
+                "TWITCH_CHANNEL": "dociai",
+                "SOREN_DIRECT_STREAM_RECONNECT_BACKOFF_SEC": "1",
+            }
+        )
+        watchdog = direct_stream.load_audio_capture_watchdog_config({})
+        seen: list[object] = []
+
+        def fake_once(
+            config_, command, *, mode, reconnect, captions_active=False,
+            audio_watchdog=None,
+        ):
+            seen.append(audio_watchdog)
+            return direct_stream.RunOutcome(
+                exit_code=0, state="stopped", started_at=1, ffmpeg_exit_code=0
+            )
+
+        with mock.patch.object(
+            direct_stream, "_run_ffmpeg_once", side_effect=fake_once
+        ), mock.patch.object(direct_stream, "validate_runtime"):
+            result = direct_stream._run_ffmpeg(
+                config,
+                mode="live",
+                output_path=None,
+                duration_sec=None,
+                reconnect=reconnect,
+                audio_watchdog=watchdog,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(seen, [watchdog])
 
 
 if __name__ == "__main__":
