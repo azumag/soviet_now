@@ -403,6 +403,23 @@ class TrpgRuntimeAudioFenceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(list((self.root / 'queue').iterdir()), [])
 
+    def test_trpg_fence_required_even_without_sidecar(self):
+        # Old producer form: a TRPG-named item with no sidecar must still be
+        # treated as fence-required, so an unfenced stale item cannot be played
+        # after the run ended (the new P2). Hanjuku-unrelated normal comments
+        # keep their unfenced behaviour.
+        for suffix in ('.txt', '.playing'):
+            with self.subTest(suffix=suffix):
+                target = self.root / ('comment_announce_999_trpg:scene' + suffix)
+                target.write_text('旧世代のTRPG実況です。')
+                self.assertTrue(fence.required(target))
+                with self.assertRaises(OSError):
+                    fence.check(self.canonical, target)
+        # A plain (non-TRPG, non-Hanjuku) item without a sidecar stays unfenced.
+        plain = self.root / 'comment_announce_999_other.txt'
+        plain.write_text('通常コメントです。')
+        self.assertFalse(fence.required(plain))
+
     def test_terminal_trpg_session_cannot_start_its_narration(self):
         for phase in ('END', 'FAILED', 'TIMEOUT'):
             with self.subTest(phase=phase):
