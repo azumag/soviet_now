@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('fence', ROOT / 'lib/hanjuku_audio_fence.py')
+SPEC = importlib.util.spec_from_file_location('fence', ROOT / 'lib/runtime_audio_fence.py')
 fence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(fence)
 
@@ -113,7 +113,7 @@ class HanjukuAudioFenceTests(unittest.TestCase):
         player.write_text('import os, time\nfrom pathlib import Path\n'
                           f'Path("{name}.started").write_text(str(os.getpid()))\n'
                           f'time.sleep({seconds})\n')
-        return [sys.executable, str(ROOT / 'lib/hanjuku_audio_fence.py'), 'play',
+        return [sys.executable, str(ROOT / 'lib/runtime_audio_fence.py'), 'play',
                 str(self.canonical), str(self.target), '--', sys.executable, str(player)]
 
     def _wait_for(self, path, timeout=3):
@@ -232,7 +232,7 @@ _play_comment_queue
     def test_player_not_started_after_tts_wait_and_stopped_on_terminal(self):
         player = self.root / 'player.py'
         player.write_text('import os, time\nfrom pathlib import Path\nPath("started").write_text(str(os.getpid()))\ntime.sleep(5)\n')
-        command = [sys.executable, str(ROOT / 'lib/hanjuku_audio_fence.py'), 'play',
+        command = [sys.executable, str(ROOT / 'lib/runtime_audio_fence.py'), 'play',
                    str(self.canonical), str(self.target), '--', sys.executable, str(player)]
         self.set_state(lease='replacement')
         result = subprocess.run(command, cwd=self.root, capture_output=True, timeout=3)
@@ -257,7 +257,7 @@ _play_comment_queue
 
     def test_interrupt_reaps_only_the_owned_player(self):
         code = 'import os,time; from pathlib import Path; Path("owned_pid").write_text(str(os.getpid())); time.sleep(5)'
-        proc = subprocess.Popen([sys.executable, str(ROOT / 'lib/hanjuku_audio_fence.py'), 'play',
+        proc = subprocess.Popen([sys.executable, str(ROOT / 'lib/runtime_audio_fence.py'), 'play',
                                  str(self.canonical), str(self.target), '--', sys.executable, '-c', code],
                                 cwd=self.root)
         try:
@@ -277,7 +277,7 @@ _play_comment_queue
     def test_full_say_drops_expired_item_without_retry_or_failure_streak(self):
         shutil.copy2(ROOT / 'say_enqueue.sh', self.root / 'say_enqueue.sh')
         (self.root / 'lib').mkdir()
-        for name in ('outbound_queue.sh', 'hanjuku_audio_fence.py'):
+        for name in ('outbound_queue.sh', 'runtime_audio_fence.py'):
             shutil.copy2(ROOT / 'lib' / name, self.root / 'lib' / name)
         self.set_state(lease='replacement')
         env = dict(self.env, SOREN_OBS_PLATFORM='linux', SAY_RETRY_MAX='6',
@@ -309,7 +309,7 @@ _play_comment_queue
         launcher = script[script.index('_hanjuku_audio_allowed() {'):script.index('# Linux 専用: paplay')]
         helper = self.root / 'lib'
         helper.mkdir()
-        (helper / 'hanjuku_audio_fence.py').symlink_to(ROOT / 'lib/hanjuku_audio_fence.py')
+        (helper / 'runtime_audio_fence.py').symlink_to(ROOT / 'lib/runtime_audio_fence.py')
         for suffix in ('.txt', '.playing'):
             with self.subTest(suffix=suffix):
                 target = self.root / ('comment_announce_123_hanjuku:commentary' + suffix)
@@ -329,11 +329,118 @@ _play_comment_queue
         launcher = script[script.index('_launch_bg_exec() {'):script.index('# Linux 専用: paplay')]
         helper = self.root / 'lib'
         helper.mkdir()
-        (helper / 'hanjuku_audio_fence.py').symlink_to(ROOT / 'lib/hanjuku_audio_fence.py')
+        (helper / 'runtime_audio_fence.py').symlink_to(ROOT / 'lib/runtime_audio_fence.py')
         self.set_state(lease='new-lease')
         result = self.shell(launcher + '\nCONTENT_FILE="$1"; _launch_bg_exec "" touch started; wait "$!"', self.target)
         self.assertEqual(result.returncode, 75, result.stderr)
         self.assertFalse((self.root / 'started').exists())
+
+
+class TrpgRuntimeAudioFenceTests(unittest.TestCase):
+    """The TRPG corner shares the sink with Hanjuku but has its own run file."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='trpg-audio-fence-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.state = self.root / 'state'
+        (self.state / 'locks').mkdir(parents=True)
+        (self.state / 'locks/game-switch.lock').touch()
+        self.identity = dict(game='trpg-view', runtime_id='g7-abcdef12', generation=4,
+                             lease_id='lease-4', expires_at=time.time() + 30)
+        self.canonical = self.state / 'game_switch.json'
+        self.run_file = self.state / 'runtimes/g7-abcdef12/trpg_session.json'
+        self.run_file.parent.mkdir(parents=True)
+        self.set_state()
+        self.target = self.root / 'comment_announce_1_trpg:scene.txt'
+        self.target.write_text('シーン「城の地下」です。')
+        fence.sidecar(self.target).write_text(json.dumps(self.identity))
+        self.env = dict(os.environ, ELOOP_LIB_DIR=str(ROOT),
+                        SOREN_ACTIVE_GAME_CONTEXT_FILE=str(self.canonical),
+                        OUTBOUND_CHAT_QUEUE_DIR=str(self.root / 'outbound'),
+                        COMMENT_QUEUE_DIR=str(self.root / 'queue'),
+                        COMMENT_AUDIO_DEDUP_TTL_SEC='0')
+        (self.root / 'queue').mkdir()
+
+    def set_state(self, *, lease=None, phase='ready', session_phase='SCENE'):
+        active = {key: self.identity[key] for key in fence.KEYS}
+        if lease:
+            active['lease_id'] = lease
+        self.canonical.write_text(json.dumps(dict(phase=phase, active=active)))
+        self.run_file.write_text(json.dumps(dict(active, state=dict(phase=session_phase))))
+
+    def shell(self, script, *args):
+        return subprocess.run(['bash', '-c', script, '_', *map(str, args)],
+                              cwd=self.root, env=self.env, capture_output=True, text=True, timeout=8)
+
+    def test_trpg_fence_is_accepted_and_publishes_a_sidecar(self):
+        result = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text text trpg:scene "" "$2"',
+            ROOT, json.dumps(self.identity))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        target, = (self.root / 'queue').glob('*.txt')
+        self.assertEqual(json.loads(fence.sidecar(target).read_text())['game'], 'trpg-view')
+
+    def test_trpg_fence_is_rejected_for_another_games_source(self):
+        # A Hanjuku fence must not be accepted for a TRPG source and the
+        # other way round; the fence only belongs to its own namespace.
+        for source, identity in (('trpg:scene', self.identity),
+                                 ('hanjuku_commentary', dict(self.identity, game='hanjuku-hero'))):
+            with self.subTest(source=source):
+                result = self.shell(
+                    'source "$1/lib/outbound_queue.sh"; enqueue_audio_text text "$2" "" "$3"',
+                    ROOT, source, json.dumps(identity))
+                self.assertEqual(result.returncode, 0, result.stderr)
+        # A TRPG fence on a Hanjuku source is rejected outright.
+        result = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text text hanjuku_commentary "" "$2"',
+            ROOT, json.dumps(self.identity))
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_trpg_source_without_fence_is_refused(self):
+        result = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text text trpg:scene', ROOT)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list((self.root / 'queue').iterdir()), [])
+
+    def test_terminal_trpg_session_cannot_start_its_narration(self):
+        for phase in ('END', 'FAILED', 'TIMEOUT'):
+            with self.subTest(phase=phase):
+                self.set_state(session_phase=phase)
+                with self.assertRaises(ValueError):
+                    fence.active(self.canonical, self.identity)
+
+    def test_live_trpg_session_can_start_its_narration(self):
+        for phase in ('IDLE', 'SCENE', 'CHOICE', 'RESOLVE', 'CLIMAX', 'REVEAL'):
+            with self.subTest(phase=phase):
+                self.set_state(session_phase=phase)
+                fence.active(self.canonical, self.identity)
+
+    def test_old_trpg_run_loses_the_fence_after_a_switch(self):
+        self.set_state(lease='new-lease')
+        with self.assertRaises(ValueError):
+            fence.active(self.canonical, self.identity)
+
+    def test_dedup_scope_lets_the_same_text_speak_in_another_scene(self):
+        # Without a scope the text hash is global, so the second scene drops
+        # the same sentence.  A per-scene scope keeps the in-scene guard and
+        # lets the legitimate repeat through.
+        self.env = dict(self.env, COMMENT_AUDIO_DEDUP_TTL_SEC='120')
+        fence_json = json.dumps(self.identity)
+        first = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text 同じ文 trpg:scene "" "$2" scene-1',
+            ROOT, fence_json)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        again = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text 同じ文 trpg:scene "" "$2" scene-1',
+            ROOT, fence_json)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(len(list((self.root / 'queue').glob('*.txt'))), 1)
+        other = self.shell(
+            'source "$1/lib/outbound_queue.sh"; enqueue_audio_text 同じ文 trpg:scene "" "$2" scene-2',
+            ROOT, fence_json)
+        self.assertEqual(other.returncode, 0, other.stderr)
+        self.assertEqual(len(list((self.root / 'queue').glob('*.txt'))), 2)
 
 
 if __name__ == '__main__':

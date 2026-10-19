@@ -316,6 +316,7 @@ _comment_audio_cleanup_dedup_markers() {
 
 _comment_audio_claim_enqueue_key() {
 	local text="$1"
+	local scope="${2:-}"
 	local ttl="${COMMENT_AUDIO_DEDUP_TTL_SEC:-120}"
 	case "$ttl" in
 	''|*[!0-9]*) ttl=120 ;;
@@ -324,7 +325,17 @@ _comment_audio_claim_enqueue_key() {
 	local dedup_dir="${COMMENT_AUDIO_DEDUP_DIR:-${COMMENT_QUEUE_DIR:-tmp/.comment_queue}/audio_dedup}"
 	mkdir -p "$dedup_dir" 2>/dev/null || true
 	local key marker now mt age
-	key=$(_outbound_chat_hash "$text")
+	# The scope narrows the suppression to one runtime occurrence, so the same
+	# sentence in a later scene or a later run is not treated as a duplicate.
+	# The scope is hashed together with the text and never leaves this host.
+	# An empty scope keeps the historical global key, so existing markers and
+	# existing callers are unaffected.
+	if [ -n "$scope" ]; then
+		key=$(_outbound_chat_hash "$scope
+$text")
+	else
+		key=$(_outbound_chat_hash "$text")
+	fi
 	[ -n "$key" ] || return 0
 	marker="$dedup_dir/$key"
 	now=$(date +%s)
@@ -461,22 +472,42 @@ outbound_queue_consume_once() {
 # soren_loop / eloop / improve から直接 say_enqueue.sh を呼ばず、
 # この関数で queue に書いて audio_worker に再生を委譲する。
 
-# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE] [RUNTIME_FENCE_JSON]
-# Hanjuku-only fence: game/runtime_id/generation/lease_id/expires_at (<=120s).
+# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE] [RUNTIME_FENCE_JSON] [DEDUP_SCOPE]
+# Runtime fence: game/runtime_id/generation/lease_id/expires_at (<=120s).
+#   A fence binds the line to one live runtime; the sink refuses a fence it
+#   does not understand, and a runtime-bound source without a fence.
+# Dedup scope: narrows the same-text suppression to one runtime occurrence.
+#   Without it the text hash is global, so a legitimate repeat in a later
+#   scene or a later run is dropped instead of spoken.
 #   テキストを comment queue に積む。audio_worker の _play_comment_queue が再生する。
 enqueue_audio_text() {
 	local text="${1:-}"
 	local source="${2:-unknown}"
 	local speaker_override="${3:-}"
 	local runtime_fence="${4:-}" encoded_fence=""
+	local dedup_scope="${5:-}"
 	# Source becomes a filename component; never accept paths or shell syntax.
 	case "$source" in ''|hanjuku:commentary|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
-	if [ -n "$runtime_fence" ] || [ "$source" = hanjuku_commentary ]; then
-		[ "$source" = hanjuku_commentary ] && [ -n "$runtime_fence" ] || return 1
-		encoded_fence=$(python3 "${ELOOP_LIB_DIR:-.}/lib/hanjuku_audio_fence.py" encode "$runtime_fence") || return 1
+	# A runtime-bound source must carry its fence, and a fence only belongs to
+	# the source namespace of the game it names.  A fence that does not match
+	# its source is rejected rather than silently ignored.
+	local source_game="" fence_game=""
+	case "$source" in
+	hanjuku_commentary|hanjuku:commentary) source_game="hanjuku-hero" ;;
+	trpg:*) source_game="trpg-view" ;;
+	esac
+	if [ -n "$runtime_fence" ]; then
+		encoded_fence=$(python3 "${ELOOP_LIB_DIR:-.}/lib/runtime_audio_fence.py" encode "$runtime_fence") || return 1
+		fence_game=$(printf '%s' "$encoded_fence" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("game",""))' 2>/dev/null) || return 1
+		[ -n "$source_game" ] || return 1
+		[ "$fence_game" = "$source_game" ] || return 1
+	elif [ -n "$source_game" ]; then
+		# Runtime-bound narration without a fence would play unbounded, so a
+		# stopped or superseded run could still be heard.
+		return 1
 	fi
 	[ -n "$text" ] || return 1
-	if ! _comment_audio_claim_enqueue_key "$text"; then
+	if ! _comment_audio_claim_enqueue_key "$text" "$dedup_scope"; then
 		return 0
 	fi
 
