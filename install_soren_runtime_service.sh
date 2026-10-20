@@ -137,7 +137,14 @@ install_pulse_client_conf() {
 			echo "pulse client.conf backup already exists: $backup" >&2
 			exit 3
 		fi
-		sudo cp -p "$PULSE_CLIENT_CONF_TARGET" "$backup"
+		# A failed backup must abort the change explicitly. Relying on `set -e`
+		# alone is not enough: a swallowed exit status (or a caller running
+		# without `set -e`) would continue to the overwrite with no backup to
+		# restore from (review 5580497362).
+		if ! sudo cp -p "$PULSE_CLIENT_CONF_TARGET" "$backup"; then
+			echo "cannot back up $PULSE_CLIENT_CONF_TARGET; leaving it unchanged" >&2
+			exit 3
+		fi
 		printf 'pulse_client_conf_backup=%s\n' "$backup"
 	fi
 

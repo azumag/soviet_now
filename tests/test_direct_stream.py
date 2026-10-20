@@ -825,6 +825,69 @@ class DirectStreamTests(unittest.TestCase):
             "missing",
         )
 
+    def test_mixed_listing_with_our_pid_hidden_is_unknown(self) -> None:
+        # Review 5580497362: a listing where our own block hides
+        # application.process.id while a foreign recorder publishes PID 9999.
+        # Attributing by "our pid is absent" here would stop a healthy encoder.
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        mixed = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.name = "ffmpeg"\n'
+            'Source Output #9\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "9999"\n'
+        )
+
+        def run(command, *, env=None):
+            return "" if command[1:] == ["info"] else mixed
+
+        # Observed healthy first, then the same mixed listing repeatedly: the
+        # monitor must never reach the strike threshold.
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run
+            ),
+            "unknown",
+        )
+
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        states = ["ok"] + ["unknown"] * 6
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= len(states):
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: states.pop(0),
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(monitor_state["reconnect"])
+        self.assertIsNone(monitor_state["reconnect_reason"])
+        child.send_signal.assert_not_called()
+
     def test_unattributable_probe_never_stops_ffmpeg(self) -> None:
         # End-to-end: with the daemon answering but the pid attribute missing,
         # the monitor must not request a reconnect even after many probes.

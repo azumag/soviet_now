@@ -637,6 +637,66 @@ install_pulse_client_conf
         self.assertLess(gate, source.index(".bak"))
         self.assertLess(gate, source.index("pulse_client_conf=written"))
 
+    def test_client_conf_writer_aborts_unchanged_when_backup_fails(self) -> None:
+        # Review 5580497362: a failing backup must abort the change, and the
+        # abort must be explicit rather than inherited from `set -e`. The
+        # harness deliberately does NOT run under `set -e`, so a writer that
+        # merely relies on it would fall through to the overwrite and fail
+        # this test.
+        text = INSTALLER.read_text(encoding="utf-8")
+        parts = []
+        for marker in (
+            "pulse_client_conf_setting() {",
+            "install_pulse_client_conf() {",
+        ):
+            start = text.index(marker)
+            end = text.index("\n}\n", start) + len("\n}\n")
+            parts.append(text[start:end])
+        script = "\n".join(parts) + """
+set -uo pipefail
+sudo() {
+  if [ "$1" = "-n" ]; then shift; fi
+  if [ "$1" = "cp" ]; then
+    echo "cp: simulated failure" >&2
+    return 1
+  fi
+  "$@"
+}
+PULSE_CLIENT_CONF_TARGET="$TARGET"
+PULSE_CLIENT_CONF_SERVER="$SERVER"
+PULSE_AUDIO_CHANGE_CONFIRMED=1
+EXPECTED_USER="$(id -un)"
+install_pulse_client_conf
+echo "writer_reached_the_end"
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = "autospawn = yes\ndisable-shm = yes\n"
+            target.write_text(original, encoding="utf-8")
+            stub = Path(temp_dir) / "run.sh"
+            stub.write_text(script, encoding="utf-8")
+            env = {
+                **os.environ,
+                "TARGET": str(target),
+                "SERVER": "unix:/run/user/1001/pulse/native",
+            }
+            result = subprocess.run(
+                ["bash", str(stub)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot back up", result.stderr)
+            # The writer must have stopped before writing anything.
+            self.assertNotIn("writer_reached_the_end", result.stdout)
+            self.assertNotIn("pulse_client_conf=written", result.stdout)
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
     def test_client_conf_state_uses_effective_settings(self) -> None:
         source = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("pulse_client_conf_setting() {", source)
