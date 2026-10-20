@@ -48,6 +48,9 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 | 占領記録・保有・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
 | 戦闘結果（勝/敗/未分類）・戦闘開始終了・切り札確定 | policy `stats` / run `battles_*` |
 | 交戦HP | policy `battle` の `enemy_hp` / `ally_hp` と将軍名 |
+| 交戦将軍の最大HP・戦闘・対抗・思考・エッグ種類・卵補正・得意・初登場話数・性格/趣味 | policy `battle.egg_plan` の `enemy_profile` / `ally_profile`（docich #2364） |
+| 切り札の実ID・卵落値・在庫・携行・使用可否 | policy `battle.egg_plan` の `cards` 行 |
+| 卵落の入力値（敵/味最大HP・合計・余り・必要値）と判定・開幕札 | policy `battle.egg_plan` の `verdict` / 数値 / `dropper` |
 | 駐留・行軍中・卵 | policy `garrison` / `sorties` / `egg_uses` |
 | 出撃成立/失敗 | policy `orders` の `launched` / `failed` |
 | 画面・方針・計画段階・保留計画・実入力・観測回数 | bot `screen_kind` / policy `variant` / `active` / run |
@@ -56,6 +59,16 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 
 - `battle` がない時は交戦HPを「戦闘記録なし」とし、HPを推測しない。片側だけの
   読み取りも表示しない。
+- 交戦将軍と切り札は `battle` の中でも戦闘記録が存在する時だけ出し、戦闘終了・
+  相手変更・ゲーム切替では snapshot ごと消える（旧将軍・旧携行・旧計算を残さない）。
+  docich 側の `egg_plan` が無い・型不正なら何も足さない。
+- 最大HPは固定値、現在HPは戦闘パネルの実測で、別の項目として出す。卵落は
+  `卵落 > 最大HP合計 mod 16` の厳密な `>` で、入力値・余り・必要値をそのまま表示し、
+  Soren 側で再計算しない。未知（将軍・最大HP・札ID・卵落値）は `0` で埋めず
+  「不明」「判定不能」とし、`droppable` と「実際に落とした」を混同しない
+  （`dropped_unconfirmed` は選択後のHP低下までの推定）。
+- 切り札は1行1枚・最大4枚。未携行・使用済み・ID不明は使用可にしない。趣味などの
+  長い値は行幅57桁に収まる形で出し、`fit_dashboard_lines` で切り捨てない。
 - 行軍中は policy 自身の判定（`en_route` / `launched_unconfirmed`、busy 400観測以内）
   と同じ条件で行う。行き先未確定は「未確定」と出す。解決済み・tick 不正は出さない。
 - 城名・将軍名・卵・将軍名は画面から読めた名前だけを最大3件・各10文字で出す。

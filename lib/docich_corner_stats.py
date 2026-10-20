@@ -729,6 +729,97 @@ def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
     return rows
 
 
+
+# #2364: docich の ``policy.battle.egg_plan`` は表示と開幕戦術が共有する唯一の
+# 計算結果。ここでは型・範囲・制御文字を検証して投影するだけで、再計算しない。
+# 未知は None のまま返し、呼び出し側が「不明」と表示する (0 で埋めない)。
+_HANJUKU_VERDICTS = frozenset({'droppable', 'not_droppable', 'no_egg', 'used',
+                               'dropped_unconfirmed', 'excluded', 'unknown', 'not_threat'})
+_HANJUKU_EGG_STATES = frozenset({'available', 'none', 'unknown', 'used',
+                                 'dropped_unconfirmed'})
+_HANJUKU_UNAVAILABLE = frozenset({'not_carried', 'used', 'kit_unknown', 'unknown_card'})
+
+
+def _hanjuku_int(value, high):
+    return value if type(value) is int and 0 <= value <= high else None
+
+
+def _hanjuku_profile(value):
+    """将軍9項目 + 最大HPの投影。未収録は全項目 None のまま残す。"""
+    if not isinstance(value, dict):
+        return None
+    has_egg = value.get('has_egg')
+    return {
+        'name': _hanjuku_name(value.get('name'), each=24),
+        'max_hp': _hanjuku_int(value.get('max_hp'), 9999),
+        'current_hp': _hanjuku_int(value.get('current_hp'), 1000000),
+        'combat': _hanjuku_int(value.get('combat'), 999),
+        'counter': _hanjuku_int(value.get('counter'), 100),
+        'thought': _hanjuku_int(value.get('thought'), 9),
+        'egg_type': _hanjuku_text(value.get('egg_type'), 12),
+        'egg_bonus': _hanjuku_text(value.get('egg_bonus'), 8),
+        'aptitude': _hanjuku_text(value.get('aptitude'), 8),
+        'debut': _hanjuku_int(value.get('debut'), 12),
+        'personality': _hanjuku_text(value.get('personality'), 12),
+        'hobby': _hanjuku_text(value.get('hobby'), 24),
+        'has_egg': has_egg if has_egg in (True, False) else None,
+    }
+
+
+def _hanjuku_card_rows(value, limit=4):
+    """切り札の実ID・卵落値・在庫・携行・使用可否を有界に投影する。"""
+    if not isinstance(value, list):
+        return []
+    rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _hanjuku_name(item.get('name'), each=16)
+        if not name:
+            continue
+        unavailable = item.get('unavailable')
+        rows.append({
+            'name': name,
+            'id': _hanjuku_int(item.get('id'), 31),
+            'egg_drop': _hanjuku_int(item.get('egg_drop'), 15),
+            'drops': item.get('drops') if item.get('drops') in (True, False, None) else None,
+            'stock': _hanjuku_int(item.get('stock'), 99),
+            'carried': _hanjuku_int(item.get('carried'), 3),
+            'usable': item.get('usable') is True,
+            'unavailable': unavailable if unavailable in _HANJUKU_UNAVAILABLE else None,
+        })
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _hanjuku_battle_display(policy: Mapping[str, object]):
+    """この戦闘の表示事実。戦闘記録が無ければ None。"""
+    battle = policy.get('battle')
+    if not isinstance(battle, dict):
+        return None
+    plan = battle.get('egg_plan')
+    if not isinstance(plan, dict):
+        return None
+    verdict = plan.get('verdict')
+    egg_state = plan.get('egg_state')
+    return {
+        'enemy': _hanjuku_profile(plan.get('enemy_profile')),
+        'ally': _hanjuku_profile(plan.get('ally_profile')),
+        'cards': _hanjuku_card_rows(plan.get('cards')),
+        'egg': {
+            'verdict': verdict if verdict in _HANJUKU_VERDICTS else 'unknown',
+            'egg_state': egg_state if egg_state in _HANJUKU_EGG_STATES else 'unknown',
+            'enemy_max_hp': _hanjuku_int(plan.get('enemy_max_hp'), 9999),
+            'ally_max_hp': _hanjuku_int(plan.get('ally_max_hp'), 9999),
+            'max_hp_sum': _hanjuku_int(plan.get('max_hp_sum'), 19998),
+            'remainder': _hanjuku_int(plan.get('remainder'), 15),
+            'threshold': _hanjuku_int(plan.get('threshold'), 16),
+            'dropper': _hanjuku_name(plan.get('dropper'), each=16),
+            'dropper_charted': plan.get('dropper_charted') is True,
+        },
+    }
+
 def _hanjuku_gap(runtime, policy, now):
     """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
@@ -901,6 +992,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                             for name, uses in sorted(egg_uses.items(), key=lambda kv: str(kv[0]))
                             if _hanjuku_name(name) and type(uses) is int and 0 <= uses <= 4)
                            if row["general"]][:3],
+                  "battle_display": _hanjuku_battle_display(policy),
                   "enemy": _hanjuku_name(battle.get("enemy")) if battle else None,
                   "ally": _hanjuku_name(battle.get("ally")) if battle else None,
                   "enemy_hp": number(battle.get("enemy_hp")) if battle else None,

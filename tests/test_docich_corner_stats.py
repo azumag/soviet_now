@@ -623,6 +623,91 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual(_hanjuku_clean('\x07\x08\x00only'), 'only')
         self.assertEqual(_hanjuku_names(['\x1b[2J', 'plain', 'plain', '\x07b']), ['plain', 'b'])
 
+    def _battle_plan(self, **extra):
+        plan = {
+            'verdict': 'droppable', 'egg_state': 'available',
+            'enemy_max_hp': 26, 'ally_max_hp': 24, 'max_hp_sum': 50,
+            'remainder': 2, 'threshold': 3,
+            'dropper': 'ブラッキー', 'dropper_charted': True,
+            'enemy_profile': {
+                'name': 'キッシュ', 'max_hp': 26, 'current_hp': 26, 'combat': 5,
+                'counter': 50, 'thought': 2, 'egg_type': 'スーパー', 'egg_bonus': '0',
+                'aptitude': '洞窟', 'debut': 1, 'personality': '身勝手',
+                'hobby': 'カルトクイズ', 'has_egg': True},
+            'ally_profile': {
+                'name': 'ココット', 'max_hp': 24, 'current_hp': 24, 'combat': 8,
+                'counter': 75, 'thought': 3, 'egg_type': 'カラフル', 'egg_bonus': '3',
+                'aptitude': '平地', 'debut': 1, 'personality': '泣き虫',
+                'hobby': 'じょうば', 'has_egg': False},
+            'cards': [
+                {'name': 'ブラッキー', 'id': 2, 'egg_drop': 3, 'drops': True,
+                 'stock': 1, 'carried': 1, 'usable': True, 'unavailable': None},
+                {'name': 'ダイチスイム', 'id': 1, 'egg_drop': 1, 'drops': False,
+                 'stock': 2, 'carried': 1, 'usable': True, 'unavailable': None},
+                {'name': 'イッテツーン', 'id': 0, 'egg_drop': 8, 'drops': True,
+                 'stock': 1, 'carried': 0, 'usable': False, 'unavailable': 'not_carried'},
+            ],
+        }
+        plan.update(extra)
+        battle = {'enemy': 'キッシュ', 'ally': 'ココット', 'enemy_hp': 26, 'ally_hp': 24,
+                  'egg_plan': plan}
+        self._policy(battle=battle)
+        return self.snapshot()['hanjuku']
+
+    def test_battle_display_renders_the_shared_egg_plan_without_recomputing(self):
+        value = self._battle_plan()
+        display = value['battle_display']
+        self.assertEqual(display['egg']['verdict'], 'droppable')
+        self.assertEqual((display['egg']['max_hp_sum'], display['egg']['remainder'],
+                          display['egg']['threshold']), (50, 2, 3))
+        self.assertEqual(display['enemy']['max_hp'], 26)
+        self.assertEqual(display['ally']['max_hp'], 24)
+        text = '\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value)))
+        self.assertIn('敵 キッシュ 最大26 現在26 戦5 対50% 思2', text)
+        self.assertIn('卵スーパー 補0 得洞窟 初1話 身勝手/カルトクイズ', text)
+        self.assertIn('味 ココット 最大24 現在24 戦8 対75% 思3', text)
+        self.assertIn('卵カラフル 補3 得平地 初1話 泣き虫/じょうば', text)
+        self.assertIn('卵落: 敵26+味24=50 余2 必要3 → 計算上落とせる', text)
+        self.assertIn('札 ブラッキー ID2 卵3○ 携1 在1 使用可', text)
+        self.assertIn('札 ダイチスイム ID1 卵1× 携1 在2 使用可', text)
+        self.assertIn('札 イッテツーン ID0 卵8○ 未携行 在1 不可', text)
+        self.assertIn('開幕札: ブラッキー（チャート指定）', text)
+        # 幅57桁を超える行を作らない: 趣味まで truncate されずに読める。
+        for line in sd.fit_dashboard_lines(sd.render_hanjuku_status(value)):
+            self.assertLessEqual(sd.ansi_display_width(line), sd.W, line)
+
+    def test_battle_display_unknowns_are_not_zero_filled(self):
+        value = self._battle_plan(verdict='unknown', enemy_max_hp=None, ally_max_hp=None,
+                                  max_hp_sum=None, remainder=None, threshold=None,
+                                  dropper=None,
+                                  enemy_profile={'name': '\x1b[31m未知将軍\n'},
+                                  cards=[{'name': 'きらきら', 'id': None, 'egg_drop': None,
+                                          'drops': None, 'stock': None, 'carried': 0,
+                                          'usable': False, 'unavailable': 'unknown_card'}])
+        display = value['battle_display']
+        self.assertIsNone(display['egg']['max_hp_sum'])
+        self.assertIsNone(display['egg']['remainder'])
+        self.assertIsNone(display['cards'][0]['id'])
+        text = '\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value)))
+        self.assertIn('卵落: 判定不能', text)
+        self.assertNotIn('敵None', text)
+        self.assertNotIn('0+0', text)
+        self.assertIn('札 きらきら 未携行 不可', text)
+        for fragment in ('\x1b', '[31m'):
+            self.assertNotIn(fragment, text)
+
+    def test_battle_display_is_absent_without_a_live_battle(self):
+        result = self.snapshot()['hanjuku']
+        self.assertIsNone(result['battle_display'])
+        self.assertNotIn('敵 キッシュ', '\n'.join(sd.render_hanjuku_status(result)))
+
+    def test_battle_display_bounds_the_card_rows(self):
+        cards = [{'name': f'札{i}', 'id': i, 'egg_drop': 1, 'drops': False,
+                  'stock': 1, 'carried': 1, 'usable': True, 'unavailable': None}
+                 for i in range(10)]
+        value = self._battle_plan(cards=cards)
+        self.assertEqual(len(value['battle_display']['cards']), 4)
+
     def _policy(self, **extra):
         data = json.loads((self.runtime / 'hanjuku_bot.json').read_text())
         data['policy'].update(extra)

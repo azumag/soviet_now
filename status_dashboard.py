@@ -3351,6 +3351,123 @@ def _hanjuku_join(names, fallback="未確認", limit=3):
     return "/".join(items) if items else fallback
 
 
+def _battle_text(value, fallback='不明', limit=24):
+    if not isinstance(value, str):
+        return fallback
+    text = _CORNER_CONTROL_RE.sub('', value)
+    text = ''.join(ch for ch in text if ch.isprintable()).strip()
+    return text[:limit] if text else fallback
+
+
+def _battle_general(value, prefix):
+    """将軍1人を2行へ。9項目を落とさず、幅57桁に収まる範囲で畳む。"""
+    if not isinstance(value, dict):
+        return []
+    name = _battle_text(value.get('name'), '不明', 24)
+    max_hp, current_hp = value.get('max_hp'), value.get('current_hp')
+    hp = ''
+    if max_hp is not None:
+        hp = f"最大{max_hp}"
+        if current_hp is not None:
+            hp += f" 現在{current_hp}"
+    tokens = [hp] if hp else []
+    combat, counter, thought = value.get('combat'), value.get('counter'), value.get('thought')
+    if combat is not None:
+        tokens.append(f"戦{combat}")
+    if counter is not None:
+        tokens.append(f"対{counter}%")
+    if thought is not None:
+        tokens.append(f"思{thought}")
+    lines = [f"{prefix} {name} " + ' '.join(tokens)] if tokens else [f"{prefix} {name}"]
+    second = []
+    egg_type, egg_bonus = value.get('egg_type'), value.get('egg_bonus')
+    if egg_type is not None:
+        second.append(f"卵{egg_type}")
+    if egg_bonus is not None:
+        second.append(f"補{egg_bonus}")
+    aptitude, debut = value.get('aptitude'), value.get('debut')
+    if aptitude is not None:
+        second.append(f"得{aptitude}")
+    if debut is not None:
+        second.append(f"初{debut}話")
+    personality, hobby = value.get('personality'), value.get('hobby')
+    if personality is not None or hobby is not None:
+        second.append(f"{_battle_text(personality, '不明', 12)}/{_battle_text(hobby, '不明', 24)}")
+    if second:
+        lines.append('  ' + ' '.join(second))
+    return lines
+
+
+_HANJUKU_VERDICT_LABELS = {
+    'droppable': '計算上落とせる',
+    'not_droppable': '不成立',
+    'no_egg': '敵に卵なし',
+    'used': '敵卵は使用済み',
+    'dropped_unconfirmed': '落下は未確認',
+    'excluded': '対象外（ボス）',
+    'not_threat': '卵の脅威なし',
+    'unknown': '判定不能',
+}
+
+
+def render_hanjuku_battle(value):
+    """#2364: 交戦中の将軍・切り札・卵落判定。同じ docich の plan を表示するだけ。"""
+    if not isinstance(value, dict):
+        return []
+    enemy, ally = value.get('enemy'), value.get('ally')
+    if not isinstance(enemy, dict) and not isinstance(ally, dict):
+        return []
+    # 交戦HP 行が両軍名を出すので、ここでは最大HPと9項目を足す (重複させない)。
+    lines = _battle_general(enemy, '敵')
+    lines += _battle_general(ally, '味')
+    egg = value.get('egg')
+    if isinstance(egg, dict):
+        verdict = egg.get('verdict')
+        label_text = _HANJUKU_VERDICT_LABELS.get(verdict, '判定不能')
+        enemy_max, ally_max = egg.get('enemy_max_hp'), egg.get('ally_max_hp')
+        total, remainder = egg.get('max_hp_sum'), egg.get('remainder')
+        need = egg.get('threshold')
+        if None not in (enemy_max, ally_max, total, remainder) and type(need) is int:
+            lines.append(
+                f"卵落: 敵{enemy_max}+味{ally_max}={total} 余{remainder} 必要{need} → {label_text}")
+        else:
+            lines.append(f"卵落: {label_text}")
+        for card in value.get('cards') or []:
+            if not isinstance(card, dict):
+                continue
+            name = _battle_text(card.get('name'), '', 16)
+            if not name:
+                continue
+            parts = [f"札 {name}"]
+            if card.get('id') is not None:
+                parts.append(f"ID{card['id']}")
+            if card.get('egg_drop') is not None:
+                value_text = f"卵{card['egg_drop']}"
+                if card.get('drops') is True:
+                    value_text += '○'
+                elif card.get('drops') is False:
+                    value_text += '×'
+                parts.append(value_text)
+            carried = card.get('carried')
+            parts.append(f"携{carried}" if carried else '未携行')
+            if card.get('stock') is not None:
+                parts.append(f"在{card['stock']}")
+            if card.get('usable') is True:
+                parts.append('使用可')
+            elif card.get('unavailable') == 'used':
+                parts.append('使用済み')
+            elif card.get('unavailable') == 'kit_unknown':
+                parts.append('携行不明')
+            else:
+                parts.append('不可')
+            lines.append('  ' + ' '.join(parts))
+        dropper = _battle_text(egg.get('dropper'), '', 16)
+        if dropper:
+            charted = '（チャート指定）' if egg.get('dropper_charted') is True else ''
+            lines.append(f"  開幕札: {dropper}{charted}")
+    return lines
+
+
 def render_hanjuku_status(value):
     value = value if isinstance(value, dict) else {}
     if value.get("availability") != "fresh":
@@ -3525,6 +3642,7 @@ def render_hanjuku_status(value):
         lines.append(f"  交戦HP: 敵 {enemy_hp}（{enemy_name}） / 我 {ally_hp}（{ally_name}）")
     else:
         lines.append("  交戦HP: 戦闘記録なし")
+    lines += render_hanjuku_battle(value.get("battle_display"))
     garrison = [g for g in row("garrison") if isinstance(g, dict)]
     if garrison:
         lines.append("  駐留: " + " / ".join(
