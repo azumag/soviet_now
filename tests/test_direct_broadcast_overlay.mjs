@@ -1041,7 +1041,25 @@ w(rt / 'hanjuku_bot.json', dict(decision_trace=ident, screen_kind='battle_menu',
     orders={'A1': 'launched', 'A2': 'failed'},
     garrison={'アルマムーン': ['ゼウス', 'ユイートル']},
     sorties={'J3': dict(general='どうし', target='ナキューメラ', status='en_route', tick=5290)},
-    battle={'enemy': 'dragon', 'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44})))
+    battle={'enemy': 'キッシュ', 'ally': 'ココット', 'enemy_hp': 20, 'ally_hp': 24,
+            'hp_observed_at': time.time(), 'egg_plan': dict(
+        enemy='キッシュ', ally='ココット',
+        enemy_profile=dict(name='キッシュ', max_hp=26, combat=5, counter=50, thought=2,
+                           egg_type='スーパー', egg_bonus='0', aptitude='洞窟', debut=1,
+                           personality='身勝手', hobby='カルトクイズ', has_egg=True),
+        ally_profile=dict(name='ココット', max_hp=24, combat=8, counter=75, thought=3,
+                          egg_type='カラフル', egg_bonus='3', aptitude='平地', debut=1,
+                          personality='泣き虫', hobby='じょうば', has_egg=True),
+        enemy_max_hp=26, ally_max_hp=24, max_hp_sum=50, remainder=2, threshold=3,
+        has_egg=True, threat=True, egg_state='available', excluded=None,
+        verdict='droppable', dropper='ブラッキー', dropper_charted=False,
+        cards=[dict(name='ダイチスイム', id=1, egg_drop=1, drops=False, stock=2,
+                    carried=2, available=2, usable=True, unavailable=None),
+               dict(name='ブラッキー', id=2, egg_drop=3, drops=True, stock=1,
+                    carried=1, available=1, usable=True, unavailable=None),
+               dict(name='イッテツーン', id=0, egg_drop=8, drops=True, stock=1,
+                    carried=0, available=0, usable=False, unavailable='not_carried')],
+        cards_total=3)})))
 print("\\n".join(sd.render_docich_corner_stats(load_active_corner(root))))
 `;
   const out = spawnSync('python3', ['-c', script], { encoding: 'utf8' });
@@ -1169,7 +1187,7 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4 / 1');
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
-  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
+  assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 キッシュ 20 / ココット 24');
   assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
   assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
   assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
@@ -1179,6 +1197,45 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /2城/);
   assert.equal(ui.feedG.querySelector('.hanjuku-plan'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-inputs'), null);
+});
+
+test('Hanjuku right status renders both generals, held cards and the shared egg-drop verdict', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: renderHanjukuCardText() }));
+  // The fake DOM's querySelectorAll pops a stack, so match by content rather
+  // than relying on document order.
+  const general = [...ui.feedG.querySelectorAll('.hanjuku-general')].map(e => e.textContent);
+  assert.equal(general.length, 2);
+  assert.match(general.find(line => line.startsWith('敵将軍:')),
+    /^敵将軍: キッシュ .*最大HP 26 .*戦闘 5 .*対抗 50%（召喚時） .*思考パターン 2 .*エッグ スーパー .*卵補正 0 .*得意 洞窟 .*初登場 1話 .*性格 身勝手 .*趣味 カルトクイズ$/);
+  assert.match(general.find(line => line.startsWith('味方将軍:')),
+    /^味方将軍: ココット .*最大HP 24 .*卵補正 3 .*得意 平地 .*趣味 じょうば$/);
+  assert.match(ui.feedG.querySelector('.hanjuku-eggpredict').textContent,
+    /^卵落: 敵最大HP 26 \+ 味方最大HP 24 = 50 \/ 余り 2 \/ 条件 卵落>2 \/ 予測 成立（ブラッキー 卵落3） \/ 敵卵 保有（静的能力） \/ 実際の落下 未確認$/);
+  const cards = [...ui.feedG.querySelectorAll('.hanjuku-cardline')].map(e => e.textContent);
+  assert.equal(cards.length, 3);
+  assert.match(cards.find(line => line.includes('ダイチスイム')),
+    /^切り札: ダイチスイム \/ ID 1 \/ 卵落 1 .*予測 不成立（1>2）$/);
+  assert.match(cards.find(line => line.includes('ブラッキー')),
+    /^切り札: ブラッキー \/ ID 2 \/ 卵落 3 .*使用可 .*予測 成立（3>2）$/);
+  assert.ok(cards.some(line => line.includes('未携行')));
+  // 観測が古くなると将軍・札・計算も同じカードから消える。
+  await ui.tick(31);
+  assert.equal(ui.feedG.querySelector('.hanjuku-general'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-eggpredict'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-cardline'), null);
+});
+
+test('Hanjuku right status drops the detailed block when the HP pair changes', async () => {
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: renderHanjukuCardText() }));
+  assert.ok(ui.feedG.querySelector('.hanjuku-general'));
+  const switched = renderHanjukuCardText().replace('交戦HP: 敵 20（キッシュ） / 我 24（ココット）',
+    '交戦HP: 敵 30（ガルバンゾー） / 我 24（ココット）');
+  ui.setState(hanjukuFixture({ text: switched }));
+  await ui.tick(1);
+  // 交戦HP の将軍と詳細行の将軍が一致しない場合は古い計算を出さない。
+  assert.equal(ui.feedG.querySelector('.hanjuku-general'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-eggpredict'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-cardline'), null);
 });
 
 

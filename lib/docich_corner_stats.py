@@ -653,6 +653,123 @@ def _hanjuku_text(value, limit=80):
     return text[:max(1, int(limit))]
 
 
+def _hanjuku_bounded_int(value, lo=0, hi=1000000):
+    """A bounded int from cached memory; bool/str/float are not ints here."""
+    return value if type(value) is int and lo <= value <= hi else None
+
+
+def _hanjuku_profile(value):
+    """One general's static profile, bounded field by field (#2364).
+
+    The fields come from the bot's persisted ``egg_plan`` (built from docich's
+    static tables). Nothing here recomputes a stat, so the card cannot drift
+    from the decision. A missing field stays None and is rendered as 不明.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    name = _hanjuku_name(value.get('name'), each=24)
+    if name is None:
+        return None
+    has_egg = value.get('has_egg')
+    return {
+        'name': name,
+        'max_hp': _hanjuku_bounded_int(value.get('max_hp'), 1, 9999),
+        'combat': _hanjuku_bounded_int(value.get('combat'), 1, 15),
+        'counter': _hanjuku_bounded_int(value.get('counter'), 0, 100),
+        'thought': _hanjuku_bounded_int(value.get('thought'), 0, 9),
+        'egg_type': _hanjuku_text(value.get('egg_type'), 24),
+        'egg_bonus': _hanjuku_text(value.get('egg_bonus'), 8),
+        'aptitude': _hanjuku_text(value.get('aptitude'), 12),
+        'debut': _hanjuku_bounded_int(value.get('debut'), 0, 99),
+        'personality': _hanjuku_text(value.get('personality'), 24),
+        'hobby': _hanjuku_text(value.get('hobby'), 24),
+        'has_egg': has_egg if isinstance(has_egg, bool) else None,
+    }
+
+
+def _hanjuku_duel(battle):
+    """This battle's right-status projection: generals, cards, 卵落 (#2364).
+
+    The plan is accepted only while it belongs to the currently displayed
+    enemy/ally pair. A switch, a new battle or a stale record therefore drops
+    the old generals and cards instead of showing them beside the new HP line.
+    All nested values are bounded and allowlisted; the renderer never trusts
+    cached memory.
+    """
+    if not isinstance(battle, Mapping):
+        return None
+    plan = battle.get('egg_plan')
+    if not isinstance(plan, Mapping):
+        return None
+    enemy = _hanjuku_name(battle.get('enemy'), each=24)
+    ally = _hanjuku_name(battle.get('ally'), each=24)
+    if enemy is None or ally is None:
+        return None
+    if (_hanjuku_name(plan.get('enemy'), each=24) != enemy
+            or _hanjuku_name(plan.get('ally'), each=24) != ally):
+        return None
+    verdict = plan.get('verdict')
+    verdict = verdict if verdict in {'excluded', 'no_egg', 'unknown', 'used', 'dropped',
+                                     'not_threat', 'not_droppable', 'droppable'} else 'unknown'
+    egg_state = plan.get('egg_state')
+    egg_state = egg_state if egg_state in {'available', 'none', 'unknown', 'used',
+                                           'dropped_unconfirmed'} else 'unknown'
+    excluded = plan.get('excluded')
+    excluded = excluded if excluded in {'boss', 'enemy_unknown', 'ally_unknown'} else None
+    cards = []
+    for row in plan.get('cards') or []:
+        if not isinstance(row, Mapping):
+            continue
+        name = _hanjuku_name(row.get('name'), each=24)
+        if name is None or any(card['name'] == name for card in cards):
+            continue
+        drops, usable = row.get('drops'), row.get('usable')
+        unavailable = row.get('unavailable')
+        if unavailable not in {'not_carried', 'used', 'kit_unknown'}:
+            unavailable = None
+        cards.append({
+            'name': name,
+            'id': _hanjuku_bounded_int(row.get('id'), 0, 99),
+            'egg_drop': _hanjuku_bounded_int(row.get('egg_drop'), 0, 99),
+            'drops': drops if isinstance(drops, bool) else None,
+            'stock': _hanjuku_bounded_int(row.get('stock'), 0, 99),
+            'carried': _hanjuku_bounded_int(row.get('carried'), 0, 99),
+            'available': _hanjuku_bounded_int(row.get('available'), 0, 99),
+            'usable': usable if isinstance(usable, bool) else None,
+            'unavailable': unavailable,
+        })
+        if len(cards) >= 16:
+            break
+    total_cards = len(plan.get('cards') or []) if isinstance(plan.get('cards'), list) else 0
+    # A cached profile must belong to the same general as the HP row.
+    enemy_profile = _hanjuku_profile(plan.get('enemy_profile'))
+    ally_profile = _hanjuku_profile(plan.get('ally_profile'))
+    if not enemy_profile or enemy_profile.get('name') != enemy:
+        enemy_profile = None
+    if not ally_profile or ally_profile.get('name') != ally:
+        ally_profile = None
+    return {
+        'enemy': enemy, 'ally': ally,
+        'enemy_profile': enemy_profile, 'ally_profile': ally_profile,
+        'enemy_max_hp': _hanjuku_bounded_int(plan.get('enemy_max_hp'), 1, 9999),
+        'ally_max_hp': _hanjuku_bounded_int(plan.get('ally_max_hp'), 1, 9999),
+        'max_hp_sum': _hanjuku_bounded_int(plan.get('max_hp_sum'), 2, 19998),
+        'remainder': _hanjuku_bounded_int(plan.get('remainder'), 0, 15),
+        'threshold': _hanjuku_bounded_int(plan.get('threshold'), 1, 16),
+        'has_egg': plan.get('has_egg') if isinstance(plan.get('has_egg'), bool) else None,
+        'threat': plan.get('threat') if isinstance(plan.get('threat'), bool) else None,
+        'egg_state': egg_state, 'excluded': excluded, 'verdict': verdict,
+        'dropper': _hanjuku_name(plan.get('dropper'), each=24),
+        'dropper_charted': plan.get('dropper_charted') is True,
+        # Scoped docich side (#2364): a chart-owned dropper is left to the
+        # chart, so the opening tactic is withheld even though the arithmetic
+        # succeeds. Keep the reason visible instead of claiming "no dropper".
+        'egg_drop_free': (plan.get('egg_drop_free')
+                          if isinstance(plan.get('egg_drop_free'), bool) else None),
+        'cards': cards, 'cards_total': total_cards,
+    }
+
+
 def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
     """castle -> generals actually read from a castle panel, bounded."""
     raw = policy.get("garrison")
@@ -863,6 +980,12 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         if pending is None and isinstance(policy.get("active"), str) and policy["active"]:
             pending = "sortie"
         battle = policy.get("battle") if isinstance(policy.get("battle"), dict) else None
+        # The new general/card/卵落 block is a live battle observation, so it
+        # follows the same 10-second battle-panel freshness as the HP row.
+        battle_stamp = battle.get("hp_observed_at") if battle else None
+        battle_recent = (type(battle_stamp) in (int, float) and math.isfinite(battle_stamp)
+                         and 0 <= now - battle_stamp <= 10)
+        duel = _hanjuku_duel(battle) if battle_recent else None
         tick = policy.get("tick")
         orders = policy.get("orders") if isinstance(policy.get("orders"), dict) else None
         egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
@@ -905,6 +1028,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "ally": _hanjuku_name(battle.get("ally")) if battle else None,
                   "enemy_hp": number(battle.get("enemy_hp")) if battle else None,
                   "ally_hp": number(battle.get("ally_hp")) if battle else None,
+                  "duel": duel,
                   "battles_started": number(run.get("battles_started")),
                   "battles_finished": number(run.get("battles_finished")),
                   "observations": number(run.get("observations")),

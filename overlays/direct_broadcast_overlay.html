@@ -945,6 +945,17 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-detail-row + .hanjuku-detail-row { margin-top: 5px; }
 .hanjuku-details { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; color: #edf5fb; font-size: 18px; line-height: 1.35; }
 .hanjuku-group { min-width: 0; }
+/* #2364: dense live-battle reference text. It wraps instead of truncating so
+   long 趣味/思考/得意 strings and seasonal 卵補正 stay readable. */
+.hanjuku-general, .hanjuku-eggpredict, .hanjuku-cardline {
+  font-size: 11px; line-height: 1.42; font-weight: 500; overflow-wrap: anywhere;
+}
+.hanjuku-eggpredict { color: #ffe6a2; }
+.hanjuku-cardline { color: #bae6fd; }
+/* Dense battle reference rows: keep the card inside the 632px sidebar even
+   with two generals and the whole carried kit. */
+.hanjuku-duel-row { padding: 2px 7px; }
+.hanjuku-duel-row + .hanjuku-duel-row { margin-top: 2px; }
 .hanjuku-group-title { margin-bottom: 4px; color: #bdcdd9; font-size: 14px; font-weight: 600; }
 .hanjuku-detail-row { display: block; margin-top: 0; }
 .hanjuku-detail-label { margin-bottom: 3px; color: #bdcdd9; font-size: 14px; }
@@ -1739,6 +1750,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const marching = pick(/^行軍中: (.{1,120})$/);
     const intent = pick(/^出撃意図: (.{1,220})$/);
     const eggs = pick(/^卵: (.{1,160})$/);
+    const enemyGeneral = pick(/^敵将軍: (.{1,700})$/);
+    const allyGeneral = pick(/^味方将軍: (.{1,700})$/);
+    const eggPredict = pick(/^卵落: (.{1,700})$/);
+    const cardStock = pick(/^切り札在庫: (.{1,200})$/);
+    const cards = lines.filter(line => line.startsWith('切り札: '))
+      .map(line => line.slice('切り札: '.length)).slice(0, 16);
+    const generalName = line => line ? line.split(' / ')[0].trim() : null;
     const orders = pick(/^出撃: 成立 (\d+) \/ 失敗 (\d+)$/);
     const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
     const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
@@ -1772,7 +1790,16 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
          cards:timedRows('余白切り札: ')[0] || null,
          decision:timedRows('余白戦闘判断: ')[0] || null,
          egg:timedRows('余白卵対策: ')[0] || null} : null;
-    return {gap, fresh, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
+    const enemyName = fresh ? (duel?.[2] || null) : null;
+    const allyName = fresh ? (duel?.[4] || null) : null;
+    // The detailed block belongs to the pair on the same 交戦HP line. A switch
+    // or a ended battle drops it even if an older line survived somewhere.
+    const duelView = (fresh && enemyName && allyName && enemyGeneral && allyGeneral && eggPredict
+      && generalName(enemyGeneral[1]) === enemyName
+      && generalName(allyGeneral[1]) === allyName)
+      ? {enemy: enemyGeneral[1], ally: allyGeneral[1], egg: eggPredict[1],
+         cards, note: cardStock?.[1] || null} : null;
+    return {gap, fresh, duel:duelView, chapter:fresh && chapter >= 1 && chapter <= 12 ? chapter : null,
       gold:fresh ? number(values?.[2]) : null,
       year:fresh && number(calendar?.[1]) >= 1 && number(calendar?.[1]) <= 9999 ? number(calendar[1]) : null,
       month:fresh && number(calendar?.[2]) >= 1 && number(calendar?.[2]) <= 12 ? number(calendar[2]) : null,
@@ -1793,8 +1820,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       battlesFinished:fresh ? number(battleFlow?.[2]) : null,
       cardsConfirmed:fresh ? number(battleFlow?.[3]) : null,
       launched:fresh ? number(orders?.[1]) : null, failed:fresh ? number(orders?.[2]) : null,
-      enemyHp:fresh ? number(duel?.[1]) : null, enemy:fresh ? (duel?.[2] || null) : null,
-      allyHp:fresh ? number(duel?.[3]) : null, ally:fresh ? (duel?.[4] || null) : null,
+      enemyHp:fresh ? number(duel?.[1]) : null, enemy:enemyName,
+      allyHp:fresh ? number(duel?.[3]) : null, ally:allyName,
       plan:fresh && plan?.[1] !== '不明' ? plan?.[1] : null,
       pending:fresh ? ({monthly:'月次処理', recall:'帰還', repair:'卵修理', sortie:'出撃'}[pending?.[1]] || null) : null,
       wins:fresh ? number(battle?.[1]) : null, losses:fresh ? number(battle?.[2]) : null,
@@ -1847,6 +1874,22 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       row.appendChild(node(cls, text));
       section.appendChild(row);
     };
+    if (value.duel) {
+      // #2364: both generals, the observed card stock and the shared 卵落
+      // prediction. These are live-battle observations, so they render only
+      // with a fresh 交戦HP pair and disappear with it on switch/end.
+      const section = group('交戦中の将軍・切り札（実測分）・卵落');
+      const line = (cls, text) => {
+        const row = node('hanjuku-detail-row hanjuku-duel-row');
+        row.appendChild(node(cls, text));
+        section.appendChild(row);
+      };
+      line('hanjuku-general', `敵将軍: ${value.duel.enemy}`);
+      line('hanjuku-general', `味方将軍: ${value.duel.ally}`);
+      line('hanjuku-eggpredict', `卵落: ${value.duel.egg}`);
+      for (const card of value.duel.cards) line('hanjuku-cardline', `切り札: ${card}`);
+      if (value.duel.note) line('hanjuku-cardline', value.duel.note);
+    }
     if (!value.gap && value.holds) {
       const territory = group('占領した拠点（累計記録）');
       territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));

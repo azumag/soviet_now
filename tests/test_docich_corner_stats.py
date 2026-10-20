@@ -629,6 +629,143 @@ class HanjukuStatusTest(unittest.TestCase):
         _write_json(self.runtime / 'hanjuku_bot.json', data)
         return data
 
+    def test_right_status_shows_generals_cards_and_shared_egg_drop_arithmetic(self):
+        import time
+        now = time.time()
+        plan = dict(
+            enemy='キッシュ', ally='ココット',
+            enemy_profile=dict(name='キッシュ', max_hp=26, combat=5, counter=50,
+                               thought=2, egg_type='スーパー', egg_bonus='0',
+                               aptitude='洞窟', debut=1, personality='身勝手',
+                               hobby='カルトクイズ', has_egg=True),
+            ally_profile=dict(name='ココット', max_hp=24, combat=8, counter=75,
+                              thought=3, egg_type='カラフル', egg_bonus='3',
+                              aptitude='平地', debut=1, personality='泣き虫',
+                              hobby='じょうば', has_egg=True),
+            enemy_max_hp=26, ally_max_hp=24, max_hp_sum=50, remainder=2, threshold=3,
+            has_egg=True, threat=True, egg_state='available', excluded=None,
+            verdict='droppable', dropper='ブラッキー', dropper_charted=False,
+            cards=[
+                dict(name='ダイチスイム', id=1, egg_drop=1, drops=False, stock=2,
+                     carried=2, available=2, usable=True, unavailable=None),
+                dict(name='ブラッキー', id=2, egg_drop=3, drops=True, stock=1,
+                     carried=1, available=1, usable=True, unavailable=None),
+                dict(name='イッテツーン', id=0, egg_drop=8, drops=True, stock=1,
+                     carried=0, available=0, usable=False, unavailable='not_carried'),
+            ], cards_total=3)
+        self._policy(battle=dict(enemy='キッシュ', ally='ココット', enemy_hp=20,
+                                 ally_hp=24, hp_observed_at=now - 1, egg_plan=plan))
+        value = self.snapshot()['hanjuku']
+        duel = value['duel']
+        self.assertEqual((duel['enemy'], duel['ally']), ('キッシュ', 'ココット'))
+        self.assertEqual((duel['max_hp_sum'], duel['remainder']), (50, 2))
+        self.assertEqual([card['name'] for card in duel['cards']],
+                         ['ダイチスイム', 'ブラッキー', 'イッテツーン'])
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertIn('敵将軍: キッシュ / 最大HP 26 / 戦闘 5 / 対抗 50%（召喚時）'
+                      ' / 思考パターン 2 / エッグ スーパー / 卵補正 0 / 得意 洞窟'
+                      ' / 初登場 1話 / 性格 身勝手 / 趣味 カルトクイズ', text)
+        self.assertIn('味方将軍: ココット / 最大HP 24 / 戦闘 8 / 対抗 75%（召喚時）'
+                      ' / 思考パターン 3 / エッグ カラフル / 卵補正 3 / 得意 平地'
+                      ' / 初登場 1話 / 性格 泣き虫 / 趣味 じょうば', text)
+        self.assertIn('卵落: 敵最大HP 26 + 味方最大HP 24 = 50 / 余り 2 / 条件 卵落>2'
+                      ' / 予測 成立（ブラッキー 卵落3） / 敵卵 保有（静的能力）'
+                      ' / 実際の落下 未確認', text)
+        self.assertIn('切り札: ブラッキー / ID 2 / 卵落 3 / 在庫 1 / 携行 1'
+                      ' / 使用可 / 予測 成立（3>2）', text)
+        self.assertIn('切り札: ダイチスイム / ID 1 / 卵落 1 / 在庫 2 / 携行 2'
+                      ' / 使用可（残2） / 予測 不成立（1>2）', text)
+        self.assertIn('切り札: イッテツーン / ID 0 / 卵落 8 / 在庫 1 / 携行 0'
+                      ' / 使用不可（未携行） / 予測 成立（8>2）', text)
+
+    def test_right_status_drops_old_generals_cards_and_plan_on_change_or_stale(self):
+        import time
+        now = time.time()
+        plan = dict(enemy='キッシュ', ally='ココット', enemy_max_hp=26,
+                    ally_max_hp=24, max_hp_sum=50, remainder=2, egg_state='available',
+                    verdict='not_droppable', cards=[dict(name='ブラッキー', id=2,
+                    egg_drop=3, drops=True, stock=1, carried=1, available=1,
+                    usable=True, unavailable=None)])
+        battle = dict(enemy='キッシュ', ally='ココット', enemy_hp=20, ally_hp=24,
+                      hp_observed_at=now - 1, egg_plan=plan)
+        self._policy(battle=battle)
+        self.assertIsNotNone(self.snapshot()['hanjuku']['duel'])
+        # 相手変更: plan が旧将軍のままなら新しい戦闘の行に混ぜない。
+        self._policy(battle=dict(battle, enemy='ガルバンゾー'))
+        value = self.snapshot()['hanjuku']
+        self.assertIsNone(value['duel'])
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertNotIn('敵将軍:', text)
+        self.assertNotIn('切り札:', text)
+        # 観測が古い: 10秒の戦闘パネル境界を超えたら将軍・札・計算を出さない。
+        self._policy(battle=dict(battle, hp_observed_at=now - 11))
+        self.assertIsNone(self.snapshot()['hanjuku']['duel'])
+
+    def test_right_status_reports_a_chart_owned_dropper_as_withheld_not_absent(self):
+        import time
+        now = time.time()
+        plan = dict(enemy='ガルバンゾー', ally='どうし', enemy_max_hp=30,
+                    ally_max_hp=20, max_hp_sum=50, remainder=2, threshold=3,
+                    has_egg=True, threat=True, egg_state='available', excluded=None,
+                    verdict='not_droppable', dropper=None, egg_drop_free=False,
+                    cards=[dict(name='フットバース', id=3, egg_drop=5, drops=True,
+                                stock=1, carried=1, available=1, usable=True,
+                                unavailable=None)])
+        self._policy(battle=dict(enemy='ガルバンゾー', ally='どうし', enemy_hp=30,
+                                 ally_hp=20, hp_observed_at=now - 1, egg_plan=plan))
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('予測 保留（チャート指定札のため開幕は使わない）', text)
+        self.assertNotIn('携行札に卵落札なし', text)
+        self.assertRegex(text, r'切り札: フットバース / ID 3 / 卵落 5 .*予測 成立（5>2）')
+
+    def test_right_status_never_fills_unknown_max_hp_or_card_values(self):
+        import time
+        now = time.time()
+        plan = dict(enemy='未知将軍', ally='ココット', enemy_max_hp=None,
+                    ally_max_hp=24, max_hp_sum=None, remainder=None, threshold=None,
+                    excluded='enemy_unknown', egg_state='unknown', verdict='unknown',
+                    enemy_profile=None, ally_profile=None,
+                    cards=[dict(name='きらきら', id=None, egg_drop=None, drops=None,
+                                stock=1, carried=0, available=0, usable=False,
+                                unavailable='not_carried')])
+        self._policy(battle=dict(enemy='未知将軍', ally='ココット', enemy_hp=20,
+                                 ally_hp=24, hp_observed_at=now - 1, egg_plan=plan))
+        value = self.snapshot()['hanjuku']
+        self.assertEqual(value['duel']['max_hp_sum'], None)
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertIn('敵将軍: 判定不能（将軍または最大HP不明）', text)
+        self.assertIn('卵落: 判定不能（敵将軍の最大HP不明）', text)
+        self.assertIn('切り札: きらきら / ID 不明 / 卵落 不明 / 在庫 1 / 携行 0'
+                      ' / 使用不可（未携行） / 予測 判定不能', text)
+        self.assertNotIn('最大HP 0', text)
+
+    def test_right_status_keeps_seasonal_conditions_and_long_text(self):
+        import time
+        now = time.time()
+        plan = dict(enemy='アルファルファ', ally='しゅじんこう', enemy_max_hp=38,
+                    ally_max_hp=90, max_hp_sum=128, remainder=0, threshold=1,
+                    egg_state='available', threat=True, verdict='droppable',
+                    dropper='イッテツーン', excluded=None, has_egg=True,
+                    enemy_profile=dict(name='アルファルファ', max_hp=38, combat=5,
+                                       counter=50, thought=2, egg_type='スーパー',
+                                       egg_bonus='春+1', aptitude='森', debut=1,
+                                       personality='和風', hobby='あいきどう'),
+                    ally_profile=dict(name='しゅじんこう', max_hp=90, combat=14,
+                                      counter=50, thought=2, egg_type='エラベル',
+                                      egg_bonus='0', aptitude=None, debut=1,
+                                      personality='甘えんぼ', hobby='つまみぐい'),
+                    cards=[dict(name='イッテツーン', id=0, egg_drop=8, drops=True,
+                                stock=2, carried=1, available=1, usable=True)])
+        self._policy(battle=dict(enemy='アルファルファ', ally='しゅじんこう',
+                                 enemy_hp=10, ally_hp=80, hp_observed_at=now - 1,
+                                 egg_plan=plan))
+        text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
+        self.assertIn('卵補正 春+1', text)
+        self.assertIn('得意 森', text)
+        # 得意なし ('－') は空文字で届く。不明とは書かず、条件を失わない。
+        self.assertIn('味方将軍: しゅじんこう', text)
+        self.assertIn('得意 －', text)
+
     def test_observed_battle_hp_replaces_the_permanent_unknown_placeholder(self):
         self._policy(battle={'enemy': ' dragon', 'ally': 'ゼウス', 'enemy_hp': 31, 'ally_hp': 44})
         text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))

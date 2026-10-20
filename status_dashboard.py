@@ -166,7 +166,7 @@ def fit_dashboard_lines(lines, width=W):
     prefixes = (
         '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
-        '  出撃意図:',
+        '  出撃意図:', '  敵将軍:', '  味方将軍:', '  卵落:', '  切り札:', '  切り札在庫:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
 
@@ -3377,6 +3377,112 @@ def render_hanjuku_status(value):
             return fallback
         return _corner_short(_CORNER_CONTROL_RE.sub("", value), fallback, limit)
 
+    def duel_general(side, profile):
+        """9 requested fields + max HP, keeping seasonal conditions verbatim."""
+        if not isinstance(profile, dict):
+            return f"  {side}将軍: 判定不能（将軍または最大HP不明）"
+        def integer(key, fallback='不明'):
+            value = profile.get(key)
+            return str(value) if type(value) is int else fallback
+        bonus = text(profile.get('egg_bonus'), '', 8) or '－'
+        aptitude = text(profile.get('aptitude'), '', 12) or '－'
+        egg_type = text(profile.get('egg_type'), '', 24) or '不明'
+        debut = profile.get('debut')
+        debut_label = f"{debut}話" if type(debut) is int and debut > 0 else '－'
+        return (
+            f"  {side}将軍: {text(profile.get('name'), '不明', 24)}"
+            f" / 最大HP {integer('max_hp')}"
+            f" / 戦闘 {integer('combat')}"
+            f" / 対抗 {integer('counter')}%（召喚時）"
+            f" / 思考パターン {integer('thought')}"
+            f" / エッグ {egg_type}"
+            f" / 卵補正 {bonus}"
+            f" / 得意 {aptitude}"
+            f" / 初登場 {debut_label}"
+            f" / 性格 {text(profile.get('personality'), '不明', 24)}"
+            f" / 趣味 {text(profile.get('hobby'), '不明', 24)}")
+
+    def duel_lines(duel):
+        if not isinstance(duel, dict):
+            return []
+        out = [duel_general('敵', duel.get('enemy_profile')),
+               duel_general('味方', duel.get('ally_profile'))]
+        egg_state = duel.get('egg_state')
+        excluded = duel.get('excluded')
+        verdict = duel.get('verdict')
+        if excluded == 'boss':
+            out.append("  卵落: 対象外（ボス戦）")
+        elif excluded in ('enemy_unknown', 'ally_unknown'):
+            side = '敵' if excluded == 'enemy_unknown' else '味方'
+            out.append(f"  卵落: 判定不能（{side}将軍の最大HP不明）")
+        elif egg_state == 'none':
+            out.append("  卵落: 対象外（敵に卵なし）")
+        elif egg_state == 'used':
+            out.append("  卵落: 対象外（敵卵は使用済み） / 実際の落下 未確認")
+        elif egg_state == 'dropped_unconfirmed':
+            out.append("  卵落: 落下推定（未確認） / 実際の落下 未確認")
+        else:
+            enemy_max, ally_max = duel.get('enemy_max_hp'), duel.get('ally_max_hp')
+            total, remainder = duel.get('max_hp_sum'), duel.get('remainder')
+            if not all(type(v) is int for v in (enemy_max, ally_max, total, remainder)):
+                out.append("  卵落: 判定不能（最大HPまたは余り不明）")
+            else:
+                parts = [f"敵最大HP {enemy_max} + 味方最大HP {ally_max} = {total}",
+                         f"余り {remainder}", f"条件 卵落>{remainder}"]
+                threat = duel.get('threat')
+                if verdict == 'droppable':
+                    dropper = text(duel.get('dropper'), '不明', 24)
+                    row = next((card for card in duel.get('cards') or []
+                                if isinstance(card, dict) and card.get('name') == dropper), {})
+                    value = row.get('egg_drop') if isinstance(row, dict) else None
+                    parts.append(f"予測 成立（{dropper} 卵落{value if type(value) is int else '不明'}）")
+                elif threat is False:
+                    parts.append("予測 対象外（卵を使わない思考）")
+                elif threat is None or verdict == 'unknown':
+                    parts.append("予測 判定不能（思考または入力不明）")
+                elif duel.get('egg_drop_free') is False:
+                    parts.append("予測 保留（チャート指定札のため開幕は使わない）")
+                else:
+                    parts.append("予測 不成立（携行札に卵落札なし）")
+                parts.append('敵卵 保有（静的能力）' if duel.get('has_egg') is True
+                             else '敵卵 不明')
+                parts.append('実際の落下 未確認')
+                out.append("  卵落: " + " / ".join(parts))
+        reason = {'not_carried': '未携行', 'used': '使用済み', 'kit_unknown': '携行不明'}
+        for card in duel.get('cards') or []:
+            if not isinstance(card, dict):
+                continue
+            name = text(card.get('name'), '', 24)
+            if not name:
+                continue
+            number = lambda key, fallback='不明': (str(card[key]) if type(card.get(key)) is int
+                                                   else fallback)
+            usable = card.get('usable')
+            if usable is True:
+                available = card.get('available')
+                use = '使用可' + (f"（残{available}）" if type(available) is int and available > 1 else '')
+            elif usable is False:
+                use = '使用不可（' + reason.get(card.get('unavailable'), '理由不明') + '）'
+            else:
+                use = '可否 不明'
+            drops = card.get('drops')
+            egg_drop, remainder = card.get('egg_drop'), duel.get('remainder')
+            if drops is True and type(egg_drop) is int and type(remainder) is int:
+                prediction = f"成立（{egg_drop}>{remainder}）"
+            elif drops is False and type(egg_drop) is int and type(remainder) is int:
+                prediction = f"不成立（{egg_drop}>{remainder}）"
+            else:
+                prediction = '判定不能'
+            out.append(
+                f"  切り札: {name} / ID {number('id')} / 卵落 {number('egg_drop')}"
+                f" / 在庫 {number('stock')} / 携行 {number('carried')}"
+                f" / {use} / 予測 {prediction}")
+        total_cards = duel.get('cards_total')
+        shown = len(duel.get('cards') or [])
+        if type(total_cards) is int and total_cards > shown:
+            out.append(f"  切り札在庫: ほか {total_cards - shown}枚（実測分・表示上限）")
+        return out
+
     lines = [
         "半熟英雄 / 最終観測・記録",
         f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
@@ -3525,6 +3631,7 @@ def render_hanjuku_status(value):
         lines.append(f"  交戦HP: 敵 {enemy_hp}（{enemy_name}） / 我 {ally_hp}（{ally_name}）")
     else:
         lines.append("  交戦HP: 戦闘記録なし")
+    lines += duel_lines(value.get("duel"))
     garrison = [g for g in row("garrison") if isinstance(g, dict)]
     if garrison:
         lines.append("  駐留: " + " / ".join(
