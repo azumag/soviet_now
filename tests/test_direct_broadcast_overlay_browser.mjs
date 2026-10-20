@@ -35,6 +35,23 @@ function fixture(kind) {
     + '駐留: アルマムーン=ゼウス/ユイートル\n行軍中: どうし→ナキューメラ\n'
     + '出撃: 成立 4 / 失敗 1\n画面: battle_menu / battle / 方針 chart_adjusted\n'
     + '計画段階: J3（完了未確認）\n保留計画: sortie\n実入力: 412回 / 観測 0秒前';
+  if (kind === 'duel') {
+    text = text.replace('交戦HP: 敵 31（dragon） / 我 44（ゼウス）',
+      '交戦HP: 敵 26（キッシュ） / 我 24（ココット）')
+      + '\n敵将軍: キッシュ / 最大HP 26 / 戦闘 5 / 対抗 50%（召喚時） / 思考パターン 2'
+      + ' / エッグ スーパー / 卵補正 0 / 得意 洞窟 / 初登場 1話 / 性格 身勝手 / 趣味 カルトクイズ'
+      + '\n味方将軍: ココット / 最大HP 24 / 戦闘 8 / 対抗 75%（召喚時） / 思考パターン 3'
+      + ' / エッグ カラフル / 卵補正 3 / 得意 平地 / 初登場 1話 / 性格 泣き虫 / 趣味 じょうば'
+      + '\n卵落: 敵最大HP 26 + 味方最大HP 24 = 50 / 余り 2 / 条件 卵落>2'
+      + ' / 予測 成立（ブラッキー 卵落3） / 敵卵 保有（静的能力） / 実際の落下 未確認'
+      + '\n切り札: ダイチスイム / ID 1 / 卵落 1 / 在庫 2 / 携行 2 / 使用可（残2） / 予測 不成立（1>2）'
+      + '\n切り札: ブラッキー / ID 2 / 卵落 3 / 在庫 1 / 携行 1 / 使用可 / 予測 成立（3>2）'
+      + '\n切り札: イッテツーン / ID 0 / 卵落 8 / 在庫 1 / 携行 0 / 使用不可（未携行） / 予測 成立（8>2）'
+      // Production measures the left gap during Hanjuku; the right card then
+      // omits territory/garrison/march (they live in the left card), leaving
+      // room for the live battle reference block.
+      + `\n投影余白: side=left x=0 w=239 until=${Math.floor(Date.now() / 1000) + 30}`;
+  }
   if(kind==='long-card'||kind==='stress') text=text.replace('カストーラ/スペンソニア','保有将軍'.repeat(10))
     .replace('アルマムーン=ゼウス/ユイートル','駐留将軍'.repeat(15))
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
@@ -95,7 +112,7 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
   if (kind === 'long') ops.push(...Array.from({length:24}, (_, i) => `INFO Observer ${i+1}: ${'観測を確認中 '.repeat(12)}`));
   if (kind === 'stress') ops.push('    ! Unexpected  KickW', '    ! Duplicates  DETECTED  chat_worker=10,11');
   if (kind === 'prediction'||kind==='stress') ops.push('予想対象：#23｜終了まで20秒', '#23：今回の予想対象');
-  return {version:1, updatedAt:now, feeds:{
+  return {version:1, updatedAt:now, gameGapEnabled:kind==='duel', feeds:{
     showStatusG:{text, segments:kind==='monitor'&&process.env.SOREN_MONITOR_FEED?JSON.parse(fs.readFileSync(process.env.SOREN_MONITOR_FEED,'utf8')).segments:undefined, updatedAt:now-(kind==='stale'?31:0), lineCount:text.split('\n').length},
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
     systemMetrics:{sampledAt:['initial','missing-time'].includes(metricsKind)?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
@@ -138,7 +155,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','metrics-bad-timestamps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
+    for(const kind of ['normal','duel','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','metrics-bad-timestamps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -213,6 +230,16 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
+      } else if(kind==='duel') {
+        assert.equal(await page.locator('.hanjuku-general').count(),2);
+        assert.equal(await page.locator('.hanjuku-cardline').count(),3);
+        assert.match(await page.locator('.hanjuku-eggpredict').textContent(),/余り 2 .*予測 成立/);
+        for(const selector of ['.hanjuku-general','.hanjuku-eggpredict','.hanjuku-cardline']) {
+          const size=await page.locator(selector).first().evaluate(e=>parseFloat(getComputedStyle(e).fontSize));
+          assert.equal(size,11,`${selector} compact readable size`);
+          const overflow=await page.locator(selector).first().evaluate(e=>e.scrollWidth>e.clientWidth+1);
+          assert.equal(overflow,false,`${selector} wraps without horizontal clipping`);
+        }
       } else if(!kind.startsWith('console') && !['improve','soren91','jev','monitor'].includes(kind)) {
         assert.match(await page.locator('.hanjuku-orders').textContent(),/成立 4 \/ 失敗 1/);
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
