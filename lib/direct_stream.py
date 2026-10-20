@@ -994,15 +994,14 @@ def probe_audio_capture_state(
     if listing.strip() and not re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
         return "unknown"
 
-    blocks = [
-        block
-        for block in re.split(
-            r"^Source Output #\d+", listing, flags=re.MULTILINE
-        )[1:]
-        if block.strip()
-    ]
+    # Split on the headers, keeping the raw bodies. An empty body is NOT the
+    # same as no listing: a header proves the daemon described a stream, and a
+    # body that did not arrive means no stream can be attributed, so it must
+    # stay unattributable rather than collapse into "no capture exists"
+    # (review 2026-10-20).
+    blocks = re.split(r"^Source Output #\d+", listing, flags=re.MULTILINE)[1:]
     if not blocks:
-        # The daemon answered and no capture stream exists at all.
+        # The daemon answered and described no capture stream at all.
         return "missing"
 
     unattributable = False
@@ -1011,6 +1010,8 @@ def probe_audio_capture_state(
             r'application\.process\.id = "([0-9]+)"', block
         )
         if match is None:
+            # Covers both a stream that hides the attribute and a header whose
+            # body is missing or incomplete.
             unattributable = True
             continue
         if int(match.group(1)) == int(ffmpeg_pid):
