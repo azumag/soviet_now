@@ -16,6 +16,11 @@ EXPECTED_REPO="${SOREN_RUNTIME_REPO:-/home/ubuntu/soren}"
 EXPECTED_USER="${SOREN_RUNTIME_USER:-ubuntu}"
 EXPECTED_UID="${SOREN_RUNTIME_UID:-1001}"
 ENV_FILE="${SOREN_ENV_FILE:-$SCRIPT_DIR/.env}"
+# docich #2008: keep the shared PulseAudio owned by the ubuntu user manager and
+# forbid client libraries from autospawning private servers.
+PULSE_CLIENT_CONF_SOURCE="$SCRIPT_DIR/deploy/pulse/client.conf"
+PULSE_CLIENT_CONF_TARGET="/home/$EXPECTED_USER/.config/pulse/client.conf"
+PULSE_USER_UNITS=(pulseaudio.socket pulseaudio.service)
 
 usage() {
 	echo "Usage: $0 --status | --print-config | --install --confirm-runtime-migration" >&2
@@ -33,7 +38,7 @@ backend_name() {
 }
 
 print_config() {
-	python3 - "$EXPECTED_REPO" "$RUNTIME_UNIT_TARGET" "$OBS_DROPIN_TARGET" "$EXPECTED_USER" "$EXPECTED_UID" "$(backend_name)" <<'PY'
+	python3 - "$EXPECTED_REPO" "$RUNTIME_UNIT_TARGET" "$OBS_DROPIN_TARGET" "$EXPECTED_USER" "$EXPECTED_UID" "$(backend_name)" "$PULSE_CLIENT_CONF_TARGET" <<'PY'
 import json
 import sys
 
@@ -45,6 +50,8 @@ print(json.dumps({
     "runtime_uid": int(sys.argv[5]),
     "selected_backend": sys.argv[6],
     "pulse_sink": "soren_null",
+    "pulse_client_conf": sys.argv[7],
+    "pulse_user_units": ["pulseaudio.socket", "pulseaudio.service"],
     "stream_credentials_read": False,
     "obs_restarted_during_migration": False,
 }, sort_keys=True))
@@ -58,6 +65,58 @@ status() {
 		printf 'runtime_active=%s\n' "$(systemctl is-active "$RUNTIME_UNIT" 2>/dev/null || true)"
 		printf 'obs_active=%s\n' "$(systemctl is-active obs.service 2>/dev/null || true)"
 	fi
+	printf 'pulse_client_conf=%s\n' "$(pulse_client_conf_state)"
+	printf 'pulse_user_units=%s\n' "$(pulse_user_units_state)"
+	printf 'pulse_socket=%s\n' "$(pulse_socket_state)"
+}
+
+# docich #2008 helpers: report the permanence of the shared PulseAudio without
+# touching anything. managed = installed bytes match the reviewed template.
+pulse_client_conf_state() {
+	if [ ! -f "$PULSE_CLIENT_CONF_TARGET" ]; then
+		printf '%s\n' missing
+		return
+	fi
+	if [ "$(cat "$PULSE_CLIENT_CONF_TARGET" 2>/dev/null || true)" \
+		= "$(cat "$PULSE_CLIENT_CONF_SOURCE")" ]; then
+		printf '%s\n' managed
+	else
+		printf '%s\n' unexpected
+	fi
+}
+
+pulse_user_units_state() {
+	local unit state states=""
+	for unit in "${PULSE_USER_UNITS[@]}"; do
+		state="$(pulse_user_systemctl is-enabled "$unit" 2>/dev/null || true)"
+		states+="${state:-unknown},"
+	done
+	printf '%s\n' "${states%,}"
+}
+
+pulse_socket_state() {
+	if sudo -n -u "$EXPECTED_USER" \
+		env XDG_RUNTIME_DIR="/run/user/$EXPECTED_UID" \
+		PULSE_SERVER="unix:/run/user/$EXPECTED_UID/pulse/native" \
+		pactl info >/dev/null 2>&1; then
+		printf '%s\n' answering
+	else
+		printf '%s\n' silent
+	fi
+}
+
+pulse_user_systemctl() {
+	# Prefer the user manager bus via machined; fall back to running systemctl
+	# as the runtime user when the machined path is unavailable. Output of the
+	# winning path is passed through; failures stay failures for the caller.
+	local out
+	if out="$(systemctl --user --machine="${EXPECTED_USER}@.host" "$@" 2>/dev/null)"; then
+		printf '%s\n' "$out"
+		return 0
+	fi
+	sudo -n -u "$EXPECTED_USER" \
+		env XDG_RUNTIME_DIR="/run/user/$EXPECTED_UID" \
+		systemctl --user "$@"
 }
 
 case "$*" in
@@ -88,8 +147,10 @@ fi
 for file in \
 	"$RUNTIME_UNIT_SOURCE" \
 	"$OBS_DROPIN_SOURCE" \
+	"$PULSE_CLIENT_CONF_SOURCE" \
 	stream_backend_condition.sh \
 	wait_soren_runtime_prereqs.sh \
+	wait_soren_bgm_pulse.sh \
 	start_all.sh \
 	stop_soren.sh \
 	soviet_watchdog.sh \
@@ -133,13 +194,39 @@ if [ "$(loginctl show-user "$EXPECTED_USER" -p Linger --value 2>/dev/null || tru
 	LINGER_WAS_ENABLED=1
 fi
 
-chmod 0755 stream_backend_condition.sh wait_soren_runtime_prereqs.sh
+chmod 0755 stream_backend_condition.sh wait_soren_runtime_prereqs.sh wait_soren_bgm_pulse.sh
 sudo loginctl enable-linger "$EXPECTED_USER"
 sudo install -o root -g root -m 0644 "$RUNTIME_UNIT_SOURCE" "$RUNTIME_UNIT_TARGET"
 sudo install -d -o root -g root -m 0755 /etc/systemd/system/obs.service.d
 sudo install -o root -g root -m 0644 "$OBS_DROPIN_SOURCE" "$OBS_DROPIN_TARGET"
 sudo systemctl daemon-reload
 sudo systemctl enable "$RUNTIME_UNIT" >/dev/null
+
+# docich #2008: make the shared PulseAudio permanent BEFORE the runtime
+# migration starts. Idempotent; deliberately outside the rollback trap because
+# reverting these lines would re-arm the 2026-10-11 failure mode (stray
+# autospawned PulseAudio dying with soren-bgm.service). Nothing here stops or
+# restarts a live server: only a silent canonical socket triggers a
+# socket-activation start of pulseaudio.socket/pulseaudio.service.
+sudo systemctl start "user@${EXPECTED_UID}.service" >/dev/null 2>&1 || true
+sudo install -d -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0755 \
+	"/home/$EXPECTED_USER/.config/pulse"
+sudo install -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0644 \
+	"$PULSE_CLIENT_CONF_SOURCE" "$PULSE_CLIENT_CONF_TARGET"
+for unit in "${PULSE_USER_UNITS[@]}"; do
+	sudo systemctl --user --machine="${EXPECTED_USER}@.host" enable "$unit" >/dev/null 2>&1 || \
+		sudo -n -u "$EXPECTED_USER" XDG_RUNTIME_DIR="/run/user/$EXPECTED_UID" \
+			systemctl --user enable "$unit" >/dev/null || {
+		echo "cannot enable the user-level $unit; PulseAudio permanence is not guaranteed" >&2
+		exit 3
+	}
+done
+if [ "$(pulse_socket_state)" != answering ]; then
+	sudo systemctl --user --machine="${EXPECTED_USER}@.host" \
+		start "${PULSE_USER_UNITS[@]}" >/dev/null 2>&1 || \
+		sudo -n -u "$EXPECTED_USER" XDG_RUNTIME_DIR="/run/user/$EXPECTED_UID" \
+			systemctl --user start "${PULSE_USER_UNITS[@]}" >/dev/null 2>&1 || true
+fi
 
 MUTATION_STARTED=0
 restore_previous_runtime() {
@@ -279,6 +366,6 @@ if [ "$OBS_WAS_LIVE" -eq 1 ]; then
 fi
 
 trap - ERR INT TERM
-printf 'runtime_migration=ok backend=%s main_pid=%s obs_continuity=%s linger=enabled\n' \
-	"$(backend_name)" "$main_pid" "$OBS_WAS_LIVE"
+printf 'runtime_migration=ok backend=%s main_pid=%s obs_continuity=%s linger=enabled pulse_client_conf=%s pulse_socket=%s\n' \
+	"$(backend_name)" "$main_pid" "$OBS_WAS_LIVE" "$(pulse_client_conf_state)" "$(pulse_socket_state)"
 status
