@@ -739,6 +739,265 @@ class DirectStreamTests(unittest.TestCase):
             "unknown",
         )
 
+    def test_probe_never_reports_missing_when_a_pid_is_unavailable(self) -> None:
+        # Review 2026-10-20: a listing that stops exposing
+        # application.process.id (pactl version, restricted properties, a
+        # stream reclaimed by module-stream-restore) must not be classified as
+        # "missing". Doing so stops a healthy encoder and causes the very
+        # outage the watchdog exists to prevent.
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+
+        def listing_run(listing: str):
+            def run(command, *, env=None):
+                return "" if command[1:] == ["info"] else listing
+
+            return run
+
+        # A single unattributable stream: we cannot prove it is not ours.
+        no_pid_attribute = 'Source Output #7\n\tSource: 3\n\tapplication.name = "ffmpeg"\n'
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=listing_run(no_pid_attribute)
+            ),
+            "unknown",
+        )
+
+        # One attributable (foreign) stream plus one unattributable stream:
+        # still not provably ours, so never "missing".
+        mixed = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "9999"\n'
+            'Source Output #9\n'
+            '\tSource: 3\n'
+            '\tapplication.name = "ffmpeg"\n'
+        )
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=listing_run(mixed)
+            ),
+            "unknown",
+        )
+
+        # Every stream is attributable and none is ours: a genuine loss.
+        all_attributable = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "9999"\n'
+            'Source Output #9\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "8888"\n'
+        )
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=listing_run(all_attributable)
+            ),
+            "missing",
+        )
+
+        # Our own stream among others is healthy even if another lacks a pid.
+        ours_plus_unattributable = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "4321"\n'
+            'Source Output #9\n'
+            '\tSource: 3\n'
+            '\tapplication.name = "ffmpeg"\n'
+        )
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=listing_run(ours_plus_unattributable)
+            ),
+            "ok",
+        )
+
+        # The daemon answered and no capture stream exists at all.
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=listing_run("")
+            ),
+            "missing",
+        )
+
+    def test_empty_block_bodies_are_unknown_not_missing(self) -> None:
+        # Review 2026-10-20: a "Source Output #N" header whose body is empty or
+        # incomplete means the listing is unusable, not that no capture exists.
+        # Discarding such blocks made an incomplete listing look like "no
+        # capture", which signalled a healthy FFmpeg after two strikes.
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+
+        def probe(listing: str) -> str:
+            def run(command, *, env=None):
+                return "" if command[1:] == ["info"] else listing
+
+            return direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run
+            )
+
+        # Headers without usable bodies are unattributable, never "missing".
+        self.assertEqual(probe("Source Output #7\n"), "unknown")
+        self.assertEqual(probe("Source Output #7\n\n"), "unknown")
+        self.assertEqual(probe("Source Output #7\nSource Output #9\n"), "unknown")
+        self.assertEqual(
+            probe(
+                'Source Output #7\nSource Output #9\n'
+                '\tapplication.process.id = "9999"\n'
+            ),
+            "unknown",
+        )
+
+        # A listing with no header at all still means "no capture stream".
+        self.assertEqual(probe(""), "missing")
+        self.assertEqual(probe("   \n"), "missing")
+
+        # And the monitor must not signal FFmpeg on repeated unusable listings.
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        states = ["ok"] + ["unknown"] * 5
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= len(states):
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: states.pop(0),
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(monitor_state["reconnect"])
+        child.send_signal.assert_not_called()
+
+    def test_mixed_listing_with_our_pid_hidden_is_unknown(self) -> None:
+        # Review 5580497362: a listing where our own block hides
+        # application.process.id while a foreign recorder publishes PID 9999.
+        # Attributing by "our pid is absent" here would stop a healthy encoder.
+        config = direct_stream.load_config(base_env())
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        mixed = (
+            'Source Output #7\n'
+            '\tSource: 3\n'
+            '\tapplication.name = "ffmpeg"\n'
+            'Source Output #9\n'
+            '\tSource: 3\n'
+            '\tapplication.process.id = "9999"\n'
+        )
+
+        def run(command, *, env=None):
+            return "" if command[1:] == ["info"] else mixed
+
+        # Observed healthy first, then the same mixed listing repeatedly: the
+        # monitor must never reach the strike threshold.
+        self.assertEqual(
+            direct_stream.probe_audio_capture_state(
+                config, watchdog, 4321, run=run
+            ),
+            "unknown",
+        )
+
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        states = ["ok"] + ["unknown"] * 6
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= len(states):
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: states.pop(0),
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(monitor_state["reconnect"])
+        self.assertIsNone(monitor_state["reconnect_reason"])
+        child.send_signal.assert_not_called()
+
+    def test_unattributable_probe_never_stops_ffmpeg(self) -> None:
+        # End-to-end: with the daemon answering but the pid attribute missing,
+        # the monitor must not request a reconnect even after many probes.
+        config = direct_stream.load_config(
+            base_env(SOREN_DIRECT_STREAM_STATE_DIR=tempfile.mkdtemp())
+        )
+        watchdog = direct_stream.AudioCaptureWatchdogConfig(
+            enabled=True,
+            probe_interval_sec=10,
+            loss_threshold=2,
+            pulse_server="unix:/run/user/1001/pulse/native",
+        )
+        child = mock.Mock()
+        child.pid = 4321
+        monitor_state: dict[str, object] = {
+            "stopping": False,
+            "reconnect": False,
+            "reconnect_reason": None,
+        }
+        checks = {"count": 0}
+
+        def fake_sleep(_seconds: float) -> None:
+            checks["count"] += 1
+            if checks["count"] >= 5:
+                monitor_state["stopping"] = True
+
+        thread = direct_stream._start_audio_capture_monitor(
+            config,
+            watchdog,
+            child,
+            monitor_state,
+            probe=lambda *args, **kwargs: "unknown",
+            sleep=fake_sleep,
+            alive=lambda _pid: True,
+        )
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(monitor_state["reconnect"])
+        self.assertIsNone(monitor_state["reconnect_reason"])
+        child.send_signal.assert_not_called()
+        self.assertEqual(monitor_state["audio_capture"]["status"], "unknown")
+
     def test_audio_watchdog_restarts_ffmpeg_after_capture_loss(self) -> None:
         config = direct_stream.load_config(base_env())
         watchdog = direct_stream.AudioCaptureWatchdogConfig(

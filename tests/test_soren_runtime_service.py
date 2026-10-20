@@ -487,6 +487,231 @@ esac
         )
         self.assertNotIn("pulseaudio --start", source)
 
+    def _run_client_conf_writer(
+        self,
+        target: Path,
+        server: str = "unix:/run/user/1001/pulse/native",
+        confirm_audio: bool = True,
+    ):
+        """Run the shipped writer against ``target`` with only sudo stubbed.
+
+        The helper bodies are extracted from the installer itself (anchored on
+        their function definitions) so this exercises the production code, not
+        a copy of it. ``sudo`` is stubbed to run the command directly because
+        the test cannot escalate.
+        """
+        text = INSTALLER.read_text(encoding="utf-8")
+        parts = []
+        for marker in ("pulse_client_conf_setting() {", "install_pulse_client_conf() {"):
+            start = text.index(marker)
+            end = text.index("\n}\n", start) + len("\n}\n")
+            parts.append(text[start:end])
+        script = "\n".join(parts) + """
+set -euo pipefail
+sudo() {
+  if [ "$1" = "-n" ]; then shift; fi
+  "$@"
+}
+PULSE_CLIENT_CONF_TARGET="$TARGET"
+PULSE_CLIENT_CONF_SERVER="$SERVER"
+PULSE_AUDIO_CHANGE_CONFIRMED="${CONFIRM_AUDIO:-0}"
+EXPECTED_USER="$(id -un)"
+install_pulse_client_conf
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stub = Path(temp_dir) / "run.sh"
+            stub.write_text(script, encoding="utf-8")
+            env = {
+                **os.environ,
+                "TARGET": str(target),
+                "SERVER": server,
+                "CONFIRM_AUDIO": "1" if confirm_audio else "0",
+            }
+            return subprocess.run(
+                ["bash", str(stub)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+
+    def test_client_conf_writer_preserves_operator_lines_with_a_backup(self) -> None:
+        # Review 2026-10-20: an existing client.conf must never be silently
+        # overwritten. Production carried operator lines (2026-09-07 record).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = (
+                "# operator note\n"
+                "autospawn = yes\n"
+                "default-server = unix:/tmp/stale/pulse\n"
+                "disable-shm = yes\n"
+            )
+            target.write_text(original, encoding="utf-8")
+            result = self._run_client_conf_writer(target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            written = target.read_text(encoding="utf-8")
+            # Managed settings are corrected...
+            self.assertIn("autospawn = no", written)
+            self.assertIn(
+                "default-server = unix:/run/user/1001/pulse/native", written
+            )
+            # ...every other operator line survives...
+            self.assertIn("# operator note", written)
+            self.assertIn("disable-shm = yes", written)
+            # ...and the previous content is recoverable byte-for-byte.
+            backups = sorted(target.parent.glob("client.conf.*.bak"))
+            self.assertEqual(len(backups), 1, backups)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), original)
+
+    def test_client_conf_writer_is_idempotent_without_extra_backups(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            target.write_text(
+                "disable-shm = yes\n"
+                "autospawn = no\n"
+                "default-server = unix:/run/user/1001/pulse/native\n",
+                encoding="utf-8",
+            )
+            first = self._run_client_conf_writer(target)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("pulse_client_conf=unchanged", first.stdout)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_client_conf_writer_creates_a_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "pulse" / "client.conf"
+            result = self._run_client_conf_writer(target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("autospawn = no", written)
+            self.assertIn(
+                "default-server = unix:/run/user/1001/pulse/native", written
+            )
+
+    def test_client_conf_change_is_gated_behind_audio_confirmation(self) -> None:
+        # Review 2026-10-20: client.conf is a broadcast-audio setting, so the
+        # runtime migration must not change it implicitly. This mirrors the
+        # dedicated installer's --confirm-audio-session gate.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = "autospawn = yes\ndisable-shm = yes\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = self._run_client_conf_writer(target, confirm_audio=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("pulse_client_conf=needs_confirmation", result.stdout)
+            self.assertIn("--confirm-audio-session", result.stderr)
+            # Nothing changed and no backup was taken.
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_already_managed_client_conf_needs_no_audio_confirmation(self) -> None:
+        # Idempotent path: a host already converged by the dedicated installer
+        # keeps working under the plain runtime migration.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            managed = (
+                "disable-shm = yes\n"
+                "autospawn = no\n"
+                "default-server = unix:/run/user/1001/pulse/native\n"
+            )
+            target.write_text(managed, encoding="utf-8")
+            result = self._run_client_conf_writer(target, confirm_audio=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("pulse_client_conf=unchanged", result.stdout)
+            self.assertEqual(target.read_text(encoding="utf-8"), managed)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_runtime_installer_requires_explicit_audio_confirmation_flag(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("PULSE_AUDIO_CHANGE_CONFIRMED=0", source)
+        self.assertIn("PULSE_AUDIO_CHANGE_CONFIRMED=1", source)
+        self.assertIn(
+            "--install\\ --confirm-runtime-migration\\ --confirm-audio-session",
+            source,
+        )
+        # The gate must be checked before any write or backup happens.
+        gate = source.index("PULSE_AUDIO_CHANGE_CONFIRMED:-0")
+        self.assertLess(gate, source.index(".bak"))
+        self.assertLess(gate, source.index("pulse_client_conf=written"))
+
+    def test_client_conf_writer_aborts_unchanged_when_backup_fails(self) -> None:
+        # Review 5580497362: a failing backup must abort the change, and the
+        # abort must be explicit rather than inherited from `set -e`. The
+        # harness deliberately does NOT run under `set -e`, so a writer that
+        # merely relies on it would fall through to the overwrite and fail
+        # this test.
+        text = INSTALLER.read_text(encoding="utf-8")
+        parts = []
+        for marker in (
+            "pulse_client_conf_setting() {",
+            "install_pulse_client_conf() {",
+        ):
+            start = text.index(marker)
+            end = text.index("\n}\n", start) + len("\n}\n")
+            parts.append(text[start:end])
+        script = "\n".join(parts) + """
+set -uo pipefail
+sudo() {
+  if [ "$1" = "-n" ]; then shift; fi
+  if [ "$1" = "cp" ]; then
+    echo "cp: simulated failure" >&2
+    return 1
+  fi
+  "$@"
+}
+PULSE_CLIENT_CONF_TARGET="$TARGET"
+PULSE_CLIENT_CONF_SERVER="$SERVER"
+PULSE_AUDIO_CHANGE_CONFIRMED=1
+EXPECTED_USER="$(id -un)"
+install_pulse_client_conf
+echo "writer_reached_the_end"
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = "autospawn = yes\ndisable-shm = yes\n"
+            target.write_text(original, encoding="utf-8")
+            stub = Path(temp_dir) / "run.sh"
+            stub.write_text(script, encoding="utf-8")
+            env = {
+                **os.environ,
+                "TARGET": str(target),
+                "SERVER": "unix:/run/user/1001/pulse/native",
+            }
+            result = subprocess.run(
+                ["bash", str(stub)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot back up", result.stderr)
+            # The writer must have stopped before writing anything.
+            self.assertNotIn("writer_reached_the_end", result.stdout)
+            self.assertNotIn("pulse_client_conf=written", result.stdout)
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_client_conf_state_uses_effective_settings(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("pulse_client_conf_setting() {", source)
+        # Last assignment wins, so an operator line before the managed pair
+        # must not make the state look unmanaged.
+        self.assertIn(
+            'sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p"', source
+        )
+        self.assertIn("tail -n 1", source)
+
+    def test_installer_refuses_to_drift_from_the_reviewed_template(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("does not disable autospawn", source)
+        self.assertIn("does not pin $PULSE_CLIENT_CONF_SERVER", source)
+
     def test_installer_print_config_publishes_pulse_target(self) -> None:
         result = subprocess.run(
             ["bash", str(INSTALLER), "--print-config"],
