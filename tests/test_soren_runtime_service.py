@@ -487,7 +487,12 @@ esac
         )
         self.assertNotIn("pulseaudio --start", source)
 
-    def _run_client_conf_writer(self, target: Path, server: str = "unix:/run/user/1001/pulse/native"):
+    def _run_client_conf_writer(
+        self,
+        target: Path,
+        server: str = "unix:/run/user/1001/pulse/native",
+        confirm_audio: bool = True,
+    ):
         """Run the shipped writer against ``target`` with only sudo stubbed.
 
         The helper bodies are extracted from the installer itself (anchored on
@@ -509,6 +514,7 @@ sudo() {
 }
 PULSE_CLIENT_CONF_TARGET="$TARGET"
 PULSE_CLIENT_CONF_SERVER="$SERVER"
+PULSE_AUDIO_CHANGE_CONFIRMED="${CONFIRM_AUDIO:-0}"
 EXPECTED_USER="$(id -un)"
 install_pulse_client_conf
 """
@@ -519,6 +525,7 @@ install_pulse_client_conf
                 **os.environ,
                 "TARGET": str(target),
                 "SERVER": server,
+                "CONFIRM_AUDIO": "1" if confirm_audio else "0",
             }
             return subprocess.run(
                 ["bash", str(stub)],
@@ -582,6 +589,53 @@ install_pulse_client_conf
             self.assertIn(
                 "default-server = unix:/run/user/1001/pulse/native", written
             )
+
+    def test_client_conf_change_is_gated_behind_audio_confirmation(self) -> None:
+        # Review 2026-10-20: client.conf is a broadcast-audio setting, so the
+        # runtime migration must not change it implicitly. This mirrors the
+        # dedicated installer's --confirm-audio-session gate.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = "autospawn = yes\ndisable-shm = yes\n"
+            target.write_text(original, encoding="utf-8")
+
+            result = self._run_client_conf_writer(target, confirm_audio=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("pulse_client_conf=needs_confirmation", result.stdout)
+            self.assertIn("--confirm-audio-session", result.stderr)
+            # Nothing changed and no backup was taken.
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_already_managed_client_conf_needs_no_audio_confirmation(self) -> None:
+        # Idempotent path: a host already converged by the dedicated installer
+        # keeps working under the plain runtime migration.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            managed = (
+                "disable-shm = yes\n"
+                "autospawn = no\n"
+                "default-server = unix:/run/user/1001/pulse/native\n"
+            )
+            target.write_text(managed, encoding="utf-8")
+            result = self._run_client_conf_writer(target, confirm_audio=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("pulse_client_conf=unchanged", result.stdout)
+            self.assertEqual(target.read_text(encoding="utf-8"), managed)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_runtime_installer_requires_explicit_audio_confirmation_flag(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("PULSE_AUDIO_CHANGE_CONFIRMED=0", source)
+        self.assertIn("PULSE_AUDIO_CHANGE_CONFIRMED=1", source)
+        self.assertIn(
+            "--install\\ --confirm-runtime-migration\\ --confirm-audio-session",
+            source,
+        )
+        # The gate must be checked before any write or backup happens.
+        gate = source.index("PULSE_AUDIO_CHANGE_CONFIRMED:-0")
+        self.assertLess(gate, source.index(".bak"))
+        self.assertLess(gate, source.index("pulse_client_conf=written"))
 
     def test_client_conf_state_uses_effective_settings(self) -> None:
         source = INSTALLER.read_text(encoding="utf-8")
