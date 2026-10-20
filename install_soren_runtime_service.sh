@@ -20,6 +20,9 @@ ENV_FILE="${SOREN_ENV_FILE:-$SCRIPT_DIR/.env}"
 # forbid client libraries from autospawning private servers.
 PULSE_CLIENT_CONF_SOURCE="$SCRIPT_DIR/deploy/pulse/client.conf"
 PULSE_CLIENT_CONF_TARGET="/home/$EXPECTED_USER/.config/pulse/client.conf"
+# The only two settings this installer manages. An existing client.conf keeps
+# every other operator line; the managed lines are replaced in place.
+PULSE_CLIENT_CONF_SERVER="unix:/run/user/$EXPECTED_UID/pulse/native"
 PULSE_USER_UNITS=(pulseaudio.socket pulseaudio.service)
 
 usage() {
@@ -71,18 +74,72 @@ status() {
 }
 
 # docich #2008 helpers: report the permanence of the shared PulseAudio without
-# touching anything. managed = installed bytes match the reviewed template.
+# touching anything. managed = the effective (last-assignment) settings match
+# the reviewed template, regardless of any other operator lines that remain.
+pulse_client_conf_setting() {
+	# Last assignment wins, matching PulseAudio's own precedence.
+	[ -f "$PULSE_CLIENT_CONF_TARGET" ] || return 0
+	sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" \
+		"$PULSE_CLIENT_CONF_TARGET" 2>/dev/null | tail -n 1
+}
+
 pulse_client_conf_state() {
 	if [ ! -f "$PULSE_CLIENT_CONF_TARGET" ]; then
 		printf '%s\n' missing
 		return
 	fi
-	if [ "$(cat "$PULSE_CLIENT_CONF_TARGET" 2>/dev/null || true)" \
-		= "$(cat "$PULSE_CLIENT_CONF_SOURCE")" ]; then
+	if [ "$(pulse_client_conf_setting autospawn)" = "no" ] \
+		&& [ "$(pulse_client_conf_setting default-server)" = "$PULSE_CLIENT_CONF_SERVER" ]; then
 		printf '%s\n' managed
 	else
 		printf '%s\n' unexpected
 	fi
+}
+
+# Install the two managed settings without discarding operator content.
+# An existing client.conf is backed up first and every non-managed line is
+# preserved: production carried operator lines (2026-09-07 record), and a
+# silent full overwrite would drop them (review 2026-10-20).
+install_pulse_client_conf() {
+	local directory backup temporary
+	directory="$(dirname "$PULSE_CLIENT_CONF_TARGET")"
+	local owner_group
+	owner_group="$(id -gn "$EXPECTED_USER")"
+	sudo install -d -o "$EXPECTED_USER" -g "$owner_group" -m 0755 "$directory"
+
+	if [ -f "$PULSE_CLIENT_CONF_TARGET" ] \
+		&& [ "$(pulse_client_conf_setting autospawn)" = "no" ] \
+		&& [ "$(pulse_client_conf_setting default-server)" = "$PULSE_CLIENT_CONF_SERVER" ]; then
+		printf 'pulse_client_conf=unchanged\n'
+		return 0
+	fi
+
+	if [ -f "$PULSE_CLIENT_CONF_TARGET" ]; then
+		backup="$PULSE_CLIENT_CONF_TARGET.$(date '+%Y%m%d-%H%M%S').bak"
+		if [ -e "$backup" ] || [ -L "$backup" ]; then
+			echo "pulse client.conf backup already exists: $backup" >&2
+			exit 3
+		fi
+		sudo cp -p "$PULSE_CLIENT_CONF_TARGET" "$backup"
+		printf 'pulse_client_conf_backup=%s\n' "$backup"
+	fi
+
+	# Build the new content as the runtime user so ownership and mode stay
+	# correct without a second privileged write of operator data.
+	temporary="$(mktemp)"
+	chmod 0600 "$temporary"
+	{
+		if [ -f "$PULSE_CLIENT_CONF_TARGET" ]; then
+			grep -vE '^[[:space:]]*(autospawn|default-server)[[:space:]]*=' \
+				"$PULSE_CLIENT_CONF_TARGET" || true
+		fi
+		printf 'autospawn = no\n'
+		printf 'default-server = %s\n' "$PULSE_CLIENT_CONF_SERVER"
+	} >"$temporary"
+	sudo install -o "$EXPECTED_USER" -g "$owner_group" -m 0644 \
+		"$temporary" "$PULSE_CLIENT_CONF_TARGET"
+	rm -f "$temporary"
+	printf 'pulse_client_conf=written\n'
 }
 
 pulse_user_units_state() {
@@ -164,6 +221,16 @@ for file in \
 		exit 2
 	}
 done
+# The reviewed template and the managed settings written into an existing
+# client.conf must not drift apart.
+grep -qE '^[[:space:]]*autospawn[[:space:]]*=[[:space:]]*no[[:space:]]*$' "$PULSE_CLIENT_CONF_SOURCE" || {
+	echo "pulse client.conf template does not disable autospawn" >&2
+	exit 2
+}
+grep -qF "default-server = $PULSE_CLIENT_CONF_SERVER" "$PULSE_CLIENT_CONF_SOURCE" || {
+	echo "pulse client.conf template does not pin $PULSE_CLIENT_CONF_SERVER" >&2
+	exit 2
+}
 for command_name in sudo systemctl loginctl install pactl xdpyinfo python3 node lsof tmux; do
 	command -v "$command_name" >/dev/null 2>&1 || {
 		echo "missing runtime installation command: $command_name" >&2
@@ -209,10 +276,7 @@ sudo systemctl enable "$RUNTIME_UNIT" >/dev/null
 # restarts a live server: only a silent canonical socket triggers a
 # socket-activation start of pulseaudio.socket/pulseaudio.service.
 sudo systemctl start "user@${EXPECTED_UID}.service" >/dev/null 2>&1 || true
-sudo install -d -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0755 \
-	"/home/$EXPECTED_USER/.config/pulse"
-sudo install -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0644 \
-	"$PULSE_CLIENT_CONF_SOURCE" "$PULSE_CLIENT_CONF_TARGET"
+install_pulse_client_conf
 for unit in "${PULSE_USER_UNITS[@]}"; do
 	sudo systemctl --user --machine="${EXPECTED_USER}@.host" enable "$unit" >/dev/null 2>&1 || \
 		sudo -n -u "$EXPECTED_USER" XDG_RUNTIME_DIR="/run/user/$EXPECTED_UID" \

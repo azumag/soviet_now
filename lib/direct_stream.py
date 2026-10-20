@@ -967,12 +967,18 @@ def probe_audio_capture_state(
     """Classify the encoder's Pulse capture stream.
 
     ``ok``          the daemon answered and this FFmpeg owns a source output.
-    ``missing``     the daemon answered but this FFmpeg has no capture stream.
+    ``missing``     the daemon answered and no source output can belong to this
+                    FFmpeg, while every listed stream was attributable.
     ``unreachable`` the daemon did not answer, so the cause is outside FFmpeg.
-    ``unknown``     the daemon answered but the listing was not understood.
+    ``unknown``     the daemon answered but the listing was not understood, or
+                    at least one listed stream exposes no process id, so no
+                    stream can be attributed to this FFmpeg.
 
-    Only ``missing`` may restart FFmpeg: an unreachable daemon must not take
-    the video down with it (docich#2008).
+    Only ``missing`` may restart FFmpeg. An unreachable daemon must not take
+    the video down with it, and neither may a listing that merely stops
+    exposing ``application.process.id``: restarting there would stop a healthy
+    encoder and cause the very outage the watchdog exists to prevent
+    (docich#2008, review 2026-10-20).
     """
 
     env = dict(os.environ)
@@ -987,13 +993,30 @@ def probe_audio_capture_state(
         return "unknown"
     if listing.strip() and not re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
         return "unknown"
-    pids = {
-        int(value)
-        for value in re.findall(
-            r'application\.process\.id = "([0-9]+)"', listing
+
+    blocks = [
+        block
+        for block in re.split(
+            r"^Source Output #\d+", listing, flags=re.MULTILINE
+        )[1:]
+        if block.strip()
+    ]
+    if not blocks:
+        # The daemon answered and no capture stream exists at all.
+        return "missing"
+
+    unattributable = False
+    for block in blocks:
+        match = re.search(
+            r'application\.process\.id = "([0-9]+)"', block
         )
-    }
-    return "ok" if int(ffmpeg_pid) in pids else "missing"
+        if match is None:
+            unattributable = True
+            continue
+        if int(match.group(1)) == int(ffmpeg_pid):
+            return "ok"
+    # A stream we cannot attribute might be ours, so this is never "missing".
+    return "unknown" if unattributable else "missing"
 
 
 def _start_audio_capture_monitor(

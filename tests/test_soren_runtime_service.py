@@ -487,6 +487,117 @@ esac
         )
         self.assertNotIn("pulseaudio --start", source)
 
+    def _run_client_conf_writer(self, target: Path, server: str = "unix:/run/user/1001/pulse/native"):
+        """Run the shipped writer against ``target`` with only sudo stubbed.
+
+        The helper bodies are extracted from the installer itself (anchored on
+        their function definitions) so this exercises the production code, not
+        a copy of it. ``sudo`` is stubbed to run the command directly because
+        the test cannot escalate.
+        """
+        text = INSTALLER.read_text(encoding="utf-8")
+        parts = []
+        for marker in ("pulse_client_conf_setting() {", "install_pulse_client_conf() {"):
+            start = text.index(marker)
+            end = text.index("\n}\n", start) + len("\n}\n")
+            parts.append(text[start:end])
+        script = "\n".join(parts) + """
+set -euo pipefail
+sudo() {
+  if [ "$1" = "-n" ]; then shift; fi
+  "$@"
+}
+PULSE_CLIENT_CONF_TARGET="$TARGET"
+PULSE_CLIENT_CONF_SERVER="$SERVER"
+EXPECTED_USER="$(id -un)"
+install_pulse_client_conf
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stub = Path(temp_dir) / "run.sh"
+            stub.write_text(script, encoding="utf-8")
+            env = {
+                **os.environ,
+                "TARGET": str(target),
+                "SERVER": server,
+            }
+            return subprocess.run(
+                ["bash", str(stub)],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+
+    def test_client_conf_writer_preserves_operator_lines_with_a_backup(self) -> None:
+        # Review 2026-10-20: an existing client.conf must never be silently
+        # overwritten. Production carried operator lines (2026-09-07 record).
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            original = (
+                "# operator note\n"
+                "autospawn = yes\n"
+                "default-server = unix:/tmp/stale/pulse\n"
+                "disable-shm = yes\n"
+            )
+            target.write_text(original, encoding="utf-8")
+            result = self._run_client_conf_writer(target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            written = target.read_text(encoding="utf-8")
+            # Managed settings are corrected...
+            self.assertIn("autospawn = no", written)
+            self.assertIn(
+                "default-server = unix:/run/user/1001/pulse/native", written
+            )
+            # ...every other operator line survives...
+            self.assertIn("# operator note", written)
+            self.assertIn("disable-shm = yes", written)
+            # ...and the previous content is recoverable byte-for-byte.
+            backups = sorted(target.parent.glob("client.conf.*.bak"))
+            self.assertEqual(len(backups), 1, backups)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), original)
+
+    def test_client_conf_writer_is_idempotent_without_extra_backups(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "client.conf"
+            target.write_text(
+                "disable-shm = yes\n"
+                "autospawn = no\n"
+                "default-server = unix:/run/user/1001/pulse/native\n",
+                encoding="utf-8",
+            )
+            first = self._run_client_conf_writer(target)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertIn("pulse_client_conf=unchanged", first.stdout)
+            self.assertEqual(sorted(target.parent.glob("client.conf.*.bak")), [])
+
+    def test_client_conf_writer_creates_a_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "pulse" / "client.conf"
+            result = self._run_client_conf_writer(target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            written = target.read_text(encoding="utf-8")
+            self.assertIn("autospawn = no", written)
+            self.assertIn(
+                "default-server = unix:/run/user/1001/pulse/native", written
+            )
+
+    def test_client_conf_state_uses_effective_settings(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("pulse_client_conf_setting() {", source)
+        # Last assignment wins, so an operator line before the managed pair
+        # must not make the state look unmanaged.
+        self.assertIn(
+            'sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p"', source
+        )
+        self.assertIn("tail -n 1", source)
+
+    def test_installer_refuses_to_drift_from_the_reviewed_template(self) -> None:
+        source = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("does not disable autospawn", source)
+        self.assertIn("does not pin $PULSE_CLIENT_CONF_SERVER", source)
+
     def test_installer_print_config_publishes_pulse_target(self) -> None:
         result = subprocess.run(
             ["bash", str(INSTALLER), "--print-config"],
