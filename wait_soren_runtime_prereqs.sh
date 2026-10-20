@@ -55,6 +55,18 @@ done
 
 export DISPLAY="$DISPLAY_NAME"
 export PULSE_SERVER="unix:$PULSE_SOCKET"
+
+# docich #2008: the canonical PulseAudio is the ubuntu user manager's
+# pulseaudio.socket / pulseaudio.service. When the expected socket does not
+# answer yet, ask systemd-user to bring it up once before waiting. This never
+# autospawns a private server: PULSE_SERVER above forbids libpulse autospawn
+# for this script, and the managed client.conf ships autospawn=no.
+if command -v systemctl >/dev/null 2>&1; then
+	if ! pactl info >/dev/null 2>&1; then
+		systemctl --user start pulseaudio.socket pulseaudio.service >/dev/null 2>&1 || true
+	fi
+fi
+
 deadline=$(( $(date +%s) + WAIT_SEC ))
 
 while ! pactl info >/dev/null 2>&1; do

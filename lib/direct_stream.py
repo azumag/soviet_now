@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 
@@ -186,6 +186,33 @@ class ReconnectConfig:
 
 
 @dataclass(frozen=True)
+class AudioCaptureWatchdogConfig:
+    """Detect a live encoder whose Pulse capture input silently died.
+
+    On 2026-10-11 the deploy restart killed the autospawned PulseAudio server
+    and FFmpeg logged ``Error during demuxing`` for its pulse input while it
+    kept publishing video (docich#2008). The supervisor only reacted to process
+    exit, so the broadcast stayed silent until an operator noticed. This policy
+    watches the encoder's capture stream on the fixed user socket and restarts
+    FFmpeg once the daemon is reachable again; while the daemon is down the
+    video keeps running, exactly as before.
+    """
+
+    enabled: bool
+    probe_interval_sec: int
+    loss_threshold: int
+    pulse_server: str
+
+    def public_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "probe_interval_sec": self.probe_interval_sec,
+            "loss_threshold": self.loss_threshold,
+            "pulse_server": self.pulse_server,
+        }
+
+
+@dataclass(frozen=True)
 class RunOutcome:
     """Result of one FFmpeg publish run."""
 
@@ -275,6 +302,30 @@ def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConf
             source, "SOREN_DIRECT_STREAM_RECONNECT_MAX_CONSECUTIVE", 10, 1, 100
         ),
         reload_relay=_strict_bool(source, "SOREN_DIRECT_STREAM_RECONNECT_RELOAD_RELAY", True),
+    )
+
+
+def load_audio_capture_watchdog_config(
+    env: Mapping[str, str] | None = None,
+) -> AudioCaptureWatchdogConfig:
+    """Load the capture watchdog policy from the reviewed runtime environment."""
+
+    source = os.environ if env is None else env
+    pulse_server = str(
+        source.get("PULSE_SERVER")
+        or f"unix:/run/user/{os.getuid()}/pulse/native"
+    ).strip()
+    if not re.fullmatch(r"unix:/[A-Za-z0-9._/-]+", pulse_server) or ".." in pulse_server:
+        raise ConfigError("PULSE_SERVER must be a local unix socket path")
+    return AudioCaptureWatchdogConfig(
+        enabled=_strict_bool(source, "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_ENABLED", True),
+        probe_interval_sec=_strict_int(
+            source, "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_PROBE_SEC", 10, 5, 120
+        ),
+        loss_threshold=_strict_int(
+            source, "SOREN_DIRECT_STREAM_AUDIO_WATCHDOG_LOSS_THRESHOLD", 2, 1, 10
+        ),
+        pulse_server=pulse_server,
     )
 
 
@@ -906,6 +957,122 @@ def _start_reconnect_monitor(
     return thread
 
 
+def probe_audio_capture_state(
+    config: DirectStreamConfig,
+    watchdog: AudioCaptureWatchdogConfig,
+    ffmpeg_pid: int,
+    *,
+    run: Callable[..., str] = _checked,
+) -> str:
+    """Classify the encoder's Pulse capture stream.
+
+    ``ok``          the daemon answered and this FFmpeg owns a source output.
+    ``missing``     the daemon answered but this FFmpeg has no capture stream.
+    ``unreachable`` the daemon did not answer, so the cause is outside FFmpeg.
+    ``unknown``     the daemon answered but the listing was not understood.
+
+    Only ``missing`` may restart FFmpeg: an unreachable daemon must not take
+    the video down with it (docich#2008).
+    """
+
+    env = dict(os.environ)
+    env["PULSE_SERVER"] = watchdog.pulse_server
+    try:
+        run(["pactl", "info"], env=env)
+    except RuntimeCheckError:
+        return "unreachable"
+    try:
+        listing = run(["pactl", "list", "source-outputs"], env=env)
+    except RuntimeCheckError:
+        return "unknown"
+    if listing.strip() and not re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
+        return "unknown"
+    pids = {
+        int(value)
+        for value in re.findall(
+            r'application\.process\.id = "([0-9]+)"', listing
+        )
+    }
+    return "ok" if int(ffmpeg_pid) in pids else "missing"
+
+
+def _start_audio_capture_monitor(
+    config: DirectStreamConfig,
+    watchdog: AudioCaptureWatchdogConfig,
+    child: subprocess.Popen[str],
+    monitor_state: dict[str, object],
+    *,
+    probe: Callable[..., str] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    alive: Callable[[object], bool] | None = None,
+) -> threading.Thread:
+    """Restart FFmpeg when its capture stream is gone but Pulse is reachable."""
+
+    # Resolve at call time so tests and callers can patch the module helpers.
+    probe_fn = probe_audio_capture_state if probe is None else probe
+    sleep_fn = time.sleep if sleep is None else sleep
+    alive_fn = _pid_alive if alive is None else alive
+
+    def publish(state: str, consecutive: int) -> None:
+        monitor_state["audio_capture"] = {
+            "status": state,
+            "consecutive_unhealthy": consecutive,
+            "checked_at": int(time.time()),
+            "pulse_server": watchdog.pulse_server,
+            "source": config.pulse_source,
+        }
+
+    def monitor() -> None:
+        consecutive = 0
+        seen_capture = False
+        while True:
+            sleep_fn(watchdog.probe_interval_sec)
+            if monitor_state.get("stopping") or monitor_state.get("reconnect"):
+                return
+            if not alive_fn(child.pid):
+                return
+            state = probe_fn(config, watchdog, child.pid)
+            if state == "ok":
+                # Only a capture stream that we actually saw on this FFmpeg run
+                # may be declared lost later. Without this transition guard an
+                # unexpected listing format would restart a healthy encoder.
+                seen_capture = True
+                consecutive = 0
+            elif state == "missing" and seen_capture:
+                consecutive += 1
+            else:
+                # Unreachable daemon, unknown listing, or no capture observed
+                # yet: keep publishing video and never restart on a guess.
+                consecutive = 0
+            publish(state, consecutive)
+            if (
+                state != "missing"
+                or not seen_capture
+                or consecutive < watchdog.loss_threshold
+            ):
+                continue
+            print(
+                f"direct_stream: pulse capture lost "
+                f"({consecutive} checks) source={config.pulse_source}",
+                file=sys.stderr,
+            )
+            monitor_state["reconnect"] = True
+            monitor_state["reconnect_reason"] = "pulse_capture_lost"
+            try:
+                child.send_signal(signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            return
+
+    thread = threading.Thread(
+        target=monitor,
+        name="direct-stream-audio-capture-monitor",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 def _run_ffmpeg_once(
     config: DirectStreamConfig,
     command: Sequence[str],
@@ -913,6 +1080,7 @@ def _run_ffmpeg_once(
     mode: str,
     reconnect: ReconnectConfig | None,
     captions_active: bool = False,
+    audio_watchdog: AudioCaptureWatchdogConfig | None = None,
 ) -> RunOutcome:
     """Run FFmpeg once and return the outcome of this single publish session."""
     started_at = int(time.time())
@@ -946,6 +1114,19 @@ def _run_ffmpeg_once(
         }
         if reconnect is not None:
             base_state["reconnect"] = reconnect.public_dict()
+        watchdog_active = (
+            audio_watchdog is not None
+            and audio_watchdog.enabled
+            and mode == "live"
+        )
+        if watchdog_active:
+            base_state["audio_capture"] = {
+                "status": "starting",
+                "consecutive_unhealthy": 0,
+                "checked_at": started_at,
+                "pulse_server": audio_watchdog.pulse_server,
+                "source": config.pulse_source,
+            }
         _atomic_json(config.state_dir / "status.json", base_state)
 
         stopping = False
@@ -980,6 +1161,11 @@ def _run_ffmpeg_once(
             monitor_thread = _start_reconnect_monitor(
                 config, reconnect, child, monitor_state
             )
+        audio_thread: threading.Thread | None = None
+        if watchdog_active:
+            audio_thread = _start_audio_capture_monitor(
+                config, audio_watchdog, child, monitor_state
+            )
         batch: list[str] = []
         latest: dict[str, object] = {}
         try:
@@ -999,6 +1185,8 @@ def _run_ffmpeg_once(
                         "system_metrics": metrics,
                         "updated_at": int(time.time()),
                     }
+                    if "audio_capture" in monitor_state:
+                        payload["audio_capture"] = monitor_state["audio_capture"]
                     _atomic_json(config.state_dir / "status.json", payload)
             return_code = child.wait()
         finally:
@@ -1006,6 +1194,8 @@ def _run_ffmpeg_once(
             signal.signal(signal.SIGINT, previous_int)
             if monitor_thread is not None:
                 monitor_thread.join(timeout=5)
+            if audio_thread is not None:
+                audio_thread.join(timeout=5)
 
         if monitor_state.get("reconnect"):
             final_state = "reconnect"
@@ -1032,6 +1222,8 @@ def _run_ffmpeg_once(
             final_payload["ffmpeg_exit_code"] = return_code
         if monitor_state.get("reconnect_reason"):
             final_payload["reconnect_reason"] = monitor_state["reconnect_reason"]
+        if "audio_capture" in monitor_state:
+            final_payload["audio_capture"] = monitor_state["audio_capture"]
         _atomic_json(config.state_dir / "status.json", final_payload)
         return RunOutcome(
             exit_code=runner_exit_code,
@@ -1053,6 +1245,7 @@ def _run_ffmpeg(
     output_path: Path | None,
     duration_sec: int | None,
     reconnect: ReconnectConfig | None = None,
+    audio_watchdog: AudioCaptureWatchdogConfig | None = None,
 ) -> int:
     captions_active = validate_runtime(config, mode=mode)
     captions_active = captions_active and prepare_caption_runtime(config)
@@ -1084,6 +1277,7 @@ def _run_ffmpeg(
                 mode=mode,
                 reconnect=None,
                 captions_active=captions_active,
+                audio_watchdog=audio_watchdog,
             ).exit_code
 
         # Live supervise loop: reconnect on Twitch-side cuts and unexpected
@@ -1105,6 +1299,7 @@ def _run_ffmpeg(
                     mode=mode,
                     reconnect=reconnect,
                     captions_active=captions_active,
+                    audio_watchdog=audio_watchdog,
                 )
                 if stop_requested or outcome.state == "stopped":
                     return 0
@@ -1231,12 +1426,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.action == "run":
         reconnect_config = load_reconnect_config()
+        audio_watchdog = load_audio_capture_watchdog_config()
         return _run_ffmpeg(
             config,
             mode="live",
             output_path=None,
             duration_sec=None,
             reconnect=reconnect_config,
+            audio_watchdog=audio_watchdog,
         )
     if args.action == "record":
         return _run_ffmpeg(
