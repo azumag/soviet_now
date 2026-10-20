@@ -171,6 +171,10 @@ async function contract(headed) {
     await installInlineDirectBroadcastOverlay(page, config, {watch: false});
     await waitHidden(); await pixels('inline-empty');
     setGap(); await waitCard();
+    // A freshly (re)created inline iframe exposes its text before the
+    // compositor presents the surface. Let one presentable frame land before
+    // the X11 pixel contract reads the padding.
+    await page.waitForTimeout(250);
     assert.deepEqual((await frames())[0].box, [0, 90, 239, 540]); await pixels('inline-card', true);
     text = 'SOREN/CORNER: SOREN / sorengame / 進行中'; marker++; await waitHidden(); await pixels('inline-restored');
     assert.ok(await page.evaluate(start => window.fixtureFrame > start, startFrame));
