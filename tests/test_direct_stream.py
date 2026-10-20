@@ -862,7 +862,22 @@ class DirectStreamTests(unittest.TestCase):
         self.assertEqual(probe(""), "missing")
         self.assertEqual(probe("   \n"), "missing")
 
-        # And the monitor must not signal FFmpeg on repeated unusable listings.
+        # The reviewer's exact second shape: a normal foreign block FOLLOWED BY
+        # a trailing header-only block. The trailing header must not be dropped
+        # so that the listing still reduces to a foreign "missing".
+        self.assertEqual(
+            probe(
+                'Source Output #9\n'
+                '\tapplication.process.id = "9999"\n'
+                'Source Output #7\n'
+            ),
+            "unknown",
+        )
+
+        # Transition: after a healthy observation, repeated incomplete listings
+        # must never reach the strike threshold or signal FFmpeg. The monitor
+        # is driven by the real classifier over the reviewer's listings, so the
+        # parse and the transition are covered together.
         child = mock.Mock()
         child.pid = 4321
         monitor_state: dict[str, object] = {
@@ -870,27 +885,39 @@ class DirectStreamTests(unittest.TestCase):
             "reconnect": False,
             "reconnect_reason": None,
         }
-        states = ["ok"] + ["unknown"] * 5
+        healthy = 'Source Output #7\n\tapplication.process.id = "4321"\n'
+        incomplete_listings = [
+            "Source Output #7\n",
+            'Source Output #9\n\tapplication.process.id = "9999"\nSource Output #7\n',
+            "Source Output #7\nSource Output #9\n",
+        ]
+        sequence = [healthy] + incomplete_listings * 3
         checks = {"count": 0}
 
         def fake_sleep(_seconds: float) -> None:
             checks["count"] += 1
-            if checks["count"] >= len(states):
+            if checks["count"] >= len(sequence):
                 monitor_state["stopping"] = True
+
+        def real_probe(_config, _watchdog, _pid):
+            listing = sequence.pop(0)
+            return probe(listing)
 
         thread = direct_stream._start_audio_capture_monitor(
             config,
             watchdog,
             child,
             monitor_state,
-            probe=lambda *args, **kwargs: states.pop(0),
+            probe=real_probe,
             sleep=fake_sleep,
             alive=lambda _pid: True,
         )
         thread.join(timeout=5)
 
         self.assertFalse(monitor_state["reconnect"])
+        self.assertIsNone(monitor_state["reconnect_reason"])
         child.send_signal.assert_not_called()
+        self.assertEqual(monitor_state["audio_capture"]["consecutive_unhealthy"], 0)
 
     def test_mixed_listing_with_our_pid_hidden_is_unknown(self) -> None:
         # Review 5580497362: a listing where our own block hides
