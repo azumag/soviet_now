@@ -993,6 +993,11 @@ def probe_audio_capture_state(
             r'application\.process\.id = "([0-9]+)"', listing
         )
     }
+    # If the listing contains source outputs but we could not read any PID
+    # attribute, ownership is undetermined: treat as "unknown" so we never
+    # restart FFmpeg on a parse failure (docich#2008).
+    if not pids and re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
+        return "unknown"
     return "ok" if int(ffmpeg_pid) in pids else "missing"
 
 

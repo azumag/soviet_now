@@ -211,6 +211,12 @@ sudo systemctl enable "$RUNTIME_UNIT" >/dev/null
 sudo systemctl start "user@${EXPECTED_UID}.service" >/dev/null 2>&1 || true
 sudo install -d -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0755 \
 	"/home/$EXPECTED_USER/.config/pulse"
+# Back up any differing existing client.conf before overwriting (docich#2008).
+if [ -f "$PULSE_CLIENT_CONF_TARGET" ] && \
+   ! cmp -s "$PULSE_CLIENT_CONF_SOURCE" "$PULSE_CLIENT_CONF_TARGET"; then
+	sudo cp -p "$PULSE_CLIENT_CONF_TARGET" \
+		"$PULSE_CLIENT_CONF_TARGET.$(date '+%Y%m%d-%H%M%S').bak" || true
+fi
 sudo install -o "$EXPECTED_USER" -g "$(id -gn "$EXPECTED_USER")" -m 0644 \
 	"$PULSE_CLIENT_CONF_SOURCE" "$PULSE_CLIENT_CONF_TARGET"
 for unit in "${PULSE_USER_UNITS[@]}"; do
