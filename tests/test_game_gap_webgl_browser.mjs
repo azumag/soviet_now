@@ -91,19 +91,6 @@ async function contract(headed) {
         assert.equal(raw.length, 1280 * 720 * 3);
       } else raw = await sharp(await page.screenshot()).removeAlpha().raw().toBuffer();
       const at = (x, y) => [...raw.subarray((y * 1280 + x) * 3, (y * 1280 + x) * 3 + 3)];
-      if (label === 'inline-card') {
-        console.log('inline-diag', JSON.stringify(await page.evaluate(() => ({
-          stack: document.elementsFromPoint(100, 500).map(e => ({tag: e.tagName, id: e.id, region: e.dataset?.sorenOverlayRegion})),
-          frames: [...document.querySelectorAll('iframe')].map(f => {
-            const r = f.getBoundingClientRect(); const gap = f.contentDocument?.getElementById('hanjuku-gap');
-            return {id: f.id, region: f.dataset.sorenOverlayRegion, rect: [r.x, r.y, r.width, r.height],
-              display: getComputedStyle(f).display, visibility: getComputedStyle(f).visibility,
-              opacity: getComputedStyle(f).opacity, zIndex: getComputedStyle(f).zIndex,
-              gapDisplay: gap?.style.display, gapText: gap?.innerText?.slice(0, 40),
-              gapBg: gap ? getComputedStyle(gap).backgroundColor : null};
-          }),
-        }))));
-      }
       if (artifactDir) {
         fs.mkdirSync(artifactDir, {recursive: true});
         await sharp(raw, {raw: {width: 1280, height: 720, channels: 3}}).png()
