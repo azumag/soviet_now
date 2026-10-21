@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     -o) out="$2"; shift 2 ;;
     -w) want_code=1; shift 2 ;;
     -X) method="$2"; shift 2 ;;
-    -H) shift 2 ;;
+    -H) case "$2" in "Authorization: "*) auth="$2" ;; esac; shift 2 ;;
     -d) body="$2"; shift 2 ;;
     http*) url="$1"; shift ;;
     *) shift ;;
@@ -42,15 +42,28 @@ emit() { # $1=text: -o があればファイルへ、無ければ stdout へ
   if [ "${want_code:-}" = "1" ]; then printf '%s' "${STUB_HTTP_CODE:-200}"; fi
 }
 # 既定応答 (${VAR:-...} は既定値内の } と衝突するため if で設定する)
-if [ -z "${STUB_VALIDATE+x}" ]; then STUB_VALIDATE='{"client_id":"cid","login":"tester","scopes":["channel:manage:broadcast"]}'; fi
+if [ -z "${STUB_VALIDATE+x}" ]; then STUB_VALIDATE='{"client_id":"cid","login":"tester","user_id":"test-bid","scopes":["channel:manage:broadcast"]}'; fi
 if [ -z "${STUB_CHANNELS+x}" ]; then STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}'; fi
 if [ -z "${STUB_GAMES+x}" ]; then STUB_GAMES='{"data":[{"id":"11585","name":"Robots"}]}'; fi
 if [ -z "${STUB_SEARCH+x}" ]; then STUB_SEARCH='{"data":[{"id":"11585","name":"Robots"}]}'; fi
 case "$url" in
   *oauth2/validate*)
-    emit "$STUB_VALIDATE" ;;
+    if [ "${STUB_CREDENTIAL_CASE:-}" = "1" ]; then
+      case "${auth:-}" in
+        *expired*) emit '{"status":401,"message":"PRIVATE"}' ;;
+        *limited*) emit '{"client_id":"cid","user_id":"test-bid","scopes":[]}' ;;
+        *foreign*) emit '{"client_id":"cid","user_id":"other","scopes":["channel:manage:broadcast"]}' ;;
+        *malformed*) emit '[]' ;;
+        *) emit "$STUB_VALIDATE" ;;
+      esac
+    else
+      emit "$STUB_VALIDATE"
+    fi ;;
   *helix/channels*\&broadcaster_id=*|*helix/channels\?broadcaster_id=*)
     if [ "$method" = "PATCH" ]; then
+      if [ "${STUB_CREDENTIAL_CASE:-}" = "1" ] && [ "${auth:-}" != "Authorization: Bearer test-token" ]; then
+        printf '403'; exit 0
+      fi
       printf '%s' "${body:-}" >"${STUB_PATCH_OUT:-/dev/null}"
       printf '1' >>"${STUB_PATCH_COUNT:-/dev/null}"
       # Twitch PATCH /helix/channels は成功時 204
@@ -167,16 +180,33 @@ export STUB_CHANNELS='{"data":[{"title":"old","game_id":"1","game_name":"Old"}]}
 [ "$?" = "1" ] && ok "non-numeric id rc=1" || not_ok "non-numeric id rc"
 
 # 5. scope 不足 → exit 3
-export STUB_VALIDATE='{"client_id":"cid","login":"tester","scopes":["channel:manage:predictions"]}'
+export STUB_VALIDATE='{"client_id":"cid","login":"tester","user_id":"test-bid","scopes":["channel:manage:predictions"]}'
 "$BIN" --game robots --games-dir "$TMP/games" >/dev/null 2>&1
 [ "$?" = "3" ] && ok "missing scope rc=3" || not_ok "missing scope rc"
-export STUB_VALIDATE='{"client_id":"cid","login":"tester","scopes":["channel:manage:broadcast"]}'
+export STUB_VALIDATE='{"client_id":"cid","login":"tester","user_id":"test-bid","scopes":["channel:manage:broadcast"]}'
 
 # 6. token 優先順位: GAME > TITLE (TITLE を無効値にしても成功する)
 export TWITCH_GAME_TOKEN=test-token TWITCH_TITLE_TOKEN=bogus
 "$BIN" --game robots --games-dir "$TMP/games" --dry-run >/dev/null 2>&1
 [ "$?" = "0" ] && ok "token precedence" || not_ok "token precedence"
 unset TWITCH_TITLE_TOKEN
+
+# A rejected earlier credential must not shadow a later usable credential.
+export STUB_CREDENTIAL_CASE=1
+for rejected in expired limited foreign malformed; do
+  rm -f "$STUB_PATCH_COUNT"
+  TWITCH_GAME_TOKEN="$rejected" TWITCH_TITLE_TOKEN=test-token "$BIN" --game robots --games-dir "$TMP/games" >"$TMP/fallback.out" 2>"$TMP/fallback.err"
+  rc=$?
+  [ "$rc" = "0" ] && [ "$(cat "$STUB_PATCH_COUNT" 2>/dev/null)" = "1" ] && ok "fallback after $rejected" || not_ok "fallback after $rejected rc=$rc"
+done
+rm -f "$STUB_PATCH_COUNT"
+TWITCH_GAME_TOKEN=expired TWITCH_TITLE_TOKEN=limited TWITCH_BOT_TOKEN=foreign TWITCH_PREDICTIONS_TOKEN=malformed "$BIN" --game robots --games-dir "$TMP/games" >"$TMP/rejected.out" 2>"$TMP/rejected.err"
+rc=$?
+[ "$rc" = "3" ] && [ ! -f "$STUB_PATCH_COUNT" ] && ok "all rejected: no PATCH" || not_ok "all rejected rc=$rc"
+grep -Eq 'PRIVATE|expired|limited|foreign|malformed' "$TMP/rejected.err" && not_ok "credential details leaked" || ok "credential failure stays generic"
+TWITCH_GAME_TOKEN=limited "$BIN" --verify --game robots --games-dir "$TMP/games" >/dev/null 2>&1
+[ "$?" = "0" ] && ok "read-only verify does not require broadcast scope" || not_ok "read-only verify"
+unset STUB_CREDENTIAL_CASE
 
 # 7. --verify 一致 → 0 / 不一致 → 5
 export STUB_GAMES='{"data":[{"id":"11585","name":"Robots"}]}'

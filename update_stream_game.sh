@@ -34,8 +34,8 @@
 #   トークン (優先順): TWITCH_GAME_TOKEN > TWITCH_TITLE_TOKEN >
 #     TWITCH_BOT_TOKEN > TWITCH_PREDICTIONS_TOKEN
 #   いずれも channel:manage:broadcast スコープ必須 (PATCH用)。
-#   (実測: PREDICTIONS は polls/predictions のみ、旧 TITLE は失効、
-#    BOT は broadcast 付き。--verify/--resolve は読取のみで scope 不要)
+#   各候補を検証し、broadcaster本人・scope・client_idが有効な最初の候補を使う。
+#   --verify/--resolve は読取のみで broadcast scope・本人一致は不要。
 # 任意:
 #   STREAM_DAY_EPOCH (既定 2026-03-14), STREAM_DAY_TZ (既定 Asia/Tokyo)
 #   STREAM_VIEWER_TITLE_FILE (既定 prompts/viewer_title.md)
@@ -123,39 +123,52 @@ _record_title_sync_invocation
 EPOCH="${STREAM_DAY_EPOCH:-2026-03-14}"
 DAY_TZ="${STREAM_DAY_TZ:-Asia/Tokyo}"
 
-# --- 認証情報 (読取系でも Client-Id 解決に使う) ---
-TOKEN="${TWITCH_GAME_TOKEN:-${TWITCH_TITLE_TOKEN:-${TWITCH_BOT_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}}}"
-TOKEN="${TOKEN#oauth:}"
-CLIENT_ID="${TWITCH_CLIENT_ID:-}"
+# --- 認証情報: 優先順に検証し、使える既存候補を選ぶ ---
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
-if [ -z "$TOKEN" ]; then
-	_log "ERROR: no token (set TWITCH_GAME_TOKEN, TWITCH_TITLE_TOKEN, TWITCH_BOT_TOKEN or TWITCH_PREDICTIONS_TOKEN)"; exit 1
-fi
 if [ -z "$BROADCASTER_ID" ] && [ "$MODE" != "resolve" ]; then
-	_log "ERROR: TWITCH_BROADCASTER_ID not set"; exit 1
+    _log "ERROR: TWITCH_BROADCASTER_ID not set"; exit 1
 fi
-
-# --- トークン検証: スコープ確認 & client_id 取得 ---
-VALIDATE_JSON="$(curl -s -H "Authorization: OAuth ${TOKEN}" https://id.twitch.tv/oauth2/validate)"
-read -r TOK_CLIENT_ID HAS_SCOPE TOK_LOGIN <<EOF
-$(printf '%s' "$VALIDATE_JSON" | python3 -c "
-import sys, json
+TOKEN=""
+EFFECTIVE_CLIENT_ID=""
+had_candidate=0
+for token_name in TWITCH_GAME_TOKEN TWITCH_TITLE_TOKEN TWITCH_BOT_TOKEN TWITCH_PREDICTIONS_TOKEN; do
+    candidate="${!token_name}"
+    candidate="${candidate#oauth:}"
+    [ -n "$candidate" ] || continue
+    had_candidate=1
+    # A failed/expired or wrong-scope first candidate must not hide a valid one.
+    # Bound each validation and never expose the response or credential in logs.
+    VALIDATE_JSON="$(curl -s --max-time 10 -H "Authorization: OAuth ${candidate}" https://id.twitch.tv/oauth2/validate)"
+    TOK_CLIENT_ID=$(printf '%s' "$VALIDATE_JSON" | python3 -c '
+import json, sys
 try:
     d = json.load(sys.stdin)
-except Exception:
-    print('', '0', ''); raise SystemExit
-scopes = d.get('scopes') or []
-has = '1' if 'channel:manage:broadcast' in scopes else '0'
-print(d.get('client_id') or '', has, d.get('login') or '')
-")
-EOF
-EFFECTIVE_CLIENT_ID="${TOK_CLIENT_ID:-$CLIENT_ID}"
-if [ -z "$EFFECTIVE_CLIENT_ID" ]; then
-	_log "ERROR: no client id (token invalid? resp: $(printf '%s' "$VALIDATE_JSON" | head -c 120))"; exit 3
-fi
-if [ "$HAS_SCOPE" != "1" ] && [ "$MODE" != "verify" ] && [ "$MODE" != "resolve" ]; then
-	_log "ERROR: token(login=${TOK_LOGIN:-?}) lacks 'channel:manage:broadcast' scope. TWITCH_GAME_TOKEN (broadcaster の broadcast 付きトークン) を設定してください。"
-	exit 3
+    client = d.get("client_id")
+    scopes = d.get("scopes")
+    read_only = sys.argv[2] in ("verify", "resolve")
+    allowed = read_only or (
+        isinstance(scopes, list) and "channel:manage:broadcast" in scopes
+        and d.get("user_id") == sys.argv[1]
+    )
+    if isinstance(client, str) and client and client.isalnum() and allowed:
+        print(client)
+except (ValueError, TypeError, AttributeError):
+    pass
+' "$BROADCASTER_ID" "$MODE")
+    if [ -n "$TOK_CLIENT_ID" ]; then
+        TOKEN="$candidate"
+        EFFECTIVE_CLIENT_ID="$TOK_CLIENT_ID"
+        break
+    fi
+done
+unset candidate VALIDATE_JSON TOK_CLIENT_ID
+if [ -z "$TOKEN" ]; then
+    if [ "$had_candidate" = "0" ]; then
+        _log "ERROR: no token (set TWITCH_GAME_TOKEN, TWITCH_TITLE_TOKEN, TWITCH_BOT_TOKEN or TWITCH_PREDICTIONS_TOKEN)"
+        exit 1
+    fi
+    _log "ERROR: no valid broadcaster credential with channel:manage:broadcast"
+    exit 3
 fi
 
 _twitch_get() {
