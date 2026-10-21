@@ -132,6 +132,7 @@ mkdir -p "$TMP_MARKERS_DIR" "$TMP_STATE_DIR"
 echo "1" > "$GAME_COUNT_FILE"
 
 log() { printf 'LOG: %s\n' "$*" >> "$TMP_DIR/integration.log"; }
+_program_corner_active() { return 1; }
 get_comment_backlog_counts() { printf '0 0\n'; }
 is_comment_backlog_high() { return 1; }
 _last_score() { printf '0\n'; }
