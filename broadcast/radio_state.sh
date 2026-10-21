@@ -698,8 +698,35 @@ _run_jiji_corner_guarded() {
 	fi
 }
 
+# 番組枠コーナー（docich の AI探偵ミステリー / PAPER）が番組表示へ切り替えて
+# いる間は、通常ラジオを生成・再生しない（コーナー読み上げとの混線防止）。
+# 共有フラグ tmp/.program_corner_active を第一に読み、旧 PAPER 専用フラグも
+# 後方互換で受理する。ends_at を過ぎた古いフラグ・破損・欠落は無視する
+# （radio を止めない fail-open）。クラッシュで削除漏れがあっても ends_at で
+# 自動復帰する。
+# 0 を返す = 番組枠中（ブロック）, 1 を返す = 通常（許可）。
+_program_corner_active() {
+	local flag="" ends_at=0 now=0
+	now=$(date +%s 2>/dev/null || echo 0)
+	for flag in tmp/.program_corner_active tmp/.paper_corner_active; do
+		[ -f "$flag" ] || continue
+		ends_at=$(python3 -c "import json; print(json.load(open('$flag')).get('ends_at',0))" 2>/dev/null || echo 0)
+		case "$ends_at" in ''|*[!0-9.]*) ends_at=0 ;; esac
+		if [ "${ends_at%.*}" -gt "$now" ] 2>/dev/null; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 _play_deferred_radio_queue_once() {
 	_radio_cleanup_orphan_render_artifacts
+	# 番組枠コーナー中は deferred ラジオを再生しない。生成側（scheduler）の
+	# 抑止だけでは、コーナー開始前に積まれた deferred がコーナー途中で
+	# 再生されて読み上げを中断させるため、再生側でも同じフラグを見る。
+	if _program_corner_active; then
+		return 0
+	fi
 	# コメント未消化がある間は deferred ラジオを再生しない
 	local comment_queued=0 comment_playing=0 comment_total=0
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
