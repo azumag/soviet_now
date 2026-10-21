@@ -23,6 +23,7 @@ sed -n '/^_radio_render_retry_path()/,/^}/p' "$STATE_SRC" > "$TMP/fn_retry_path.
 sed -n '/^_radio_render_meta_path()/,/^}/p' "$STATE_SRC" > "$TMP/fn_render_meta.sh"
 sed -n '/^_radio_clear_deferred_render_retry()/,/^}/p' "$STATE_SRC" > "$TMP/fn_retry_clear.sh"
 sed -n '/^_radio_cleanup_orphan_render_artifacts()/,/^}/p' "$STATE_SRC" > "$TMP/fn_orphan_cleanup.sh"
+sed -n '/^_program_corner_active()/,/^}/p' "$STATE_SRC" > "$TMP/fn_program_gate.sh"
 sed -n '/^_play_deferred_radio_queue_once()/,/^}/p' "$STATE_SRC" > "$TMP/fn_play.sh"
 sed -n '/^_broadcast_mode_sidecar_path()/,/^}/p' "$PERSONA_SRC" > "$TMP/fn_sidecar.sh"
 sed -n '/^_broadcast_clear_expected_mode()/,/^}/p' "$PERSONA_SRC" > "$TMP/fn_clear_mode.sh"
@@ -33,6 +34,7 @@ sed -n '/^_broadcast_clear_expected_mode()/,/^}/p' "$PERSONA_SRC" > "$TMP/fn_cle
 . "$TMP/fn_render_meta.sh"
 . "$TMP/fn_retry_clear.sh"
 . "$TMP/fn_orphan_cleanup.sh"
+. "$TMP/fn_program_gate.sh"
 . "$TMP/fn_sidecar.sh"
 . "$TMP/fn_clear_mode.sh"
 . "$TMP/fn_play.sh"
@@ -148,5 +150,31 @@ if [ "$(ls -1 "$TMP/case2"/radio_*.txt 2>/dev/null | wc -l)" -eq 0 ]; then
 else
 	not_ok "case2: queue drained"
 fi
+
+# --- 挙動検証3: 番組枠フラグ中は deferred を再生しない（キューは保持） ---
+mkdir -p "$TMP/case3" "$TMP/tmp"
+export RADIO_DEFERRED_QUEUE_DIR="$TMP/case3"
+echo "コーナー中のラジオ" > "$TMP/case3/radio_3000_7_news_1.txt"
+printf 'RIFF' > "$TMP/case3/radio_3000_7_news_1.ready.wav"
+export SAY_LOG="$TMP/case3/say.log" LOG_FILE="$TMP/case3/play.log"
+rm -f "$TMP/case3/play.log" "$TMP/case3/say.log"
+python3 -c "import json; json.dump({'ends_at': $(date +%s) + 1800}, open('$TMP/tmp/.program_corner_active','w'))"
+
+(
+	cd "$TMP"
+	_play_deferred_radio_queue_once
+)
+
+if [ ! -s "$TMP/case3/say.log" ] && [ ! -e "$TMP/case3/play.log" ]; then
+	ok "case3: program corner suppresses playback"
+else
+	not_ok "case3: program corner suppresses playback"
+fi
+if [ -f "$TMP/case3/radio_3000_7_news_1.txt" ]; then
+	ok "case3: queue item kept for after the corner"
+else
+	not_ok "case3: queue item kept for after the corner"
+fi
+rm -f "$TMP/tmp/.program_corner_active"
 
 exit "$FAIL"

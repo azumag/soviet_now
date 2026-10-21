@@ -27,6 +27,7 @@ run_case() {
       esac
     }
     log() { printf '%s\n' "$*" >>"$case_dir/log"; }
+    _program_corner_active() { return 1; }
     _last_score() { printf '0\n'; }
     get_comment_backlog_counts() { printf '0 0\n'; }
     is_comment_backlog_high() { return 1; }
@@ -83,6 +84,7 @@ run_dead_owner_recovery_case() {
       esac
     }
     log() { printf '%s\n' "$*" >>"$case_dir/log"; }
+    _program_corner_active() { return 1; }
     _last_score() { printf '0\n'; }
     get_comment_backlog_counts() { printf '0 0\n'; }
     is_comment_backlog_high() { return 1; }
@@ -131,6 +133,7 @@ run_live_owner_preserved_case() {
       esac
     }
     log() { printf '%s\n' "$*" >>"$case_dir/log"; }
+    _program_corner_active() { return 1; }
     _last_score() { printf '0\n'; }
     get_comment_backlog_counts() { printf '0 0\n'; }
     is_comment_backlog_high() { return 1; }
@@ -179,6 +182,7 @@ run_previous_day_cleanup_case() {
       esac
     }
     log() { :; }
+    _program_corner_active() { return 1; }
     _last_score() { printf '0\n'; }
     get_comment_backlog_counts() { printf '0 0\n'; }
     is_comment_backlog_high() { return 1; }
