@@ -31,7 +31,7 @@ while [ "$#" -gt 0 ]; do
     -o) out="$2"; shift 2 ;;
     -w) want_code=1; shift 2 ;;
     -X) method="$2"; shift 2 ;;
-    -H) case "$2" in "Authorization: "*) auth="$2" ;; esac; shift 2 ;;
+    -H) case "$2" in "Authorization: "*) auth="$2" ;; "Client-Id: "*) client="$2" ;; esac; shift 2 ;;
     -d) body="$2"; shift 2 ;;
     http*) url="$1"; shift ;;
     *) shift ;;
@@ -54,16 +54,16 @@ case "$url" in
         *limited*) emit '{"client_id":"cid","user_id":"test-bid","scopes":[]}' ;;
         *foreign*) emit '{"client_id":"cid","user_id":"other","scopes":["channel:manage:broadcast"]}' ;;
         *malformed*) emit '[]' ;;
-        *) emit "$STUB_VALIDATE" ;;
+        *) emit '{"client_id":"fallbackcid","user_id":"test-bid","scopes":["channel:manage:broadcast"]}' ;;
       esac
     else
       emit "$STUB_VALIDATE"
     fi ;;
   *helix/channels*\&broadcaster_id=*|*helix/channels\?broadcaster_id=*)
+    if [ "${STUB_CREDENTIAL_CASE:-}" = "1" ] && { [ "${auth:-}" != "Authorization: Bearer test-token" ] || [ "${client:-}" != "Client-Id: fallbackcid" ]; }; then
+      emit '{"error":"credential pair mismatch"}'; exit 0
+    fi
     if [ "$method" = "PATCH" ]; then
-      if [ "${STUB_CREDENTIAL_CASE:-}" = "1" ] && [ "${auth:-}" != "Authorization: Bearer test-token" ]; then
-        printf '403'; exit 0
-      fi
       printf '%s' "${body:-}" >"${STUB_PATCH_OUT:-/dev/null}"
       printf '1' >>"${STUB_PATCH_COUNT:-/dev/null}"
       # Twitch PATCH /helix/channels は成功時 204

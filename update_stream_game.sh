@@ -30,7 +30,7 @@
 # --title-prefix は後方互換のため受理するが、タイトル生成では使用しない。
 #
 # 必要な環境変数 (.env):
-#   TWITCH_CLIENT_ID / TWITCH_BROADCASTER_ID (既存と共通)
+#   TWITCH_BROADCASTER_ID (既存と共通)。Client-Idは候補のvalidate応答から取得する。
 #   トークン (優先順): TWITCH_GAME_TOKEN > TWITCH_TITLE_TOKEN >
 #     TWITCH_BOT_TOKEN > TWITCH_PREDICTIONS_TOKEN
 #   いずれも channel:manage:broadcast スコープ必須 (PATCH用)。
