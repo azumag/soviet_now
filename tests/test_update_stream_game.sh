@@ -280,5 +280,24 @@ echo "$out" | grep -q 'PR770\|v763\|main' && not_ok "internal identifiers leaked
 out="$("$BIN" --game robots --games-dir "$TMP/games" --activity 'NetHackでAIが長期攻略に挑戦' --dry-run 2>/dev/null)"
 echo "$out" | grep -q '^\[day[0-9]*\] NetHackでAIが長期攻略に挑戦$' && ok "public activity kept" || not_ok "public activity changed: $out"
 
+# 15. docich diagnostics の固定トラバーサルは group/other writable を拒否する。
+#     呼び出し元 umask が緩くても、スクリプトが作る tmp/logs とログは private で作られる。
+rm -rf "$TEST_ROOT/tmp/logs"
+# 本番既定の相対パスへ戻して実行する (フィクスチャは $TMP/game.log へ上書き指定しているため)。
+( umask 002; cd "$TEST_ROOT" && TWITCH_GAME_TOKEN=test-token \
+	STREAM_GAME_LOG_FILE=tmp/logs/stream_game.log \
+	"$BIN" --game robots --games-dir "$TMP/games" --strategy "root継続" >/dev/null 2>&1 )
+check_private_mode() { # $1=path $2=label
+	local mode
+	mode="$(stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null || echo absent)"
+	if [ "$mode" != absent ] && [ "$(( 8#$mode & 8#22 ))" -eq 0 ]; then
+		ok "$2 has no group/other write bits ($mode)"
+	else
+		not_ok "$2 mode: $mode"
+	fi
+}
+check_private_mode "$TEST_ROOT/tmp/logs" "log directory"
+check_private_mode "$TEST_ROOT/tmp/logs/stream_game.log" "stream_game.log"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = "0" ]
