@@ -22,9 +22,12 @@ Soren91 が試合後・一定試合数ごと・日次スケジュール等で LL
 
 ## セットアップ
 
+Node.jsは親ディレクトリの`.node-version`（22.23.4）を使用します。
+24系なら24.22.1以上、26系なら26.12.1以上が必要です。
+
 ```bash
 cd soren91
-npm install
+npm ci
 npx playwright install chromium
 node main.mjs
 ```

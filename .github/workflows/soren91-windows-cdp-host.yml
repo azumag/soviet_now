@@ -3,6 +3,8 @@ name: Soren91 Windows cdp-host contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-windows-cdp-host.yml'
       - 'tools/soren91_windows_cdp_host.mjs'
       - 'tools/soren91_local_agent.mjs'
@@ -28,6 +30,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install Node dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax check
@@ -50,6 +55,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install Node dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Build Windows helpers with the in-box csc.exe

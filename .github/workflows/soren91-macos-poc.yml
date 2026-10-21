@@ -3,6 +3,8 @@ name: Soren91 macOS PoC contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-macos-poc.yml'
       - 'eloop_lib.sh'
       - 'broadcast/radio_persona.sh'
@@ -51,6 +53,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install Node dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax check macOS renderer/session helpers

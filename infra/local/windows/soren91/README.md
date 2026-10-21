@@ -1,5 +1,11 @@
 # Soren91 Windows renderer host (cdp-host)
 
+Use Node.js 22.23.4 from the repository `.node-version` (or a patched
+24.22.1+/26.12.1+ release within those majors), then install the root
+dependencies with `npm ci`. Updating the checkout does not replace the
+resident agent's executable or restart it; follow the authorized rollout
+procedure and verify its effective Node.js version before marking it updated.
+
 The wired Windows desktop is the **primary** Soren91 (Meriken AI) renderer;
 the Mac mini (`infra/local/macos/soren91`) is the failover. docich selects
 between them (azumag/docich#1176, webui "メリケンAI 描画ホスト": auto /

@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Automated player for 91-player Soren game on unityroom",
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || ^26.12.1"
+  },
   "scripts": {
     "start": "node main.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.0",
     "playwright": "^1.59.1",
-    "sharp": "^0.33.0"
+    "sharp": "^0.35.5"
   }
 }

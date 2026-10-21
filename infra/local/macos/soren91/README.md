@@ -175,7 +175,9 @@ content, unlike the original bug.
   triggered** as long as this succeeds. Only fall back to
   `npx playwright install chromium --no-shell` if `channel: 'chrome'` fails to
   launch, and note the `~/Library/Caches/ms-playwright` size delta if you do.
-- `npm install` in this checkout (installs `playwright` from `package.json`;
+- Node.js 22.23.4 from `.node-version`, or a patched 24.22.1+/26.12.1+ release
+  within those majors. Check the executable used by launchd as well as the shell.
+- `npm ci` in this checkout (installs `playwright` from the lockfile;
   does not download a browser).
 - **Screen Recording permission**, for BOTH: whichever app hosts the
   `ffmpeg`/`node` process, AND the `soren91_window_capture` binary itself

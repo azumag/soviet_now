@@ -3,6 +3,8 @@ name: Shared overlay contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/shared-overlay-contracts.yml'
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
@@ -33,6 +35,8 @@ on:
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/shared-overlay-contracts.yml'
       - 'start_shared_overlay_service.sh'
       - 'shared_overlay.mjs'
@@ -73,6 +77,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install Node dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax check the shared overlay service surface

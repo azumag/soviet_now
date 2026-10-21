@@ -3,12 +3,16 @@ name: External game audio contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - 'external_game_audio.mjs'
       - 'tests/test_external_game_audio.mjs'
       - '.github/workflows/external-game-audio.yml'
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - 'external_game_audio.mjs'
       - 'tests/test_external_game_audio.mjs'
       - '.github/workflows/external-game-audio.yml'
@@ -24,5 +28,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - run: node --check external_game_audio.mjs
       - run: node --test tests/test_external_game_audio.mjs
