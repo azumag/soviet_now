@@ -6,8 +6,9 @@
 cd "$(dirname "$0")"
 source lib/outbound_queue.sh 2>/dev/null || true
 
-# 単体実行時にも.envを読めるようにする（ループ内ではsoren_loop.shが既にexport済み）
-[ -z "${TWITCH_CLIENT_ID:-}" ] && [ -f .env ] && set -a && . ./.env && set +a
+# 毎回 .env を読み直す。Twitch トークンは定期自動更新で .env 側が差し替わるため、
+# 長命ワーカーから継承した環境の値（失効済みの可能性がある）を優先しない。
+[ -f .env ] && set -a && . ./.env && set +a
 
 EVENT_MSG="${1:-}"
 EVENT_KIND="${2:-generic}"

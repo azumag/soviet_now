@@ -5,8 +5,10 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
-BOTS = {'nightbot', 'streamelements', 'streamlabs', 'wizebot'}
+ENV_FILE = Path(__file__).resolve().parents[1] / '.env'
+BOTS ={'nightbot', 'streamelements', 'streamlabs', 'wizebot'}
 
 
 def raiders(items):
@@ -46,9 +48,31 @@ def research(login, get):
     return result
 
 
+def _env_file_values(keys):
+    """Current literal values from Soren's .env (never sourced or evaluated).
+
+    Twitch tokens are rotated in .env by the periodic refresher, so the copy a
+    long-lived worker inherited at start-up may already be expired.
+    """
+    values = {}
+    try:
+        lines = ENV_FILE.read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeDecodeError):
+        return values
+    for line in lines:
+        line = line.strip()
+        if line.startswith('export '):
+            line = line[7:].lstrip()
+        key, sep, value = line.partition('=')
+        if sep and key.strip() in keys:
+            values[key.strip()] = value.strip().strip('"\'')
+    return values
+
+
 def api_get(endpoint, params):
-    token = os.environ.get('TWITCH_BOT_TOKEN', '').removeprefix('oauth:')
-    client = os.environ.get('TWITCH_CLIENT_ID', '')
+    fresh = _env_file_values({'TWITCH_BOT_TOKEN', 'TWITCH_CLIENT_ID'})
+    token = (fresh.get('TWITCH_BOT_TOKEN') or os.environ.get('TWITCH_BOT_TOKEN', '')).removeprefix('oauth:')
+    client = fresh.get('TWITCH_CLIENT_ID') or os.environ.get('TWITCH_CLIENT_ID', '')
     if not token or not client:
         return []
     req = urllib.request.Request('https://api.twitch.tv/helix/' + endpoint + '?' + urllib.parse.urlencode(params),

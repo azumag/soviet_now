@@ -89,6 +89,50 @@ printf '200'
             subprocess.run(["bash", "workers/goal_worker.sh", "--once"], cwd=root, env=env, check=True)
             self.assertEqual(lines, (chat_dir / "raw.log").read_text(encoding="utf-8").splitlines())
 
+    def test_worker_uses_rotated_token_from_env_file_not_inherited_one(self):
+        import shutil
+
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp_raw:
+            tmp = Path(tmp_raw)
+            for rel in ("workers/goal_worker.sh", "lib/twitch_goal_monitor.py"):
+                (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(root / rel, tmp / rel)
+            (tmp / ".env").write_text("TWITCH_GOALS_ENABLED=1\nexport TWITCH_PREDICTIONS_TOKEN='fresh-token'\n", encoding="utf-8")
+            fake_bin = tmp / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "curl").write_text(
+                """#!/bin/bash
+out=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -H) case "$2" in Authorization:*) printf '%s\\n' "$2" >>"$AUTH_LOG" ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '{"data":[]}' >"$out"
+printf '200'
+""",
+                encoding="utf-8",
+            )
+            (fake_bin / "curl").chmod(0o755)
+            env = os.environ.copy()
+            env.update({
+                "PATH": f"{fake_bin}:{env['PATH']}",
+                "AUTH_LOG": str(tmp / "auth.log"),
+                "TWITCH_GOALS_TOKEN": "stale-inherited",
+                "TWITCH_PREDICTIONS_TOKEN": "stale-inherited",
+                "TWITCH_CLIENT_ID": "test-client",
+                "TWITCH_BROADCASTER_ID": "test-broadcaster",
+                "TWITCH_GOALS_STATE_FILE": str(tmp / "state.json"),
+                "TWITCH_CHAT_DIR": str(tmp / "chat"),
+            })
+            subprocess.run(["bash", "workers/goal_worker.sh", "--once"], cwd=tmp, env=env, check=True,
+                           capture_output=True)
+            self.assertEqual(["Authorization: Bearer fresh-token"],
+                             (tmp / "auth.log").read_text(encoding="utf-8").splitlines())
+
     def test_goal_event_is_wired_into_ai_comment_path(self):
         root = Path(__file__).resolve().parents[1]
         response = (root / "prompts/comment_response_default.md").read_text(encoding="utf-8")

@@ -114,6 +114,13 @@ Twitch のカテゴリーは IGDB が正本。`--resolve` で候補を引き、
 `TWITCH_GAME_TOKEN` に設定する (中身はリポジトリに書かない)。
 `--verify` / `--resolve` は読取のみで scope 不要。
 
+2026-10-21 以降、dociai のトークン (`TWITCH_BOT_TOKEN` / `TWITCH_PREDICTIONS_TOKEN` /
+`TWITCH_POLLS_TOKEN` / `TWITCH_CLIP_TOKEN`) は docich の定期更新
+(`docich-twitch-oauth-refresh.timer`、手順は docich の
+`docs/operations/twitch-oauth-refresh.md`) が `.env` を数時間ごとに書き換える。
+トークンを使う処理は **呼び出しごとに `.env` から読み直す** こと。長命ワーカーが
+起動時に継承した値を使い続けると、約4時間で失効した値を送ることになる。
+
 ## 自動フック (未接続・予定)
 
 接続先: 切替成功の直後。
