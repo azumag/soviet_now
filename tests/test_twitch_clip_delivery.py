@@ -59,6 +59,8 @@ post = '-X' in args
 assert '--connect-timeout' in args and '--max-time' in args
 with open('http_calls.txt', 'a') as f:
     f.write(('POST' if post else 'GET') + '\\n')
+with open('auth_headers.txt', 'a') as f:
+    f.write(next((a for a in args if a.startswith('Authorization:')), '') + '\\n')
 mode = os.environ.get('HTTP_TEST_MODE', 'success')
 if post:
     if mode == 'timeout':
@@ -90,6 +92,13 @@ class TwitchClipHTTPTests(TwitchClipHTTPFixture):
         self.assertEqual((self.work / "chat.txt").read_text(),
                          "celebration | https://clips.twitch.tv/TestClip\n")
         self.assertEqual((self.work / "http_calls.txt").read_text(), "POST\nGET\n")
+
+    def test_rotated_token_in_env_file_wins_over_inherited_environment(self):
+        (self.work / ".env").write_text("TWITCH_CLIP_TOKEN=fresh-rotated-token\n")
+        result = self.run_clip()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        headers = set((self.work / "auth_headers.txt").read_text().splitlines())
+        self.assertEqual(headers, {"Authorization: Bearer fresh-rotated-token"})
 
     def test_missing_credentials_is_not_success(self):
         self.env.pop("TWITCH_CLIP_TOKEN")

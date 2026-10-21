@@ -41,10 +41,20 @@ name=(f"「{desc}」" if desc else "")
 print(f"配信目標: [配信目標達成] {label}目標{name}を{current}/{target}で達成しました。みんなと一緒に一度だけ祝ってください。")' "$1"
 }
 
+# .env の現在値を1つ読む（値は出力しない呼び出し側で使う）。Twitch トークンは
+# 定期自動更新で .env 側が差し替わるため、起動時に読んだ値を使い続けない。
+_env_file_value() {
+	[ -f .env ] || return 0
+	sed -n "s/^\(export \)\{0,1\}$1=//p" .env | tail -n 1 | sed -e "s/^[\"']//" -e "s/[\"']\$//"
+}
+
 _poll_once() {
 	[ "${TWITCH_GOALS_ENABLED:-0}" = "1" ] || return 0
 	[ "${EXPLORE_MODE:-0}" != "1" ] || return 0
-	local token="${TWITCH_GOALS_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}"
+	local token
+	token="$(_env_file_value TWITCH_GOALS_TOKEN)"
+	[ -n "$token" ] || token="$(_env_file_value TWITCH_PREDICTIONS_TOKEN)"
+	[ -n "$token" ] || token="${TWITCH_GOALS_TOKEN:-${TWITCH_PREDICTIONS_TOKEN:-}}"
 	local client_id="${TWITCH_CLIENT_ID:-}" broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
 	if [ -z "$token" ] || [ -z "$client_id" ] || [ -z "$broadcaster_id" ]; then
 		_log "SKIP: missing Twitch goals credentials/config"

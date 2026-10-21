@@ -30,6 +30,24 @@ class RaidResearchTest(unittest.TestCase):
         with patch.dict('os.environ',{'TWITCH_BOT_TOKEN':'secret','TWITCH_CLIENT_ID':'client'}), patch('urllib.request.urlopen',side_effect=OSError('failed')):
             self.assertEqual(api_get('users',{'login':'example'}),[])
 
+    def test_rotated_token_in_env_file_wins_over_inherited_environment(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import lib.raid_research as rr
+        seen = []
+        def fake_urlopen(req, timeout):
+            seen.append(req.get_header('Authorization'))
+            raise OSError('stop')
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / '.env'
+            env_file.write_text('export TWITCH_BOT_TOKEN="fresh"\nTWITCH_CLIENT_ID=client\n', encoding='utf-8')
+            with patch.object(rr, 'ENV_FILE', env_file), \
+                    patch.dict('os.environ', {'TWITCH_BOT_TOKEN': 'stale', 'TWITCH_CLIENT_ID': 'client'}), \
+                    patch('urllib.request.urlopen', side_effect=fake_urlopen):
+                self.assertEqual(rr.api_get('users', {'login': 'example'}), [])
+        self.assertEqual(seen, ['Bearer fresh'])
+
     def test_empty_description_keeps_recent_titles(self):
         def get(endpoint,params):
             return {'users':[dict(id='12',login='example')], 'channels':[], 'videos':[dict(title='配信者の企画')]}[endpoint]
