@@ -3,12 +3,16 @@ name: Kick chat ingest
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - 'kick_chat_daemon.mjs'
       - 'tests/test_kick_chat_daemon.mjs'
       - '.github/workflows/kick-chat-ingest.yml'
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - 'kick_chat_daemon.mjs'
       - 'tests/test_kick_chat_daemon.mjs'
       - '.github/workflows/kick-chat-ingest.yml'
@@ -26,7 +30,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version-file: '.node-version'
           cache: 'npm'
           cache-dependency-path: package-lock.json
       - run: node --check kick_chat_daemon.mjs

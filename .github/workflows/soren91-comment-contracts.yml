@@ -3,6 +3,8 @@ name: Soren91 commentary contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-comment-contracts.yml'
       - 'soren91/comment.mjs'
       - 'soren91/prompts/**'
@@ -12,6 +14,8 @@ on:
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-comment-contracts.yml'
       - 'soren91/comment.mjs'
       - 'soren91/prompts/**'
@@ -31,6 +35,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install Node dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax check commentary modules

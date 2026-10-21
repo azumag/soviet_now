@@ -8,9 +8,13 @@
 export HOME="/Users/azumag"
 PROJ="${0:A:h:h}"
 # doci と同様に内蔵バイナリを優先 (外付けボリュームの dyld 固まり回避)
-nvm_node_bins=(/Users/azumag/.nvm/versions/node/*/bin(N/n[-1]))
-NVM_NODE_BIN="${nvm_node_bins[1]}"
-export PATH="$PROJ/tools/ffbin:${NVM_NODE_BIN:-/Users/azumag/.nvm/versions/node/v24.18.0/bin}:/Users/azumag/.local/bin:/Users/azumag/.opencode/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+# Do not silently select a newer major with an unfixed security patch level.
+NVM_NODE_BIN="/Users/azumag/.nvm/versions/node/v24.22.1/bin"
+if [[ ! -x "$NVM_NODE_BIN/node" ]]; then
+  echo "Node.js 24.22.1 is required at $NVM_NODE_BIN; install it before running this job." >&2
+  exit 1
+fi
+export PATH="$PROJ/tools/ffbin:$NVM_NODE_BIN:/Users/azumag/.local/bin:/Users/azumag/.opencode/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 # ログ
 LOG="$PROJ/output/soren_news_cron.log"

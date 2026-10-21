@@ -3,6 +3,8 @@ name: Soren91 play contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-play-contracts.yml'
       - 'soren91/main.mjs'
       - 'soren91/commentary_schedule.mjs'
@@ -33,11 +35,12 @@ on:
       - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
-      - 'package*.json'
       - 'soren91/package*.json'
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/soren91-play-contracts.yml'
       - 'soren91/main.mjs'
       - 'soren91/commentary_schedule.mjs'
@@ -61,7 +64,6 @@ on:
       - 'soviet_now.png'
       - 'tests/fixtures/soren91-sprites/**'
       - 'soren91/critical_turn_screenshots.mjs'
-      - 'soren91/rejected_frame_diagnostics.mjs'
       - 'lib/mute_flag.py'
       - 'lib/mute_flag_reader.mjs'
       - 'soviet_local.mjs'
@@ -69,7 +71,6 @@ on:
       - 'tests/test_soren91_mute_flag.py'
       - 'tests/test_soren91_*.mjs'
       - 'tests/test_soren91_*.py'
-      - 'package*.json'
       - 'soren91/package*.json'
 
 permissions:
@@ -84,8 +85,17 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Install locked dependencies without lifecycle scripts
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix soren91 --ignore-scripts --no-audit --no-fund
+      - name: Audit both locked dependency trees
+        run: |
+          npm audit --audit-level=high
+          npm audit --prefix soren91 --audit-level=high
       - name: Syntax check player decision modules
         run: |
           node --version

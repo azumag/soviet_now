@@ -733,7 +733,7 @@ bash sloop.sh
 - **ゲームソースコード**: [ソ連パズル（BOOTH）](https://chemicalpudding.booth.pm/items/5222746) から購入・ダウンロード
 - **Unity**: 2022.3.62f3 LTS (Unity Hub 経由でインストール)
 - **Unity WebGL Build Support**: Unity Hub → Installs → Add Modules → WebGL Build Support
-- **Node.js**: v18+ (Playwright 依存)
+- **Node.js**: 22.23.4（`.node-version`）。24系は24.22.1以上、26系は26.12.1以上を使用する。各系列の対応範囲は`package.json`の`engines`を参照。
 - **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
 - **LLM CLI ツール** (AI ループで使用):
   - [Codex CLI](https://github.com/openai/codex) (`codex`) — `codex:<model>` の実行
@@ -933,7 +933,7 @@ cp -R /tmp/soren-build/* sorengame/build/
 ### 2. Node.js 依存インストール
 
 ```bash
-npm install        # playwright, sharp 等
+npm ci             # lockfileで固定したplaywright, sharp等
 npx playwright install chromium
 ```
 

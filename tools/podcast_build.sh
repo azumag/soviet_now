@@ -14,9 +14,13 @@ PROJ="${0:A:h:h}"            # games/soviet_now
 DOCICH_ROOT="${PROJ:h:h}"    # docich リポジトリルート
 
 # doci と同様に内蔵バイナリを優先 (外付けボリュームの dyld 固まり回避)
-nvm_node_bins=(/Users/azumag/.nvm/versions/node/*/bin(N/n[-1]))
-NVM_NODE_BIN="${nvm_node_bins[1]}"
-export PATH="$PROJ/tools/ffbin:${NVM_NODE_BIN:-/Users/azumag/.nvm/versions/node/v24.18.0/bin}:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+# Do not silently select a newer major with an unfixed security patch level.
+NVM_NODE_BIN="/Users/azumag/.nvm/versions/node/v24.22.1/bin"
+if [[ ! -x "$NVM_NODE_BIN/node" ]]; then
+  echo "Node.js 24.22.1 is required at $NVM_NODE_BIN; install it before running this job." >&2
+  exit 1
+fi
+export PATH="$PROJ/tools/ffbin:$NVM_NODE_BIN:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 # voicevox_tts.sh は docich CLI へ委譲する薄いブリッジなので、その実体を明示する
 export DOCICH_BIN="${DOCICH_BIN:-$DOCICH_ROOT/bin/docich}"

@@ -3,6 +3,8 @@ name: JEV player contracts
 on:
   pull_request:
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/jev-player-contracts.yml'
       - 'soviet_local.mjs'
       - 'soren_loop.sh'
@@ -27,6 +29,8 @@ on:
   push:
     branches: [main]
     paths:
+      - '.node-version'
+      - 'package*.json'
       - '.github/workflows/jev-player-contracts.yml'
       - 'soviet_local.mjs'
       - 'soren_loop.sh'
@@ -61,6 +65,9 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
       - name: Syntax check JEV bridge and worker modules
         run: |
           node --version

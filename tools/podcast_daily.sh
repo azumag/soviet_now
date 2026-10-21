@@ -23,9 +23,13 @@ export HOME="/Users/azumag"
 PROJ="${0:A:h:h}"
 DOCICH_ROOT="${PROJ:h:h}"
 
-nvm_node_bins=(/Users/azumag/.nvm/versions/node/*/bin(N/n[-1]))
-NVM_NODE_BIN="${nvm_node_bins[1]}"
-export PATH="$PROJ/tools/ffbin:${NVM_NODE_BIN:-/Users/azumag/.nvm/versions/node/v24.18.0/bin}:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+# Do not silently select a newer major with an unfixed security patch level.
+NVM_NODE_BIN="/Users/azumag/.nvm/versions/node/v24.22.1/bin"
+if [[ ! -x "$NVM_NODE_BIN/node" ]]; then
+  echo "Node.js 24.22.1 is required at $NVM_NODE_BIN; install it before running this job." >&2
+  exit 1
+fi
+export PATH="$PROJ/tools/ffbin:$NVM_NODE_BIN:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 export DOCICH_BIN="${DOCICH_BIN:-$DOCICH_ROOT/bin/docich}"
 export SOREN_RADIO_ARCHIVE="${SOREN_RADIO_ARCHIVE:-$HOME/soren-radio-archive}"
