@@ -323,24 +323,23 @@ _fetch_nolock() {
     if [ -f "$RAW_LOG" ]; then
         local last_offset
         last_offset=$(cat "$OFFSET_FILE" 2>/dev/null || echo 0)
-        local current_lines
-        current_lines=$(wc -l < "$RAW_LOG" | tr -d ' ')
+        case "$last_offset" in ''|*[!0-9]*) last_offset=0 ;; esac
+        local current_lines=0 new_comments=""
 
-        if [ "$current_lines" -gt "$last_offset" ]; then
-            # 差分行を取得
-            local new_comments
-            new_comments=$(tail -n "+$((last_offset + 1))" "$RAW_LOG")
+        # デーモンはロックを取らず1行ごとに raw.log を開いて追記する。読み取り後に
+        # raw.log を書き戻す/切り詰めると、その間に届いた行を既読扱いで失う。
+        # rename でスナップショットを取り、以降の追記は新しい raw.log に入れる。
+        local snapshot="$CHAT_DIR/.raw_fetch.$$"
+        if [ -s "$RAW_LOG" ] && mv "$RAW_LOG" "$snapshot" 2>/dev/null; then
+            echo "0" > "$OFFSET_FILE"
+            current_lines=$(wc -l < "$snapshot" | tr -d ' ')
+            # 旧形式の書き戻しで残ったオフセットが行数を超えていたら先頭から読む。
+            [ "$last_offset" -le "$current_lines" ] || last_offset=0
+            new_comments=$(tail -n "+$((last_offset + 1))" "$snapshot")
+            rm -f "$snapshot"
+        fi
 
-            # 既読分をログから削除してオフセットリセット
-            local remaining
-            remaining=$(tail -n "+$((current_lines + 1))" "$RAW_LOG" 2>/dev/null)
-            if [ -n "$remaining" ]; then
-                echo "$remaining" > "$RAW_LOG"
-                echo "$(echo "$remaining" | wc -l | tr -d ' ')" > "$OFFSET_FILE"
-            else
-                > "$RAW_LOG"
-                echo "0" > "$OFFSET_FILE"
-            fi
+        if [ -n "$new_comments" ]; then
 
             # 最新10件に制限したうえで、msg-id重複と危険入力を除外
             local scan_tmp seen_batch_tmp seen_line_batch_tmp dedup_tmp
