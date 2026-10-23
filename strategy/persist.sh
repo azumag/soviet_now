@@ -208,6 +208,10 @@ persist_strategy_improve() {
 	# clone が無い環境では何もしない (runtime 互換・CI 互換)。
 	if [ ! -d "$repo/.git" ]; then
 		_persist_write_status "$repo" "no-op" "$message" "$branch" "" "clone_missing" "0" "clone not present"
+		# durable record は TMP_STATE_DIR 側に残る (clone 消失後も診断可能)。
+		if declare -F _record_strategy_persist_failure >/dev/null 2>&1; then
+			_record_strategy_persist_failure "clone_missing" "0" "persist"
+		fi
 		return 0
 	fi
 	if [ -z "$message" ]; then
@@ -323,9 +327,11 @@ _persist_strategy_improve_locked() {
 	done < <(git -C "$repo" ls-files -z -- "${paths[@]}" 2>/dev/null)
 
 	if [ "${#copied[@]}" -eq 0 ]; then
-		# tracked な対象が runtime に一つも無い = 比べる候補が無い。
-		_persist_write_status "$repo" "no-change" "$message" "$branch" "$(git -C "$repo" rev-parse HEAD 2>/dev/null)" "none" "3" "no tracked paths in runtime"
-		return 3
+		# tracked な対象が runtime に一つも無い = 設定ミス (runtime の tracked path が空)。
+		# no-change ではなく失敗として扱い、failure record を残す。
+		_persist_log "ERROR" "no tracked paths in runtime"
+		_persist_write_status "$repo" "fail" "$message" "$branch" "$(git -C "$repo" rev-parse HEAD 2>/dev/null)" "copy_failed" "1" "no tracked paths in runtime"
+		return 1
 	fi
 	if ! git -C "$repo" add -- "${copied[@]}" 2>/dev/null; then
 		_persist_log "ERROR" "git add failed"
