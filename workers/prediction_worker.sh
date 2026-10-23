@@ -241,7 +241,8 @@ while true; do
 		fi
 		_LAST_GAME_NUM="$current_game_num"
 		_LAST_ACC_COUNT="$current_acc_count"
-		sleep "$POLL_INTERVAL"
+		# #2688: never let a 0/invalid interval busy-loop this python3-heavy path.
+		sleep "$(docich_poll_interval "${POLL_INTERVAL:-}" 5 1 2>/dev/null || printf '5')"
 		continue
 	fi
 
@@ -330,7 +331,8 @@ while true; do
 	_LAST_ACC_COUNT="$current_acc_count"
 
 	# sleep を1秒単位で分割
-	_sleep_remaining="$POLL_INTERVAL"
+	# #2688: a 0/invalid interval must never skip the wait entirely.
+	_sleep_remaining=$(docich_poll_interval "${POLL_INTERVAL:-}" 1 1 2>/dev/null || printf '1')
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
 		docich_poll_sleep 1

@@ -9,7 +9,11 @@ PID_FILE="$SCRIPT_DIR/tmp/soren91.pid"
 MAIN_PID_FILE="$SCRIPT_DIR/tmp/main.pid"
 RUNNER_LOCK_DIR="$SCRIPT_DIR/tmp/.runner.lock"
 METRICS_FILE="$SCRIPT_DIR/tmp/state/soren91_runtime_metrics.json"
-RETRY_DELAY_SEC="${SOREN91_RESTART_DELAY_SEC:-3}"
+# #2688: an env-provided 0 used to make the crash-retry loop relaunch node with
+# no wait at all (sleep 0), burning a core. Keep the retry strictly positive.
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/../lib/poll_wait.sh" 2>/dev/null || true
+RETRY_DELAY_SEC=$(docich_poll_interval "${SOREN91_RESTART_DELAY_SEC:-}" 3 1 2>/dev/null || printf '3')
 RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
 CHILD_MAIN_PID=""
 METRICS_PID=""

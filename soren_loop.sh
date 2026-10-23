@@ -110,6 +110,12 @@ rm -f tmp/stop
 
 # --- 共通ライブラリ読み込み ---
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+
+# #2688: the improve-pause paths below run a python3 monitor every tick. An
+# env-provided 0 would turn that pause into a busy loop (and leave the python3
+# children behind when the loop is killed), so keep the wait >= 1s.
+_SOREN_IMPROVE_PAUSE_SEC=$(docich_poll_interval "${SOREN_IMPROVE_PAUSE_SEC:-}" 3 1 2>/dev/null || printf '3')
 
 # A committed same-game player snapshot is the only source that may override
 # the legacy existing policy for this process. Invalid/missing state remains
@@ -1014,7 +1020,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 			fi
 			log_pause_throttled "wildcard_parallel_isolated" "[PAUSE] param並列調整中(隔離評価): soren91代打を立てず待機"
 			_run_improve_runtime_monitor
-			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 			continue
 		fi
 		case "${_pause_reason}:${pause_phase:-}:${pause_detail:-}" in
@@ -1025,14 +1031,14 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 			fi
 			log_pause_throttled "${_pause_reason:-isolated}_improve" "[PAUSE] ${_pause_reason:-isolated}改善中(隔離評価): soren91代打を立てず待機"
 			_run_improve_runtime_monitor
-			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 			continue
 			;;
 		esac
 		if [ -z "$_live_improve_pid" ]; then
 			log_pause_throttled "improve_state_no_live_pid" "[PAUSE] 改善状態だが実改善PIDなし: soren91は起動せず回収待ち"
 			_run_improve_runtime_monitor
-			sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+			sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 			continue
 		fi
 		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
@@ -1041,7 +1047,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 		command -v _soren91_switch_obs_layout >/dev/null 2>&1 && _soren91_switch_obs_layout meriken 2>/dev/null || true
 		log_pause_throttled "improve_running" "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
 		_run_improve_runtime_monitor
-		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+		sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 		continue
 	fi
 	# 改善完了直後の連続(カスケード)改善ロックに即 PAUSE せず、メインゲームを
@@ -1057,7 +1063,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ] && ! _improve_keep_main_game_running; then
 		log_pause_throttled "improve_lock_wait" "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		_run_improve_runtime_monitor
-		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+		sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 		continue
 	elif [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ] && [ ! -f "$TMP_STATE_DIR/peak_hour_defer" ]; then
 		log_pause_throttled "improve_lock_main_continues" "[IMPROVE] 改善ロック待ちでもメインゲームを継続"
@@ -1065,7 +1071,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
 		log_pause_throttled "soren91_stop_in_progress" "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
 		_run_improve_runtime_monitor
-		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+		sleep "$_SOREN_IMPROVE_PAUSE_SEC"
 		continue
 	fi
 

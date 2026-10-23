@@ -22,8 +22,12 @@ cd "$SCRIPT_DIR"
 export IMPROVE_DAEMON_MODE=1
 
 source ./eloop_lib.sh
+source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
-POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
+# #2688: never let a configured 0/invalid interval become a busy loop. The
+# daemon body sources modules and reads state (python3) every tick, so a hot
+# loop burns a core and floods short-lived python3 children.
+POLL_INTERVAL=$(docich_poll_interval "${IMPROVE_DAEMON_POLL_INTERVAL:-}" 30 1 2>/dev/null || printf '30')
 DAEMON_TTY_FILE="$TMP_STATE_DIR/improve_daemon.tty"
 DAEMON_LOCK_DIR="$TMP_STATE_DIR/improve_daemon.lockdir"
 DAEMON_LOCK_PID_FILE="$DAEMON_LOCK_DIR/pid"

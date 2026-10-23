@@ -7,6 +7,12 @@ ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export ELOOP_LIB_DIR
 # shellcheck source=/dev/null
 source "$ELOOP_LIB_DIR/core/config.sh"
+source "$ELOOP_LIB_DIR/lib/poll_wait.sh" 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+
+# #2688: IMPROVE_OVERLAY_REFRESH_SEC comes from the environment. 0/invalid
+# values made the watch loop regenerate the HTML (and spawn python3) with no
+# wait at all. Keep the configured cadence but never below one second.
+IMPROVE_OVERLAY_REFRESH_SEC=$(docich_poll_interval "${IMPROVE_OVERLAY_REFRESH_SEC:-}" 2 1 2>/dev/null || printf '2')
 
 mode="${1:-once}"
 watch_pid="${2:-}"

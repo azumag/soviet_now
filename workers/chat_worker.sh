@@ -295,7 +295,8 @@ while true; do
 	_process_clip_queue
 
 	# sleep を1秒単位で分割し、tmp/stop を素早く検知できるようにする
-	_sleep_remaining="$POLL_INTERVAL"
+	# #2688: a 0/invalid interval must never skip the wait entirely.
+	_sleep_remaining=$(docich_poll_interval "${POLL_INTERVAL:-}" 1 1 2>/dev/null || printf '1')
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
 		[ -f tmp/stop ] && break 2
 		docich_poll_sleep 1
