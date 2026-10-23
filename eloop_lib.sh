@@ -40,6 +40,7 @@ source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
 [ -f "$ELOOP_LIB_DIR/strategy/ab_integrity.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_integrity.sh"
+[ -f "$ELOOP_LIB_DIR/strategy/ab_confirmation.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_confirmation.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"
 [ -f "$ELOOP_LIB_DIR/strategy/persist.sh" ] && source "$ELOOP_LIB_DIR/strategy/persist.sh"
 # Live improve_state is ephemeral by design. Wrap the writer after the base
