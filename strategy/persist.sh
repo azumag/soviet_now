@@ -97,7 +97,7 @@ _persist_record_success() {
 # git の stderr を 1 行・400 文字に丸めて status の error に入れる。
 _persist_error_excerpt() {
 	local file="$1" fallback="$2" text
-	text="$(tail -c 400 "$file" 2>/dev/null | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')"
+	text="$(tail -c 400 "$file" 2>/dev/null | tr -d '\000-\010\013\014\016-\037' | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')"
 	[ -n "$text" ] || text="$fallback"
 	printf '%s' "$text"
 }
