@@ -11,6 +11,7 @@ on:
       - 'strategy/ab_interleave.sh'
       - 'core/strategy_runtime.sh'
       - 'strategy/ab_integrity.sh'
+      - 'strategy/ab_confirmation.sh'
       - 'tools/ab_decide.py'
       - 'tools/ab_report.py'
       - 'tests/test_ab_decide.py'
@@ -18,6 +19,7 @@ on:
       - 'tests/test_ab_gate.sh'
       - 'tests/test_ab_interleave.sh'
       - 'tests/test_ab_integrity.sh'
+      - 'tests/test_ab_confirmation.sh'
       - 'tests/test_ab_improve_serialization.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
@@ -37,6 +39,7 @@ on:
       - 'strategy/ab_interleave.sh'
       - 'core/strategy_runtime.sh'
       - 'strategy/ab_integrity.sh'
+      - 'strategy/ab_confirmation.sh'
       - 'tools/ab_decide.py'
       - 'tools/ab_report.py'
       - 'tests/test_ab_decide.py'
@@ -44,6 +47,7 @@ on:
       - 'tests/test_ab_gate.sh'
       - 'tests/test_ab_interleave.sh'
       - 'tests/test_ab_integrity.sh'
+      - 'tests/test_ab_confirmation.sh'
       - 'tests/test_ab_improve_serialization.sh'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
@@ -65,8 +69,8 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest tests.test_spawn_guard_lease tests.test_improve_retry_reliability tests.test_shadow_validation_retry
       - run: python3 -m unittest tests.test_ab_decide tests.test_ab_decide_calibration
-      - run: bash -n strategy/improve.sh strategy/ab_gate.sh strategy/ab_integrity.sh
-      - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_integrity.sh && bash tests/test_ab_improve_serialization.sh
+      - run: bash -n strategy/improve.sh strategy/ab_gate.sh strategy/ab_integrity.sh strategy/ab_confirmation.sh
+      - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_integrity.sh && bash tests/test_ab_confirmation.sh && bash tests/test_ab_improve_serialization.sh
       - run: bash tests/test_ab_deferred_batch.sh
       - run: bash tests/test_peak_hours_agent_order.sh
       - run: bash tests/test_radio_factcheck_timeout.sh
