@@ -36,7 +36,7 @@ _strategy_persist_failure_path() {
 # strategy/persist.sh から呼ばれる durable record。採用 (apply) 自体は成功して
 # いても GitHub への永続化が失敗した状態を、次の成功/no-change まで残す。
 _record_strategy_persist_failure() {
-	local reason="${1:-unknown}" rc="${2:-1}" label="${3:-unknown}" path now tmp
+	local reason="${1:-unknown}" rc="${2:-1}" label="${3:-unknown}" path now
 	reason=$(_improve_failure_persist_reason "$reason")
 	case "$label" in
 	''|*[!A-Za-z0-9_-]*) label=unknown ;;
@@ -46,12 +46,44 @@ _record_strategy_persist_failure() {
 	esac
 	path=$(_strategy_persist_failure_path)
 	now=$(date +%s)
-	mkdir -p "$(dirname "$path")" 2>/dev/null || return 0
-	tmp="${path}.tmp.$$"
-	{
-		printf '{"schema_version":1,"status":"failed","failure_code":"strategy_persist_failed","reason":"%s","rc":%s,"label":"%s","failed_at":%s}\n' \
-			"$reason" "$rc" "$label" "$now"
-	} > "$tmp" 2>/dev/null && mv "$tmp" "$path" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+	# terminal failure history と同じく fsync + 0600 で durable にする。
+	python3 - "$path" "$reason" "$rc" "$label" "$now" <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import sys
+import tempfile
+
+path, reason, rc, label, failed_at = sys.argv[1:6]
+payload = {
+    "schema_version": 1,
+    "status": "failed",
+    "failure_code": "strategy_persist_failed",
+    "reason": reason,
+    "rc": int(rc),
+    "label": label,
+    "failed_at": int(failed_at),
+}
+parent = os.path.dirname(path) or "."
+os.makedirs(parent, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=".strategy_persist_last_failure.", dir=parent)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+finally:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+PY
 	return 0
 }
 
