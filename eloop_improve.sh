@@ -37,6 +37,9 @@ export IMPROVE_JOB_DEADLINE_MONOTONIC IMPROVE_ANALYSIS_DEADLINE_MONOTONIC
 IMPROVE_RUN_RECEIPT_DIR="$HOST_ROOT/tmp/state/improve_receipts/job-$$"
 mkdir -p -m 700 "$IMPROVE_RUN_RECEIPT_DIR" || exit 81
 export IMPROVE_RUN_RECEIPT_DIR
+# persist の error log は TMP_STATE_DIR 配下。ディレクトリ欠損時に `2>>` の
+# リダイレクト自体が失敗して persist が実行されないため、先に存在を保証する。
+mkdir -p "$TMP_STATE_DIR" 2>/dev/null || true
 
 # #93: close the apply->pin race. Every site that writes a new strategy.py must
 # archive it and advance active_branch.head_hash in the SAME step — otherwise the
@@ -4207,8 +4210,13 @@ PY
 		"$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" \
 		game_count.txt score_history.txt eval_score_history.txt \
 		best_score.txt score_dashboard.html game_state.json \
-		game_history strategy_versions strategy_versions_archive; then
+		game_history strategy_versions strategy_versions_archive \
+		2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log"; then
 		phylo_push_ok=true
+	else
+		# rc を捨てずに durable record へ渡す。採用自体は live に残るため
+		# improve cycle は止めず、失敗は diagnostics / operator へ可視化する。
+		_persist_log_failure "commit" $?
 	fi
 	if [ "$phylo_push_ok" = true ]; then
 		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"

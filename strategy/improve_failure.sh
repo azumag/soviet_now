@@ -12,11 +12,54 @@ _improve_failure_history_path() {
 _improve_failure_normalize_code() {
 	local raw="${1:-other}"
 	case "$raw" in
-	apply_bundle_failed|projection_guard_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change)
+	apply_bundle_failed|projection_guard_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change|strategy_persist_failed)
 		printf '%s\n' "$raw"
 		;;
 	*) printf '%s\n' other ;;
 	esac
+}
+
+_improve_failure_persist_reason() {
+	local raw="${1:-unknown}"
+	case "$raw" in
+	clone_missing|invalid_message|invalid_branch|gh_missing|identity_setup_failed|fetch_failed|remote_head_failed|checkout_failed|reset_failed|copy_failed|add_failed|commit_failed|tree_failed|push_failed|pr_failed|unknown)
+		printf '%s\n' "$raw"
+		;;
+	*) printf '%s\n' unknown ;;
+	esac
+}
+
+_strategy_persist_failure_path() {
+	printf '%s\n' "${STRATEGY_PERSIST_FAILURE_FILE:-${TMP_STATE_DIR:-tmp/state}/strategy_persist_last_failure.json}"
+}
+
+# strategy/persist.sh から呼ばれる durable record。採用 (apply) 自体は成功して
+# いても GitHub への永続化が失敗した状態を、次の成功/no-change まで残す。
+_record_strategy_persist_failure() {
+	local reason="${1:-unknown}" rc="${2:-1}" label="${3:-unknown}" path now tmp
+	reason=$(_improve_failure_persist_reason "$reason")
+	case "$label" in
+	''|*[!A-Za-z0-9_-]*) label=unknown ;;
+	esac
+	case "$rc" in
+	''|*[!0-9]*) rc=1 ;;
+	esac
+	path=$(_strategy_persist_failure_path)
+	now=$(date +%s)
+	mkdir -p "$(dirname "$path")" 2>/dev/null || return 0
+	tmp="${path}.tmp.$$"
+	{
+		printf '{"schema_version":1,"status":"failed","failure_code":"strategy_persist_failed","reason":"%s","rc":%s,"label":"%s","failed_at":%s}\n' \
+			"$reason" "$rc" "$label" "$now"
+	} > "$tmp" 2>/dev/null && mv "$tmp" "$path" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+	return 0
+}
+
+_clear_strategy_persist_failure() {
+	local path
+	path=$(_strategy_persist_failure_path)
+	rm -f "$path" 2>/dev/null || true
+	return 0
 }
 
 _improve_failure_recent_apply_code() {
@@ -39,9 +82,6 @@ try:
     code = str(data.get("failure_code") or "")
 except Exception:
     raise SystemExit(1)
-# Only apply-phase codes written by the runtime layer may re-label an ambiguous
-# terminal detail. projection_guard_refused (docich#2487) is written by the
-# same marker right after the gate refuses a live apply.
 if code not in ("apply_bundle_failed", "projection_guard_refused") or failed_at <= 0:
     raise SystemExit(1)
 # A nonzero run start is authoritative. The age guard only covers legacy callers
