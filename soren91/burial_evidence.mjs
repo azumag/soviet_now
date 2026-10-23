@@ -120,9 +120,9 @@ function countLoneExposedBurials(sim, pieces, lanes) {
   return buried;
 }
 
-// The piece that physically dropped when the recorded decision used HOLD:
+// The piece selected by each decision, whether recorded or counterfactual:
 // swapping makes the hold slot (or the known-empty swap source) the current.
-function recordedDropPiece(state, decision) {
+function decisionDropPiece(state, decision) {
   if (decision?.hold === true) {
     return state?.hold ?? (state?.holdKnownEmpty === true ? state?.nextPieces?.[1] ?? null : null);
   }
@@ -177,7 +177,7 @@ export function analyzeRecords(records, { replayDecide = decide, maxExamples = 5
     const hasLane = lanes.length > 0;
     if (hasLane) summary.laneOpportunityTurns++;
 
-    const dropped = normalizePiece(recordedDropPiece(state, decision));
+    const dropped = normalizePiece(decisionDropPiece(state, decision));
     if (!dropped) {
       summary.skipped.unusableDropPiece++;
       if (hasLane) pushExample({ file: record.file, turn: record.turn, reason: 'unusable-drop-piece', lanes: lanes.map(l => l.type) });
@@ -212,11 +212,16 @@ export function analyzeRecords(records, { replayDecide = decide, maxExamples = 5
       summary.replay.attempted++;
       try {
         const replayed = replayDecide(state);
-        const replaySim = simulateDrop(pieces, dropped, replayed.x, columns);
+        const replayDropped = normalizePiece(decisionDropPiece(state, replayed));
+        if (!replayDropped) {
+          bump(summary.replay.skipReasons, 'unusable-drop-piece');
+          continue;
+        }
+        const replaySim = simulateDrop(pieces, replayDropped, replayed.x, columns);
         const replayBurials = countLaneBurials(replaySim, lanes);
         if (replayBurials > 0) {
           summary.replay.burialTurns++;
-          pushExample({ file: record.file, turn: record.turn, kind: 'replay-burial', x: replayed.x, type: dropped.type, buried: replayBurials });
+          pushExample({ file: record.file, turn: record.turn, kind: 'replay-burial', x: replayed.x, type: replayDropped.type, buried: replayBurials });
         } else if (recordedBurials > 0) {
           summary.replay.avoidedRecordedBurials++;
         }
