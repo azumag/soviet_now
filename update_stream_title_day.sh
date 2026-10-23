@@ -29,6 +29,11 @@
 #            4=API エラー, 1=設定不足
 cd "$(dirname "$0")"
 
+# docich diagnostics reads tmp/state and tmp/logs through a fixed traversal that
+# refuses group/other writable directories and files. Keep everything this
+# script creates private regardless of the caller's umask (cron/CLI/unit).
+umask 077
+
 # Shared with game switches so a daily update cannot race a game/title update.
 if command -v flock >/dev/null 2>&1; then
     mkdir -p tmp/state

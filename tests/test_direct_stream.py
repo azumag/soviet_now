@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1174,6 +1175,49 @@ class DirectStreamTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(seen, [watchdog])
+
+
+class EnsurePrivateDirectoryTests(unittest.TestCase):
+    """Regression: diagnostics refuses 0o022 directories under the fixed sources."""
+
+    def test_created_levels_are_private_even_with_permissive_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "state" / "direct_stream"
+            previous = os.umask(0o002)
+            try:
+                direct_stream._ensure_private_directory(target)
+            finally:
+                os.umask(previous)
+            for level in (target.parent, target):
+                self.assertTrue(level.is_dir())
+                self.assertEqual(stat.S_IMODE(level.stat().st_mode), 0o700)
+
+    def test_existing_group_writable_directory_self_heals(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "logs"
+            target.mkdir(mode=0o775)
+            direct_stream._ensure_private_directory(target)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
+
+    def test_foreign_owned_directory_is_left_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "logs"
+            previous = os.umask(0o000)
+            try:
+                target.mkdir(mode=0o775)
+            finally:
+                os.umask(previous)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o775)
+            with mock.patch.object(direct_stream.os, "geteuid", return_value=-1):
+                direct_stream._ensure_private_directory(target)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o775)
+
+    def test_non_directory_path_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "state"
+            target.write_text("not a directory", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                direct_stream._ensure_private_directory(target)
 
 
 if __name__ == "__main__":

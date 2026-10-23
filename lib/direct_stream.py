@@ -751,8 +751,41 @@ def parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
     return parsed
 
 
+def _ensure_private_directory(path: Path) -> None:
+    """Create a directory tree that never carries group/other write bits.
+
+    The diagnostics fixed-source traversal refuses directories whose mode has
+    the 0o022 bits set, and pathlib's parents=True creates ancestors with the
+    process umask, so every missing level is created explicitly with mode
+    0o700. An existing level keeps its identity; when this process owns it,
+    any group/other write bit is cleared so a previously relaxed directory
+    self-heals on the next start instead of failing diagnostics again.
+    """
+    current = Path(path)
+    missing = []
+    probe = current
+    while not probe.exists():
+        missing.append(probe)
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    for level in reversed(missing):
+        try:
+            level.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+    try:
+        metadata = current.lstat()
+    except OSError:
+        return
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise FileExistsError(f"private directory path is not a directory: {current.name}")
+    if metadata.st_uid == os.geteuid() and metadata.st_mode & 0o022:
+        os.chmod(current, metadata.st_mode & ~0o022)
+
+
 def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(path.parent)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -1281,10 +1314,10 @@ def _run_ffmpeg(
         captions_active=captions_active,
     )
 
-    config.state_dir.mkdir(parents=True, exist_ok=True)
-    config.log_file.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(config.state_dir)
+    _ensure_private_directory(config.log_file.parent)
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_private_directory(output_path.parent)
 
     lock_path = config.state_dir / "direct_stream.lock"
     lock_stream = lock_path.open("a+", encoding="utf-8")

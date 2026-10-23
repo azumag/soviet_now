@@ -17,6 +17,11 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
+# docich diagnostics reads tmp/state/audio_worker.pid through a fixed traversal
+# that refuses group/other writable paths. Keep the pid file (and everything
+# else this worker creates) private regardless of the caller's umask.
+umask 077
+
 # --- 環境変数読み込み ---
 [ -f .env ] && set -a && . ./.env && set +a
 
