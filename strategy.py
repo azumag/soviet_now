@@ -3501,4 +3501,4 @@ if __name__ == "__main__":
         analysis = {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
     result = decide(game_state, analysis)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=2))# recon test marker 1792763607
