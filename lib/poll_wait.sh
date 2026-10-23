@@ -14,7 +14,8 @@
 #
 # Contract:
 #   - docich_poll_wait_open      idempotently open the private wait descriptor
-#   - docich_poll_sleep <secs>   wait ~<secs> seconds, never fails, no child
+#   - docich_poll_sleep <secs>   wait ~<secs> seconds (>=1), never fails, no child
+#   - docich_poll_interval ...   validate a configured loop interval (>=1s)
 #
 # When the builtin path is not available (no mkfifo, unusable descriptor, or a
 # non-bash shell) both helpers degrade to `sleep`, so callers keep working.
@@ -59,12 +60,44 @@ docich_poll_wait_open() {
 	return 0
 }
 
+# docich_poll_interval <raw> <default> <min>
+#
+# Validate a configured poll interval before it reaches `sleep`. Issue #2688
+# observed a transient python3 poll loop burning a core: a loop whose interval
+# came from the environment can become `sleep 0` (or an invalid value that
+# makes `sleep` fail immediately), turning a 30s poll into a busy loop that
+# spawns python3 back-to-back. Keep every loop's wait strictly positive.
+#
+# Contract:
+#   - empty / non-numeric -> <default>
+#   - numeric but below <min> (including 0) -> <min>
+#   - <min> itself is normalized to at least 1 second
+docich_poll_interval() {
+	local raw="${1:-}" default="${2:-1}" min="${3:-1}" value
+	case "$default" in
+	'' | *[!0-9]*) default=1 ;;
+	esac
+	case "$min" in
+	'' | *[!0-9]*) min=1 ;;
+	esac
+	[ "$min" -ge 1 ] || min=1
+	[ "$default" -ge "$min" ] || default="$min"
+	case "$raw" in
+	'' | *[!0-9]*) value="$default" ;;
+	*) value="$raw" ;;
+	esac
+	[ "$value" -ge "$min" ] || value="$min"
+	printf '%s\n' "$value"
+}
+
 docich_poll_sleep() {
 	local secs="${1:-1}"
 	case "$secs" in
 	'' | *[!0-9]*) secs=1 ;;
 	esac
-	[ "$secs" -gt 0 ] 2>/dev/null || return 0
+	# A busy loop is never a valid poll wait (#2688): 0/negative intervals
+	# used to return immediately and let callers spin on python3/state reads.
+	[ "$secs" -ge 1 ] 2>/dev/null || secs=1
 
 	if [ -z "$_DOCICH_POLL_WAIT_READY" ] && ! docich_poll_wait_open; then
 		sleep "$secs" 2>/dev/null || true

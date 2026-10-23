@@ -48,12 +48,16 @@ fi
 if [ -f "$SCRIPT_DIR/strategy/improve.sh" ]; then
 	source "$SCRIPT_DIR/strategy/improve.sh"
 fi
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/poll_wait.sh" 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 # --- 設定 ---
 MAX_RESTARTS="${SUPERVISOR_MAX_RESTARTS:-10}"
 RESTART_BACKOFF_BASE="${SUPERVISOR_BACKOFF_BASE:-2}"
 RESTART_BACKOFF_MAX="${SUPERVISOR_BACKOFF_MAX:-60}"
-SUPERVISOR_POLL_SEC="${SUPERVISOR_POLL_SEC:-3}"
+# #2688: the monitor loop restarts workers (and shells out) each tick; a 0
+# interval would spin the supervisor with no wait.
+SUPERVISOR_POLL_SEC=$(docich_poll_interval "${SUPERVISOR_POLL_SEC:-}" 3 1 2>/dev/null || printf '3')
 PID_FILE="tmp/state/start_all.pid"
 TMUX_SESSION="${SUPERVISOR_TMUX_SESSION:-soren_supervisor}"
 DUPLICATE_STATE_FILE="${SUPERVISOR_DUPLICATE_STATE_FILE:-tmp/state/worker_duplicates.json}"

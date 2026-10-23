@@ -139,14 +139,16 @@ class PollWaitTest(unittest.TestCase):
         self.assertEqual(self.sleep_invocations(), ["2"])
         self.assertGreaterEqual(elapsed, 1.5, elapsed)
 
-    def test_zero_wait_returns_immediately(self):
+    def test_zero_wait_is_clamped_to_one_second(self):
+        # docich#2688: 0 is never a valid poll wait. It used to return
+        # immediately, which let a loop whose interval was configured to 0 spin
+        # on python3/state reads and pin a core.
         start = time.monotonic()
         result = self.run_bash('source "$LIB"\ndocich_poll_sleep 0\necho ok\n')
         elapsed = time.monotonic() - start
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "ok")
-        self.assertLess(elapsed, 1.0, elapsed)
-        self.assertEqual(self.sleep_invocations(), [])
+        self.assertGreaterEqual(elapsed, 0.9, elapsed)
 
     def test_missing_lib_degrades_to_sleep_instead_of_aborting(self):
         # Some callers (and several existing tests) run a worker file copied

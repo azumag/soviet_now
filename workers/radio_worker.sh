@@ -386,7 +386,9 @@ _run_iteration() {
 
 	# tmp/stop の応答性は保ちつつ、sleep 1 を毎秒spawnしない。既定10秒pollなら
 	# 5秒×2回なので、待機用sleepは約60/min→12/minへ減る。
-	local _sleep_remaining="$POLL_INTERVAL" _sleep_slice="$_STOP_POLL_SLICE_SEC"
+	# #2688: a 0/invalid interval must never skip the wait entirely.
+	local _sleep_remaining _sleep_slice="$_STOP_POLL_SLICE_SEC"
+	_sleep_remaining=$(docich_poll_interval "${POLL_INTERVAL:-}" 1 1 2>/dev/null || printf '1')
 	case "$_sleep_slice" in
 	'' | *[!0-9]*) _sleep_slice=5 ;;
 	esac
