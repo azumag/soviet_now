@@ -301,14 +301,29 @@ _ab_finish() {
 		if cp -p "${STRATEGY_FILE:-strategy.py}" tmp/revert_strategy.py 2>/dev/null; then
 			change_log_base="tmp/revert_strategy.py"
 		fi
-		# helper は additive-only: strategy より先に配置する (import 先が無い瞬間を作らない)
+		# docich#2487: live writes must go through the strategy_runtime projection
+		# gate. The direct cp fallback is gone: when the atomic apply is
+		# unavailable, or the gate refuses unreviewed bytes, the B adopt fails
+		# closed and A stays live. helpers move inside the same locked bundle as
+		# strategy.py, which keeps the "no moment where strategy.py exists
+		# without its helpers" ordering guarantee while closing the unguarded
+		# helpers bypass.
 		if [ -d "$AB_ALT_HELPERS_DIR" ]; then
-			cp -R "$AB_ALT_HELPERS_DIR/." strategy_helpers/ 2>/dev/null || true
-		fi
-		if command -v strategy_runtime_atomic_apply >/dev/null 2>&1; then
-			strategy_runtime_atomic_apply "$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" || { log "[AB] root 差し替え失敗"; return 1; }
+			if ! command -v strategy_runtime_atomic_apply_bundle_then >/dev/null 2>&1; then
+				log "[AB] bundle apply unavailable → B採用 fail-closed (docich#2487)"
+				return 1
+			fi
+			strategy_runtime_atomic_apply_bundle_then \
+				"$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" \
+				"$AB_ALT_HELPERS_DIR" "strategy_helpers" "" ||
+				{ log "[AB] root+helpers 差し替え失敗 (projection guard or apply)"; return 1; }
 		else
-			cp -p "$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" || return 1
+			if ! command -v strategy_runtime_atomic_apply >/dev/null 2>&1; then
+				log "[AB] atomic apply unavailable → B採用 fail-closed (docich#2487)"
+				return 1
+			fi
+			strategy_runtime_atomic_apply "$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" ||
+				{ log "[AB] root 差し替え失敗 (projection guard or apply)"; return 1; }
 		fi
 		root_after=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 		[ "$root_after" = "$b" ] || { log "[AB] 差し替え後 hash 不一致 ($root_after != $b)"; return 1; }

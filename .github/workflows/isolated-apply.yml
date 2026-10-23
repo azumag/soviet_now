@@ -11,6 +11,7 @@ on:
       - 'tests/test_isolated_runner_rootless.py'
       - 'tests/test_strategy_runtime_apply_retry.py'
       - 'tests/test_improve_failure_history.py'
+      - 'tests/test_projection_guard.py'
       - '.github/workflows/isolated-apply.yml'
   push:
     branches: [main]
@@ -24,6 +25,7 @@ on:
       - 'tests/test_isolated_runner_rootless.py'
       - 'tests/test_strategy_runtime_apply_retry.py'
       - 'tests/test_improve_failure_history.py'
+      - 'tests/test_projection_guard.py'
       - '.github/workflows/isolated-apply.yml'
 permissions:
   contents: read
@@ -40,4 +42,5 @@ jobs:
           tests.test_isolated_runner_rootless
           tests.test_strategy_runtime_apply_retry
           tests.test_improve_failure_history
+          tests.test_projection_guard
       - run: bash -n strategy/sandbox.sh core/strategy_runtime.sh strategy/improve_failure.sh eloop_lib.sh

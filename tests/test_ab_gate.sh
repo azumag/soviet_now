@@ -28,6 +28,12 @@ TMP_STATE_DIR=tmp/state; STRATEGY_FILE=strategy.py; IMPROVE_LOCK_FILE=tmp/improv
 REJECTED_HASHES_FILE=tmp/state/rejected_hashes.txt
 source "$ROOT/strategy/ab_interleave.sh"
 source "$ROOT/strategy/ab_gate.sh"
+# docich#2487: the adopt path now requires the strategy_runtime apply helpers;
+# the unguarded cp fallback is gone. Use the real implementation and disable
+# the projection gate (this WORK dir is not a production projection) so the
+# adopt semantics under test stay deterministic.
+source "$ROOT/core/strategy_runtime.sh"
+IMPROVE_LIVE_APPLY_POLICY=off
 pass=0; fail=0
 ok() { pass=$((pass+1)); }
 ng() { fail=$((fail+1)); echo "FAIL: $*"; }
@@ -148,11 +154,27 @@ cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
 cp "$ACCUMULATED_GAMES_FILE" tmp/state/improve_retry_batch.json
 # apply failure must not be committed to the improvement memory as ADOPTED.
 strategy_runtime_atomic_apply() { return 1; }
+strategy_runtime_atomic_apply_bundle_then() { return 1; }
 _ab_finish B "forced apply failure" >/dev/null 2>&1 && ng "forced apply failure must fail" || ok
 ! grep -q "A/B ADOPTED" "$CHANGE_LOG_FILE_HOST" 2>/dev/null && ok || ng "failed apply must not write ADOPTED"
 [ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "failed apply must keep root A"
 [ -f tmp/state/ab_state.json ] && ok || ng "failed apply must keep AB state for recovery"
-unset -f strategy_runtime_atomic_apply
+# docich#2487: a projection-gate refusal (rc=3) must fail closed exactly like an
+# apply failure — no ADOPTED record, root stays A, AB state kept for recovery.
+strategy_runtime_atomic_apply() { return 3; }
+strategy_runtime_atomic_apply_bundle_then() { return 3; }
+_ab_finish B "projection guard refusal" >/dev/null 2>&1 && ng "guard refusal must fail closed" || ok
+! grep -q "A/B ADOPTED" "$CHANGE_LOG_FILE_HOST" 2>/dev/null && ok || ng "guard refusal must not write ADOPTED"
+[ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "guard refusal must keep root A"
+[ -f tmp/state/ab_state.json ] && ok || ng "guard refusal must keep AB state for recovery"
+unset -f strategy_runtime_atomic_apply strategy_runtime_atomic_apply_bundle_then
+# The unguarded cp fallback is intentionally gone (docich#2487): without the
+# runtime apply helpers the adopt must fail closed instead of writing live
+# bytes directly.
+_ab_finish B "missing apply helpers" >/dev/null 2>&1 && ng "missing apply helpers must fail closed" || ok
+[ "$(python3 extract_decide_hash.py strategy.py)" = "$A" ] && ok || ng "missing apply helpers must keep root A"
+# restore the real runtime apply helpers for the successful-adopt case
+source "$ROOT/core/strategy_runtime.sh"
 _ab_finish B "test adopt" >/dev/null 2>&1 && ok || ng "finish B rc"
 [ ! -e "$IMPROVE_LOCK_FILE" ] && [ ! -e tmp/state/improve_retry_batch.json ] && ok || ng "B verdict must retire old A locks"
 find tmp/history -name '*batch*' | grep -q . && ok || ng "B verdict must archive old metadata"
