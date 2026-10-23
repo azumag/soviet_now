@@ -72,6 +72,13 @@ source "$repo_root/strategy/improve_failure.sh"
 SOREN_PERSIST_REPO="$tmp/does-not-exist"
 rc=0; persist_strategy_improve "m" strategy.py || rc=$?
 [ "$rc" -eq 0 ] && pass "missing repo no-op returns 0" || fail "missing repo rc=$rc (want 0)"
+python3 - "$TMP_STATE_DIR/strategy_persist_last_failure.json" <<'PY' && pass "missing clone leaves durable clone_missing record" || fail "clone_missing durable record missing"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["failure_code"] == "strategy_persist_failed", data
+assert data["reason"] == "clone_missing", data
+assert data["rc"] == 0, data
+PY
 
 # 2) runtime == main は 3。PRも作らない。
 SOREN_PERSIST_REPO="$work"
@@ -131,6 +138,17 @@ main_value="$(git --git-dir="$origin" show main:strategy.py)"
 candidate_value="$(git --git-dir="$origin" show runtime/eloop-improve:strategy.py)"
 [ "$candidate_value" = "v3-improved" ] && pass "candidate branch updates to latest adopted strategy" || fail "updated candidate='$candidate_value'"
 [ "$(grep -c '^pr create ' "$gh_log")" -eq 1 ] && pass "updated candidate reuses open PR" || fail "updated candidate duplicated PR"
+
+# 5b) tracked path が runtime に一つも無い設定ミスは no-change ではなく失敗。
+rc=0; persist_strategy_improve "no tracked paths probe" not_tracked.txt || rc=$?
+[ "$rc" -eq 1 ] && pass "no tracked paths fails with 1" || fail "no tracked paths rc=$rc (want 1)"
+python3 - "$work/.git/persist-status.json" <<'PY' && pass "no tracked paths records failure" || fail "no tracked paths status contract"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["result"] == "fail", data
+assert data["reason"] == "copy_failed", data
+assert data["rc"] == 1, data
+PY
 
 # 6) 失敗は status file に固定 enum reason + rc で残り、durable record にも投影できる。
 SOREN_PERSIST_BRANCH="main"
