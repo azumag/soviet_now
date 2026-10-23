@@ -130,7 +130,12 @@ class MergeOpportunityTests(unittest.TestCase):
         settings={'V763_DIVERSITY_W':'1.0','V767_BUNDLE':'0',
                   'ANALYZE_BOARD_VERTICAL_LANE_DIRECT':'1','ANALYZE_BOARD_MERGE_TOP_MODEL':'2',
                   'ANALYZE_BOARD_WALL_CLAMP':'1','ANALYZE_BOARD_LANDING_ARC':'0'}
-        for turn, expected in ((39,.6),(14,1.2),(36,1.52)):
+        # docich#2482 同期 PR (v761/v764 + v763 hard-disable) 適用後の recorded-board 実測値。
+        # turn14 の 1.2 -> 0.6 は v763 hard-disable のみによる変化 (bisect 済み: v761/v764 を
+        # 単独 revert しても 0.6 のまま、v763 を戻すと 1.2 + MERGE_OPPORTUNITY_KEEP_ROUTES に復帰)。
+        # V763_DIVERSITY_W は本候補で戦略内 hard-disable されたため、この pin は v763 無効時の
+        # full-pipeline 挙動を固定する (本番 VM では 2026-10-23 02:53 JST から同挙動で live 運用)。
+        for turn, expected in ((39,.6),(14,.6),(36,1.52)):
             with self.subTest(turn=turn), patch.dict(os.environ,settings):
                 gs=json.loads((ROOT/f'tests/fixtures/merge_opportunities/route_turn{turn}.json').read_text())['game_state']
                 an=runner.build_analysis(gs)

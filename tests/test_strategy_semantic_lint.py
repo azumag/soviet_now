@@ -68,8 +68,11 @@ class StrategySemanticLintTests(unittest.TestCase):
     # 進行中の A/B (v757) 中は strategy.py の挙動を変えられないため、いま検出できる欠陥を
     # そのまま固定する。修正が入ったらこのテストが落ちるので、期待値を空へ更新すること。
     # 逆に「新しい欠陥が増えた」場合も落ちる。
-    KNOWN_UNARY_MINUS = [1661, 2046, 2047, 2189, 2302, 2322, 2393, 2792, 3001, 3056, 3175, 3191]
-    KNOWN_UNREACHABLE = [(1641, "max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
+    # docich#2482 同期 PR (v761/v764 + v763 hard-disable) では欠陥の個数は不変
+    # (単項マイナス 12件、到達不能 elif 1件) で、v763 hunk (-9行) と v761/v764 hunk
+    # (+N行) により行番号のみ移動したため、位置だけ更新する。
+    KNOWN_UNARY_MINUS = [1657, 2043, 2044, 2186, 2299, 2319, 2390, 2792, 3001, 3056, 3175, 3191]
+    KNOWN_UNREACHABLE = [(1637, "max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
 
     def test_consecutive_unary_minus_is_frozen(self):
         hits = _consecutive_unary_minus(self._tree("strategy.py"))
