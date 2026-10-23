@@ -54,6 +54,7 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
+import os
 
 from strategy_helpers import board_stats
 
@@ -78,7 +79,16 @@ _V763_BASE_BONUS = 260.0
 
 def _v763_weight():
     """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
-    return 0.0
+    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
+    if raw in ("", "0", "false", "no", "off"):
+        return 0.0
+    try:
+        w = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if w != w or w < 0.0:
+        return 0.0
+    return min(w, 8.0)
 
 
 def _v763_open_by_type(pieces):
@@ -183,12 +193,6 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 # v705: HIGH_TYPE_COVER_AVOID の open 判定を真上遮蔽のみへ修正し、抑止を -400 に強化（対象段階: ウクライナ T13）
 # Fixes rollback failure mode: 同typeペアは作れてもそのペアを次の手で併合できず、末盤の deadline guard が延命だけして点数を止める
 # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
-# v761: axis 9.3の死文化1判定のみ置換（rp長さ3対応・両端id分離・実塞ぎ手のみ既存額/reason、対象段階: 反応可能ペア残留→T14x2最終接触）
-# Fixes rollback failure mode: 反応可能ペアの間塞ぎ抑止が死文化し非併合手がペア区間を塞ぐため中盤停滞と高位ペア残留が起きる (H1)
-# refs: tmp/analysis_result.md, tmp/batch_summary.txt, data/mandatory_themes.txt, advice.md
-# v764: v701集合生成1件のみ置換し盤面合成T13を常時レーン/低ペア集合へ追加(額・包絡・reason・発火条件不変、対象段階: 第一T15前のT13集約)
-# Fixes rollback failure mode: T13単独散逸→T14第二素材欠落でRussia(T15)経路が途絶する (H1)
-# refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md, data/mandatory_themes.txt, advice.md
 
 
 def _as_float(value, default):
@@ -1726,19 +1730,18 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
             )
             reactive_zone_pairs.append((_ptype, _zmid, _zspan, _ztop, _zmin_y, _zr, _zblocked))
     t12_on_board = isinstance(pieces, list) and any(p.get("type") == 12 for p in pieces)
-    # T13 は常時レーンアンカー・被覆抑止ペアに含め、既存 T13/T14 クラスタ側へ素材を集約する
+    # T14 存在時は T13 もレーンアンカー・被覆抑止ペアに含め、既存 T13/T14 クラスタ側へ素材を集約する
     # （T13+T13→2個目 T14→T14+T14→T15 の盤面組み立て経路を維持）。
     t14_on_board = isinstance(pieces, list) and any(p.get("type") == 14 for p in pieces)
     t12_lane_xs = []
     t12_lane_top = -10.0
     t12_low_pairs = []
     if isinstance(pieces, list):
-        # H1: 盤面合成T13を条件なしで常時含め第一T15前のT13集約を復旧する(T14在盤条件を撤廃)。
-        _t11t12 = [p for p in pieces if p.get("type") in (11, 12, 13)]
+        _t11t12 = [p for p in pieces if p.get("type") in (11, 12) or (t14_on_board and p.get("type") == 13)]
         t12_lane_xs = [float(p.get("x", 0.0) or 0.0) for p in _t11t12]
         t12_lane_top = max([float(p.get("y", 0.0) or 0.0) for p in _t11t12], default=-10.0)
         # 低い（y<=0.8）同typeピースをx順に隣接ペア化し、被覆抑止帯（span・top）を一度計算。
-        for _ptype in (11, 12, 13):
+        for _ptype in ((11, 12, 13) if t14_on_board else (11, 12)):
             _low = [
                 p for p in _t11t12
                 if p.get("type") == _ptype and float(p.get("y", 99.0) or 99.0) <= 0.8
@@ -2450,11 +2453,10 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
             if not board_congested and not death_spiral:
                 blocking_penalty = -0.0798
                 for rp in reactive_pairs:
-                    # H1: rp実形式は(id1,id2,type)の3要素。両端は異なるidから取得する。
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                    if isinstance(rp, (list, tuple)) and len(rp) >= 6:
                         rp_type = rp[2]
                         if rp_type != next_type:
-                            pos1 = piece_pos_by_id.get(rp[0])
+                            pos1 = piece_pos_by_id.get(rp[1])
                             pos2 = piece_pos_by_id.get(rp[1])
                             if pos1 and pos2:
                                 x1, y1 = pos1
@@ -2467,9 +2469,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                                     pair_min_y = min(y1, y2)
                                     if landing_y >= pair_min_y:
                                         blocking_penalty += 88.8
-                # H1: 実塞ぎがあった手にのみ既存額・既存上限で罰則+reasonを付与。
-                # 非塞ぎ手の微小値(-0.0798)では発火させない。額・上限・reason名は不変。
-                if blocking_penalty > 0:
+                if blocking_penalty > -1:
                     score -= min(blocking_penalty, 810.9)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
@@ -2491,7 +2491,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
             and type15_count == 0
             and t12_on_board
         ):
-            # (a) 横レーン誘導: 最寄りの T11/T12/T13 x へ dx<=2.0 で最大140、dx=2.0 で0。
+            # (a) 横レーン誘導: 最寄りの T11/T12（T14存在時はT13含む）x へ dx<=2.0 で最大140、dx=2.0 で0。
             if t12_lane_xs:
                 _t12_dx = min(abs(x - _tx) for _tx in t12_lane_xs)
                 if _t12_dx <= 2.0:
@@ -2503,7 +2503,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                         # 上から着地しても連鎖発火を狙えるよう、半減で継続する
                         score += _t12_bonus * 0.5
                         reasons.append("T12_CHAIN_LANE_GUIDANCE")
-            # (b) 被覆抑止: 低い T11/T12/T13 同typeペアの横span内・ペアtop+0.2〜+2.5 の別type着地を -200。
+            # (b) 被覆抑止: 低い T11/T12 同typeペアの横span内・ペアtop+0.2〜+2.5 の別type着地を -200。
             for _pcover_type, _cmin_x, _cmax_x, _cpair_top in t12_low_pairs:
                 if _pcover_type == next_type:
                     continue  # 上置きは併合レーン（テーマ#4）
