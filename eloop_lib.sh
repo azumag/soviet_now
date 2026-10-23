@@ -26,6 +26,7 @@ fi
 source "$ELOOP_LIB_DIR/core/helpers.sh"
 source "$ELOOP_LIB_DIR/core/game_state.sh"
 source "$ELOOP_LIB_DIR/core/strategy_runtime.sh"
+source "$ELOOP_LIB_DIR/core/strategy_runtime_strict.sh"
 # Layer 1.5: AI共通ディスパッチ (helpers.sh に依存)
 source "$ELOOP_LIB_DIR/lib/ai_generate.sh"
 source "$ELOOP_LIB_DIR/lib/ai_generate_policy.sh"
