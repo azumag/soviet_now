@@ -216,7 +216,7 @@ _persist_strategy_improve_locked() {
 		}
 	done < <(git -C "$repo" ls-files -z -- "${paths[@]}" 2>/dev/null)
 
-	git -C "$repo" add -- "${paths[@]}" 2>/dev/null || true
+	git -C "$repo" add -- "${paths[@]}" 2>/dev/null || { _persist_log "ERROR" "git add failed"; _persist_write_status "$repo" "fail" "$message" "$branch" "" "git add failed"; return 1; }
 	if git -C "$repo" diff --cached --quiet; then
 		# runtime が既に main と同一なら候補自体が不要。
 		_persist_write_status "$repo" "no-change" "$message" "$branch" "$(git -C "$repo" rev-parse HEAD 2>/dev/null)" ""

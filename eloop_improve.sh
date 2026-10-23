@@ -592,7 +592,7 @@ PY
 	# Commit immediately after applying the winner so the new strategy.py is preserved
 	# even if eloop_improve.sh is killed before reaching the main git_commit phase.
 	if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$baseline_hash" ]; then
-		persist_strategy_improve "eloop Improve [param-parallel] adopt ${winner_job:-winner} after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || _persist_log_failure "param-parallel" $?
+		persist_strategy_improve "eloop Improve [param-parallel] adopt ${winner_job:-winner} after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || { _rc=$?; [ "$_rc" -eq 3 ] || _persist_log_failure "param-parallel" "$_rc"; }
 	fi
 	_post_improve_import_result_stats "$result_file" "$HASH_AFTER"
 	_wildcard_parallel_cleanup_sessions
@@ -1600,7 +1600,7 @@ PY
 		# Commit immediately after applying the winner so strategy.py is preserved
 		# even if the process is killed before reaching the git_commit phase below.
 		if [ -n "$HASH_AFTER" ] && [ "$HASH_AFTER" != "$HASH_BEFORE" ]; then
-			persist_strategy_improve "eloop Improve [wildcard] adopt parallel winner after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || _persist_log_failure "wildcard-adopt" $?
+			persist_strategy_improve "eloop Improve [wildcard] adopt parallel winner after game #${GAME_NUM_SNAPSHOT}" strategy.py 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || { _rc=$?; [ "$_rc" -eq 3 ] || _persist_log_failure "wildcard-adopt" "$_rc"; }
 		fi
 		_import_wildcard_parallel_game_stats "$wildcard_result" "$HASH_AFTER" || true
 		wildcard_parallel_cleanup_sessions
@@ -1711,7 +1711,7 @@ except Exception:
 " 2>/dev/null || true
 		fi
 		_improve_progress "git_commit" "90" "wildcard_parallel_commit"
-		persist_strategy_improve "eloop Improve [wildcard] parallel trial after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || _persist_log_failure "wildcard-parallel" $?
+		persist_strategy_improve "eloop Improve [wildcard] parallel trial after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || { _rc=$?; [ "$_rc" -eq 3 ] || _persist_log_failure "wildcard-parallel" "$_rc"; }
 		_improve_progress "done" "100" "wildcard_parallel_complete"
 		log "[WILDCARD] parallel cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 		wildcard_parallel_restore_once
@@ -1869,7 +1869,7 @@ except Exception:
 	fi
 	# git commit
 	_improve_progress "git_commit" "90" "wildcard_commit"
-	persist_strategy_improve "eloop Improve [wildcard] perturbation after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || _persist_log_failure "wildcard-perturbation" $?
+	persist_strategy_improve "eloop Improve [wildcard] perturbation after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || { _rc=$?; [ "$_rc" -eq 3 ] || _persist_log_failure "wildcard-perturbation" "$_rc"; }
 	_improve_progress "done" "100" "wildcard_complete"
 	log "[WILDCARD] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER}"
 	exit 0
@@ -2269,7 +2269,7 @@ PY
 		echo "$archive_restart_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'- selected {d[\"hash\"]}: comp={d[\"comp\"]:.1f} p50={d[\"p50\"]:.1f} p25={d[\"p25\"]:.1f} n={d[\"n\"]} russia={d.get(\"russia_count\",0)} soviet={d.get(\"soviet_count\",0)} best_type={d.get(\"best_max_type\",0)} anchor={d.get(\"anchor_hash\",\"\")[:8]} comp={d.get(\"anchor_comp\",0):.1f}')" 2>/dev/null
 	} >>"$CHANGE_LOG_FILE_HOST" 2>/dev/null || true
 	_improve_progress "git_commit" "90" "archive_restart_commit"
-	persist_strategy_improve "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || _persist_log_failure "archive-restart" $?
+	persist_strategy_improve "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" strategy.py game_count.txt score_history.txt eval_score_history.txt 2>>"${TMP_STATE_DIR:-tmp/state}/persist-errors.log" || { _rc=$?; [ "$_rc" -eq 3 ] || _persist_log_failure "archive-restart" "$_rc"; }
 	_improve_progress "done" "100" "archive_restart_complete"
 	log "[ARCHIVE-RESTART] cycle complete: ${HASH_BEFORE} → ${HASH_AFTER} source=${archive_restart_hash}"
 	_improve_flow_notify \
