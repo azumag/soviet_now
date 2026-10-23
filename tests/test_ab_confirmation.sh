@@ -127,6 +127,13 @@ AB_CALLS=0
 _ab_finish A "REJECT_HARM" && ok || ng "A pass-through"
 [ "$AB_CALLS" -eq 1 ] && [ "$AB_LAST_WINNER" = A ] && ok || ng "A verdict underlying call"
 
+# confirmation contract 自体を書けない場合は旧1段階へ落とさず、A側で閉じる。
+AB_CALLS=0
+AB_LAST_WINNER=""
+_ab_confirmation_mark_new_state() { return 1; }
+_ab_start_from_bundle bundle ABBA >/dev/null 2>&1 && ng "confirmation init failure must fail start" || ok
+[ "$AB_CALLS" -eq 1 ] && [ "$AB_LAST_WINNER" = A ] && [ "$AB_LAST_REASON" = confirmation_init_failed ] && ok || ng "init failure must finish A"
+
 if [ "$fail" -ne 0 ]; then
 	echo "FAILED: $fail failed, $pass passed"
 	exit 1
