@@ -242,7 +242,7 @@ while true; do
 		_LAST_GAME_NUM="$current_game_num"
 		_LAST_ACC_COUNT="$current_acc_count"
 		# #2688: never let a 0/invalid interval busy-loop this python3-heavy path.
-		sleep "$(docich_poll_interval "${POLL_INTERVAL:-}" 5 1 2>/dev/null || printf '5')"
+		sleep "$(docich_poll_interval "${POLL_INTERVAL:-}" 5 1 2>/dev/null || printf '1')"
 		continue
 	fi
 
