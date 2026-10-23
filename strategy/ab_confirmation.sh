@@ -114,7 +114,12 @@ _ab_start_from_bundle() {
 	_ab_start_from_bundle_without_confirmation "$@" || return $?
 	if [ -f "$AB_STATE_FILE" ]; then
 		_ab_confirmation_mark_new_state || {
-			log "[AB-CONFIRM] confirmation state 初期化失敗 → A/B開始を fail-closed"
+			log "[AB-CONFIRM] confirmation state 初期化失敗 → A維持でA/Bを終了"
+			# confirmation_required を永続化できない state を継続すると、後で
+			# 旧1段階finishへfall-throughしてしまう。必ずA側で閉じる。
+			if declare -F _ab_finish >/dev/null 2>&1; then
+				_ab_finish A "confirmation_init_failed" >/dev/null 2>&1 || true
+			fi
 			return 1
 		}
 		log "[AB-CONFIRM] independent confirmation required for new A/B"
