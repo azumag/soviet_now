@@ -13,6 +13,8 @@ on:
       - 'lib/game_lifecycle.py'
       - 'lib/game_terminal.py'
       - 'lib/game_founding_boundary.py'
+      - 'lib/founding_marker.py'
+      - 'core/game_state.sh'
       - 'lib/game_observation.mjs'
       - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
@@ -26,6 +28,7 @@ on:
       - 'tests/test_game_observation.mjs'
       - 'tests/test_bridge_stop_fence.mjs'
       - 'tests/test_soviet_continuation.py'
+      - 'tests/test_founding_marker_identity.py'
   push:
     branches: [main]
     paths:
@@ -39,6 +42,8 @@ on:
       - 'lib/game_lifecycle.py'
       - 'lib/game_terminal.py'
       - 'lib/game_founding_boundary.py'
+      - 'lib/founding_marker.py'
+      - 'core/game_state.sh'
       - 'lib/game_observation.mjs'
       - 'lib/game_lifecycle.mjs'
       - 'lib/jev_*.mjs'
@@ -52,6 +57,7 @@ on:
       - 'tests/test_game_observation.mjs'
       - 'tests/test_bridge_stop_fence.mjs'
       - 'tests/test_soviet_continuation.py'
+      - 'tests/test_founding_marker_identity.py'
 
 permissions:
   contents: read
@@ -77,6 +83,7 @@ jobs:
             lib/game_lifecycle.py \
             lib/game_terminal.py \
             lib/game_founding_boundary.py \
+            lib/founding_marker.py \
             strategy_runner.py \
             lib/jev_player_contract.py \
             lib/jev_player_worker.py \
@@ -98,6 +105,7 @@ jobs:
             tests.test_game_lifecycle \
             tests.test_game_founding_boundary \
             tests.test_soviet_continuation \
+            tests.test_founding_marker_identity \
             tests.test_jev_player_worker \
             tests.test_jev_player_contract \
             tests.test_jev_player_candidates \

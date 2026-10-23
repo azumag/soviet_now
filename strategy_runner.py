@@ -29,9 +29,15 @@ import uuid
 from lib.country_names import country_named_reason
 from lib.game_terminal import is_terminal as is_terminal_game_state
 from lib.game_founding_boundary import FoundingBoundaryWitness
+from lib.founding_marker import (
+    founding_marker_is_current,
+    observation_game_id,
+    write_founding_marker,
+)
 
 # --- 定数 ---
 GAME_STATE = "game_state.json"
+SOVIET_MARKER = "tmp/markers/.soviet_created"
 COMMANDS = "commands.txt"
 HISTORY_DIR = "game_history"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "latest.jsonl")
@@ -3219,7 +3225,11 @@ def wait_for_move_state(deadline_fast_drop_enabled=DEFAULT_FAST_DROP_DEADLINE_CO
         if is_terminal_game_state(
             gs,
             state_mtime=state_mtime,
-            founding_seen=os.path.exists("tmp/markers/.soviet_created"),
+            # Only a founding marker that belongs to this board may make a
+            # legacy STOP non-terminal. A leftover marker from an earlier
+            # match used to mask the next match's real GAME OVER and freeze
+            # the loop (docich#2345).
+            founding_seen=founding_marker_is_current(),
         ):
             return gs, False
 
@@ -3336,25 +3346,48 @@ def run_game():
     prev_actual_deadline_contact = False
     last_decision = {}
     soviet_resume_at = 0.0
+    # Bridge game_id of the match that wrote the founding marker (None when the
+    # bridge exposes no identity, e.g. an older bridge).
+    founding_game_id = None
     founding_boundary = FoundingBoundaryWitness()
 
     def observe_soviet(gs):
-        nonlocal soviet_created, soviet_resume_at
+        nonlocal soviet_created, soviet_resume_at, founding_game_id
+        if soviet_created and founding_game_id is not None:
+            current_game_id = observation_game_id()
+            if current_game_id is not None and current_game_id != founding_game_id:
+                # The bridge relaunched, or a RETRY started a new match while
+                # this runner was still holding the founding board. The hold
+                # belongs to the match that just ended; releasing it here stops
+                # the new match's GAME OVER from being read as a founding STOP
+                # (docich#2345).
+                log(
+                    f"[SOVIET] 新しい試合を観測 (game_id {founding_game_id}→{current_game_id})。"
+                    "建国フラグを解除して終端観測を再開します"
+                )
+                soviet_created = False
+                soviet_resume_at = 0.0
+                founding_game_id = None
+                try:
+                    os.remove(SOVIET_MARKER)
+                except FileNotFoundError:
+                    pass
         founding_boundary.observe(gs, soviet_created)
         count = gs.get("makeSorenCount", 0)
         if (soviet_created or type(count) not in (int, float)
                 or not 0 < count <= 2**53 - 1 or not math.isfinite(count) or int(count) != count):
             return
         soviet_created = True
+        # Record which match founded, so a later reader can tell this marker
+        # apart from one left behind by an earlier match.
+        founding_game_id = observation_game_id()
         score = gs.get("score", 0)
         log(
             f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} "
             f"makeSorenCount={gs.get('makeSorenCount', 0)}"
         )
         trigger_soviet_clip_now(score, turn + 1)
-        os.makedirs("tmp/markers", exist_ok=True)
-        with open("tmp/markers/.soviet_created", "w") as flag_f:
-            flag_f.write(f"{turn + 1}\n")
+        write_founding_marker(SOVIET_MARKER, turn + 1, founding_game_id)
         pause_sec = min(300.0, max(0.0, _env_float("SOVIET_CELEBRATION_PAUSE_SEC", 300.0)))
         soviet_resume_at = time.monotonic() + pause_sec
         log(f"[SOVIET] 同じ盤面で祝賀待機 ({pause_sec:g}s)。待機後は操作を再開します")
@@ -3365,7 +3398,7 @@ def run_game():
     except FileNotFoundError:
         pass
     try:
-        os.remove("tmp/markers/.soviet_created")
+        os.remove(SOVIET_MARKER)
     except FileNotFoundError:
         pass
 
@@ -3392,7 +3425,12 @@ def run_game():
                     state_mtime = os.path.getmtime(GAME_STATE)
                 except OSError:
                     state_mtime = None
-                if not is_terminal_game_state(gs or {}, state_mtime=state_mtime, founding_seen=soviet_created):
+                # The in-memory flag alone is not enough: this runner can
+                # outlive the match it founded (bridge relaunch / external
+                # RETRY), and a marker owned by that ended match must not keep
+                # the next match's STOP from being terminal (docich#2345).
+                founding_seen = soviet_created and founding_marker_is_current()
+                if not is_terminal_game_state(gs or {}, state_mtime=state_mtime, founding_seen=founding_seen):
                     # Never turn animation/unknown state into bookkeeping,
                     # a round boundary, retry, or a command on a stale board.
                     log(f"[WAIT] 非終端状態 {final_state}。盤面を保持して再観測します")

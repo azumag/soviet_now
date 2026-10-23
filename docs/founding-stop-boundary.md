@@ -16,6 +16,16 @@ ACKは終端のbookkeepingやゲーム入力を発生させない。資源解放
 
 停滞を検知したら、まず `tmp/state/game_observation.json` (bridge が実観測から最長1秒ごとに更新する) を非破壊に再観測する。待機は `BRIDGE_OBSERVE_WAIT_SEC` (既定5s)、鮮度閾値は `BRIDGE_OBSERVE_FRESH_SEC` (既定15s)。実観測が生存していれば live page は生きており、凍結した `game_state.json` は保持対象の盤面と判定して保留し、kill/relaunch も RETRY/RELOAD も送らず盤面リセットへ自動で進まない。保留は `BRIDGE_STALE_NOTICE_SEC` (既定60s) ごとに理由と盤面をログする。実観測も途絶えている場合だけ従来どおり復旧する (プロセス消失・致命ログ署名の扱いは変えない)。
 
+## marker の帰属 (docich#2345)
+
+`tmp/markers/.soviet_created` は「どの試合が建国したか」を主張する。共有 `is_terminal()` に `founding_seen` として渡すのは、**いま読んでいる盤面に帰属する marker だけ**とする。`lib/founding_marker.py` が唯一の判定で、`core/game_state.sh:is_game_over()`、`strategy_runner.py`、`lib/game_lifecycle.py`、docich の `recover_soren_game` が同じ規則を使う。
+
+1. marker が無ければ `false`。
+2. marker と bridge 観測の両方に `game_id` があれば、その一致だけで決める。`game_id` は RETRY・bridge relaunch・新試合で更新されるため、前の試合の marker は一致しない。
+3. どちらか欠ける場合 (旧 runner/旧 bridge が書いた marker、観測欠落) は board mtime で判定し、marker が board より `MTIME_GRACE_SECONDS` (5s) を超えて古ければ `false`。`game_state.json` の mtime は盤面が変わった時だけ進むため、同じ STOP を保持している間は marker と board の前後関係が保たれる。
+
+2026-10-16 の15時間40分停止は、09:44 の建国 marker が 10:00 の bridge relaunch 後も残り、10:04 の新試合の GAME OVER(`STOP`) が `founding_seen` により非終端と読まれたため。runner は同じく新試合の `game_id` を観測した時点でメモリの建国フラグ・祝賀待機・marker を解除する。marker の妥当性判定は「盤面を終わらせてよいか」だけを答え、retry・入力・boundary ACK を単独で許可しない。
+
 ## 反映と依存
 
 旧runner/旧bridgeにはこの証跡がないため、古いmarker・静止ファイルだけで現在の稼働試合を終了させない。コードのcommit/pushやCI成功で進行中switchの復旧を保証しない。新コードを正規に配備し、次の自然なrunner/bridge起動から有効にする。既存試合の強制終了や確認用再起動はこの修正の範囲外。
