@@ -12,7 +12,7 @@ _improve_failure_history_path() {
 _improve_failure_normalize_code() {
 	local raw="${1:-other}"
 	case "$raw" in
-	apply_bundle_failed|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change)
+	apply_bundle_failed|projection_guard_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change)
 		printf '%s\n' "$raw"
 		;;
 	*) printf '%s\n' other ;;
@@ -39,7 +39,10 @@ try:
     code = str(data.get("failure_code") or "")
 except Exception:
     raise SystemExit(1)
-if code != "apply_bundle_failed" or failed_at <= 0:
+# Only apply-phase codes written by the runtime layer may re-label an ambiguous
+# terminal detail. projection_guard_refused (docich#2487) is written by the
+# same marker right after the gate refuses a live apply.
+if code not in ("apply_bundle_failed", "projection_guard_refused") or failed_at <= 0:
     raise SystemExit(1)
 # A nonzero run start is authoritative. The age guard only covers legacy callers
 # that did not carry started_at, and prevents an old apply incident from being
@@ -126,11 +129,12 @@ if declare -F _write_improve_state >/dev/null 2>&1 && ! declare -F _write_improv
 		# eloop_improve historically labels a repeated atomic-apply failure as
 		# validation_failed because the failure code is not set at that call site.
 		# The runtime layer now writes a fixed marker only after BOTH bounded apply
-		# attempts fail, so safely correct that one ambiguous terminal detail here.
+		# attempts fail (or the projection gate refuses the apply, docich#2487),
+		# so safely correct that one ambiguous terminal detail here.
 		if [ "$detail" = "failed_no_apply:validation_failed" ]; then
 			apply_code=$(_improve_failure_recent_apply_code "$started_at" 2>/dev/null || true)
-			if [ "$apply_code" = "apply_bundle_failed" ]; then
-				detail="failed_no_apply:apply_bundle_failed"
+			if [ -n "$apply_code" ]; then
+				detail="failed_no_apply:${apply_code}"
 			fi
 		fi
 

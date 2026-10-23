@@ -1130,8 +1130,11 @@ PY
 }
 
 _improve_reset_sandbox_targets() {
+	# docich#2487: live strategy.py is no longer mutated here. The reviewed file
+	# in soviet_now main already carries FAST_DROP_DEADLINE_CONTACT, and a
+	# runtime in-place append would itself be live drift the deploy plane
+	# refuses. Only the staging copy gets the parameter ensured.
 	cp "strategy.py" "$STAGING_FILE"
-	_ensure_strategy_runtime_params "strategy.py"
 	_ensure_strategy_runtime_params "$STAGING_FILE"
 	rm -rf "strategy_helpers" 2>/dev/null || true
 	mkdir -p "strategy_helpers" 2>/dev/null || true
@@ -4036,17 +4039,28 @@ if $improve_ok; then
 				log "[IMPROVE] $VALIDATE_ERROR"
 				improve_ok=false
 			fi
-		elif ! strategy_runtime_atomic_apply_bundle_then \
-			"$HARVEST_DIR/strategy.py.staging" \
-			"$STRATEGY_FILE" \
-			"$HARVEST_DIR/strategy_helpers" \
-			"strategy_helpers" \
-			"_atomic_pin_advance_after_apply" \
-			"$IMPROVE_BASE_HASH" \
-			"improve"; then
-			VALIDATE_ERROR="strategy/helper bundle の原子的反映に失敗"
-			log "[IMPROVE] $VALIDATE_ERROR"
-			improve_ok=false
+		else
+			_improve_apply_rc=0
+			strategy_runtime_atomic_apply_bundle_then \
+				"$HARVEST_DIR/strategy.py.staging" \
+				"$STRATEGY_FILE" \
+				"$HARVEST_DIR/strategy_helpers" \
+				"strategy_helpers" \
+				"_atomic_pin_advance_after_apply" \
+				"$IMPROVE_BASE_HASH" \
+				"improve" || _improve_apply_rc=$?
+			if [ "$_improve_apply_rc" -ne 0 ]; then
+				if [ "$_improve_apply_rc" -eq "${_STRATEGY_RUNTIME_GUARD_REFUSED:-3}" ]; then
+					# docich#2487: the projection gate refused the unreviewed
+					# candidate; its bytes are quarantined under
+					# tmp/state/projection_guard/ for the upstream PR path.
+					VALIDATE_ERROR="projection_guard_refused: candidate preserved under tmp/state/projection_guard (docich#2487)"
+				else
+					VALIDATE_ERROR="strategy/helper bundle の原子的反映に失敗"
+				fi
+				log "[IMPROVE] $VALIDATE_ERROR"
+				improve_ok=false
+			fi
 		fi
 		if $improve_ok && [ "$AB_GATE_EMITTED" != "true" ]; then
 			if [ -f "$HARVEST_DIR/logs/change_log.txt" ] && [ -s "$HARVEST_DIR/logs/change_log.txt" ]; then

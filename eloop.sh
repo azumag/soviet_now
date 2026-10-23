@@ -97,32 +97,46 @@ _handle_decide_exception_recovery() {
 
 	_stop_improvement_for_runtime_recovery
 
-	local current_hash rollback_line rollback_file rollback_note rollback_hash
+	local current_hash rollback_line rollback_file rollback_note rollback_hash _rollback_gate_rc=0
 	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 	rollback_line=$(_pick_runtime_rollback_candidate "$current_hash" || true)
 	if [ -n "$rollback_line" ]; then
 		IFS='|' read -r rollback_file rollback_note rollback_hash <<<"$rollback_line"
 		if [ -f "$rollback_file" ]; then
-			cp "$rollback_file" "$STRATEGY_FILE"
-			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
-			local rolled_hash
-			local phylo_push_ok=false
-			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
-			rollback_applied=true
-			log "[RECOVERY] ロールバック完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
-			git add "$STRATEGY_FILE" tmp/revert_strategy.py 2>/dev/null || true
-			if git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null; then
-				if git push 2>/dev/null; then
-					phylo_push_ok=true
-				fi
-			fi
-			if [ "$phylo_push_ok" = true ]; then
-				_post_phyrogenetic_tree_link_to_chat "rollback" "$current_hash" "$rolled_hash"
+			# docich#2487: a rollback candidate may be a runtime version that
+			# never reached soviet_now main. On the production projection,
+			# restoring it onto live would re-introduce exactly the unreviewed
+			# drift the deploy plane refuses — skip it fail-closed instead.
+			_rollback_gate_rc=0
+			if command -v strategy_runtime_projection_apply_gate >/dev/null 2>&1; then
+				strategy_runtime_projection_apply_gate "$rollback_file" "$STRATEGY_FILE" "" "recovery_rollback" || _rollback_gate_rc=$?
 			fi
 		else
 			log "[RECOVERY] ロールバック候補ファイルなし: ${rollback_file}"
 		fi
+	fi
+	if [ -n "$rollback_line" ] && [ -f "$rollback_file" ] && [ "$_rollback_gate_rc" -eq 0 ]; then
+		cp "$rollback_file" "$STRATEGY_FILE"
+		cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+		local rolled_hash
+		local phylo_push_ok=false
+		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+		rollback_applied=true
+		log "[RECOVERY] ロールバック完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
+		git add "$STRATEGY_FILE" tmp/revert_strategy.py 2>/dev/null || true
+		if git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null; then
+			if git push 2>/dev/null; then
+				phylo_push_ok=true
+			fi
+		fi
+		if [ "$phylo_push_ok" = true ]; then
+			_post_phyrogenetic_tree_link_to_chat "rollback" "$current_hash" "$rolled_hash"
+		fi
+	elif [ -n "$rollback_line" ] && [ ! -f "$rollback_file" ]; then
+		: # ロールバック候補ファイルなしは上で記録済み
+	elif [ "$_rollback_gate_rc" -ne 0 ]; then
+		log "[RECOVERY] projection guard: rollback candidate ${rollback_hash:0:12} is not in the reviewed lineage → rollback skipped, live kept at reviewed bytes (docich#2487)"
 	else
 		log "[RECOVERY] ロールバック候補なし（現戦略のまま再試行）"
 	fi
@@ -228,6 +242,21 @@ EOF
 	if [ -z "${source_file:-}" ]; then
 		log "[STRATEGY-REPAIR] active_branch head mismatch current=${current_hash:0:12} expected=${expected_hash:0:12} だが archive が見つからないため維持"
 		return 0
+	fi
+
+	# docich#2487: the active_branch head may be an unreviewed runtime candidate
+	# (pinned before the projection gate existed, or by an improve run whose
+	# bytes never reached soviet_now main). Restoring it onto the production
+	# projection would re-introduce exactly the unreviewed drift the deploy
+	# plane refuses. Fail closed: keep the reviewed live bytes. After a deploy
+	# convergence, align or clear tmp/state/active_branch.json (runbook).
+	local _repair_gate_rc=0
+	if command -v strategy_runtime_projection_apply_gate >/dev/null 2>&1; then
+		strategy_runtime_projection_apply_gate "$source_file" "$STRATEGY_FILE" "" "strategy_repair" || _repair_gate_rc=$?
+		if [ "$_repair_gate_rc" -ne 0 ]; then
+			log "[STRATEGY-REPAIR] projection guard: active_branch head ${expected_hash:0:12} not in reviewed lineage → repair skipped, live kept at reviewed bytes (docich#2487)"
+			return 0
+		fi
 	fi
 
 	mkdir -p "${TMP_STATE_DIR:-tmp/state}/strategy_repair_backups" 2>/dev/null || true
