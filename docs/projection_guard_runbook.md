@@ -15,14 +15,29 @@ live bytes+mode が reviewed lineage と一致しない限り fail-closed する
 
 ## ポリシー (`IMPROVE_LIVE_APPLY_POLICY`)
 
+base gate (`core/strategy_runtime.sh`) の値:
+
 | 値 | 挙動 |
 |---|---|
-| `dry_run` (既定) | 拒否判定をログ + マーカーに残すだけで apply は通す。本番へ入れる前に「何が拒否されるか」を観測する段階 |
+| `dry_run` | 拒否判定をログ + マーカーに残すだけで apply は通す (base runtime の既定。dev checkout / 単体テスト向け) |
 | `enforce_reviewed` | reviewed lineage (`origin/main` → `main`) に無い bytes の live apply を**拒否**。候補は `tmp/state/projection_guard/<UTC>_<pid>/` に隔離 |
-| `off` | gate 無効 (escape hatch) |
+| `off` | gate 無効 (escape hatch。dev checkout 限定) |
+
+### production projection の強制層 (`core/strategy_runtime_strict.sh`)
+
+`soviet_now#717` 以降、`eloop_lib.sh` は base runtime の直後に strict layer を
+source する。**本番の git-less projection では判定不能を許可にしない**:
+
+- 有効ポリシーは常に `enforce_reviewed`。`.env` に残った `dry_run` / `off` は
+  `SOREN_UNSAFE_PROJECTION_APPLY_ACK=1` を併記した明示的な二重 opt-in が無い限り
+  `enforce_reviewed` に昇格する。
+- `SOREN_PROJECTION_FORCE=0` だけでは本番 projection の guard を無効化できない。
+- lineage clone 不在 / reviewed ref 不在 / target root 解決不能 / 想定外 verdict は
+  `projection_guard_refused` として **fail-closed** (隔離 + マーカー)。
+- 回帰: `tests/test_projection_guard_strict.py`、CI は isolated-apply。
 
 - projection 検出: runtime root に `.git` が無いこと (`strategy/persist.sh` の前提)。
-  `SOREN_PROJECTION_FORCE=1|0` で上書き可 (テスト・調査用)。
+  strict layer は `SOREN_PROJECTION_FORCE=1` を尊重しつつ `=0` では解除しない。
 - reviewed 参照: `SOREN_LINEAGE_REF_REPO` (既定 `SOREN_PERSIST_REPO` →
   `/home/ubuntu/soren-persist`)、ref は `SOREN_LINEAGE_REF` (既定 `origin/main` →
   `main`)。gate は fetch しない。persist clone の `origin/main` が古い場合は
@@ -45,23 +60,24 @@ live bytes+mode が reviewed lineage と一致しない限り fail-closed する
 
 ## 本番 (production projection) への適用
 
+strict layer により、本番 projection では **.env の設定なしで enforce_reviewed** が
+効く (apply 時に評価される)。導入・確認手順:
+
 ```bash
-# 1) dry_run で観測 (既定。明示設定も可)
-#    /home/ubuntu/soren/.env:
-IMPROVE_LIVE_APPLY_POLICY=dry_run
-# 2) 拒否ログとマーカーを確認
+# 1) strict layer が本番に入っていることを確認 (deploy 済み SHA で)
+grep -n 'strategy_runtime_strict' /home/ubuntu/soren/eloop_lib.sh
+# 2) 拒否ログとマーカーを確認 (拒否が起きていない場合はマーカー未生成)
 grep -h 'PROJECTION-GUARD' /home/ubuntu/soren/logs/*.log | tail -50
 cat /home/ubuntu/soren/tmp/state/projection_guard_last_event.json
-# 3) enforce へ移行
-IMPROVE_LIVE_APPLY_POLICY=enforce_reviewed
 ```
 
-- `IMPROVE_LIVE_APPLY_POLICY` は apply 時点で環境変数から読む。`improve_daemon` /
-  `soren_loop.sh` は起動時に `.env` を source するため、**変更後は対象 worker を
-  完全再起動**して反映する (reload では既定値が残る。AGENTS.md の
-  「config.sh 既定値の変更は worker 完全再起動で反映する」と同じ理由)。
+- `.env` に以前の段階導入値 (`dry_run` / `off`) が残っていても、strict layer が
+  `enforce_reviewed` へ昇格させるため **worker 再起動は必須ではない**。明示的に
+  安全側で揃えたい場合は `.env` から該当行を削除する (次回起動時に読まれる)。
 - `enforce_reviewed` では live 反映が PR merge + gitlink advance の律速になる。
   candidate 生成・sandbox 検証・persist PR は従来どおり継続する。
+- dry_run 観測が必要な場合 (dev checkout / 明示調査) は git-less projection では
+  `SOREN_UNSAFE_PROJECTION_APPLY_ACK=1` を併用する。本番の常用設定にしない。
 
 ## マーカーとログ
 
@@ -72,9 +88,10 @@ IMPROVE_LIVE_APPLY_POLICY=enforce_reviewed
 | `tmp/state/improve_last_failure.json` | 端末失敗として `failed_no_apply:projection_guard_refused` が残る |
 | ログ行 `PROJECTION-GUARD[<tag>]` | 拒否・dry_run 判定・degrade の記録 |
 
-`gate_degraded` は lineage clone 不在 / ref 解決不能 / 想定外 verdict のいずれかで、
-apply は従来どおり通る (improve loop を凍結しない)。この状態が続く場合は
-`/home/ubuntu/soren-persist` の整備状況を確認する。
+`gate_degraded` (dry_run degrade) は **dev checkout / 明示 ack の dry_run のみ**。
+本番 projection では同じ状況が `refused` (fail-closed) として記録され、apply は
+拒否される (`core/strategy_runtime_strict.sh`)。本番で `refused` が lineage 不在
+理由で続く場合は `/home/ubuntu/soren-persist` の整備状況を確認する。
 
 ## deploy 側との関係
 
