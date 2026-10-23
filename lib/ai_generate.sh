@@ -464,6 +464,7 @@ _ai_generation_queue_enter_priority() {
 	local label="${1:-AI}" lane base pending_dir request_dir request_tmp guard_path slot_dir
 	local wait_sec="${AI_GENERATION_QUEUE_WAIT_SEC:-2}" stale_sec="${AI_GENERATION_QUEUE_STALE_SEC:-900}"
 	local max_wait_sec waited=0 token owner_summary="" owner_pid="${AI_GENERATION_QUEUE_OWNER_PID:-${BASHPID:-$$}}"
+	local tmp_attempts=0 tmp_max_attempts="${AI_GENERATION_QUEUE_TMP_ATTEMPTS:-50}"
 	AI_GENERATION_QUEUE_LAST_GIVEUP_HOLDER_CATEGORY=""
 	lane=$(_ai_queue_priority_lane "$label") || return 1
 	base=$(_ai_generation_queue_priority_base_dir)
@@ -475,11 +476,21 @@ _ai_generation_queue_enter_priority() {
 	case "$stale_sec" in '' | *[!0-9]*) stale_sec=900 ;; esac
 	[ "$stale_sec" -lt 60 ] && stale_sec=60
 	case "$owner_pid" in '' | *[!0-9]*) owner_pid="${BASHPID:-$$}" ;; esac
+	case "$tmp_max_attempts" in '' | *[!0-9]*) tmp_max_attempts=50 ;; esac
+	[ "$tmp_max_attempts" -ge 1 ] || tmp_max_attempts=1
 	mkdir -p "$pending_dir" 2>/dev/null || true
 	token="${BASHPID:-$$}.${RANDOM}.$(date +%s).${lane}"
 	request_dir="$pending_dir/$token"
 	request_tmp="$pending_dir/.${token}.tmp"
+	# #2688: a failed mkdir (pending dir read-only / path unusable) used to
+	# retry forever with no wait, regenerating the token (date fork) each time.
 	while ! mkdir "$request_tmp" 2>/dev/null; do
+		tmp_attempts=$((tmp_attempts + 1))
+		if [ "$tmp_attempts" -ge "$tmp_max_attempts" ]; then
+			AI_GENERATION_QUEUE_LAST_TOKEN=""
+			return 1
+		fi
+		sleep 0.05
 		token="${BASHPID:-$$}.${RANDOM}.$(date +%s).${lane}"
 		request_dir="$pending_dir/$token"
 		request_tmp="$pending_dir/.${token}.tmp"

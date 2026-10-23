@@ -8,13 +8,15 @@ loop that spawned them without waiting. These tests pin the three guards:
 * ``docich_poll_sleep`` always waits at least a second,
 * the canonical probe obeys its interval and does not burn CPU,
 * no tracked shell script grows a new infinite loop that spawns python3 with
-  no wait/backoff in the loop body.
+  no wait/backoff in the loop body,
+* mkdir-based lock loops always yield the CPU and stay bounded.
 """
 import os
 import re
 import resource
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -39,7 +41,12 @@ FIXED_INTERVAL_SCRIPTS = (
     "generate_improve_overlay.sh",
     "soren91/run_player_loop.sh",
     "start_all.sh",
+    "workers/prediction_worker.sh",
 )
+
+# A lock made with `mkdir` retries forever unless the loop yields and/or has a
+# deadline. Issue #2688's most plausible idle spinner was this shape.
+_LOCK_LOOP = re.compile(r"^[ \t]*(while|until)\s+!?\s*mkdir\b")
 
 
 def _poll_interval(raw, default, minimum):
@@ -165,6 +172,78 @@ class NoSleeplessPythonLoopTests(unittest.TestCase):
         for relative in FIXED_INTERVAL_SCRIPTS:
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn("docich_poll_interval", text, relative)
+
+    def test_prediction_worker_never_sleeps_raw_interval(self):
+        # _read_json_field spawns the observed `python3 -c ... round_version`
+        # one-liner. Its wait must never be the raw env value (0 => spin).
+        text = (ROOT / "workers" / "prediction_worker.sh").read_text(encoding="utf-8")
+        self.assertNotIn('sleep "$POLL_INTERVAL"', text)
+        self.assertNotIn('_sleep_remaining="$POLL_INTERVAL"', text)
+
+    def test_lock_loops_yield_the_cpu(self):
+        files = subprocess.check_output(
+            ["git", "ls-files", "*.sh"], cwd=ROOT, text=True
+        ).splitlines()
+        offenders = []
+        for relative in files:
+            if relative.startswith("tests/"):
+                continue
+            try:
+                text = (ROOT / relative).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            lines = text.splitlines()
+            for index, line in enumerate(lines):
+                if not _LOCK_LOOP.match(line):
+                    continue
+                body = []
+                for follow in lines[index + 1:]:
+                    if follow.strip() == "done":
+                        break
+                    body.append(follow)
+                joined = "\n".join(body)
+                if not _WAIT_TOKENS.search(joined):
+                    offenders.append(f"{relative}:{index + 1}")
+        self.assertEqual(
+            offenders,
+            [],
+            "mkdir lock loop retries without yielding the CPU: " + ", ".join(offenders),
+        )
+
+    def test_improve_daemon_lock_loop_is_bounded(self):
+        source = (ROOT / "improve_daemon.sh").read_text(encoding="utf-8")
+        start = source.index("_acquire_daemon_singleton() {")
+        end = source.index("\n}\n", start) + 3
+        function = source[start:end]
+
+        with tempfile.TemporaryDirectory() as td:
+            blocker = Path(td) / "blocker"
+            blocker.write_text("not a directory\n", encoding="utf-8")
+            # mkdir cannot create a directory below a regular file, and rm -rf
+            # cannot repair it: the bounded loop must fail closed instead of
+            # spinning forever.
+            script = f"""
+set -u
+_pid_alive_local() {{ kill -0 "${{1:-}}" 2>/dev/null; }}
+IMPROVE_DAEMON_PID_FILE="{td}/daemon.pid"
+DAEMON_LOCK_DIR="{blocker}/lock"
+DAEMON_LOCK_PID_FILE="$DAEMON_LOCK_DIR/pid"
+IMPROVE_DAEMON_LOCK_ACQUIRE_ATTEMPTS=5
+{function}
+_acquire_daemon_singleton
+"""
+            before = resource.getrusage(resource.RUSAGE_CHILDREN)
+            started = time.monotonic()
+            result = subprocess.run(
+                [BASH, "-c", script], cwd=td, capture_output=True, text=True, timeout=30
+            )
+            elapsed = time.monotonic() - started
+            after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertLess(elapsed, 10.0)
+        self.assertLess(cpu, 1.0)
 
 
 if __name__ == "__main__":

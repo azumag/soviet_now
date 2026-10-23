@@ -48,6 +48,13 @@ _acquire_daemon_singleton() {
 		echo "[$(date '+%H:%M:%S')] [improve_daemon] 既存 daemon PID=${old_pid} が稼働中 → 重複起動を終了"
 		exit 0
 	fi
+	# #2688: this loop used to retry `mkdir` with no sleep and no bound. If the
+	# lock path cannot be created for a reason other than a live owner (path is
+	# a file, read-only tmp, permission error), it spun at 100% CPU forever.
+	# Keep a short backoff and fail closed after a bounded number of attempts.
+	local attempts=0 max_attempts="${IMPROVE_DAEMON_LOCK_ACQUIRE_ATTEMPTS:-50}"
+	case "$max_attempts" in '' | *[!0-9]*) max_attempts=50 ;; esac
+	[ "$max_attempts" -ge 1 ] || max_attempts=1
 	while ! mkdir "$DAEMON_LOCK_DIR" 2>/dev/null; do
 		old_pid=$(cat "$DAEMON_LOCK_PID_FILE" 2>/dev/null || true)
 		if _pid_alive_local "$old_pid"; then
@@ -55,6 +62,13 @@ _acquire_daemon_singleton() {
 			exit 0
 		fi
 		rm -rf "$DAEMON_LOCK_DIR" 2>/dev/null || true
+		attempts=$((attempts + 1))
+		if [ "$attempts" -ge "$max_attempts" ]; then
+			echo "[$(date '+%H:%M:%S')] [improve_daemon] ERROR: lock を取得できません (${DAEMON_LOCK_DIR}, attempts=${attempts}) → 起動を中止" >&2
+			exit 3
+		fi
+		[ -f tmp/stop ] && exit 0
+		sleep 0.2
 	done
 	printf '%s\n' "$$" >"$DAEMON_LOCK_PID_FILE" 2>/dev/null || true
 }
