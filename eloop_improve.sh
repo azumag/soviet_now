@@ -37,6 +37,9 @@ export IMPROVE_JOB_DEADLINE_MONOTONIC IMPROVE_ANALYSIS_DEADLINE_MONOTONIC
 IMPROVE_RUN_RECEIPT_DIR="$HOST_ROOT/tmp/state/improve_receipts/job-$$"
 mkdir -p -m 700 "$IMPROVE_RUN_RECEIPT_DIR" || exit 81
 export IMPROVE_RUN_RECEIPT_DIR
+# persist の error log は TMP_STATE_DIR 配下。ディレクトリ欠損時に `2>>` の
+# リダイレクト自体が失敗して persist が実行されないため、先に存在を保証する。
+mkdir -p "$TMP_STATE_DIR" 2>/dev/null || true
 
 # #93: close the apply->pin race. Every site that writes a new strategy.py must
 # archive it and advance active_branch.head_hash in the SAME step — otherwise the

@@ -22,6 +22,10 @@
 #       identity_setup_failed, fetch_failed, remote_head_failed, checkout_failed,
 #       reset_failed, copy_failed, add_failed, commit_failed, tree_failed,
 #       push_failed, pr_failed, unknown
+#   - status は origin_main (最後に fetch した origin/main の sha)、last_success_at
+#     (最後に candidate 作成/更新へ成功した epoch)、error (失敗した git の stderr 抜粋)
+#     も持つ。clone が main から取り残される停止 (#2489 の HEAD 2026-09-17 型) を
+#     機械的に検知するための材料であり、状態の修復はここでは行わない。
 #   - persist 失敗時は stderr に [persist] ERROR: ... を出力する。呼び出し側で
 #     2>/dev/null すると失敗が隠れるため、運用では stderr を保持するか status file を読むこと。
 #   - _persist_log_failure <label> <rc> は失敗を stderr に加えて durable な
@@ -32,11 +36,13 @@
 # candidate と main の競合解決手順（review で解決）:
 #   1. persist は毎回 current main から candidate を再構築する（git checkout -B branch origin/main
 #      + reset --hard origin/main）。古い runtime candidate の混入を防ぐ。
-#   2. runtime の採用成果物を main ツリーへ上書きコピーする。main 側で strategy.py が
-#      変更されていた場合、その変更は candidate から消える（main が基準）。
+#   2. runtime の採用成果物を main ツリーへ上書きコピーする。これは「main が基準」
+#      ではない。コピー対象 path については runtime が勝ち、main 側で同じ path が
+#      変更されていた場合、その変更は candidate diff 上で revert として現れる。
+#      したがって並行進化の解消は review で行う必要がある。
 #   3. candidate と main の競合（main 側の strategy.py 変更と runtime 採用の並行進化）は
 #      PR review で解決する。reviewer は candidate diff を見て、main 側の変更を candidate へ
-#      マージするか、runtime 採用を main へ取り込むかを判断する。
+#      マージし直すか、runtime 採用を main へ取り込むかを判断する。
 #   4. persist が conflict を検出できない場合（push が reject された場合）、戻り値 1 を返し
 #      status file に failure を記録する。呼び出し側は次回の persist 呼び出しで自動的に
 #      main を再 fetch して candidate を再構築する（冪等）。
@@ -63,8 +69,41 @@ _persist_status_file() {
 	printf '%s/.git/persist-status.json' "$repo"
 }
 
+_persist_last_success_file() {
+	local repo="$1"
+	printf '%s/.git/persist-last-success.json' "$repo"
+}
+
+_persist_last_success_at() {
+	local repo="$1" file
+	file="$(_persist_last_success_file "$repo")"
+	sed -n 's/.*"success_at": \([0-9][0-9]*\).*/\1/p' "$file" 2>/dev/null | head -1
+}
+
+# candidate 作成/更新に成功した時刻を、失敗時の status にも引き継げるよう別ファイルに残す。
+_persist_record_success() {
+	local repo="$1" commit="$2" origin_main="${3:-}"
+	[ -d "$repo/.git" ] || return 0
+	local file tmp now
+	file="$(_persist_last_success_file "$repo")"
+	tmp="${file}.tmp.$$"
+	now="$(date +%s 2>/dev/null || echo 0)"
+	printf '{"success_at": %s, "commit": "%s", "origin_main": "%s"}\n' \
+		"$now" "$commit" "$origin_main" >"$tmp" 2>/dev/null \
+		&& mv "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+	return 0
+}
+
+# git の stderr を 1 行・400 文字に丸めて status の error に入れる。
+_persist_error_excerpt() {
+	local file="$1" fallback="$2" text
+	text="$(tail -c 400 "$file" 2>/dev/null | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')"
+	[ -n "$text" ] || text="$fallback"
+	printf '%s' "$text"
+}
+
 _persist_write_status() {
-	local repo="$1" result="$2" message="$3" branch="$4" commit="${5:-}" reason="${6:-none}" rc="${7:-}"
+	local repo="$1" result="$2" message="$3" branch="$4" commit="${5:-}" reason="${6:-none}" rc="${7:-}" error="${8:-}"
 	# clone が無い環境では status file を書かない (no-op)。
 	[ -d "$repo" ] || return 0
 	local status_file
@@ -77,6 +116,12 @@ _persist_write_status() {
 	''|*[!0-9]*) ;;
 	*) rc_json="$rc" ;;
 	esac
+	local last_success_json="null" last_success
+	last_success="$(_persist_last_success_at "$repo")"
+	case "$last_success" in
+	''|*[!0-9]*) ;;
+	*) last_success_json="$last_success" ;;
+	esac
 	local tmp="${status_file}.tmp.$$"
 	{
 		printf '{\n'
@@ -84,6 +129,8 @@ _persist_write_status() {
 		printf '  "result": "%s",\n' "$result"
 		printf '  "reason": "%s",\n' "$reason"
 		printf '  "rc": %s,\n' "$rc_json"
+		printf '  "origin_main": "%s",\n' "${PERSIST_ORIGIN_MAIN_SHA:-}"
+		printf '  "last_success_at": %s,\n' "$last_success_json"
 		printf '  "message": "%s",\n' "$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 		printf '  "branch": "%s",\n' "$(printf '%s' "$branch" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 		printf '  "commit": "%s",\n' "$(printf '%s' "$commit" | sed 's/\\/\\\\/g; s/"/\\"/g')"
@@ -217,12 +264,17 @@ _persist_strategy_improve_locked() {
 	local message="$1" runtime="$2" repo="$3" branch="$4" repo_full="$5"
 	shift 5
 	local -a paths=("$@")
+	local err_file="$repo/.git/persist-last-error.txt"
+	PERSIST_ORIGIN_MAIN_SHA=""
 
-	if ! git -C "$repo" fetch --quiet origin main 2>/dev/null; then
-		_persist_log "ERROR" "git fetch origin main failed"
-		_persist_write_status "$repo" "fail" "$message" "$branch" "" "fetch_failed" "1" "git fetch origin main failed"
+	if ! git -C "$repo" fetch --quiet origin main >/dev/null 2>"$err_file"; then
+		local err
+		err="$(_persist_error_excerpt "$err_file" "git fetch origin main failed")"
+		_persist_log "ERROR" "git fetch origin main failed: $err"
+		_persist_write_status "$repo" "fail" "$message" "$branch" "" "fetch_failed" "1" "$err"
 		return 1
 	fi
+	PERSIST_ORIGIN_MAIN_SHA="$(git -C "$repo" rev-parse origin/main 2>/dev/null || true)"
 
 	# 専用 candidate branch の既存 HEAD を lease 用に取得する。存在しないのは正常。
 	local remote_ref="refs/remotes/origin/$branch"
@@ -238,14 +290,18 @@ _persist_strategy_improve_locked() {
 	fi
 
 	# 毎回 current main から candidate を再構築し、古い runtime candidate の混入を防ぐ。
-	if ! git -C "$repo" checkout --quiet -B "$branch" origin/main 2>/dev/null; then
-		_persist_log "ERROR" "git checkout -B $branch origin/main failed"
-		_persist_write_status "$repo" "fail" "$message" "$branch" "" "checkout_failed" "1" "git checkout failed"
+	if ! git -C "$repo" checkout --quiet -B "$branch" origin/main >/dev/null 2>"$err_file"; then
+		local err
+		err="$(_persist_error_excerpt "$err_file" "git checkout failed")"
+		_persist_log "ERROR" "git checkout -B $branch origin/main failed: $err"
+		_persist_write_status "$repo" "fail" "$message" "$branch" "" "checkout_failed" "1" "$err"
 		return 1
 	fi
-	if ! git -C "$repo" reset --hard --quiet origin/main 2>/dev/null; then
-		_persist_log "ERROR" "git reset --hard origin/main failed"
-		_persist_write_status "$repo" "fail" "$message" "$branch" "" "reset_failed" "1" "git reset failed"
+	if ! git -C "$repo" reset --hard --quiet origin/main >/dev/null 2>"$err_file"; then
+		local err
+		err="$(_persist_error_excerpt "$err_file" "git reset failed")"
+		_persist_log "ERROR" "git reset --hard origin/main failed: $err"
+		_persist_write_status "$repo" "fail" "$message" "$branch" "" "reset_failed" "1" "$err"
 		return 1
 	fi
 
@@ -282,9 +338,11 @@ _persist_strategy_improve_locked() {
 		return 3
 	fi
 
-	if ! git -C "$repo" commit --quiet -m "$message" 2>/dev/null; then
-		_persist_log "ERROR" "git commit failed"
-		_persist_write_status "$repo" "fail" "$message" "$branch" "" "commit_failed" "1" "git commit failed"
+	if ! git -C "$repo" commit --quiet -m "$message" >/dev/null 2>"$err_file"; then
+		local err
+		err="$(_persist_error_excerpt "$err_file" "git commit failed")"
+		_persist_log "ERROR" "git commit failed: $err"
+		_persist_write_status "$repo" "fail" "$message" "$branch" "" "commit_failed" "1" "$err"
 		return 1
 	fi
 	local candidate_tree
@@ -319,15 +377,19 @@ _persist_strategy_improve_locked() {
 	if [ -n "$remote_head" ]; then
 		if ! git -C "$repo" push --quiet \
 			--force-with-lease="refs/heads/$branch:$remote_head" \
-			origin "HEAD:refs/heads/$branch" 2>/dev/null; then
-			_persist_log "ERROR" "git push --force-with-lease failed (conflict or network)"
-			_persist_write_status "$repo" "fail" "$message" "$branch" "" "push_failed" "1" "git push --force-with-lease failed"
+			origin "HEAD:refs/heads/$branch" >/dev/null 2>"$err_file"; then
+			local err
+			err="$(_persist_error_excerpt "$err_file" "git push --force-with-lease failed")"
+			_persist_log "ERROR" "git push --force-with-lease failed (conflict or network): $err"
+			_persist_write_status "$repo" "fail" "$message" "$branch" "" "push_failed" "1" "$err"
 			return 1
 		fi
 	else
-		if ! git -C "$repo" push --quiet origin "HEAD:refs/heads/$branch" 2>/dev/null; then
-			_persist_log "ERROR" "git push failed"
-			_persist_write_status "$repo" "fail" "$message" "$branch" "" "push_failed" "1" "git push failed"
+		if ! git -C "$repo" push --quiet origin "HEAD:refs/heads/$branch" >/dev/null 2>"$err_file"; then
+			local err
+			err="$(_persist_error_excerpt "$err_file" "git push failed")"
+			_persist_log "ERROR" "git push failed: $err"
+			_persist_write_status "$repo" "fail" "$message" "$branch" "" "push_failed" "1" "$err"
 			return 1
 		fi
 	fi
@@ -341,6 +403,7 @@ _persist_strategy_improve_locked() {
 	fi
 	local commit_sha
 	commit_sha="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
+	_persist_record_success "$repo" "$commit_sha" "$PERSIST_ORIGIN_MAIN_SHA"
 	_persist_write_status "$repo" "ok" "$message" "$branch" "$commit_sha" "none" "0" ""
 	return 0
 }

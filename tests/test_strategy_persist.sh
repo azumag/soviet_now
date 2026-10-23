@@ -103,14 +103,18 @@ candidate_helper="$(git --git-dir="$origin" show runtime/eloop-improve:strategy_
 grep -q '^pr create .*--base main .*--head runtime/eloop-improve ' "$gh_log" \
   && pass "candidate opens PR against main" || fail "PR create contract missing"
 [ "$(grep -c '^pr create ' "$gh_log")" -eq 1 ] || fail "expected exactly one PR creation"
-python3 - "$work/.git/persist-status.json" <<'PY' && pass "candidate records result/reason/rc/commit" || fail "candidate status contract"
-import json, sys
+python3 - "$work/.git/persist-status.json" "$origin" <<'PY' && pass "candidate records result/reason/rc/commit/origin_main" || fail "candidate status contract"
+import json, subprocess, sys
 data = json.load(open(sys.argv[1], encoding="utf-8"))
 assert data["result"] == "ok", data
 assert data["reason"] == "none", data
 assert data["rc"] == 0, data
 assert data["branch"] == "runtime/eloop-improve", data
 assert len(data["commit"]) == 40, data
+origin_main = subprocess.check_output(
+    ["git", "--git-dir", sys.argv[2], "rev-parse", "main"], text=True).strip()
+assert data["origin_main"] == origin_main, data
+assert isinstance(data["last_success_at"], int) and data["last_success_at"] > 0, data
 PY
 
 # 4) 同じ runtime を再度永続化しても branch を書き換えず、既存PRを再利用して 3。
@@ -138,6 +142,8 @@ data = json.load(open(sys.argv[1], encoding="utf-8"))
 assert data["result"] == "fail", data
 assert data["reason"] == "invalid_branch", data
 assert data["rc"] == 1, data
+# 最後に成功した時刻は失敗 status でも引き継がれる（停止検知の材料）。
+assert isinstance(data["last_success_at"], int) and data["last_success_at"] > 0, data
 PY
 _persist_log_failure "unit-test" 1 2>/dev/null
 python3 - "$TMP_STATE_DIR/strategy_persist_last_failure.json" <<'PY' && pass "durable failure record uses fixed enum" || fail "durable failure record missing"
@@ -150,10 +156,31 @@ assert data["rc"] == 1, data
 assert data["label"] == "unit-test", data
 PY
 
-# 7) 次の成功で durable failure は解消し、status も ok に戻る。
+# 7) push 失敗は git の stderr 抜粋を status.error に残す（原因を消さない）。
 SOREN_PERSIST_BRANCH="runtime/eloop-improve"
-printf 'v4-improved\n' > "$runtime/strategy.py"
-rc=0; persist_strategy_improve "eloop Improve v4" strategy.py strategy_helpers || rc=$?
+mkdir -p "$origin/hooks"
+cat > "$origin/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+echo "simulated push rejection (docich#2684)" >&2
+exit 1
+HOOK
+chmod +x "$origin/hooks/pre-receive"
+printf 'v4-pushfail\n' > "$runtime/strategy.py"
+rc=0; persist_strategy_improve "eloop Improve v4 pushfail" strategy.py strategy_helpers || rc=$?
+[ "$rc" -eq 1 ] && pass "push rejection fails with 1" || fail "push rejection rc=$rc (want 1)"
+python3 - "$work/.git/persist-status.json" <<'PY' && pass "push failure records reason and stderr excerpt" || fail "push failure status contract"
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["result"] == "fail", data
+assert data["reason"] == "push_failed", data
+assert data["rc"] == 1, data
+assert "simulated push rejection" in data["error"], data
+assert len(data["error"]) <= 400, data
+PY
+rm -f "$origin/hooks/pre-receive"
+
+# 8) 次の成功で durable failure は解消し、status も ok に戻る。
+rc=0; persist_strategy_improve "eloop Improve v4 recovery" strategy.py strategy_helpers || rc=$?
 [ "$rc" -eq 0 ] && pass "recovery candidate returns 0" || fail "recovery rc=$rc (want 0)"
 [ ! -e "$TMP_STATE_DIR/strategy_persist_last_failure.json" ] \
   && pass "successful persist clears durable failure record" || fail "durable failure record survived success"
@@ -164,7 +191,7 @@ assert data["result"] == "ok", data
 assert data["rc"] == 0, data
 PY
 
-# 8) no-change (rc 3) は失敗ではないので durable failure を作らない。
+# 9) no-change (rc 3) は失敗ではないので durable failure を作らない。
 _persist_log_failure "no-change" 3 2>/dev/null
 [ ! -e "$TMP_STATE_DIR/strategy_persist_last_failure.json" ] \
   && pass "no-change rc 3 is not recorded as a failure" || fail "rc 3 created a durable failure"
