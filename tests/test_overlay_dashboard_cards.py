@@ -1,6 +1,13 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from lib.overlay_dashboard_cards import dashboard_css, render_game_dashboard, render_ops_dashboard
+from lib.overlay_dashboard_cards import (
+    _root_disk_metric,
+    dashboard_css,
+    render_game_dashboard,
+    render_ops_dashboard,
+)
 
 
 class OverlayDashboardCardsTest(unittest.TestCase):
@@ -37,6 +44,25 @@ Last8: 4100 4800 5300 5100 6200 6800 7200 8080"""
         self.assertIn("REPORTS", html)
         self.assertEqual(html.count('class="bar-wrap"'), 8)
 
+    def test_root_disk_metric_matches_df_percentage_and_capacity(self):
+        gib = 1024 ** 3
+        stat = SimpleNamespace(
+            f_frsize=gib,
+            f_bsize=gib,
+            f_blocks=45,
+            f_bfree=1,
+            f_bavail=1,
+        )
+        with patch("lib.overlay_dashboard_cards.os.statvfs", return_value=stat):
+            value, tone, sub = _root_disk_metric()
+        self.assertEqual(value, "98%")
+        self.assertEqual(tone, "down")
+        self.assertEqual(sub, "44.0/45.0 GiB · FREE 1.0 GiB")
+
+    def test_root_disk_metric_degrades_safely_when_unavailable(self):
+        with patch("lib.overlay_dashboard_cards.os.statvfs", side_effect=OSError("unavailable")):
+            self.assertEqual(_root_disk_metric(), ("—", "warn", "UNAVAILABLE"))
+
     def test_ops_dashboard_summarizes_healthy_services(self):
         raw = """━━━ SOREN OPS ━━━
   HEALTH
@@ -62,8 +88,28 @@ Last8: 4100 4800 5300 5100 6200 6800 7200 8080"""
         self.assertIn("LOOP", html)
         self.assertIn("TWITCH", html)
         self.assertIn("YOUTUBE", html)
+        self.assertIn("DISK", html)
+        self.assertIn("FREE", html)
         self.assertIn("ALL SYSTEMS NOMINAL", html)
         self.assertIn(">4<", html)  # Queue total A+C+T.
+
+    def test_ops_dashboard_marks_critical_disk_in_red_metric(self):
+        raw = """  HEALTH
+    ● Workers     7/7 ONLINE
+    ● Backend     FFMPEG LIVE"""
+        gib = 1024 ** 3
+        stat = SimpleNamespace(
+            f_frsize=gib,
+            f_bsize=gib,
+            f_blocks=45,
+            f_bfree=1,
+            f_bavail=1,
+        )
+        with patch("lib.overlay_dashboard_cards.os.statvfs", return_value=stat):
+            html = render_ops_dashboard(raw)
+        self.assertIn("DISK", html)
+        self.assertIn('class="metric-value down">98%</div>', html)
+        self.assertIn("44.0/45.0 GiB · FREE 1.0 GiB", html)
 
     def test_ops_dashboard_surfaces_faults_in_attention(self):
         raw = """  HEALTH
