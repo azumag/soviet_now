@@ -49,18 +49,26 @@ def read_file(path):
 
 try:
     root = Path(sys.argv[2])
-    paths = [Path(sys.argv[1]), root / "game_lifecycle/request.json",
-             root / "game_lifecycle/ack.json", root / "soren_loop.paused"]
-    raw = []
-    for path, reason in zip(paths, ("canonical_unreadable", "request_unreadable",
-                                    "ack_unreadable", "pause_unreadable")):
-        try:
-            raw.append(read_file(path))
-        except (OSError, ValueError):
-            print(reason)
-            raise SystemExit(1)
-    canonical, request, ack = [json.loads(data) for data in raw[:3]]
-    if not all(isinstance(item, dict) for item in (canonical, request, ack)):
+    canonical_path = Path(sys.argv[1])
+    request_path = root / "game_lifecycle/request.json"
+    ack_path = root / "game_lifecycle/ack.json"
+    pause_path = root / "soren_loop.paused"
+    paths = [canonical_path, request_path, ack_path, pause_path]
+
+    # Decide the canonical game first. Reading optional lifecycle proof first
+    # reported a missing handover as "request_unreadable" even when the game was
+    # excluded from fallback BGM (docich#2687), which reads like filesystem
+    # corruption/permission damage. An absent handover is not a filesystem
+    # fault; it is simply no proof of a native stop.
+    try:
+        canonical_raw = read_file(canonical_path)
+    except (OSError, ValueError):
+        raise ValueError("canonical_unreadable")
+    try:
+        canonical = json.loads(canonical_raw)
+    except (ValueError, UnicodeError):
+        raise ValueError("invalid_state")
+    if not isinstance(canonical, dict):
         raise ValueError("invalid_state")
     active = canonical.get("active")
     game = active.get("game") if isinstance(active, dict) else None
@@ -73,6 +81,26 @@ try:
         raise ValueError("invalid_game")
     if game in {"sorengame", "soren91", "hanjuku-hero", "external-video-view"}:
         raise ValueError("excluded_game")
+
+    raw = [canonical_raw]
+    for path, missing_reason, unreadable_reason in (
+        (request_path, "native_stop_unconfirmed", "request_unreadable"),
+        (ack_path, "native_stop_unconfirmed", "ack_unreadable"),
+        (pause_path, "pause_unreadable", "pause_unreadable"),
+    ):
+        try:
+            raw.append(read_file(path))
+        except FileNotFoundError:
+            # Absent proof means no permission to mix fallback BGM, not an
+            # unreadable/corrupt file. Keep the result fail-closed but name it
+            # for what was observed.
+            raise ValueError(missing_reason)
+        except (OSError, ValueError):
+            raise ValueError(unreadable_reason)
+    request = json.loads(raw[1])
+    ack = json.loads(raw[2])
+    if not all(isinstance(item, dict) for item in (request, ack)):
+        raise ValueError("invalid_state")
     # A matching terminal stop is positive proof; a CLI name or pause marker
     # alone is not. Terminal stopped acknowledgements intentionally have no TTL.
     if (type(request.get("schema")) is not int or request["schema"] != 1
@@ -103,8 +131,10 @@ try:
 except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
     # Never emit parser/OS error text, filenames or state content.
     reasons = {"invalid_state", "switch_not_ready", "invalid_game", "excluded_game",
-               "native_stop_unconfirmed", "invalid_request", "invalid_generation",
-               "invalid_deadline", "ack_mismatch", "handover_changed"}
+               "canonical_unreadable", "request_unreadable", "ack_unreadable",
+               "pause_unreadable", "native_stop_unconfirmed", "invalid_request",
+               "invalid_generation", "invalid_deadline", "ack_mismatch",
+               "handover_changed"}
     print(str(exc) if type(exc) is ValueError and str(exc) in reasons else "invalid_state")
     raise SystemExit(1)
 print("eligible")

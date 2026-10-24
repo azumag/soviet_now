@@ -62,6 +62,23 @@ def _find_status(lines: list[str], pattern: str) -> str:
     return ""
 
 
+def _audio_status(lines: list[str]) -> str:
+    """Pick the broadcast audio channel without claiming whole-path silence.
+
+    The AUDIO section starts with the speech (Say) channel, which is legitimately
+    idle between lines even while radio or the game/BGM path is playing. Showing
+    that idle line verbatim as "AUDIO SILENT" reads as a dead audio path, so fall
+    through to radio and use a neutral IDLE label when neither channel is active.
+    """
+    say = _find_status(lines, r"^Say\s+(.+)$")
+    if say and not re.match(r"^SILENT\b", say, re.IGNORECASE):
+        return say
+    radio = _find_status(lines, r"^Radio\s+(.+)$")
+    if radio and not re.match(r"^IDLE\b", radio, re.IGNORECASE):
+        return radio
+    return "IDLE"
+
+
 def _metric(label: str, value: str, *, tone: str = "", sub: str = "") -> str:
     cls = f" metric-value {tone}".rstrip()
     sub_html = f'<div class="metric-sub">{_esc(sub)}</div>' if sub else ""
@@ -200,7 +217,7 @@ def render_ops_dashboard(raw: str) -> str:
     services = [
         _service("STREAM", backend_state or "—"),
         _service("LOOP", _find_status(health, r"^Loop\s+(.+)$")),
-        _service("AUDIO", _find_status(audio, r"^(?:Say|Radio)\s+(.+)$")),
+        _service("AUDIO", _audio_status(audio)),
         _service("TWITCH", _find_status(twitch, r"^Chat\s+(.+)$")),
         _service("YOUTUBE", _find_status(youtube, r"^Chat\s+(.+)$")),
     ]
@@ -218,7 +235,10 @@ def render_ops_dashboard(raw: str) -> str:
     alerts = []
     for line in text.splitlines():
         clean = _clean(line)
-        if clean and _ALERT_RE.search(clean):
+        # Completed acceptance tests are demoted to HISTORICAL by show_status.
+        # They are evidence, not a current fault, so they must not paint the
+        # live ATTENTION list red (docich#2687: a weeks-old AVSync FAILED).
+        if clean and "HISTORICAL" not in clean.upper() and _ALERT_RE.search(clean):
             alerts.append(clean)
         if len(alerts) >= 3:
             break

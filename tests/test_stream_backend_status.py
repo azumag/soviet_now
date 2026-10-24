@@ -122,6 +122,78 @@ class StreamBackendStatusTests(unittest.TestCase):
                 self.assertIn(extra_expected, result.stdout)
             self.assertNotIn(unexpected, result.stdout)
 
+    def test_show_status_demotes_only_stale_completed_av_sync_failure(self) -> None:
+        cases = (
+            (1, "HISTORICAL", "last=failed", "AVSync      \x1b[31mFAILED"),
+            (9_999_999_999, "AVSync      \x1b[31mFAILED", None, "HISTORICAL"),
+        )
+        for tested_at, expected, extra_expected, unexpected in cases:
+            with self.subTest(tested_at=tested_at), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                direct = root / "direct"
+                soak = root / "soak"
+                direct.mkdir()
+                soak.mkdir()
+                (direct / "status.json").write_text(
+                    json.dumps(
+                        {
+                            "running": True,
+                            "mode": "live",
+                            "pid": os.getpid(),
+                            "ffmpeg_pid": os.getpid(),
+                            "fps": 30.0,
+                            "speed": 1.0,
+                            "drop_frames": 0,
+                            "dup_frames": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (soak / "status.json").write_text(
+                    json.dumps({"state": "not_started", "running": False}),
+                    encoding="utf-8",
+                )
+                av_state = root / "av.json"
+                av_state.write_text(
+                    json.dumps(
+                        {
+                            "state": "failed",
+                            "tested_at": tested_at,
+                            "config": {"capture_duration_sec": 20},
+                            "result": {
+                                "pair_count": 6,
+                                "max_abs_offset_ms": 141.0,
+                                "drift_ms": 150.0,
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                env = os.environ.copy()
+                env.update(
+                    {
+                        "SOREN_STREAM_BACKEND": "ffmpeg",
+                        "SOREN_DIRECT_STREAM_STATE_DIR": str(direct),
+                        "SOREN_DIRECT_SOAK_STATE_DIR": str(soak),
+                        "SOREN_DIRECT_AV_SYNC_STATE_FILE": str(av_state),
+                        "SHOW_STATUS_NO_FLICKER": "1",
+                    }
+                )
+                result = subprocess.run(
+                    ["./show_status.sh", "--once"],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=20,
+                    check=False,
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(expected, result.stdout)
+            if extra_expected is not None:
+                self.assertIn(extra_expected, result.stdout)
+            self.assertNotIn(unexpected, result.stdout)
+
     def test_show_status_reads_chat_worker_enablement_from_dotenv(self) -> None:
         dotenv = REPO_ROOT / ".env"
         self.assertFalse(dotenv.exists(), "test requires a checkout without a pre-existing .env")

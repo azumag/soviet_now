@@ -1504,10 +1504,21 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   }
   function firstStatus(lines, pattern) {
     for (const line of lines || []) {
-      const match = line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').match(pattern);
+      const match = line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/u, '').match(pattern);
       if (match) return match[1].trim();
     }
     return '';
+  }
+  // The AUDIO section leads with the speech (Say) channel, which is legitimately
+  // idle between lines while radio or the game/BGM path is playing. Never project
+  // that idle line as "AUDIO SILENT" (docich#2687); fall through to radio and use
+  // a neutral IDLE label when no spoken/radio channel is active.
+  function audioStatus(lines) {
+    const say = firstStatus(lines, /^Say\s+(.+)$/);
+    if (say && !/^SILENT\b/i.test(say)) return say;
+    const radio = firstStatus(lines, /^Radio\s+(.+)$/);
+    if (radio && !/^IDLE\b/i.test(radio)) return radio;
+    return 'IDLE';
   }
   function metricHistory(history, key, slotCount = 12) {
     const now = Date.now() / 1000;
@@ -1667,7 +1678,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const services = [
       ['STREAM', backendState || '—'],
       ['LOOP', firstStatus(health, /^Loop\s+(.+)$/)],
-      ['AUDIO', firstStatus(audio, /^(?:Say|Radio)\s+(.+)$/)],
+      ['AUDIO', audioStatus(audio)],
       ['TWITCH', firstStatus(twitch, /^Chat\s+(.+)$/)],
       ['YOUTUBE', firstStatus(youtube, /^Chat\s+(.+)$/)],
     ];
@@ -1687,8 +1698,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const lastDrop = activity.find(line => /LastDrop/.test(line));
 
     const alerts = text.split('\n').map(line => line.trim()).filter(line =>
-      /\b(?:STOPPED|DOWN|FAILED|INVALID|DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(line)
-      || /Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429/.test(line)
+      !/HISTORICAL/i.test(line)
+      && (/\b(?:STOPPED|DOWN|FAILED|INVALID|DEGRADED|CHECK|UNKNOWN|PAUSED)\b/.test(line)
+        || /Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429/.test(line))
     ).slice(0, 2);
 
     if (alerts.length) {
@@ -1700,7 +1712,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const alertBox = dashNode('ops-alerts');
       for (const line of alerts) {
         alertBox.appendChild(dashNode(`ops-alert ${opsTone(line) === 'down' ? 'down' : ''}`,
-          line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/, '').replace(/\s{2,}/g, ' ')));
+          line.replace(/^[●○✓!◌▸◆◇♪♫📻⟳💬]\s*/u, '').replace(/\s{2,}/g, ' ')));
       }
       root.appendChild(alertBox);
     } else {
