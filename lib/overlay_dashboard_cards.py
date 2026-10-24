@@ -7,6 +7,7 @@ project selected stable lines into broadcast-facing cards; callers keep the raw
 from __future__ import annotations
 
 import html
+import os
 import re
 
 
@@ -17,6 +18,7 @@ _ALERT_RE = re.compile(
     r"|Duplicates\s+DETECTED|^Unexpected\b|^Stopped\b|AI 429",
     re.IGNORECASE,
 )
+_GIB = 1024 ** 3
 
 
 def plain(raw: str) -> str:
@@ -38,6 +40,36 @@ def _tone(value: str) -> str:
     if re.search(r"DEGRADED|CHECK|UNKNOWN|PAUSED|RETRY|WAIT", upper):
         return "warn"
     return "ok"
+
+
+def _root_disk_metric(path: str = "/") -> tuple[str, str, str]:
+    """Return df-compatible root filesystem usage for the status overlay.
+
+    Linux filesystems may reserve blocks that are counted as used but are not
+    available to the runtime user. Match ``df`` by calculating the percentage
+    over used + user-available blocks while still showing the filesystem's
+    total size. The read is local/read-only and failure degrades to UNKNOWN.
+    """
+    try:
+        info = os.statvfs(path)
+    except (OSError, ValueError):
+        return "—", "warn", "UNAVAILABLE"
+
+    block = int(info.f_frsize or info.f_bsize or 0)
+    total = block * int(info.f_blocks)
+    free = block * int(info.f_bfree)
+    available = block * int(info.f_bavail)
+    used = max(0, total - free)
+    denominator = used + max(0, available)
+    if block <= 0 or total <= 0 or denominator <= 0:
+        return "—", "warn", "UNAVAILABLE"
+
+    # df(1) rounds usage upward so a nearly-full filesystem cannot look safer
+    # than it is. Clamp malformed/platform-specific statvfs values defensively.
+    percent = max(0, min(100, (100 * used + denominator - 1) // denominator))
+    tone = "down" if percent >= 95 else "warn" if percent >= 85 else "ok"
+    sub = f"{used / _GIB:.1f}/{total / _GIB:.1f} GiB · FREE {available / _GIB:.1f} GiB"
+    return f"{percent}%", tone, sub
 
 
 def _sections(raw: str) -> dict[str, list[str]]:
@@ -190,6 +222,7 @@ def render_ops_dashboard(raw: str) -> str:
 
     overall = workers.group(3) if workers else ("ALERT" if _ALERT_RE.search(text) else "LIVE")
     worker_value = f"{workers.group(1)} / {workers.group(2)}" if workers else "—"
+    disk_value, disk_tone, disk_sub = _root_disk_metric()
 
     backend_clean = _clean(backend_line)
     backend = re.sub(r"^Backend\s+", "", backend_clean).strip() if backend_clean else "—"
@@ -249,8 +282,9 @@ def render_ops_dashboard(raw: str) -> str:
         '<div><div class="eyebrow">OPERATIONS</div><div class="card-title">SYSTEM HEALTH</div></div>'
         f'<span class="state-pill {_tone(overall)}">{_esc(overall)}</span>'
         "</div>"
-        '<div class="metric-grid one">'
+        '<div class="metric-grid two">'
         f'{_metric("WORKERS", worker_value, tone=_tone(overall), sub=workers.group(3) if workers else "")}'
+        f'{_metric("DISK", disk_value, tone=disk_tone, sub=disk_sub)}'
         "</div>"
         '<div class="section-heading"><span>SERVICES</span><span>LIVE STATE</span></div>'
         f'<div class="service-grid">{"".join(services)}</div>'
