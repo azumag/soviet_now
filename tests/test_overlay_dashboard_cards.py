@@ -135,6 +135,40 @@ Last8: 4100 4800 5300 5100 6200 6800 7200 8080"""
         self.assertEqual(render_game_dashboard("Score Timeline\nfoo"), "")
         self.assertEqual(render_ops_dashboard("something unrelated"), "")
 
+    def test_audio_service_prefers_active_radio_over_idle_speech(self):
+        raw = """  HEALTH
+    ● Workers     9/9 ONLINE
+    ● Backend     FFMPEG LIVE
+  AUDIO
+    ♪ Say         SILENT
+    📻 Radio       PLAYING  [jiji] 3m0s"""
+        html = render_ops_dashboard(raw)
+        self.assertIn(">AUDIO<", html)
+        self.assertIn(">PLAYING  [jiji] 3m0s<", html)
+        self.assertNotIn("SILENT", html)
+
+    def test_audio_service_uses_idle_instead_of_claiming_silence(self):
+        raw = """  HEALTH
+    ● Workers     9/9 ONLINE
+    ● Backend     FFMPEG LIVE
+  AUDIO
+    ♪ Say         SILENT
+    📻 Radio       IDLE"""
+        html = render_ops_dashboard(raw)
+        self.assertIn(">AUDIO<", html)
+        self.assertIn(">IDLE<", html)
+        self.assertNotIn("SILENT", html)
+
+    def test_historical_acceptance_results_stay_out_of_live_attention(self):
+        raw = """  HEALTH
+    ● Workers     9/9 ONLINE
+    ● Backend     FFMPEG LIVE
+    ○ Soak        HISTORICAL  last=failed age=71d fps=29.
+    ○ AVSync      HISTORICAL  last=failed age=9d pairs=6 max=141.0ms"""
+        html = render_ops_dashboard(raw)
+        self.assertIn("ALL SYSTEMS NOMINAL", html)
+        self.assertNotIn("ATTENTION", html)
+
 
 if __name__ == "__main__":
     unittest.main()

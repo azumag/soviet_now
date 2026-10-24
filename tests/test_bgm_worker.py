@@ -377,6 +377,31 @@ class BgmPolicyTest(unittest.TestCase):
         self.marker.unlink()
         self.assertEqual(self.policy().stdout.strip(), b"pause_unreadable")
 
+    def test_missing_handover_is_unconfirmed_not_unreadable(self):
+        # Absent optional lifecycle proof is "no permission to mix fallback
+        # BGM", not filesystem corruption (docich#2687).
+        self.canonical_state(game="nsnake")
+        (self.lifecycle / "request.json").unlink()
+        self.assertEqual(self.policy().stdout.strip(), b"native_stop_unconfirmed")
+        self.stopped_handover()
+        (self.lifecycle / "ack.json").unlink()
+        self.assertEqual(self.policy().stdout.strip(), b"native_stop_unconfirmed")
+
+    def test_excluded_game_reason_does_not_depend_on_optional_handover_files(self):
+        # The live VM was excluded (sorengame) with no handover files and
+        # reported request_unreadable. Decide the canonical game first.
+        self.canonical_state(game="sorengame")
+        (self.lifecycle / "request.json").unlink()
+        (self.lifecycle / "ack.json").unlink()
+        self.marker.unlink()
+        self.assertEqual(self.policy().stdout.strip(), b"excluded_game")
+
+    def test_genuinely_unreadable_handover_keeps_its_unreadable_reason(self):
+        request = self.lifecycle / "request.json"
+        request.unlink()
+        request.mkdir()
+        self.assertEqual(self.policy().stdout.strip(), b"request_unreadable")
+
     def test_snapshot_follows_blocked_running_and_shutdown_without_rewriting_pause(self):
         self.setup_player()
         self.canonical_state(game="sorengame")

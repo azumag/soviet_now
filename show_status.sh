@@ -409,18 +409,49 @@ _direct_av_sync_status_line() {
 import json
 from pathlib import Path
 import sys
+import time
 
+path = Path(sys.argv[1])
 try:
-    state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    state = json.loads(path.read_text(encoding="utf-8"))
 except Exception:
     print("not_started|not tested")
     raise SystemExit
 result = state.get("result") if isinstance(state.get("result"), dict) else {}
 name = str(state.get("state") or "unknown")
-print(
-    f"{name}|pairs={result.get('pair_count', '?')} "
+detail = (
+    f"pairs={result.get('pair_count', '?')} "
     f"max={result.get('max_abs_offset_ms', '?')}ms drift={result.get('drift_ms', '?')}ms"
 )
+
+# Like a completed soak, an AV-sync probe is an acceptance test, not a
+# perpetual live-health alarm. Keep the result current for at least one day and
+# at least the capture duration; after that, preserve it as historical evidence
+# without painting an old failure red on the live operator dashboard
+# (docich#2687: a nine-day-old FAILED stayed on the overlay).
+if name in {"passed", "failed"}:
+    try:
+        completed_at = float(state.get("tested_at") or path.stat().st_mtime)
+    except (TypeError, ValueError, OSError):
+        completed_at = 0.0
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    try:
+        duration_sec = max(0, int(config.get("capture_duration_sec") or 0))
+    except (TypeError, ValueError):
+        duration_sec = 0
+    fresh_sec = max(86400, duration_sec)
+    age_sec = max(0, int(time.time() - completed_at)) if completed_at > 0 else 0
+    if completed_at > 0 and age_sec > fresh_sec:
+        if age_sec >= 86400:
+            age_label = f"{age_sec // 86400}d"
+        elif age_sec >= 3600:
+            age_label = f"{age_sec // 3600}h"
+        else:
+            age_label = f"{age_sec // 60}m"
+        print(f"historical|last={name} age={age_label} {detail}")
+        raise SystemExit
+
+print(f"{name}|{detail}")
 PY
 }
 

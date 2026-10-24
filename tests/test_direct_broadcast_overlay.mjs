@@ -640,6 +640,71 @@ test('only genuine events within three seconds get the fresh enter animation', a
 });
 
 
+test('ops dashboard never projects idle speech as AUDIO SILENT', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: 30.0',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: [
+          '● Workers     9/9 ONLINE',
+          '● Backend     FFMPEG LIVE',
+          'AUDIO',
+          '♪ Say         SILENT',
+          '📻 Radio       PLAYING  [jiji]',
+        ].join('\n'),
+        updatedAt: 1780000080,
+        lineCount: 5,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  const services = new Map(
+    overlay.feedS.querySelectorAll('.ops-service').map((card) => [
+      card.children[0]?.textContent,
+      card.children[1]?.textContent,
+    ]),
+  );
+  assert.equal(services.get('AUDIO'), 'PLAYING');
+  assert.doesNotMatch(JSON.stringify([...services.values()]), /SILENT/);
+});
+
+test('ops dashboard keeps historical acceptance results out of attention', async () => {
+  const base = {
+    version: 1,
+    updatedAt: 1780000090,
+    feeds: {
+      showStatusG: {
+        label: 'SHOW-STATUS-G',
+        text: 'SOREN/OBS FFMPEG\nRecent30: 30.0',
+        updatedAt: 1780000080,
+        lineCount: 2,
+      },
+      showStatus: {
+        label: 'SHOW-STATUS',
+        text: [
+          '● Workers     9/9 ONLINE',
+          '● Backend     FFMPEG LIVE',
+          '○ AVSync      HISTORICAL  last=failed age=9d',
+        ].join('\n'),
+        updatedAt: 1780000080,
+        lineCount: 3,
+      },
+    },
+    notifications: { visibleSec: 18, events: [], work: { active: false }, generators: [] },
+  };
+  const overlay = await runBroadcastOverlayScript(base);
+  assert.equal(overlay.feedS.querySelectorAll('.ops-alert').length, 0);
+});
+
 test('merged sidebar renders both status feeds at once with colored lines and never switches', async () => {
   const base = {
     version: 1,
