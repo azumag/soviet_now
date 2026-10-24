@@ -138,6 +138,69 @@ def _v763_post_open_types(open_by_type, drop_type, drop_x, drop_y):
         kept += 1
     return kept
 
+# --- v770: LADDER_STACK — 小さい駒を上・大きい駒を下に積む（縦積みラダー + 小型の下敷き回避） ---
+# 実測 (2026-10-25, 本番 120 試合・非併合手):
+#   * 併合機会は全手の 28% で、表面の露出駒は約 3.7 個。併合率は「露出型数 / 11」で頭打ち。
+#   * 非併合で置いた駒の真下が T+1 だと、のちに併合したときの連鎖が平均 2.7〜3.2 回
+#     （他の着地 ~2.3、床 ~1.5）。サイズ帯で層別しても同じ傾向。人手の勝ち筋「縦積みラダー」
+#     （docs/manual_challenge_20260825_insights.md §3-1）と一致する。
+#   * 露出した T+1 がある非併合手は 43% あるのに、実際に T+1 に載せたのは 8%。
+#   * 露出した小型 (T1-4) を 2 段以上大きい駒で覆うと 20 手以内の併合率が 29%（小さい駒が
+#     上に載った場合は 54%）。T5-8 でも 37% 対 48%。
+#   * 解析器の landing_hit_id が T+1 でも、中心から半径の 0.25 以内なら 61% が実際に
+#     T+1 の上に止まるが、0.8 超では 13%（肩で転がり落ちる）。中心付近だけを加点する。
+# V770_LADDER_W=0 で従来と完全一致する。
+_V770_LADDER_BONUS = 600.0
+_V770_LADDER_DEPTH_BONUS = 150.0
+_V770_BURIAL_PENALTY = 250.0
+
+
+def _v770_weight():
+    """V770_LADDER_W: 0=無効。既定 1。"""
+    raw = str(os.environ.get("V770_LADDER_W", "1") or "").strip()
+    if raw in ("0", "false", "no", "off"):
+        return 0.0
+    try:
+        w = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if w != w or w < 0.0:
+        return 0.0
+    return min(w, 4.0)
+
+
+def _v770_center_offset(target, drop_x):
+    """落下 x と target 中心の水平ずれを target の水平半径で割った値。"""
+    try:
+        radius = float(board_stats.seed_horiz_radius(int(target.get("type"))))
+        return abs(float(drop_x) - float(target.get("x"))) / max(radius, 0.05)
+    except (TypeError, ValueError):
+        return None
+
+
+def _v770_rests_on_type(piece, ttype, pieces):
+    """piece の真下に ttype の駒が接して支えているか（ラダーが 2 段以上続くか）。"""
+    try:
+        px = float(piece.get("x"))
+        py = float(piece.get("y"))
+        pr = float(board_stats.seed_horiz_radius(int(piece.get("type"))))
+    except (TypeError, ValueError):
+        return False
+    for other in pieces:
+        if not isinstance(other, dict) or other.get("type") != ttype or other.get("id") == piece.get("id"):
+            continue
+        try:
+            ox = float(other.get("x"))
+            oy = float(other.get("y"))
+            orad = float(board_stats.seed_horiz_radius(ttype))
+        except (TypeError, ValueError):
+            continue
+        if oy >= py:
+            continue
+        if math.hypot(px - ox, py - oy) <= (pr + orad) * 1.15 and abs(px - ox) <= max(pr, orad) * 0.9:
+            return True
+    return False
+
 # v747/v752: 終盤の DIRECT 併合は落下ピースの超過フラグでは差し戻さない（strategy_runner.enforce_deadline_safety が参照）
 DEADLINE_ALLOW_DIRECT_CROSS = True
 
@@ -2035,6 +2098,19 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     if next_type in _v748_seat_off:
         _v748_seat_x = -_v748_S * _v748_seat_off[next_type]
 
+    # --- v770 LADDER_STACK pre-computation ---
+    _v770_w = _v770_weight()
+    _v770_byid = {}
+    _v770_open_up = set()
+    _v770_open_small = set()
+    if _v770_w > 0.0 and isinstance(next_type, int) and 1 <= next_type <= 13:
+        for _p in pieces:
+            if isinstance(_p, dict) and _p.get("id") is not None:
+                _v770_byid[_p.get("id")] = _p
+        _v770_open_up = {_p.get("id") for _p in _v742_open_twin(pieces, next_type + 1)}
+        for _t in range(1, min(8, next_type - 2) + 1):
+            _v770_open_small.update(_p.get("id") for _p in _v742_open_twin(pieces, _t))
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -3200,6 +3276,37 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.1909:
             score -= max(2, (1.533 - margin)) * 2456
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
+
+        # ----- v770: LADDER_STACK (小さい駒を上・大きい駒を下に積む) -----
+        # 減点 (INVERTED_BURIAL) は候補ごとの危険フラグで外さない。外すと危険な候補ほど
+        # 減点を免れて相対的に浮く (実盤面で壁回転リスクの x へ寄った)。
+        if (
+            _v770_w > 0.0
+            and merge_grade == "NO"
+            and _v770_byid
+            and not deadline_crossed
+            and reactor_margin >= 1.0
+            and not death_spiral
+            and type15_count == 0
+        ):
+            _v770_hit = _v770_byid.get(result.get("landing_hit_id"))
+            _v770_safe = not (
+                result.get("crosses_deadline")
+                or result.get("merge_result_crosses_deadline")
+                or result.get("wall_rotation_risk")
+            )
+            if _v770_hit is not None:
+                if _v770_hit.get("type") == next_type + 1 and _v770_hit.get("id") in _v770_open_up:
+                    _v770_rel = _v770_center_offset(_v770_hit, x) if _v770_safe else None
+                    if _v770_rel is not None and _v770_rel <= 0.5:
+                        _v770_bonus = _V770_LADDER_BONUS * (1.0 - _v770_rel)
+                        if _v770_rests_on_type(_v770_hit, next_type + 2, pieces):
+                            _v770_bonus += _V770_LADDER_DEPTH_BONUS
+                        score += _v770_w * _v770_bonus
+                        reasons.append("LADDER_STACK")
+                elif _v770_hit.get("id") in _v770_open_small:
+                    score -= _v770_w * _V770_BURIAL_PENALTY
+                    reasons.append("INVERTED_BURIAL")
 
         # ----- update best candidate -----
         if score > best_score:
