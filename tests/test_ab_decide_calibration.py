@@ -99,5 +99,77 @@ class CalibratedHarmRuleTest(unittest.TestCase):
         self.assertNotEqual(v["harm_ucb"], v["futility_ucb"])
 
 
+
+def _final_rows_with_t15(t15_a, t15_b, diff=300):
+    """37 ブロック (各腕 74 試合) の最終判定。B が eval で上回り、T15 到達数だけを指定する。"""
+    rows = _rows_from_block_diffs([diff] * 37)
+    a_rows = [r for r in rows if r["arm"] == "A"]
+    b_rows = [r for r in rows if r["arm"] == "B"]
+    for i, r in enumerate(a_rows):
+        r["t15"] = 1 if i < t15_a else 0
+    for i, r in enumerate(b_rows):
+        r["t15"] = 1 if i < t15_b else 0
+    return rows
+
+
+def _rule(version, **extra):
+    rule = {"version": version, "looks": [19, 37], "max_blocks": 37}
+    rule.update(extra)
+    return {"pattern": "ABBA", "primary": "eval", "decision_rule_version": version, "decision_rule": rule}
+
+
+class T15GuardrailTest(unittest.TestCase):
+    """T15 到達ガードは rule v3 から片側 Fisher。v2 の state は件数規則のまま。"""
+
+    def test_v2_state_keeps_count_rule(self):
+        # v770 1fb96e38ea8f の実例: eval で上回ったが T15 3 対 5 で棄却された。
+        cfg = dec.config_from_state(_rule(2))
+        v = dec.decide(_final_rows_with_t15(5, 3), cfg)
+        self.assertEqual(v["verdict"], "REJECT_INCONCLUSIVE", v)
+        self.assertIn("T15 reach B=3 < A=5-1", " ".join(v["reasons"]))
+
+    def test_v3_state_does_not_reject_on_noise(self):
+        cfg = dec.config_from_state(_rule(3, t15_guard_alpha=0.05))
+        self.assertAlmostEqual(cfg["t15_guard_alpha"], 0.05)
+        # 差 +100 は MDE 未満 (有意ではない) なので、通れば最終判定の暫定採用になる。
+        v = dec.decide(_final_rows_with_t15(5, 3, diff=100), cfg)
+        self.assertEqual(v["verdict"], "ADOPT", v)
+        self.assertEqual(v["decision_class"], "provisional_win", v)
+
+    def test_v3_state_still_rejects_a_clear_t15_loss(self):
+        cfg = dec.config_from_state(_rule(3, t15_guard_alpha=0.05))
+        v = dec.decide(_final_rows_with_t15(12, 2), cfg)
+        self.assertEqual(v["verdict"], "REJECT_INCONCLUSIVE", v)
+        self.assertIn("Fisher", " ".join(v["reasons"]))
+
+    def test_v3_false_reject_rate_under_equal_rates_is_at_most_alpha(self):
+        # 到達率が同じ腕どうしで、ガードが採用を止める確率 (各腕 74 試合、二項分布で厳密計算)。
+        from math import comb
+        n = 74
+        a_rows = [{} for _ in range(n)]
+        b_rows = [{} for _ in range(n)]
+        blocked = {}
+        for ta in range(0, 21):
+            for tb in range(0, 21):
+                for i, r in enumerate(a_rows):
+                    r["t15"] = 1 if i < ta else 0
+                for i, r in enumerate(b_rows):
+                    r["t15"] = 1 if i < tb else 0
+                blocked[(ta, tb)] = (
+                    not dec._guardrails(a_rows, b_rows, 0.05)[0],
+                    not dec._guardrails(a_rows, b_rows, None)[0],
+                )
+        for rate in (0.04, 0.054, 0.068):
+            pmf = [comb(n, k) * rate ** k * (1 - rate) ** (n - k) for k in range(21)]
+            new = sum(pmf[a] * pmf[b] for (a, b), (nb, _) in blocked.items() if nb)
+            old = sum(pmf[a] * pmf[b] for (a, b), (_, ob) in blocked.items() if ob)
+            self.assertLessEqual(new, 0.05, (rate, new))
+            self.assertGreater(old, 0.25, (rate, old))
+
+    def test_default_without_alpha_is_count_rule(self):
+        self.assertIsNone(dec.DEFAULTS["t15_guard_alpha"])
+        self.assertFalse(dec._guardrails([{"t15": 1}] * 5 + [{}] * 69, [{"t15": 1}] * 3 + [{}] * 71)[0])
+
+
 if __name__ == "__main__":
     unittest.main()

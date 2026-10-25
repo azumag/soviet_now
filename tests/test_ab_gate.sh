@@ -78,8 +78,9 @@ python3 - <<'PY' && ok || ng "state must freeze calibrated decision rule"
 import json
 st=json.load(open("tmp/state/ab_state.json"))
 r=st["decision_rule"]
-assert st["decision_rule_version"] == 2, st
-assert r["version"] == 2, r
+assert st["decision_rule_version"] == 3, st
+assert r["version"] == 3, r
+assert abs(r["t15_guard_alpha"] - 0.05) < 1e-9, r
 assert r["harm_min_blocks"] == 10, r
 assert abs(r["harm_z"] - 2.3263) < 1e-9, r
 assert r["futility_k"] == 12, r

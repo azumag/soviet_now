@@ -27,6 +27,11 @@ Comparison / dashboard ヘッダー) と同じ tools/ab_report.py:primary_value 
   REJECT_INCONCLUSIVE 最終判定で m <= 0、ガードレール違反、または標本不足
   CONTINUE           それ以外
 
+T15 到達のガードレールは rule v3 から片側 Fisher 検定にする (t15_guard_alpha)。旧来の
+「B が A より 2 以上少ない」は 74 試合で 5 回程度の事象に 1 回差の閾値で、到達率が同じでも
+26〜31% で採用を阻止する (二項分布で計算)。v770 1fb96e38ea8f は eval +749 / score +271 /
+併合/手 +7% で、T15 3 対 5 の差だけで棄却された (2026-10-25)。v2 以前の state は旧規則のまま。
+
 これにより「有意差が無い」こと自体は rollback 理由にしない。一方で taint、即死、
 ガードレール、標本不足は従来どおり採用を阻止する。
 
@@ -57,7 +62,7 @@ except Exception:  # pragma: no cover - 単体でも動くように
 
 Z90 = 1.2816
 Z99 = 2.3263
-DECISION_RULE_VERSION = 2
+DECISION_RULE_VERSION = 2  # これ以上の version は decision_rule を固定値として読む (v3 = T15 Fisher ガード)
 
 DEFAULTS = {
     "pattern": "ABBA",
@@ -83,6 +88,9 @@ DEFAULTS = {
     "dead_eval_threshold": 400.0,
     "instadeath_alpha": 0.01,
     "instadeath_min_blocks": 4,
+    # None = 旧来の件数ガード (B < A-1 で不採用)。rule v3 は 0.05 を固定保存し、
+    # B の T15 到達率が A より片側 Fisher で有意に低いときだけ不採用にする。
+    "t15_guard_alpha": None,
 }
 
 LEGACY_HARM_RULE = {
@@ -95,7 +103,7 @@ _RULE_KEYS = (
     "alpha", "looks", "max_blocks", "min_blocks", "min_blocks_adopt",
     "min_n_per_arm", "harm_min_blocks", "harm_z", "futility_k",
     "futility_z", "futility_delta", "max_tainted", "dead_eval_threshold",
-    "instadeath_alpha", "instadeath_min_blocks",
+    "instadeath_alpha", "instadeath_min_blocks", "t15_guard_alpha",
 )
 
 
@@ -218,7 +226,7 @@ def decide(rows, cfg=None):
         alpha_look = group_sequential_alpha(c["alpha"], len(looks))
         mde = ab_report.mde(c["sd"], n_min)
         out.update({"p": p, "alpha_look": alpha_look, "mde": mde})
-        guard_ok, guard_why = _guardrails(a_rows, b_rows)
+        guard_ok, guard_why = _guardrails(a_rows, b_rows, c.get("t15_guard_alpha"))
         if m is not None and m > 0 and p is not None and p < alpha_look and m >= mde and guard_ok:
             return ret("ADOPT", "look k=%d mean %.0f >= MDE %.0f, p=%.3f < %.3f" % (k, m, mde, p, alpha_look), "significant_win")
         if not guard_ok:
@@ -237,7 +245,7 @@ def decide(rows, cfg=None):
             return ret("REJECT_INCONCLUSIVE", "final look k=%d mean %.0f <= 0 p=%s mde %.0f" % (k, m, ("%.3f" % p) if p is not None else "-", mde), decision_class)
         return ret("CONTINUE", "look k=%d not adopted (mean %.0f p=%s mde %.0f)" % (k, m, ("%.3f" % p) if p is not None else "-", mde))
     if k >= c["max_blocks"]:
-        guard_ok, guard_why = _guardrails(a_rows, b_rows)
+        guard_ok, guard_why = _guardrails(a_rows, b_rows, c.get("t15_guard_alpha"))
         if not guard_ok:
             out["reasons"].append("guardrail: " + guard_why)
         enough_data = n_min >= c["min_n_per_arm"] and k >= c["min_blocks_adopt"]
@@ -252,13 +260,26 @@ def decide(rows, cfg=None):
     return ret("CONTINUE", "k=%d n=%d/%d" % (k, n_a, n_b))
 
 
-def _guardrails(a_rows, b_rows):
-    """採用時のガードレール: T15 到達が A より 2 以上少なくない、締切交差率が悪化していない (行に指標があれば)。"""
+def _guardrails(a_rows, b_rows, t15_alpha=None):
+    """採用時のガードレール: T15 到達が A より悪くない、締切交差率が悪化していない (行に指標があれば)。
+
+    t15_alpha が None なら旧来の件数規則 (B < A-1 で不採用)。数値なら、B の到達率が A より
+    低いという片側 Fisher 検定の p < t15_alpha のときだけ不採用にする。
+    """
     def cnt(rows, key):
         return sum(1 for r in rows if (r.get(key) or 0) >= 1)
     t15_a, t15_b = cnt(a_rows, "t15"), cnt(b_rows, "t15")
-    if t15_b < t15_a - 1:
-        return False, "T15 reach B=%d < A=%d-1" % (t15_b, t15_a)
+    if t15_alpha is None:
+        if t15_b < t15_a - 1:
+            return False, "T15 reach B=%d < A=%d-1" % (t15_b, t15_a)
+    elif t15_b * len(a_rows) < t15_a * len(b_rows):
+        try:
+            p_t15 = fisher_one_sided(t15_a, len(a_rows), t15_b, len(b_rows))
+        except Exception:
+            p_t15 = 0.0  # 検定できなければ採用を止める側に倒す
+        if p_t15 < float(t15_alpha):
+            return False, "T15 reach B=%d/%d < A=%d/%d (Fisher p=%.3f < %.3f)" % (
+                t15_b, len(b_rows), t15_a, len(a_rows), p_t15, float(t15_alpha))
     ca = [r.get("crossings") for r in a_rows if isinstance(r.get("crossings"), (int, float))]
     cb = [r.get("crossings") for r in b_rows if isinstance(r.get("crossings"), (int, float))]
     if ca and cb and st.mean(cb) > 2 * max(0.5, st.mean(ca)):
