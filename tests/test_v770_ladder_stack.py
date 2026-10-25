@@ -7,7 +7,7 @@
   * landing_hit_id が T+1 でも、中心から半径 0.25 以内なら 61%、0.8 超では 13% しか上に止まらない。
 
 ここでは (1) 重み関数、(2) 中心ずれと 2 段目の判定、(3) 実履歴の局面をフルパイプラインに通したときに
-ラダーへ寄ること・DIRECT 併合と締切の安全を壊さないこと・V770_LADDER_W=0 で旧挙動に戻ること、を固定する。
+ラダーへ寄ること・DIRECT 併合と締切の安全を壊さないこと・_V770_LADDER_W=0 で旧挙動に戻ること、を固定する。
 """
 import json
 import os
@@ -50,42 +50,38 @@ def _pipeline(gs):
     return fx, str(d.get("reason", "")), chosen, an
 
 
-class _EnvMixin:
-    KEYS = ("V770_LADDER_W", "V763_DIVERSITY_W")
-
+class _WeightMixin:
     def setUp(self):
-        self._saved = {k: os.environ.get(k) for k in self.KEYS}
-        # 本番 .env と同じ (V763_DIVERSITY_W=1.0)
-        os.environ["V763_DIVERSITY_W"] = "1.0"
-        os.environ.pop("V770_LADDER_W", None)
+        # 本番と同じ重み (V763=1.0, V770=1.0) を明示する。重みは env ではなくモジュール定数。
+        self._saved = (strategy._V763_DIVERSITY_W, strategy._V770_LADDER_W)
+        strategy._V763_DIVERSITY_W = 1.0
+        strategy._V770_LADDER_W = 1.0
 
     def tearDown(self):
-        for k, v in self._saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+        strategy._V763_DIVERSITY_W, strategy._V770_LADDER_W = self._saved
 
 
-class WeightTests(_EnvMixin, unittest.TestCase):
+class WeightTests(_WeightMixin, unittest.TestCase):
     def _w(self, value):
-        if value is None:
-            os.environ.pop("V770_LADDER_W", None)
-        else:
-            os.environ["V770_LADDER_W"] = value
+        strategy._V770_LADDER_W = value
         return strategy._v770_weight()
 
     def test_enabled_by_default_and_switchable_off(self):
-        self.assertEqual(self._w(None), 1.0)
-        self.assertEqual(self._w(""), 1.0)
-        for off in ("0", "off", "no", "false"):
-            self.assertEqual(self._w(off), 0.0, off)
+        self.assertEqual(self._saved[1], 1.0, "既定で有効")
+        self.assertEqual(self._w(1.0), 1.0)
+        self.assertEqual(self._w(0.0), 0.0)
 
     def test_bad_values_and_saturation(self):
-        self.assertEqual(self._w("abc"), 1.0, "読めない値は既定 (有効) に戻す")
-        self.assertEqual(self._w("-1"), 0.0)
-        self.assertEqual(self._w("nan"), 0.0)
-        self.assertEqual(self._w("50"), 4.0)
+        for bad in ("abc", None, -1.0, float("nan")):
+            self.assertEqual(self._w(bad), 0.0, repr(bad))
+        self.assertEqual(self._w(50.0), 4.0)
+
+    def test_production_v763_weight_is_kept_without_env(self):
+        os.environ["V763_DIVERSITY_W"] = "0"
+        try:
+            self.assertEqual(strategy._v763_weight(), 1.0, "env では切り替わらない (本番値 1.0 を定数で持つ)")
+        finally:
+            os.environ.pop("V763_DIVERSITY_W", None)
 
 
 class GeometryTests(unittest.TestCase):
@@ -106,7 +102,7 @@ class GeometryTests(unittest.TestCase):
         self.assertFalse(strategy._v770_rests_on_type(lower, 6, [upper, lower]), "上にある駒は支えではない")
 
 
-class PipelineTests(_EnvMixin, unittest.TestCase):
+class PipelineTests(_WeightMixin, unittest.TestCase):
     def test_ladder_cases_move_onto_the_open_next_type(self):
         for name in ("v770_ladder_changed_1.json", "v770_ladder_changed_2.json"):
             fx = _load(name)
@@ -120,7 +116,7 @@ class PipelineTests(_EnvMixin, unittest.TestCase):
             self.assertGreater(abs(x - fx["base_x"]), 0.05, "%s: root と同じ手では検証にならない" % name)
 
     def test_weight_zero_restores_root_decision(self):
-        os.environ["V770_LADDER_W"] = "0"
+        strategy._V770_LADDER_W = 0.0
         for name in ("v770_ladder_changed_1.json", "v770_ladder_changed_2.json", "v770_burial_changed_1.json"):
             fx = _load(name)
             x, reason, chosen, an = _pipeline(_gs(fx))

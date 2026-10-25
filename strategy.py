@@ -54,7 +54,6 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
-import os
 
 from strategy_helpers import board_stats
 
@@ -73,22 +72,28 @@ from strategy_helpers import board_stats
 #   2. 露出判定を _v742_open_twin と同一基準にする（素朴な真上判定は的中 13.8%、この基準は 86.5%）
 #   3. 落とした駒自身の露出を数える（drop_type は必ず露出型として残る）
 #   4. type15_count == 0 のゲートを撤去する
-# V763_DIVERSITY_W=0 (既定) で従来と完全一致する。
+# 重みは本番 .env の V763_DIVERSITY_W=1.0 と同じ値を定数で持つ。候補の AST deny gate は os を
+# 禁じており、env 読みを残すと AI 候補は os を削って重みを 0 に戻してしまう (2026-10-25 実測:
+# LLM 候補 3fedf0802964 / ac52cd600115 は _v763_weight() を return 0.0 にして gate を通っていた)。
+# _V763_DIVERSITY_W = 0.0 で v763 以前と完全一致する。
 _V763_BASE_BONUS = 260.0
+_V763_DIVERSITY_W = 1.0
 
 
-def _v763_weight():
-    """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
-    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
-    if raw in ("", "0", "false", "no", "off"):
-        return 0.0
+def _clamp_weight(w, cap):
+    """重み定数を [0, cap] に収める。数値でない・負・nan は 0。"""
     try:
-        w = float(raw)
+        w = float(w)
     except (TypeError, ValueError):
         return 0.0
     if w != w or w < 0.0:
         return 0.0
-    return min(w, 8.0)
+    return min(w, cap)
+
+
+def _v763_weight():
+    """0=無効。1 で「露出型 +1」に +260。"""
+    return _clamp_weight(_V763_DIVERSITY_W, 8.0)
 
 
 def _v763_open_by_type(pieces):
@@ -149,24 +154,16 @@ def _v763_post_open_types(open_by_type, drop_type, drop_x, drop_y):
 #     上に載った場合は 54%）。T5-8 でも 37% 対 48%。
 #   * 解析器の landing_hit_id が T+1 でも、中心から半径の 0.25 以内なら 61% が実際に
 #     T+1 の上に止まるが、0.8 超では 13%（肩で転がり落ちる）。中心付近だけを加点する。
-# V770_LADDER_W=0 で従来と完全一致する。
+# _V770_LADDER_W = 0.0 で従来と完全一致する（env では切り替えない。理由は _V763_DIVERSITY_W と同じ）。
 _V770_LADDER_BONUS = 600.0
 _V770_LADDER_DEPTH_BONUS = 150.0
 _V770_BURIAL_PENALTY = 250.0
+_V770_LADDER_W = 1.0
 
 
 def _v770_weight():
-    """V770_LADDER_W: 0=無効。既定 1。"""
-    raw = str(os.environ.get("V770_LADDER_W", "1") or "").strip()
-    if raw in ("0", "false", "no", "off"):
-        return 0.0
-    try:
-        w = float(raw)
-    except (TypeError, ValueError):
-        return 1.0
-    if w != w or w < 0.0:
-        return 0.0
-    return min(w, 4.0)
+    """0=無効。既定 1。"""
+    return _clamp_weight(_V770_LADDER_W, 4.0)
 
 
 def _v770_center_offset(target, drop_x):
@@ -2103,7 +2100,12 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     _v770_byid = {}
     _v770_open_up = set()
     _v770_open_small = set()
-    if _v770_w > 0.0 and isinstance(next_type, int) and 1 <= next_type <= 13:
+    # 同型相方を狙う既存軸 (v736 PROBABLE_MERGE_CONTACT: 上端の開いた同型相方 / v731 SAME_TYPE_SEED_CONTACT:
+    # T9 以上の同型相方) が働く盤面では v770 は加点も減点もしない。ラダー (+600) や下敷き減点 (-250) が
+    # 接触併合 (+800) や同型播種 (+400) の候補を押しのけていた (実盤面 probable_merge_t8_turn41 /
+    # seed_contact_t11_turn15)。v770 は「同型相方がいない手」の置き場所だけを決める。
+    _v770_defer = bool(_v736_open_partner_ids) or (next_type >= 9 and bool(_v731_partners))
+    if _v770_w > 0.0 and not _v770_defer and isinstance(next_type, int) and 1 <= next_type <= 13:
         for _p in pieces:
             if isinstance(_p, dict) and _p.get("id") is not None:
                 _v770_byid[_p.get("id")] = _p

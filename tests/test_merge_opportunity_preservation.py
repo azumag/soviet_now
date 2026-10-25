@@ -128,11 +128,12 @@ class MergeOpportunityTests(unittest.TestCase):
 
     def test_recorded_boards_keep_nextnext_lane_through_full_pipeline(self):
         # 固定値は v770 LADDER_STACK を切った従来挙動で比べる (v770 を有効にした場合は下のテスト)。
-        settings={'V763_DIVERSITY_W':'1.0','V767_BUNDLE':'0','V770_LADDER_W':'0',
+        settings={'V767_BUNDLE':'0',
                   'ANALYZE_BOARD_VERTICAL_LANE_DIRECT':'1','ANALYZE_BOARD_MERGE_TOP_MODEL':'2',
                   'ANALYZE_BOARD_WALL_CLAMP':'1','ANALYZE_BOARD_LANDING_ARC':'0'}
         for turn, expected in ((39,.6),(14,1.2),(36,1.52)):
-            with self.subTest(turn=turn), patch.dict(os.environ,settings):
+            with self.subTest(turn=turn), patch.dict(os.environ,settings), \
+                 patch.object(strategy,'_V763_DIVERSITY_W',1.0), patch.object(strategy,'_V770_LADDER_W',0.0):
                 gs=json.loads((ROOT/f'tests/fixtures/merge_opportunities/route_turn{turn}.json').read_text())['game_state']
                 an=runner.build_analysis(gs)
                 d=strategy.decide(gs,an)
@@ -142,11 +143,12 @@ class MergeOpportunityTests(unittest.TestCase):
 
     def test_ladder_stack_does_not_bury_the_nextnext_twin_on_recorded_boards(self):
         # v770 は turn39 で T5 を露出した T6 の上 (x=-2.2) に載せる。次々手 T9 の露出駒は塞がない。
-        settings={'V763_DIVERSITY_W':'1.0','V767_BUNDLE':'0','V770_LADDER_W':'1',
+        settings={'V767_BUNDLE':'0',
                   'ANALYZE_BOARD_VERTICAL_LANE_DIRECT':'1','ANALYZE_BOARD_MERGE_TOP_MODEL':'2',
                   'ANALYZE_BOARD_WALL_CLAMP':'1','ANALYZE_BOARD_LANDING_ARC':'0'}
         for turn in (39,14,36):
-            with self.subTest(turn=turn), patch.dict(os.environ,settings):
+            with self.subTest(turn=turn), patch.dict(os.environ,settings), \
+                 patch.object(strategy,'_V763_DIVERSITY_W',1.0), patch.object(strategy,'_V770_LADDER_W',1.0):
                 gs=json.loads((ROOT/f'tests/fixtures/merge_opportunities/route_turn{turn}.json').read_text())['game_state']
                 an=runner.build_analysis(gs)
                 d=strategy.decide(gs,an)
