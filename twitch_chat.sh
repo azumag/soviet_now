@@ -626,7 +626,7 @@ _send() {
     local channel token nick tmp_irc rc
     channel="${TWITCH_CHANNEL:-azumagbanjo}"
     token="${TWITCH_BOT_TOKEN:-}"
-    nick="${TWITCH_BOT_NICK:-${TWITCH_BOT_LOGIN:-azumagdev}}"
+    nick="${TWITCH_BOT_NICK:-${TWITCH_BOT_LOGIN:-dociai}}"
     channel="${channel#\#}"
     nick=$(printf '%s' "$nick" | tr '\r\n' ' ' | tr -d '\000')
     if [ -z "$token" ]; then
