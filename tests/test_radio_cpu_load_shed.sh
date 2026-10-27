@@ -98,6 +98,15 @@ if check 99; then ok "cap: next tick blocks again (timer restarted)"; else not_o
 
 reset
 check 99 >/dev/null
+touch -d '@'"$(($(date +%s) - 1801))" "$MARKER"
+printf '%s' "$(($(date +%s) - 3600))" >"$TMP_MARKERS_DIR/.radio_cpu_load_shed_log_last"
+check 99 >/dev/null
+: >"$TMP/log.txt"
+check 99 >/dev/null
+[ -s "$TMP/log.txt" ] && not_ok "cap: progress log right after forced release should be suppressed" || ok "cap: no progress log right after forced release"
+
+reset
+check 99 >/dev/null
 touch -d '@'"$(($(date +%s) - 1799))" "$MARKER"
 if check 99; then ok "cap: 1799s of suppression still blocks"; else not_ok "cap: released before the cap"; fi
 
@@ -107,6 +116,15 @@ if RADIO_CPU_LOAD_SHED_MAX_SUPPRESS_SEC=60 _radio_generation_blocked_by_cpu_load
 	ok "cap: configured cap (60s) not yet reached blocks"
 else
 	not_ok "cap: fresh suppression should block under a 60s cap"
+fi
+
+# 下限クランプ: 0 を指定しても毎 tick 強制許可（= ゲート無効化）にはならない
+reset
+check 99 >/dev/null
+if RADIO_CPU_LOAD_SHED_MAX_SUPPRESS_SEC=0 _radio_generation_blocked_by_cpu_load 99; then
+	ok "cap floor: cap=0 is clamped, fresh suppression still blocks"
+else
+	not_ok "cap floor: cap=0 must not release a fresh suppression"
 fi
 
 # ============================================================
