@@ -7,8 +7,11 @@ project selected stable lines into broadcast-facing cards; callers keep the raw
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
+import time
+from pathlib import Path
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -19,6 +22,10 @@ _ALERT_RE = re.compile(
     re.IGNORECASE,
 )
 _GIB = 1024 ** 3
+_DAY_SEC = 86400
+_AV_SYNC_LINE_RE = re.compile(r"\bAVSync\b")
+_AV_SYNC_STATE_ENV = "SOREN_DIRECT_AV_SYNC_STATE_FILE"
+_AV_SYNC_STATE_DEFAULT = "tmp/state/direct_av_sync_probe.json"
 
 
 def plain(raw: str) -> str:
@@ -223,6 +230,36 @@ def render_game_dashboard(raw: str) -> str:
     )
 
 
+def _av_sync_alert(now: float | None = None) -> str:
+    """Return an ATTENTION row for a fresh failed A/V probe.
+
+    The probe's JSON state is the display source, so drift_ms comes from
+    lib/direct_av_sync.py rather than the terminal AVSync line. The freshness
+    window mirrors show_status.sh: older results are HISTORICAL evidence.
+    """
+    path = Path(os.environ.get(_AV_SYNC_STATE_ENV) or _AV_SYNC_STATE_DEFAULT)
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(state, dict) or state.get("state") != "failed":
+        return ""
+    result = state.get("result") if isinstance(state.get("result"), dict) else {}
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    try:
+        tested_at = float(state.get("tested_at") or path.stat().st_mtime)
+        duration_sec = max(0, int(config.get("capture_duration_sec") or 0))
+    except (OSError, TypeError, ValueError):
+        return ""
+    age_sec = (time.time() if now is None else now) - tested_at
+    if tested_at <= 0 or age_sec > max(_DAY_SEC, duration_sec):
+        return ""
+    return (
+        f"AVSync FAILED drift={result.get('drift_ms', '?')}ms "
+        f"max={result.get('max_abs_offset_ms', '?')}ms pairs={result.get('pair_count', '?')}"
+    )
+
+
 def render_ops_dashboard(raw: str) -> str:
     text = plain(raw)
     workers = re.search(r"Workers\s+(\d+)/(\d+)\s+(ONLINE|DEGRADED|CHECK)", text)
@@ -265,13 +302,21 @@ def render_ops_dashboard(raw: str) -> str:
     queue_value = str(sum(map(int, queue_match.groups()))) if queue_match else "—"
     drop_value = re.sub(r"^LastDrop\s+", "", drop_line).split()[0] if drop_line else "—"
 
-    alerts = []
+    av_alert = _av_sync_alert()
+    alerts = [av_alert] if av_alert else []
     for line in text.splitlines():
         clean = _clean(line)
+        # AVSync reaches ATTENTION only via _av_sync_alert (the probe JSON). Its
+        # diagnostics line is excluded here so the display source stays separate.
         # Completed acceptance tests are demoted to HISTORICAL by show_status.
         # They are evidence, not a current fault, so they must not paint the
         # live ATTENTION list red (docich#2687: a weeks-old AVSync FAILED).
-        if clean and "HISTORICAL" not in clean.upper() and _ALERT_RE.search(clean):
+        if (
+            clean
+            and not _AV_SYNC_LINE_RE.search(clean)
+            and "HISTORICAL" not in clean.upper()
+            and _ALERT_RE.search(clean)
+        ):
             alerts.append(clean)
         if len(alerts) >= 3:
             break
