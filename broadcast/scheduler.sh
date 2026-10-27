@@ -524,13 +524,9 @@ schedule_nonessential_audio_jobs() {
 	fi
 
 	# CPU 負荷シェディング: CPU 使用率 95% 以上で新規ラジオ生成をスキップ (issue #2825)
-	for _cpu_shed_fn in _radio_generation_blocked_by_cpu_load _radio_generation_blocked_by_cpu _radio_generation_blocked_by_high_cpu _radio_generation_blocked_by_cpu_usage _radio_generation_blocked_by_cpu_load_shedding _radio_generation_blocked_by_load _radio_generation_blocked_by_cpu_pressure 		_radio_generation_blocked_by_cpu_shed 		_radio_generation_blocked_by_cpu_load_shed 		_radio_generation_blocked_by_high_cpu_load 		_radio_generation_blocked_by_cpu_overload 		_radio_generation_blocked_by_cpu_load_gate 		_radio_generation_blocked_by_high_cpu_skip; do
-		if type -t "$_cpu_shed_fn" >/dev/null 2>&1; then
-			if "$_cpu_shed_fn"; then
-				return 0
-			fi
-		fi
-	done
+	if _radio_generation_blocked_by_cpu_load; then
+		return 0
+	fi
 
 	# 番組枠: docich のコーナー（AI探偵ミステリー / PAPER）が番組表示へ
 	# 切り替えている間は新規ラジオ生成を開始しない（コーナー読み上げと
@@ -855,6 +851,13 @@ _radio_generation_blocked_by_peak_hour_queue() {
 	return 1
 }
 
+# 番組枠の抑止判定は `broadcast/radio_state.sh` の `_program_corner_active`
+# を共有する（生成側と再生側で同じフラグ・同じ fail-open 契約を使うため）。
+# 旧 `_paper_corner_active` は互換のため残す（新しい判定へ委譲）。
+_paper_corner_active() {
+	_program_corner_active
+}
+
 # CPU 負荷シェディングの抑止判定（issue #2825）。
 # CPU 使用率が 95% 以上のとき新規ラジオ生成をスキップする。瞬時値ではなく
 # 1 分 load average をコア数で正規化した値を使い、ヒステリシス（開始 >=95%、
@@ -918,14 +921,8 @@ _radio_generation_blocked_by_cpu_load() {
 		fi
 	done
 	# いずれのスイッチも未設定ならデフォルト有効。明示 0 のスイッチがあれば無効。
-	for _v in CPU_LOAD_SHED_ENABLED RADIO_CPU_LOAD_SHED_ENABLED CPU_LOAD_SHEDDING_ENABLED HIGH_CPU_SKIP_ENABLED CPU_SHED_ENABLED CPU_LOAD_SHED_ENABLE; do
-		if [ -n "${!_v:-}" ]; then
-			case "${!_v}" in
-				0|false|False|FALSE|no|No|NO|off|Off|OFF) _enabled=0 ;;
-				*) _enabled=1 ;;
-			esac
-		fi
-	done
+	# （最初に設定されたスイッチを優先し、明示的な無効値のみで無効化する。
+	#  有効値で再有効化して無効設定を上書きしないよう、二重ループは用いない）
 
 	local _upper=95 _lower=90
 	for _v in CPU_LOAD_SHED_THRESHOLD CPU_LOAD_SHED_UPPER CPU_LOAD_SHED_THRESHOLD_PERCENT CPU_HIGH_THRESHOLD CPU_LOAD_THRESHOLD HIGH_CPU_THRESHOLD CPU_SHED_THRESHOLD CPU_LOAD_SHED_LIMIT; do
@@ -946,7 +943,7 @@ _radio_generation_blocked_by_cpu_load() {
 	done
 
 	local _markers=".radio_cpu_load_shed_active .radio_cpu_shed_active .radio_high_cpu_active .radio_cpu_load_active .radio_cpu_active"
-	local _marker_dir="${TMP_MARKERS_DIR:-${TMP_MARKERS_DIR:-}}"
+	local _marker_dir="${TMP_MARKERS_DIR:-}"
 	[ -z "$_marker_dir" ] && _marker_dir="${TMP:-/tmp}/markers"
 
 	_marker_exists() {
@@ -1000,20 +997,6 @@ _radio_generation_blocked_by_cpu_load() {
 	fi
 	return 1
 }
-
-# エイリアス（テスト・呼び出し側の命名揺れを吸収）
-_radio_generation_blocked_by_cpu() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_high_cpu() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_usage() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_load_shedding() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_load() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_pressure() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_load_shed() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_high_cpu_load() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_overload() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_cpu_load_gate() { _radio_generation_blocked_by_cpu_load "$@"; }
-_radio_generation_blocked_by_high_cpu_skip() { _radio_generation_blocked_by_cpu_load "$@"; }
-
 
 #=== lib/eloop_radio.sh から移行した関数 ===
 
@@ -1147,6 +1130,3 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 }
-
-# 追加エイリアス（命名揺れ吸収）
-_radio_generation_blocked_by_cpu_shed() { _radio_generation_blocked_by_cpu_load "$@"; }
