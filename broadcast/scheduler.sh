@@ -1007,8 +1007,11 @@ _radio_generation_blocked_by_cpu_load() {
 		_shed_start=$(_marker_mtime "$_marker_dir/.radio_cpu_load_shed_active") || _shed_start="$_now"
 		_max_sec="${RADIO_CPU_LOAD_SHED_MAX_SUPPRESS_SEC:-1800}"
 		case "$_max_sec" in '' | *[!0-9]*) _max_sec=1800 ;; esac
+		# 0 や極小値で毎 tick 強制許可になる (= ゲート無効化) のを防ぐ。無効化は kill switch を使う
+		[ "$_max_sec" -lt 60 ] && _max_sec=60
 		if [ $((_now - _shed_start)) -ge "$_max_sec" ]; then
 			_touch_markers
+			printf '%s' "$_now" >"$_marker_dir/.radio_cpu_load_shed_log_last" 2>/dev/null || true
 			log "[RADIO] CPU 負荷シェディング ${_max_sec}秒超過 (cpu=${cpu_pct}%) → この tick のみ新規生成を許可し抑制タイマーを再始動"
 			return 1
 		fi
