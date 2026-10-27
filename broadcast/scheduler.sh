@@ -964,6 +964,14 @@ _radio_generation_blocked_by_cpu_load() {
 		for _m in $_markers; do
 			rm -f "$_marker_dir/$_m" 2>/dev/null || true
 		done
+		rm -f "$_marker_dir/.radio_cpu_load_shed_log_last" 2>/dev/null || true
+	}
+	# マーカーの mtime (抑制開始時刻)。GNU stat を先に試し、BSD stat にフォールバック
+	_marker_mtime() {
+		local _mt
+		_mt=$(stat -c %Y "$1" 2>/dev/null) || _mt=$(stat -f %m "$1" 2>/dev/null) || _mt=""
+		case "$_mt" in '' | *[!0-9]*) return 1 ;; esac
+		printf '%s' "$_mt"
 	}
 
 	mkdir -p "$_marker_dir" 2>/dev/null || true
@@ -986,7 +994,34 @@ _radio_generation_blocked_by_cpu_load() {
 	if [ "$_blocked" = "1" ]; then
 		if ! _marker_exists; then
 			_touch_markers
+			printf '%s' "$(date +%s)" >"$_marker_dir/.radio_cpu_load_shed_log_last" 2>/dev/null || true
 			log "[RADIO] CPU 使用率 ${cpu_pct}% (>= ${_upper}%) → 新規ラジオ生成を抑制"
+			return 0
+		fi
+
+		# 慢性高負荷で再開条件 (<_lower) が永遠に満たされない場合の liveness 保証。
+		# 連続抑制が上限秒数を超えたら、この tick だけ生成を許可してマーカーを
+		# touch し直し、抑制タイマーを再始動する。閾値と指標は変えない。
+		local _shed_start="" _now _max_sec _log_every _last_log _load
+		_now=$(date +%s)
+		_shed_start=$(_marker_mtime "$_marker_dir/.radio_cpu_load_shed_active") || _shed_start="$_now"
+		_max_sec="${RADIO_CPU_LOAD_SHED_MAX_SUPPRESS_SEC:-1800}"
+		case "$_max_sec" in '' | *[!0-9]*) _max_sec=1800 ;; esac
+		if [ $((_now - _shed_start)) -ge "$_max_sec" ]; then
+			_touch_markers
+			log "[RADIO] CPU 負荷シェディング ${_max_sec}秒超過 (cpu=${cpu_pct}%) → この tick のみ新規生成を許可し抑制タイマーを再始動"
+			return 1
+		fi
+
+		# 抑制中の経過ログ。マーカーの mtime は触らず、スロットル用の別ファイルで間引く
+		_log_every="${RADIO_CPU_LOAD_SHED_LOG_INTERVAL_SEC:-1800}"
+		case "$_log_every" in '' | *[!0-9]*) _log_every=1800 ;; esac
+		_last_log=$(cat "$_marker_dir/.radio_cpu_load_shed_log_last" 2>/dev/null || echo 0)
+		case "$_last_log" in '' | *[!0-9]*) _last_log=0 ;; esac
+		if [ $((_now - _last_log)) -ge "$_log_every" ]; then
+			printf '%s' "$_now" >"$_marker_dir/.radio_cpu_load_shed_log_last" 2>/dev/null || true
+			_load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+			log "[RADIO] CPU 負荷シェディング継続中: cpu=${cpu_pct}% load=${_load:-unknown} nproc=$(nproc 2>/dev/null || echo ?) 抑制経過=$(((_now - _shed_start) / 60))分"
 		fi
 		return 0
 	fi

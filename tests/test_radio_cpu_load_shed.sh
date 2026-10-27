@@ -81,6 +81,47 @@ else
 fi
 
 # ============================================================
+# 上限時間: 連続抑制が上限を超えたら、慢性高負荷でも 1 tick だけ許可して
+# 抑制タイマーを再始動する（閾値は変えない）
+# ============================================================
+reset
+check 99 >/dev/null
+if check 99; then ok "cap: within the cap, 99% stays blocked"; else not_ok "cap: should stay blocked before the cap"; fi
+
+reset
+check 99 >/dev/null
+touch -d '@'"$(($(date +%s) - 1801))" "$MARKER"
+if check 99; then not_ok "cap: 1801s of suppression must release one tick"; else ok "cap: releases one tick after 1800s"; fi
+grep -q '上限超過\|秒超過' "$TMP/log.txt" && ok "cap: forced release is logged" || not_ok "cap: forced release not logged"
+[ -f "$MARKER" ] && ok "cap: marker kept (timer restarted)" || not_ok "cap: marker cleared on forced release"
+if check 99; then ok "cap: next tick blocks again (timer restarted)"; else not_ok "cap: next tick should block again"; fi
+
+reset
+check 99 >/dev/null
+touch -d '@'"$(($(date +%s) - 1799))" "$MARKER"
+if check 99; then ok "cap: 1799s of suppression still blocks"; else not_ok "cap: released before the cap"; fi
+
+reset
+check 99 >/dev/null
+if RADIO_CPU_LOAD_SHED_MAX_SUPPRESS_SEC=60 _radio_generation_blocked_by_cpu_load 99; then
+	ok "cap: configured cap (60s) not yet reached blocks"
+else
+	not_ok "cap: fresh suppression should block under a 60s cap"
+fi
+
+# ============================================================
+# 経過ログ: 抑制中は間引いて出す（既定 1800 秒）。マーカー mtime は変えない
+# ============================================================
+reset
+check 99 >/dev/null
+: >"$TMP/log.txt"
+check 99 >/dev/null
+[ -s "$TMP/log.txt" ] && not_ok "progress log: should be throttled right after the start" || ok "progress log: throttled right after the start"
+printf '%s' "$(($(date +%s) - 1801))" >"$TMP_MARKERS_DIR/.radio_cpu_load_shed_log_last"
+check 99 >/dev/null
+grep -q '継続中: cpu=99%' "$TMP/log.txt" && ok "progress log: emitted after the interval with cpu%" || not_ok "progress log: missing after the interval"
+
+# ============================================================
 # 生成のみ抑止: ゲートは schedule_nonessential_audio_jobs の中だけにあり、
 # 再生側の関数からは呼ばれていない
 # ============================================================
