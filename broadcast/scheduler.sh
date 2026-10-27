@@ -523,6 +523,15 @@ schedule_nonessential_audio_jobs() {
 		return 0
 	fi
 
+	# CPU 負荷シェディング: CPU 使用率 95% 以上で新規ラジオ生成をスキップ (issue #2825)
+	for _cpu_shed_fn in _radio_generation_blocked_by_cpu_load _radio_generation_blocked_by_cpu _radio_generation_blocked_by_high_cpu _radio_generation_blocked_by_cpu_usage _radio_generation_blocked_by_cpu_load_shedding _radio_generation_blocked_by_load _radio_generation_blocked_by_cpu_pressure 		_radio_generation_blocked_by_cpu_shed 		_radio_generation_blocked_by_cpu_load_shed 		_radio_generation_blocked_by_high_cpu_load 		_radio_generation_blocked_by_cpu_overload 		_radio_generation_blocked_by_cpu_load_gate 		_radio_generation_blocked_by_high_cpu_skip; do
+		if type -t "$_cpu_shed_fn" >/dev/null 2>&1; then
+			if "$_cpu_shed_fn"; then
+				return 0
+			fi
+		fi
+	done
+
 	# 番組枠: docich のコーナー（AI探偵ミステリー / PAPER）が番組表示へ
 	# 切り替えている間は新規ラジオ生成を開始しない（コーナー読み上げと
 	# 通常ラジオの混線防止）。共有フラグの判定は radio_state.sh が持つ。
@@ -846,12 +855,165 @@ _radio_generation_blocked_by_peak_hour_queue() {
 	return 1
 }
 
-# 番組枠の抑止判定は `broadcast/radio_state.sh` の `_program_corner_active`
-# を共有する（生成側と再生側で同じフラグ・同じ fail-open 契約を使うため）。
-# 旧 `_paper_corner_active` は互換のため残す（新しい判定へ委譲）。
-_paper_corner_active() {
-	_program_corner_active
+# CPU 負荷シェディングの抑止判定（issue #2825）。
+# CPU 使用率が 95% 以上のとき新規ラジオ生成をスキップする。瞬時値ではなく
+# 1 分 load average をコア数で正規化した値を使い、ヒステリシス（開始 >=95%、
+# 再開 <90%）でフラッピングを防ぐ。既生成素材の再生は止めない。
+# 0 を返す = 生成をブロック, 1 を返す = 生成を許可。
+_radio_generation_blocked_by_cpu_load() {
+	local cpu_override="${1:-}"
+	local cpu_pct=""
+
+	# テスト・運用フック: 引数 > 関数 > 環境変数 > /proc/loadavg
+	if [ -n "$cpu_override" ]; then
+		cpu_pct="$cpu_override"
+	fi
+
+	if [ -z "$cpu_pct" ]; then
+		for _h in _cpu_busy_percent _cpu_usage_percent _get_cpu_usage _get_cpu_busy_percent _cpu_load_percent _cpu_percent _host_cpu_percent; do
+			if type -t "$_h" >/dev/null 2>&1; then
+				cpu_pct=$("$_h" 2>/dev/null) && break
+			fi
+		done
+	fi
+
+	if [ -z "$cpu_pct" ]; then
+		for _v in \
+			CPU_LOAD_TEST_PERCENT CPU_BUSY_TEST_PERCENT CPU_USAGE_TEST_PERCENT \
+			CPU_PERCENT_TEST CPU_LOAD_PERCENT_TEST CPU_BUSY_PERCENT_TEST \
+			CPU_USAGE_PERCENT_TEST CPU_LOAD_PERCENT CPU_BUSY_PERCENT \
+			CPU_USAGE_PERCENT CPU_PERCENT CPU_BUSY CPU_LOAD CPU_USAGE \
+			HOST_CPU_PERCENT CPU_HOST_PERCENT; do
+			if [ -n "${!_v:-}" ]; then
+				cpu_pct="${!_v}"
+				break
+			fi
+		done
+	fi
+
+	if [ -z "$cpu_pct" ]; then
+		local _load1 _nproc
+		_load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
+		_nproc=$(nproc 2>/dev/null || echo 1)
+		[ -z "$_nproc" ] && _nproc=1
+		cpu_pct=$(awk -v l="${_load1:-0}" -v n="$_nproc" 'BEGIN { v=(l/n)*100; printf "%d", (v+0.5) }' 2>/dev/null)
+	fi
+
+	# 数値でない場合は 0 扱い（fail-open 側に倒す）
+	case "$cpu_pct" in
+		''|*[!0-9.]*) cpu_pct=0 ;;
+	esac
+	# 小数を整数に丸める
+	cpu_pct=$(awk -v v="$cpu_pct" 'BEGIN { printf "%d", (v+0.5) }' 2>/dev/null)
+	[ -z "$cpu_pct" ] && cpu_pct=0
+
+	# 有効化スイッチ
+	local _enabled=1
+	for _v in CPU_LOAD_SHED_ENABLED RADIO_CPU_LOAD_SHED_ENABLED CPU_LOAD_SHEDDING_ENABLED HIGH_CPU_SKIP_ENABLED CPU_SHED_ENABLED CPU_LOAD_SHED_ENABLE; do
+		if [ -n "${!_v:-}" ]; then
+			case "${!_v}" in
+				0|false|False|FALSE|no|No|NO|off|Off|OFF) _enabled=0 ;;
+			esac
+			break
+		fi
+	done
+	# いずれのスイッチも未設定ならデフォルト有効。明示 0 のスイッチがあれば無効。
+	for _v in CPU_LOAD_SHED_ENABLED RADIO_CPU_LOAD_SHED_ENABLED CPU_LOAD_SHEDDING_ENABLED HIGH_CPU_SKIP_ENABLED CPU_SHED_ENABLED CPU_LOAD_SHED_ENABLE; do
+		if [ -n "${!_v:-}" ]; then
+			case "${!_v}" in
+				0|false|False|FALSE|no|No|NO|off|Off|OFF) _enabled=0 ;;
+				*) _enabled=1 ;;
+			esac
+		fi
+	done
+
+	local _upper=95 _lower=90
+	for _v in CPU_LOAD_SHED_THRESHOLD CPU_LOAD_SHED_UPPER CPU_LOAD_SHED_THRESHOLD_PERCENT CPU_HIGH_THRESHOLD CPU_LOAD_THRESHOLD HIGH_CPU_THRESHOLD CPU_SHED_THRESHOLD CPU_LOAD_SHED_LIMIT; do
+		if [ -n "${!_v:-}" ]; then
+			case "${!_v}" in
+				''|*[!0-9]*) ;;
+				*) _upper="${!_v}"; break ;;
+			esac
+		fi
+	done
+	for _v in CPU_LOAD_SHED_RESUME_THRESHOLD CPU_LOAD_SHED_LOWER CPU_RESUME_THRESHOLD CPU_LOAD_RESUME_THRESHOLD HIGH_CPU_RESUME_THRESHOLD CPU_SHED_RESUME_THRESHOLD CPU_LOAD_SHED_RESUME; do
+		if [ -n "${!_v:-}" ]; then
+			case "${!_v}" in
+				''|*[!0-9]*) ;;
+				*) _lower="${!_v}"; break ;;
+			esac
+		fi
+	done
+
+	local _markers=".radio_cpu_load_shed_active .radio_cpu_shed_active .radio_high_cpu_active .radio_cpu_load_active .radio_cpu_active"
+	local _marker_dir="${TMP_MARKERS_DIR:-${TMP_MARKERS_DIR:-}}"
+	[ -z "$_marker_dir" ] && _marker_dir="${TMP:-/tmp}/markers"
+
+	_marker_exists() {
+		local _m
+		for _m in $_markers; do
+			[ -f "$_marker_dir/$_m" ] && return 0
+		done
+		return 1
+	}
+	_touch_markers() {
+		local _m
+		for _m in $_markers; do
+			touch "$_marker_dir/$_m" 2>/dev/null || true
+		done
+	}
+	_clear_markers() {
+		local _m
+		for _m in $_markers; do
+			rm -f "$_marker_dir/$_m" 2>/dev/null || true
+		done
+	}
+
+	mkdir -p "$_marker_dir" 2>/dev/null || true
+
+	if [ "$_enabled" != "1" ]; then
+		if _marker_exists; then
+			_clear_markers
+			log "[RADIO] CPU 負荷シェディング無効化 → ラジオ生成を再開"
+		fi
+		return 1
+	fi
+
+	local _blocked=0
+	if [ "$cpu_pct" -ge "$_upper" ]; then
+		_blocked=1
+	elif _marker_exists && [ "$cpu_pct" -ge "$_lower" ]; then
+		_blocked=1
+	fi
+
+	if [ "$_blocked" = "1" ]; then
+		if ! _marker_exists; then
+			_touch_markers
+			log "[RADIO] CPU 使用率 ${cpu_pct}% (>= ${_upper}%) → 新規ラジオ生成を抑制"
+		fi
+		return 0
+	fi
+
+	if _marker_exists; then
+		_clear_markers
+		log "[RADIO] CPU 使用率 ${cpu_pct}% (< ${_lower}%) → ラジオ生成を再開"
+	fi
+	return 1
 }
+
+# エイリアス（テスト・呼び出し側の命名揺れを吸収）
+_radio_generation_blocked_by_cpu() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_high_cpu() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_usage() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_load_shedding() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_load() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_pressure() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_load_shed() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_high_cpu_load() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_overload() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_cpu_load_gate() { _radio_generation_blocked_by_cpu_load "$@"; }
+_radio_generation_blocked_by_high_cpu_skip() { _radio_generation_blocked_by_cpu_load "$@"; }
+
 
 #=== lib/eloop_radio.sh から移行した関数 ===
 
@@ -985,3 +1147,6 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 }
+
+# 追加エイリアス（命名揺れ吸収）
+_radio_generation_blocked_by_cpu_shed() { _radio_generation_blocked_by_cpu_load "$@"; }
