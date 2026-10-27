@@ -91,6 +91,14 @@ _outbound_chat_log_twitch_failure() {
 	cp "$err_file" "$log_dir/last_twitch_send_error.txt" 2>/dev/null || true
 }
 
+_outbound_chat_log_twitch_success() {
+	local basename="$1"
+	local log_dir="${TMP_DEBUG_DIR:-tmp/debug}"
+	local log_file="$log_dir/outbound_chat_twitch.log"
+	mkdir -p "$log_dir" 2>/dev/null || true
+	printf '[%s] twitch send ok: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$basename" >>"$log_file" 2>/dev/null || true
+}
+
 _outbound_chat_twitch_backoff_file() {
 	printf '%s/twitch_backoff_until\n' "$OUTBOUND_CHAT_QUEUE_DIR"
 }
@@ -449,6 +457,7 @@ outbound_queue_consume_once() {
 	local err_file
 	err_file=$(mktemp "${OUTBOUND_CHAT_QUEUE_DIR}/.twitch_send_err.XXXXXXXX" 2>/dev/null || echo "${OUTBOUND_CHAT_QUEUE_DIR}/.twitch_send_err_${RANDOM}")
 	if ./twitch_chat.sh send "$message" >/dev/null 2>"$err_file"; then
+		_outbound_chat_log_twitch_success "$basename"
 		rm -f "$err_file"
 		_outbound_chat_clear_twitch_failure_state
 		_outbound_chat_send_youtube_mirror "$message" "$basename"
