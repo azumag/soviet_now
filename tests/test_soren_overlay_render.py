@@ -71,7 +71,9 @@ class SorenOverlayRenderTests(unittest.TestCase):
             if len(ticks) >= 3:
                 raise KeyboardInterrupt
 
-        with mock.patch.object(self.module, "render_from_show_status", side_effect=fake_render), \
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OPS_REFRESH_SEC": "0"}), \
+                mock.patch.object(self.module, "show_status_once", return_value="OPS"), \
+                mock.patch.object(self.module, "render", side_effect=fake_render), \
                 mock.patch.object(self.module.time, "sleep", side_effect=lambda s: sleeps.append(s)):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.serve(
@@ -91,7 +93,9 @@ class SorenOverlayRenderTests(unittest.TestCase):
                 raise KeyboardInterrupt
             raise RuntimeError("render failed")
 
-        with mock.patch.object(self.module, "render_from_show_status", side_effect=boom), \
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OPS_REFRESH_SEC": "0"}), \
+                mock.patch.object(self.module, "show_status_once", return_value="OPS"), \
+                mock.patch.object(self.module, "render", side_effect=boom), \
                 mock.patch.object(self.module.time, "sleep", side_effect=lambda s: None):
             with self.assertRaises(KeyboardInterrupt):
                 self.module.serve(2, out_file="o", width="1", height="1",
@@ -108,7 +112,9 @@ class SorenOverlayRenderTests(unittest.TestCase):
         def fake_render(**kwargs):
             renders.append(kwargs)
 
-        with mock.patch.object(self.module, "render_from_show_status", side_effect=fake_render), \
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OPS_REFRESH_SEC": "0"}), \
+                mock.patch.object(self.module, "show_status_once", return_value="OPS"), \
+                mock.patch.object(self.module, "render", side_effect=fake_render), \
                 mock.patch.object(self.module.time, "sleep", side_effect=lambda s: None), \
                 mock.patch.object(self.module.os, "getppid", side_effect=lambda: next(ppids)):
             self.module.serve(2, out_file="o", width="1", height="1",
@@ -125,9 +131,11 @@ class SorenOverlayRenderTests(unittest.TestCase):
         reparented before ``serve`` even started still exits without rendering.
         """
         renders = []
-        with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": "4242"}), \
+        with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": "4242",
+                                                     "SOREN_OPS_REFRESH_SEC": "0"}), \
                 mock.patch.object(self.module.os, "getppid", return_value=1), \
-                mock.patch.object(self.module, "render_from_show_status",
+                mock.patch.object(self.module, "show_status_once", return_value="OPS") as producer, \
+                mock.patch.object(self.module, "render",
                                   side_effect=lambda **k: renders.append(k)), \
                 mock.patch.object(self.module.time, "sleep", side_effect=lambda s: None):
             self.module.serve(2, out_file="o", width="1", height="1",
@@ -135,6 +143,7 @@ class SorenOverlayRenderTests(unittest.TestCase):
                               event_keep="1", event_visible_sec="1",
                               event_work_state_file="w")
         self.assertEqual(renders, [])
+        producer.assert_not_called()
 
     def test_expected_parent_pid_reads_the_wrapper_value(self):
         with mock.patch.dict(self.module.os.environ, {"SOREN_OVERLAY_PARENT_PID": "4242"}):

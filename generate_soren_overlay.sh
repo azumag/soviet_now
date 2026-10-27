@@ -26,6 +26,16 @@ case "$interval" in
 esac
 (( interval < 1 )) && interval=1
 
+# #970 follow-up: `show_status.sh --once` is the heaviest per-tick path (a 3k
+# line shell script with many short-lived helpers). The event/chat/STATS
+# surfaces still render at `interval`; only the OPS text is reused for
+# SOREN_OPS_REFRESH_SEC seconds. 0 restores the old every-tick behavior.
+SOREN_OPS_REFRESH_SEC="${SOREN_OPS_REFRESH_SEC:-10}"
+case "$SOREN_OPS_REFRESH_SEC" in
+''|*[!0-9]*) SOREN_OPS_REFRESH_SEC=10 ;;
+esac
+export SOREN_OPS_REFRESH_SEC
+
 out_file="${SOREN_OVERLAY_HTML_FILE:-tmp/state/soren_overlay.html}"
 width="${SOREN_OVERLAY_WIDTH:-1120}"
 height="${SOREN_OVERLAY_HEIGHT:-980}"
