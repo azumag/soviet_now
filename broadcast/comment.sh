@@ -2276,12 +2276,50 @@ _comment_is_valid_translation_candidate() {
 	return 0
 }
 
+# 翻訳の失敗を握り潰さないための専用ログ (#2793)。呼び出し元は
+# `translation_text=$(_comment_generate_translation ...)` と command
+# substitution で受けるため、stdout へ書いた記録は変数へ混入するか消える。
+# 失敗種別 (timeout / provider_error / empty_output / invalid_output) と
+# agent・rc・試行回数を 1 行で専用ファイルへ直接残す。記録自体は best-effort
+# で、翻訳経路を止めない。
+# #2849: legacy (soviet_now) 翻訳段のマーカーは native docich の
+# `src/docich/comment/translation.py` の `_log_comment_translation_failure` と
+# grep 互換にする。native 形式: `[COMMENT_TRANSLATION] <ts> failed: <kind>[: detail]`。
+# 失敗以外の事象 (skip / stop / exhausted / fallback / success) は
+# `${event}: ${kind}` 形式で残す (native は失敗のみを記録する)。
+_comment_translation_log() {
+	local event="$1" kind="$2" agent="${3:-}" rc="${4:-}" attempt="${5:-}"
+	local log_file="${COMMENT_TRANSLATION_LOG:-logs/comment_translation.log}"
+	local ts detail line
+	ts="$(date '+%Y-%m-%d %H:%M:%S')"
+	detail=""
+	[ -n "$agent" ] && detail="${detail}agent=${agent}"
+	[ -n "$rc" ] && detail="${detail:+${detail} }rc=${rc}"
+	[ -n "$attempt" ] && detail="${detail:+${detail} }attempt=${attempt}"
+	if [ "$event" = "failure" ]; then
+		if [ -n "$detail" ]; then
+			line="[${ts}] [COMMENT_TRANSLATION] failed: ${kind}: ${detail}"
+		else
+			line="[${ts}] [COMMENT_TRANSLATION] failed: ${kind}"
+		fi
+	else
+		if [ -n "$detail" ]; then
+			line="[${ts}] [COMMENT_TRANSLATION] ${event}: ${kind}: ${detail}"
+		else
+			line="[${ts}] [COMMENT_TRANSLATION] ${event}: ${kind}"
+		fi
+	fi
+	printf '%s\n' "$line" >&2
+	mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
+	printf '%s\n' "$line" >>"$log_file" 2>/dev/null || true
+}
+
 # 翻訳は補助処理。翻訳プロバイダの失敗を通常コメント生成の agent
 # backoff ファイルへ波及させないため、ai_generate_list は使わず dispatch
 # だけを順番に呼ぶ。翻訳に失敗しても日本語返信を採用する。
 _comment_generate_translation() {
 	local prompt_file="$1" agent_list="$2" timeout_sec="$3" last_agent_file="${4:-}"
-	local agents=() agent output rc attempted=0
+	local agents=() agent output rc attempted=0 kind
 	[ -n "$last_agent_file" ] && : >"$last_agent_file"
 	case "$timeout_sec" in
 	'' | *[!0-9]*) timeout_sec=20 ;;
@@ -2293,11 +2331,11 @@ _comment_generate_translation() {
 		agent="${agent%${agent##*[![:space:]]}}"
 		[ -n "$agent" ] || continue
 		if [ "$attempted" -ge 2 ]; then
-			log "[COMMENT_TRANSLATION] agent試行上限(2)に到達" >&2
+			_comment_translation_log "stop" "agent_limit" "$agent" "" "$attempted"
 			break
 		fi
 		if declare -F _ai_backoff_check >/dev/null 2>&1 && ! _ai_backoff_check "$agent"; then
-			log "[COMMENT_TRANSLATION] backoff skip: ${agent} (no force retry)" >&2
+			_comment_translation_log "skip" "backoff" "$agent" "" "$attempted"
 			continue
 		fi
 		attempted=$((attempted + 1))
@@ -2313,11 +2351,26 @@ _comment_generate_translation() {
 		fi
 		if [ "$rc" -eq 0 ] && [ -n "$output" ] && _comment_is_valid_translation_candidate "$output"; then
 			[ -n "$last_agent_file" ] && printf '%s\n' "$agent" >"$last_agent_file"
+			_comment_translation_log "success" "ok" "$agent" 0 "$attempted"
 			printf '%s' "$output"
 			return 0
 		fi
-		log "[COMMENT_TRANSLATION] ${agent} failed/invalid → next agent (no shared backoff)" >&2
+		# 失敗種別を残す: 呼び出し側はこの関数の stdout だけを翻訳文として
+		# 受け取るため、理由は専用ログへ書かないと復元できない (#2793)。
+		if [ "$rc" -ne 0 ]; then
+			case "$rc" in
+			124) kind="timeout" ;;
+			2) kind="invalid_agent" ;;
+			*) kind="provider_error" ;;
+			esac
+		elif [ -z "$output" ]; then
+			kind="empty_output"
+		else
+			kind="invalid_output"
+		fi
+		_comment_translation_log "failure" "$kind" "$agent" "$rc" "$attempted"
 	done
+	_comment_translation_log "exhausted" "no_translation" "" "" "$attempted"
 	return 1
 }
 
@@ -3835,14 +3888,17 @@ RETRYCOMMENT
 							else
 								rm -f "$comment_speech_meta_file"
 								comment_speech_meta_file=""
+								_comment_translation_log "failure" "segment_validation_failed" "" "" "${english_comment_count:-0}"
 								log "[COMMENT] 英語翻訳の段落検証失敗 → 日本語返信のみ継続"
 							fi
 						fi
 						rm -f "$classification_file" "$japanese_file" "$translation_file"
 					else
+						_comment_translation_log "fallback" "japanese_only" "" "" "${english_comment_count:-0}"
 						log "[COMMENT] 英語翻訳呼出し失敗 → 日本語返信のみ継続"
 					fi
 				else
+					_comment_translation_log "failure" "prompt_build_failed" "" "" "${english_comment_count:-0}"
 					log "[COMMENT] 日本語返信の段落境界を確定できない → 日本語返信のみ継続"
 				fi
 				rm -f "$translation_prompt_file"
