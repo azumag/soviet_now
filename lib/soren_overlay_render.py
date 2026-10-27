@@ -414,6 +414,49 @@ def _expected_parent_pid():
     return value if value > 0 else None
 
 
+def _ops_refresh_seconds() -> float:
+    """Seconds to reuse one OPS producer output (0 = every tick).
+
+    ``show_status.sh`` is a 3k-line shell script that spawns many short-lived
+    helpers. The event/chat/STATS surfaces are cheap and stay on the watched
+    cadence; only this producer is throttled (azumag/docich#970 follow-up).
+    Invalid, negative, NaN, or infinite values fall back to every tick so a
+    bad environment cannot silently freeze the OPS card.
+    """
+    try:
+        value = float(os.environ.get("SOREN_OPS_REFRESH_SEC", "0") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if value != value or value < 0 or value == float("inf"):
+        return 0.0
+    return value
+
+
+class OpsCache:
+    """Reuse the OPS producer text for a bounded interval.
+
+    A failed/empty producer is never cached as the new value: the previous
+    good text stays visible and the next tick retries, so a transient
+    ``show_status.sh`` failure cannot blank the card for the whole interval.
+    """
+
+    def __init__(self, refresh_sec: float):
+        self.refresh_sec = refresh_sec
+        self.raw = None
+        self.next_at = 0.0
+
+    def get(self, now: float, producer) -> str:
+        due = self.raw is None or self.refresh_sec <= 0 or now >= self.next_at
+        if due:
+            candidate = producer()
+            if candidate.strip() or self.raw is None:
+                self.raw = candidate
+            # A failed/empty producer is retried on the next tick; only a
+            # non-empty result starts the reuse interval.
+            self.next_at = now + self.refresh_sec if candidate.strip() else now
+        return self.raw or ""
+
+
 def serve(interval, **kwargs) -> None:
     """Render every ``interval`` seconds until the supervisor is gone.
 
@@ -425,6 +468,10 @@ def serve(interval, **kwargs) -> None:
     surviving renderer would keep drawing and spawning while a restart starts a
     second one (review of #675). The expected parent pid comes from the wrapper
     so the check is correct even when the wrapper dies before the first tick.
+
+    ``SOREN_OPS_REFRESH_SEC`` (default 0) lets the supervised worker reuse the
+    OPS producer output for a bounded interval while every other surface still
+    renders each tick.
     """
     try:
         interval = max(1, int(interval))
@@ -433,11 +480,12 @@ def serve(interval, **kwargs) -> None:
     parent = _expected_parent_pid()
     if parent is None:
         parent = os.getppid()
+    ops = OpsCache(_ops_refresh_seconds())
     while True:
         if os.getppid() != parent:
             return
         try:
-            render_from_show_status(**kwargs)
+            render(ops_raw=ops.get(time.monotonic(), show_status_once), **kwargs)
         except Exception:
             pass
         time.sleep(interval)
