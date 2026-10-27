@@ -1,4 +1,9 @@
+import json
+import os
+import tempfile
+import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -168,6 +173,50 @@ Last8: 4100 4800 5300 5100 6200 6800 7200 8080"""
         html = render_ops_dashboard(raw)
         self.assertIn("ALL SYSTEMS NOMINAL", html)
         self.assertNotIn("ATTENTION", html)
+
+    def test_av_sync_attention_reads_probe_state_not_diagnostics_text(self):
+        raw = """  HEALTH
+    ● Workers     9/9 ONLINE
+    ● Backend     FFMPEG LIVE
+    ! AVSync      FAILED  pairs=6 max=141.0ms drift=150.0ms"""
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "probe.json"
+            state.write_text(json.dumps({
+                "state": "failed",
+                "tested_at": int(time.time()),
+                "config": {"capture_duration_sec": 30},
+                "result": {"pair_count": 6, "max_abs_offset_ms": 141.0, "drift_ms": 150.0},
+            }), encoding="utf-8")
+            with patch.dict(os.environ, {"SOREN_DIRECT_AV_SYNC_STATE_FILE": str(state)}):
+                html = render_ops_dashboard(raw)
+        self.assertIn("ATTENTION", html)
+        self.assertIn("AVSync FAILED drift=150.0ms max=141.0ms pairs=6", html)
+        self.assertEqual(html.count("AVSync FAILED"), 1)
+
+    def test_diagnostics_av_sync_line_alone_does_not_drive_attention(self):
+        raw = """  HEALTH
+    ● Workers     9/9 ONLINE
+    ● Backend     FFMPEG LIVE
+    ! AVSync      FAILED  pairs=6 max=141.0ms drift=150.0ms"""
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"SOREN_DIRECT_AV_SYNC_STATE_FILE": str(Path(tmp) / "missing.json")}):
+                html = render_ops_dashboard(raw)
+        self.assertIn("ALL SYSTEMS NOMINAL", html)
+        self.assertNotIn("AVSync", html)
+
+    def test_stale_or_passed_av_sync_probe_stays_out_of_attention(self):
+        cases = (
+            {"state": "failed", "tested_at": int(time.time()) - 9 * 86400, "config": {}, "result": {"drift_ms": 150.0}},
+            {"state": "passed", "tested_at": int(time.time()), "config": {}, "result": {"drift_ms": 10.0}},
+        )
+        for payload in cases:
+            with self.subTest(state=payload["state"], tested_at=payload["tested_at"]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    state = Path(tmp) / "probe.json"
+                    state.write_text(json.dumps(payload), encoding="utf-8")
+                    with patch.dict(os.environ, {"SOREN_DIRECT_AV_SYNC_STATE_FILE": str(state)}):
+                        html = render_ops_dashboard("  HEALTH\n    ● Workers     9/9 ONLINE")
+                self.assertNotIn("AVSync FAILED", html)
 
 
 if __name__ == "__main__":
