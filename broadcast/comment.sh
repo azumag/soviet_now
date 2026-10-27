@@ -2282,14 +2282,33 @@ _comment_is_valid_translation_candidate() {
 # 失敗種別 (timeout / provider_error / empty_output / invalid_output) と
 # agent・rc・試行回数を 1 行で専用ファイルへ直接残す。記録自体は best-effort
 # で、翻訳経路を止めない。
+# #2849: legacy (soviet_now) 翻訳段のマーカーは native docich の
+# `src/docich/comment/translation.py` の `_log_comment_translation_failure` と
+# grep 互換にする。native 形式: `[COMMENT_TRANSLATION] <ts> failed: <kind>[: detail]`。
+# 失敗以外の事象 (skip / stop / exhausted / fallback / success) は
+# `${event}: ${kind}` 形式で残す (native は失敗のみを記録する)。
 _comment_translation_log() {
 	local event="$1" kind="$2" agent="${3:-}" rc="${4:-}" attempt="${5:-}"
 	local log_file="${COMMENT_TRANSLATION_LOG:-logs/comment_translation.log}"
-	local line
-	line="[$(date '+%Y-%m-%dT%H:%M:%S%z')] [COMMENT_TRANSLATION] event=${event} kind=${kind}"
-	[ -n "$agent" ] && line="${line} agent=${agent}"
-	[ -n "$rc" ] && line="${line} rc=${rc}"
-	[ -n "$attempt" ] && line="${line} attempt=${attempt}"
+	local ts detail line
+	ts="$(date '+%Y-%m-%d %H:%M:%S')"
+	detail=""
+	[ -n "$agent" ] && detail="${detail}agent=${agent}"
+	[ -n "$rc" ] && detail="${detail:+${detail} }rc=${rc}"
+	[ -n "$attempt" ] && detail="${detail:+${detail} }attempt=${attempt}"
+	if [ "$event" = "failure" ]; then
+		if [ -n "$detail" ]; then
+			line="[${ts}] [COMMENT_TRANSLATION] failed: ${kind}: ${detail}"
+		else
+			line="[${ts}] [COMMENT_TRANSLATION] failed: ${kind}"
+		fi
+	else
+		if [ -n "$detail" ]; then
+			line="[${ts}] [COMMENT_TRANSLATION] ${event}: ${kind}: ${detail}"
+		else
+			line="[${ts}] [COMMENT_TRANSLATION] ${event}: ${kind}"
+		fi
+	fi
 	printf '%s\n' "$line" >&2
 	mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
 	printf '%s\n' "$line" >>"$log_file" 2>/dev/null || true
