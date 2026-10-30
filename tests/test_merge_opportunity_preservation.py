@@ -127,17 +127,37 @@ class MergeOpportunityTests(unittest.TestCase):
         self.assertEqual(result['x'],0)
 
     def test_recorded_boards_keep_nextnext_lane_through_full_pipeline(self):
-        settings={'V763_DIVERSITY_W':'1.0','V767_BUNDLE':'0',
+        # 固定値は v770 LADDER_STACK を切った従来挙動で比べる (v770 を有効にした場合は下のテスト)。
+        settings={'V767_BUNDLE':'0',
                   'ANALYZE_BOARD_VERTICAL_LANE_DIRECT':'1','ANALYZE_BOARD_MERGE_TOP_MODEL':'2',
                   'ANALYZE_BOARD_WALL_CLAMP':'1','ANALYZE_BOARD_LANDING_ARC':'0'}
         for turn, expected in ((39,.6),(14,1.2),(36,1.52)):
-            with self.subTest(turn=turn), patch.dict(os.environ,settings):
+            with self.subTest(turn=turn), patch.dict(os.environ,settings), \
+                 patch.object(strategy,'_V763_DIVERSITY_W',1.0), patch.object(strategy,'_V770_LADDER_W',0.0):
                 gs=json.loads((ROOT/f'tests/fixtures/merge_opportunities/route_turn{turn}.json').read_text())['game_state']
                 an=runner.build_analysis(gs)
                 d=strategy.decide(gs,an)
                 d=runner.enforce_deadline_safety(d,an,gs,strategy)
                 d=runner.apply_strategy_final_decision(strategy,d,an,gs)
                 self.assertAlmostEqual(d['x'],expected)
+
+    def test_ladder_stack_does_not_bury_the_nextnext_twin_on_recorded_boards(self):
+        # v770 は turn39 で T5 を露出した T6 の上 (x=-2.2) に載せる。次々手 T9 の露出駒は塞がない。
+        settings={'V767_BUNDLE':'0',
+                  'ANALYZE_BOARD_VERTICAL_LANE_DIRECT':'1','ANALYZE_BOARD_MERGE_TOP_MODEL':'2',
+                  'ANALYZE_BOARD_WALL_CLAMP':'1','ANALYZE_BOARD_LANDING_ARC':'0'}
+        for turn in (39,14,36):
+            with self.subTest(turn=turn), patch.dict(os.environ,settings), \
+                 patch.object(strategy,'_V763_DIVERSITY_W',1.0), patch.object(strategy,'_V770_LADDER_W',1.0):
+                gs=json.loads((ROOT/f'tests/fixtures/merge_opportunities/route_turn{turn}.json').read_text())['game_state']
+                an=runner.build_analysis(gs)
+                d=strategy.decide(gs,an)
+                d=runner.enforce_deadline_safety(d,an,gs,strategy)
+                d=runner.apply_strategy_final_decision(strategy,d,an,gs)
+                chosen=min(an['results'],key=lambda r:abs(r['x']-d['x']))
+                nn_open={p['id'] for p in strategy._v742_open_twin(gs['pieces'],gs['nextNext']['type'])}
+                self.assertNotIn(chosen.get('landing_hit_id'),nn_open)
+                self.assertFalse(chosen.get('crosses_deadline'))
 
     def test_policy_hook_and_helper_change_rollback_identity(self):
         template="def decide(gs,an):\n return {'x':0}\ndef threshold():\n return %s\ndef merge_opportunity_alternatives(gs,an,d):\n return threshold()\n"
