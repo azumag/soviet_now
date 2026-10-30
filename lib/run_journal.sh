@@ -44,3 +44,20 @@ _journal_finish() {
 		${4:+--output-hash "$4"} \
 		${5:+--evidence-json "$5"} >/dev/null 2>&1 || true
 }
+
+# _journal_accumulate_shadow <archive> <score> <soviet> <hash> <russia>
+# 抽出 module（lib/strategy_accumulate.py）を shadow acc で並走させ、
+# 旧 acc との shadow_compare 差分を accumulated イベントの evidence として
+# journal へ記録する（soviet_now#145 の旧新比較）。
+_journal_accumulate_shadow() {
+	local root out
+	root="$(_run_journal_root)"
+	out=$(python3 "$root/lib/strategy_accumulate.py" shadow \
+		"${TMP_STATE_DIR:-tmp/state}/accumulated_games.shadow.json" \
+		"$1" "$2" "$3" "$4" "${5:-false}" "${LAST_RAW_SCORE:-}" \
+		"${ACCUMULATED_GAMES_FILE:-}" 2>/dev/null) || return 0
+	[ -n "$out" ] || return 0
+	_journal_append "$4" "accumulate" "accumulated" \
+		"score=$2 soviet=$3" \
+		"{\"score\": $2, \"soviet\": $3, \"russia\": ${5:-false}, \"archive\": \"${1##*/}\", \"shadow\": $out}"
+}
