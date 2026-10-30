@@ -8,6 +8,13 @@ if ! command -v strategy_archive_candidates >/dev/null 2>&1; then
 	unset _strategy_archive_shim_dir
 fi
 
+# strategy run journal の shadow 記録 (soviet_now#145)。失敗は握り潰す。
+if ! command -v _journal_finish >/dev/null 2>&1; then
+	_regression_shim_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+	[ -f "$_regression_shim_dir/lib/run_journal.sh" ] && source "$_regression_shim_dir/lib/run_journal.sh"
+	unset _regression_shim_dir
+fi
+
 _write_rollback_analysis_file() {
 	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
 	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" "eval_score_history.txt" <<'PY'
@@ -5127,6 +5134,10 @@ PY
 		fi
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
+		# run journal shadow (soviet_now#145): evaluate の rejection として
+		# この run を finished にする（rollback 採用 = 現 run 終了）
+		command -v _journal_finish >/dev/null 2>&1 &&
+			_journal_finish "$strategy_hash" "rejected" "regression:$result" "$rolled_hash" || true
 		if [ -n "$rolled_hash" ]; then
 			if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then
 				if _seed_current_strategy_run_from_rolling "$rolled_hash"; then
