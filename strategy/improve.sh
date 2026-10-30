@@ -1783,13 +1783,6 @@ PY
 accumulate_game_data() {
 	local archive_file="$1" score="$2" soviet="$3" strategy_hash="$4" russia="${5:-false}"
 
-	# run journal shadow (soviet_now#145): acc 蓄積を journal へ並行記録。
-	# run_id は current_strategy_run と同じ strategy hash。失敗しても蓄積は続行。
-	if [ -n "$strategy_hash" ] && command -v _journal_append >/dev/null 2>&1; then
-		_journal_append "$strategy_hash" "accumulate" "accumulated" "score=$score soviet=$soviet" \
-			"{\"score\": $score, \"soviet\": $soviet, \"russia\": $russia, \"archive\": \"${archive_file##*/}\"}"
-	fi
-
 	python3 -c "
 import json, os
 acc_file = '$ACCUMULATED_GAMES_FILE'
@@ -1872,6 +1865,11 @@ with open(acc_file, 'w') as f:
     json.dump(acc, f)
 print(f'[ACCUMULATE] 蓄積: {acc[\"count\"]}試合')
 " 2>/dev/null
+
+	# run journal shadow (soviet_now#145): 抽出 module を shadow acc で並走し、
+	# 旧 acc との差分を journal evidence へ記録。失敗しても蓄積は続行。
+	[ -n "$strategy_hash" ] && command -v _journal_accumulate_shadow >/dev/null 2>&1 &&
+		_journal_accumulate_shadow "$archive_file" "$score" "$soviet" "$strategy_hash" "$russia" || true
 }
 
 queue_fresh_objective_same_hash_lock_if_needed() {
