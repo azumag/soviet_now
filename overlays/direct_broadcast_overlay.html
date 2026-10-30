@@ -690,6 +690,9 @@ html[data-hanjuku-active="1"] .feed-panel.panel-s { flex: 1 1 0; }
   font-weight: 900;
   letter-spacing: .09em;
 }
+.dash-kpi-value.warn { color: #fde68a; }
+.dash-kpi-value.down { color: #fca5a5; }
+.dash-kpi-value.unknown { color: #aec0c9; }
 .ops-kpis .dash-kpi-value { font-size: 19px; }
 .ops-system-metrics {
   display: grid;
@@ -983,7 +986,6 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
-.ops-kpis { grid-template-columns: minmax(0, 1fr); }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-g { height: 100%; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .soren-monitor { height: 100%; min-height: 0; }
@@ -1600,6 +1602,36 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     update('cpu', 'CPU', metrics?.cpuPercent, '', 'cpuPercent', 80);
     update('memory', 'RAM', metrics?.memoryPercent, memoryDetail, 'memoryPercent', 85);
   }
+  function updateOpsDisk(container, metrics) {
+    const value = container?.querySelector?.('.ops-disk-value');
+    const sub = container?.querySelector?.('.ops-disk-sub');
+    if (!value || !sub) return;
+    const sampledAt = Number(metrics?.sampledAt);
+    const hasSample = Number.isFinite(sampledAt) && sampledAt > 0;
+    const age = hasSample ? Date.now() / 1000 - sampledAt : null;
+    const stale = hasSample && (age < 0 || age > 15);
+    const percent = Number(metrics?.diskPercent);
+    const free = metrics?.diskFreeBytes;
+    const used = metrics?.diskUsedBytes;
+    const total = metrics?.diskTotalBytes;
+    const valid = hasSample && !stale
+      && Number.isFinite(percent) && percent >= 0 && percent <= 100
+      && Number.isSafeInteger(free) && free >= 0;
+    const gib = (bytes) => Math.round(bytes / 1073741824 * 10) / 10;
+    if (!valid) {
+      value.textContent = '—';
+      value.className = 'dash-kpi-value ops-disk-value unknown';
+      value.title = '';
+      sub.textContent = stale ? 'STALE' : 'UNKNOWN';
+      return;
+    }
+    value.textContent = `${gib(free)}G`;
+    value.className = `dash-kpi-value ops-disk-value ${percent >= 95 ? 'down' : percent >= 85 ? 'warn' : 'ok'}`;
+    sub.textContent = `${Math.round(percent)}% USED`;
+    value.title = Number.isSafeInteger(used) && Number.isSafeInteger(total) && total > 0
+      ? `ROOT ${gib(used)}/${gib(total)} GiB used · FREE ${gib(free)} GiB`
+      : `FREE ${gib(free)} GiB`;
+  }
   function adaptOpsDashboard(container) {
     const dash = container?.querySelector?.('.ops-dashboard');
     const panel = container?.parentElement;
@@ -1646,6 +1678,15 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     workerCell.appendChild(workerValue);
     kpis.appendChild(workerCell);
 
+    // Free space is the headline so it stays visible when the compact layout
+    // hides the sub line; the percentage drives the warning tone.
+    const diskCell = dashNode('dash-kpi');
+    diskCell.appendChild(dashNode('dash-kpi-label', 'DISK FREE'));
+    const diskValue = dashNode('dash-kpi-value ops-disk-value unknown', '—');
+    diskCell.appendChild(diskValue);
+    diskCell.appendChild(dashNode('dash-kpi-sub ops-disk-sub', 'UNKNOWN'));
+    kpis.appendChild(diskCell);
+
     const backend = backendLine
       ? backendLine.replace(/^[●○✓!▸]\s*/, '').replace(/^Backend\s+/, '').trim()
       : '—';
@@ -1665,6 +1706,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     root.appendChild(systemMetrics);
     updateOpsSystemMetrics(root, metrics);
+    updateOpsDisk(root, metrics);
 
     const servicesHead = dashNode('ops-services-head');
     servicesHead.appendChild(dashNode('', 'SERVICES'));
@@ -2053,6 +2095,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       lastFeedSKey = sKey;
     }
     updateOpsSystemMetrics(feedS, state?.feeds?.systemMetrics);
+    updateOpsDisk(feedS, state?.feeds?.systemMetrics);
     if (improveActive) {
       const iKey = `${i?.updatedAt || 0}:${(i?.logLines || []).join('\n')}`;
       if (iKey !== lastFeedIKey) {

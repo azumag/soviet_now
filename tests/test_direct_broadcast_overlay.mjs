@@ -111,10 +111,15 @@ test('broadcast state publishes only bounded finite direct-stream system metrics
     memory_percent: 65,
     memory_used_bytes: 6500,
     memory_total_bytes: 10000,
+    disk_percent: 78.5,
+    disk_used_bytes: 3400000000,
+    disk_total_bytes: 4400000000,
+    disk_free_bytes: 1000000000,
     history: Array.from({ length: 50 }, (_, index) => ({
       ts: 1780000000 - index,
       cpu_percent: index === 49 ? Number.NaN : index,
       memory_percent: index === 48 ? 120 : 60,
+      disk_percent: index === 47 ? 101 : 78.5,
     })),
     private_path: temp,
   } }));
@@ -127,10 +132,15 @@ test('broadcast state publishes only bounded finite direct-stream system metrics
     memoryPercent: 65,
     memoryUsedBytes: 6500,
     memoryTotalBytes: 10000,
+    diskPercent: 78.5,
+    diskUsedBytes: 3400000000,
+    diskTotalBytes: 4400000000,
+    diskFreeBytes: 1000000000,
     history: Array.from({ length: 36 }, (_, index) => ({
       ts: 1780000000 - (index + 14),
       cpuPercent: index === 35 ? null : index + 14,
       memoryPercent: index === 34 ? null : 60,
+      diskPercent: index === 33 ? null : 78.5,
     })),
   });
   assert.doesNotMatch(JSON.stringify(state.feeds.systemMetrics), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

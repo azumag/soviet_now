@@ -50,7 +50,7 @@ class RuntimeCheckError(RuntimeError):
 
 
 class SystemMetricsSampler:
-    """Read bounded host CPU/RAM telemetry in the existing FFmpeg progress loop."""
+    """Read bounded host CPU/RAM/root-disk telemetry in the FFmpeg progress loop."""
 
     def __init__(self, interval_sec: float = SYSTEM_METRICS_INTERVAL_SEC) -> None:
         self.interval_sec = interval_sec
@@ -63,6 +63,10 @@ class SystemMetricsSampler:
             "memory_percent": None,
             "memory_used_bytes": None,
             "memory_total_bytes": None,
+            "disk_percent": None,
+            "disk_used_bytes": None,
+            "disk_total_bytes": None,
+            "disk_free_bytes": None,
             "history": self.history,
         }
 
@@ -102,12 +106,38 @@ class SystemMetricsSampler:
         except (OSError, KeyError, ValueError, UnicodeError):
             return None
 
+    @staticmethod
+    def _read_disk(path: str = "/") -> tuple[int, int, int, float] | None:
+        """Read root filesystem usage the way df reports it.
+
+        Reserved blocks count as used but are not available to the runtime
+        user, so the percentage uses used + user-available as its denominator.
+        """
+        try:
+            info = os.statvfs(path)
+        except (OSError, ValueError):
+            return None
+        block = int(info.f_frsize or info.f_bsize or 0)
+        total = block * int(info.f_blocks)
+        free = block * int(info.f_bfree)
+        available = block * int(info.f_bavail)
+        if block <= 0 or total <= 0:
+            return None
+        used = max(0, total - free)
+        available = max(0, available)
+        denominator = used + available
+        if denominator <= 0:
+            return None
+        percent = min(100.0, round(100.0 * used / denominator, 1))
+        return used, total, available, percent
+
     def sample(
         self,
         *,
         now_epoch: int,
         now_monotonic: float,
         proc_root: Path = Path("/proc"),
+        disk_root: str = "/",
         platform: str = sys.platform,
     ) -> dict[str, object]:
         if self.last_sample_monotonic is not None and now_monotonic - self.last_sample_monotonic < self.interval_sec:
@@ -118,6 +148,10 @@ class SystemMetricsSampler:
         memory_percent: float | None = None
         memory_used: int | None = None
         memory_total: int | None = None
+        disk_used: int | None = None
+        disk_total: int | None = None
+        disk_free: int | None = None
+        disk_percent: float | None = None
         if platform.startswith("linux"):
             current = self._read_cpu(proc_root / "stat")
             if current is not None and self.previous_cpu is not None:
@@ -132,10 +166,15 @@ class SystemMetricsSampler:
                 memory_used, memory_total = memory
                 memory_percent = round(100.0 * memory_used / memory_total, 1)
 
+            disk = self._read_disk(disk_root)
+            if disk is not None:
+                disk_used, disk_total, disk_free, disk_percent = disk
+
         point: dict[str, int | float | None] = {
             "ts": now_epoch,
             "cpu_percent": cpu_percent,
             "memory_percent": memory_percent,
+            "disk_percent": disk_percent,
         }
         self.history.append(point)
         del self.history[:-SYSTEM_METRICS_HISTORY_LIMIT]
@@ -145,6 +184,10 @@ class SystemMetricsSampler:
             "memory_percent": memory_percent,
             "memory_used_bytes": memory_used,
             "memory_total_bytes": memory_total,
+            "disk_percent": disk_percent,
+            "disk_used_bytes": disk_used,
+            "disk_total_bytes": disk_total,
+            "disk_free_bytes": disk_free,
             "history": self.history,
         }
         return self.latest

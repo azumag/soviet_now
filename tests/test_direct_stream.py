@@ -56,6 +56,11 @@ class DirectStreamTests(unittest.TestCase):
             self.assertIsNone(first["cpu_percent"])
             self.assertEqual(first["memory_percent"], 50.0)
             self.assertEqual(first["memory_used_bytes"], 500 * 1024)
+            self.assertGreater(first["disk_total_bytes"], 0)
+            self.assertGreaterEqual(first["disk_free_bytes"], 0)
+            self.assertLessEqual(first["disk_free_bytes"], first["disk_total_bytes"])
+            self.assertGreaterEqual(first["disk_percent"], 0)
+            self.assertLessEqual(first["disk_percent"], 100)
 
             skipped = sampler.sample(now_epoch=102, now_monotonic=2, proc_root=proc, platform="linux")
             self.assertIs(skipped, first, "reads are cadence limited")
@@ -95,8 +100,55 @@ class DirectStreamTests(unittest.TestCase):
                 )
             self.assertIsNone(result["cpu_percent"])
             self.assertIsNone(result["memory_percent"])
+            self.assertIsNone(result["disk_percent"])
+            self.assertIsNone(result["disk_free_bytes"])
             self.assertEqual(len(result["history"]), direct_stream.SYSTEM_METRICS_HISTORY_LIMIT)
             self.assertEqual(result["history"][0]["ts"], 120)
+
+    def test_system_metrics_disk_matches_df_and_fails_closed(self) -> None:
+        fake = type("Statvfs", (), {
+            "f_frsize": 4096,
+            "f_bsize": 4096,
+            "f_blocks": 1000,
+            "f_bfree": 200,
+            "f_bavail": 100,
+        })()
+        sampler = direct_stream.SystemMetricsSampler()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = Path(temp_dir)
+            self.write_proc(proc, "100 0 50 850 0 0 0 0 0 0")
+            with mock.patch.object(direct_stream.os, "statvfs", return_value=fake):
+                result = sampler.sample(
+                    now_epoch=100,
+                    now_monotonic=0,
+                    proc_root=proc,
+                    disk_root=temp_dir,
+                    platform="linux",
+                )
+        # df(1) divides by used + user-available, not the raw total.
+        self.assertEqual(result["disk_total_bytes"], 4096 * 1000)
+        self.assertEqual(result["disk_used_bytes"], 4096 * 800)
+        self.assertEqual(result["disk_free_bytes"], 4096 * 100)
+        self.assertEqual(result["disk_percent"], 88.9)
+        self.assertEqual(result["history"][-1]["disk_percent"], 88.9)
+
+    def test_system_metrics_disk_failure_keeps_unknown(self) -> None:
+        sampler = direct_stream.SystemMetricsSampler()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proc = Path(temp_dir)
+            self.write_proc(proc, "100 0 50 850 0 0 0 0 0 0")
+            with mock.patch.object(direct_stream.os, "statvfs", side_effect=OSError("gone")):
+                result = sampler.sample(
+                    now_epoch=100,
+                    now_monotonic=0,
+                    proc_root=proc,
+                    disk_root=temp_dir,
+                    platform="linux",
+                )
+        self.assertIsNone(result["disk_percent"])
+        self.assertIsNone(result["disk_used_bytes"])
+        self.assertIsNone(result["disk_total_bytes"])
+        self.assertIsNone(result["disk_free_bytes"])
 
     def test_live_command_has_expected_video_audio_and_loopback_output(self) -> None:
         config = direct_stream.load_config(base_env())
