@@ -112,7 +112,7 @@ sp="$REDACTED_DIAG_SPOOL_DIR/$eid.json"
 [ -f "$sp" ] && pass 'restricted spool entry written' || not_ok 'spool entry missing'
 grep -q 'viewer_secret' "$sp" && pass 'spool holds raw user' || not_ok 'spool lost raw user'
 grep -q '"expires_at"' "$sp" && pass 'spool entry has expires_at' || not_ok 'spool missing expires_at'
-[ "$(stat -f %Lp "$sp" 2>/dev/null || stat -c %a "$sp" 2>/dev/null)" = "600" ] && pass 'spool entry mode 0600' || not_ok 'spool entry mode not 0600'
+[ "$(python3 -c 'import os,stat,sys;print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$sp")" = "0o600" ] && pass 'spool entry mode 0600' || not_ok 'spool entry mode not 0600'
 
 # 他 category / 空 comment は取り込まない・fail-open
 before=$(find "$REDACTED_DIAG_EVENTS_DIR" -name '*.json' | wc -l | tr -d ' ')
