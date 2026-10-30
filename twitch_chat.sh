@@ -320,7 +320,7 @@ _fetch_nolock() {
     local new_sanitized=""
 
     # raw.logから新規コメントを取得
-    if [ -f "$RAW_LOG" ]; then
+    if [ -f "$RAW_LOG" ] || compgen -G "$CHAT_DIR/.raw_fetch.*" > /dev/null; then
         local last_offset
         last_offset=$(cat "$OFFSET_FILE" 2>/dev/null || echo 0)
         case "$last_offset" in ''|*[!0-9]*) last_offset=0 ;; esac
@@ -329,6 +329,31 @@ _fetch_nolock() {
         # デーモンはロックを取らず1行ごとに raw.log を開いて追記する。読み取り後に
         # raw.log を書き戻す/切り詰めると、その間に届いた行を既読扱いで失う。
         # rename でスナップショットを取り、以降の追記は新しい raw.log に入れる。
+        #
+        # 残る境界（#713）: writer が rename 直前に既に open していた FD は mv 後の
+        # snapshot inode に書き込むため、snapshot をすぐ rm するとその追記だけ
+        # 未処理で消える。snapshot は消さずに残し、消費済み行数を .pos に記録して
+        # 次回 fetch が残りを回収する。writer の open→write→close は即座に終わる
+        # （1行追記のみ）ため、前回 rename 時点の FD は次回 fetch までに必ず閉じ
+        # られており、回収後の削除は安全。
+        local harvested="" orphan
+        for orphan in "$CHAT_DIR"/.raw_fetch.*; do
+            [ -f "$orphan" ] || continue
+            case "$orphan" in *.pos) continue ;; esac
+            local orphan_pos=0
+            if [ -f "$orphan.pos" ]; then
+                orphan_pos=$(cat "$orphan.pos" 2>/dev/null || echo 0)
+                case "$orphan_pos" in ''|*[!0-9]*) orphan_pos=0 ;; esac
+            fi
+            local late
+            late=$(tail -n "+$((orphan_pos + 1))" "$orphan" 2>/dev/null || true)
+            if [ -n "$late" ]; then
+                harvested="${harvested}${late}
+"
+            fi
+            rm -f "$orphan" "$orphan.pos"
+        done
+
         local snapshot="$CHAT_DIR/.raw_fetch.$$"
         if [ -s "$RAW_LOG" ] && mv "$RAW_LOG" "$snapshot" 2>/dev/null; then
             echo "0" > "$OFFSET_FILE"
@@ -336,8 +361,10 @@ _fetch_nolock() {
             # 旧形式の書き戻しで残ったオフセットが行数を超えていたら先頭から読む。
             [ "$last_offset" -le "$current_lines" ] || last_offset=0
             new_comments=$(tail -n "+$((last_offset + 1))" "$snapshot")
-            rm -f "$snapshot"
+            # 遅い追記の回収のため snapshot は消さず、消費済み行数を残す。
+            echo "$current_lines" > "$snapshot.pos"
         fi
+        new_comments="${harvested}${new_comments}"
 
         if [ -n "$new_comments" ]; then
 

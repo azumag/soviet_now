@@ -245,6 +245,60 @@ class TwitchCommentIdentityTests(unittest.TestCase):
             self.assertEqual(pending.count("id=msg-old"), 1)
             self.assertEqual(pending.count("id=msg-new"), 1)
 
+    def test_fetch_recovers_comment_written_to_pre_rename_fd(self):
+        # #713: the daemon's `>>` append opens raw.log, and fetch may rename the
+        # file while that FD is still open. The late write then lands on the
+        # renamed snapshot inode; fetch must keep it (not rm the snapshot) and
+        # collect it on the next pass.
+        with tempfile.TemporaryDirectory() as td:
+            temp = Path(td)
+            chat_dir = temp / "chat"
+            chat_dir.mkdir()
+            out = temp / "comments.txt"
+            raw_log = chat_dir / "raw.log"
+            (chat_dir / "last_offset").write_text("0\n", encoding="utf-8")
+            raw_log.write_text(
+                "id=msg-old\tuser-id=uid-1\tlogin=alice\tdisplay=Alice\tflags=\tAlice: first\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TWITCH_CHAT_DIR": str(chat_dir),
+                    "TWITCH_CHAT_OUTFILE": str(out),
+                    "CHAT_INGEST_OVERLAY_NOTIFY": "0",
+                }
+            )
+
+            def fetch():
+                result = subprocess.run(
+                    ["bash", str(ROOT / "twitch_chat.sh"), "fetch"],
+                    cwd=ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            # An append-only FD opened before the rename, like the daemon's `>>`.
+            fd = os.open(str(raw_log), os.O_WRONLY | os.O_APPEND)
+            try:
+                fetch()
+                # The rename already happened: this write lands on the snapshot
+                # inode, not on any path a plain re-open would see.
+                os.write(
+                    fd,
+                    b"id=msg-late\tuser-id=uid-2\tlogin=bob\tdisplay=Bob\tflags=\tBob: late\n",
+                )
+            finally:
+                os.close(fd)
+            fetch()
+
+            pending = (chat_dir / "pending.log").read_text(encoding="utf-8")
+            self.assertEqual(pending.count("id=msg-old"), 1)
+            self.assertEqual(pending.count("id=msg-late"), 1)
+
     def test_fetch_recovers_when_offset_exceeds_raw_log(self):
         with tempfile.TemporaryDirectory() as td:
             temp = Path(td)
