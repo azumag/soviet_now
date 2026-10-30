@@ -1,0 +1,5 @@
+{"event_id": "anon-youtube-001", "source": "youtube", "user": "viewer_101", "comment": "アーカイブから見ています", "kind": "normal", "expected_category": "chitchat"}
+{"event_id": "anon-youtube-002", "source": "youtube", "user": "viewer_102", "comment": "配信が止まって進まないです", "kind": "bug", "expected_category": "stream_bug_report"}
+{"event_id": "anon-youtube-003", "source": "youtube", "user": "viewer_103", "comment": "中央を高く保つと良いですよ", "kind": "advice", "expected_category": "advice"}
+{"event_id": "anon-youtube-004", "source": "youtube", "user": "viewer_104", "comment": "nice play comrade", "kind": "normal", "is_english": true, "expected_category": "chitchat"}
+{"event_id": "anon-youtube-005", "source": "youtube", "user": "viewer_101", "comment": "配信が止まって進まないです", "kind": "duplicate_cross_source", "expected_category": "stream_bug_report"}

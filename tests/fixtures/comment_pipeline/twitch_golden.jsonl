@@ -1,0 +1,8 @@
+{"event_id": "anon-twitch-001", "source": "twitch", "user": "viewer_001", "comment": "同志、今日もソ連ゲーム楽しみです", "kind": "normal", "expected_category": "chitchat"}
+{"event_id": "anon-twitch-002", "source": "twitch", "user": "viewer_002", "comment": "画面が固まって動きません", "kind": "bug", "expected_category": "stream_bug_report"}
+{"event_id": "anon-twitch-003", "source": "twitch", "user": "viewer_002", "comment": "画面が固まって動きません", "kind": "duplicate", "expected_category": "stream_bug_report"}
+{"event_id": "anon-twitch-004", "source": "twitch", "user": "viewer_003", "comment": "縦置きすると右が崩れやすいです", "kind": "advice", "expected_category": "advice"}
+{"event_id": "anon-twitch-005", "source": "twitch", "user": "viewer_004", "comment": "GLORY TO THE SOVIET UNION", "kind": "normal", "is_english": true, "expected_category": "chitchat"}
+{"event_id": "anon-twitch-006", "source": "twitch", "user": "viewer_005", "comment": "カードガチャでレアを引きました", "kind": "normal", "expected_category": "card_gacha"}
+{"event_id": "anon-twitch-007", "source": "twitch", "user": "viewer_006", "comment": "歌ってください  ソ連国歌", "kind": "normal", "expected_category": "sing_request"}
+{"event_id": "anon-twitch-008", "source": "twitch", "user": "", "comment": "   ", "kind": "edge_empty", "expected_category": "other"}
