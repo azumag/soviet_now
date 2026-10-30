@@ -41,7 +41,7 @@ test('MOVE and missing observations invalidate STOP even between throttled write
   assert.ok(f.read().stop_id);
 });
 
-test('new games, bridge starts and explicit RETRY rotate identity', t => {
+test('new games and explicit RETRY rotate identity; relaunches inherit it', t => {
   const f = fixture(t);
   f.writer.observe(stop);
   const first = f.read();
@@ -54,8 +54,38 @@ test('new games, bridge starts and explicit RETRY rotate identity', t => {
   f.writer.observe(stop);
   assert.notEqual(f.read().game_id, second.game_id);
   const third = f.read();
+  // soviet_now#714: an attach-only bridge relaunch keeps the match identity so
+  // the running match's founding marker stays attributed.
   new GameObservationWriter(f.file).observe(stop);
-  assert.notEqual(f.read().game_id, third.game_id);
+  assert.equal(f.read().game_id, third.game_id);
+});
+
+test('a relaunched writer keeps game and STOP identity for the same board', t => {
+  const f = fixture(t);
+  f.writer.observe(stop);
+  const before = f.read();
+  const relaunched = new GameObservationWriter(f.file, { now: f.writer.now });
+  relaunched.observe(stop);
+  const after = f.read();
+  assert.equal(after.game_id, before.game_id);
+  assert.equal(after.stop_id, before.stop_id);
+});
+
+test('a relaunched writer still rotates on a GAMEOVER boundary', t => {
+  const f = fixture(t);
+  f.writer.observe({ ...stop, state: 'GAMEOVER' });
+  const before = f.read();
+  const relaunched = new GameObservationWriter(f.file, { now: f.writer.now });
+  relaunched.observe({ ...stop, state: 'MOVE' });
+  assert.notEqual(f.read().game_id, before.game_id);
+});
+
+test('an unreadable leftover file falls back to a fresh identity', t => {
+  const f = fixture(t);
+  fs.writeFileSync(f.file, '{"schema":1}');
+  const relaunched = new GameObservationWriter(f.file);
+  relaunched.observe(stop);
+  assert.ok(f.read().game_id);
 });
 
 test('invalid counters cannot create a STOP token; changed boards reset it', t => {
