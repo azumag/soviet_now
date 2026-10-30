@@ -248,6 +248,13 @@ POST /v1/start  (auth)     -> 202 { ok, started, pid } / 409 { error:'already ru
 POST /v1/stop   (auth)     -> 202 { ok, stopping }
 ```
 
+`lastExit` is `{ code, signal, at, reason }` (null before the first exit).
+`reason` classifies why the session end fired: the cdp-host's own verdict
+(`deadline` / `consumer-closed` from its `SOREN91_CDP_HOST_END=` line),
+`stop-requested` (a `/v1/stop` was received), `signal` (external kill),
+`clean-exit` (spontaneous code 0 with no verdict — the anomaly bucket an
+early renderer death lands in), or `failed` (non-zero, no verdict).
+
 `POST /v1/start` accepts an optional JSON body `{ "srtUrl": "srt://..." }`
 (max 8KB; additive extension — PR #131's agent ignores the body entirely).
 When present, the URL must be a Tailscale IPv4 `srt://` URL with an explicit

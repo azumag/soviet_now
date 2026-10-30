@@ -10,6 +10,7 @@ import {
   authorized,
   backendForPlatform,
   buildSessionArgs,
+  classifyExitReason,
   createServer,
   defaults,
   MAX_START_BODY_BYTES,
@@ -422,6 +423,135 @@ test('HTTP: cdp-host status exposes only fixed driver lifecycle states', async (
     assert.equal(status.driverState, 'failure');
     assert.equal(status.running, false);
     assert.equal(status.lastExit.code, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// --- status.lastExit.reason (soviet_now#732) ---
+
+test('classifyExitReason orders verdict > stop > signal > clean > failed', () => {
+  // The cdp-host's own session-end verdict outranks every agent-side
+  // observation (it is the reason the end determination itself fired).
+  assert.equal(classifyExitReason({ code: 0, verdict: 'deadline', stopRequested: true }), 'deadline');
+  assert.equal(classifyExitReason({ code: 0, verdict: 'consumer-closed' }), 'consumer-closed');
+  // An operator stop wins over the resulting code/signal whatever it is.
+  assert.equal(classifyExitReason({ code: 0, stopRequested: true }), 'stop-requested');
+  assert.equal(classifyExitReason({ signal: 'SIGKILL', stopRequested: true }), 'stop-requested');
+  assert.equal(classifyExitReason({ code: 1, stopRequested: true }), 'stop-requested');
+  // External signal without a stop request.
+  assert.equal(classifyExitReason({ signal: 'SIGTERM' }), 'signal');
+  // A spontaneous code-0 exit with no verdict is the anomaly bucket (the
+  // incident: a ~seconds-long clean exit read as a normal end).
+  assert.equal(classifyExitReason({ code: 0 }), 'clean-exit');
+  assert.equal(classifyExitReason({ code: 1 }), 'failed');
+  assert.equal(classifyExitReason({}), 'failed');
+});
+
+function stubCdpHostChild() {
+  const handlers = { stdout: null, exit: null };
+  const child = {
+    pid: 525253,
+    exitCode: null,
+    stdout: { on(event, fn) { if (event === 'data') handlers.stdout = fn; return this; } },
+    once(event, fn) { if (event === 'exit') handlers.exit = fn; },
+    kill() { return true; },
+  };
+  return { child, handlers };
+}
+
+async function withCdpHostStatus(platform, fn) {
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const spawned = [];
+  const { server } = createServer(options, {
+    platform,
+    mode: 'cdp-host',
+    reapImpl: async () => {},
+    spawnImpl: () => {
+      const entry = stubCdpHostChild();
+      spawned.push(entry);
+      return entry.child;
+    },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { authorization: `Bearer ${LONG_TOKEN}` };
+  const status = async () => (await fetch(`${base}/v1/status`, { headers })).json();
+  try {
+    await fn({ base, headers, status, spawned });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('HTTP: cdp-host session-end verdict becomes lastExit.reason', async () => {
+  await withCdpHostStatus('darwin', async ({ base, headers, status, spawned }) => {
+    const started = await fetch(`${base}/v1/start`, { method: 'POST', headers });
+    assert.equal(started.status, 202);
+    spawned[0].handlers.stdout?.(Buffer.from('SOREN91_CDP_HOST_END=consumer-closed\n'));
+    spawned[0].child.exitCode = 0;
+    spawned[0].handlers.exit?.(0, null);
+    const body = await status();
+    assert.equal(body.lastExit.code, 0);
+    assert.equal(body.lastExit.reason, 'consumer-closed');
+  });
+});
+
+test('HTTP: lastExit.reason classifies stop, signal, clean and failed exits', async () => {
+  await withCdpHostStatus('darwin', async ({ base, headers, status, spawned }) => {
+    const start = () => fetch(`${base}/v1/start`, { method: 'POST', headers });
+    // Operator stop: the resulting code/signal does not matter.
+    assert.equal((await start()).status, 202);
+    await fetch(`${base}/v1/stop`, { method: 'POST', headers });
+    spawned[0].child.exitCode = 0;
+    spawned[0].handlers.exit?.(0, null);
+    assert.equal((await status()).lastExit.reason, 'stop-requested');
+    // The next start must not inherit the previous stop/verdict state.
+    assert.equal((await start()).status, 202);
+    spawned[1].child.exitCode = null;
+    spawned[1].handlers.exit?.(null, 'SIGKILL');
+    assert.equal((await status()).lastExit.reason, 'signal');
+    assert.equal((await start()).status, 202);
+    spawned[2].child.exitCode = 0;
+    spawned[2].handlers.exit?.(0, null);
+    assert.equal((await status()).lastExit.reason, 'clean-exit');
+    assert.equal((await start()).status, 202);
+    spawned[3].child.exitCode = 1;
+    spawned[3].handlers.exit?.(1, null);
+    assert.equal((await status()).lastExit.reason, 'failed');
+    // A stale verdict from a previous session must not leak forward.
+    assert.equal((await start()).status, 202);
+    spawned[4].handlers.stdout?.(Buffer.from('SOREN91_CDP_HOST_END=deadline\n'));
+    spawned[4].child.exitCode = 0;
+    spawned[4].handlers.exit?.(0, null);
+    assert.equal((await status()).lastExit.reason, 'deadline');
+    assert.equal((await start()).status, 202);
+    spawned[5].child.exitCode = 0;
+    spawned[5].handlers.exit?.(0, null);
+    assert.equal((await status()).lastExit.reason, 'clean-exit');
+  });
+});
+
+test('HTTP: a session-mode exit reports the same reason buckets', async () => {
+  let exitHandler = null;
+  const child = {
+    pid: 525254,
+    exitCode: null,
+    once(event, fn) { if (event === 'exit') exitHandler = fn; },
+    kill() { return true; },
+  };
+  const options = { host: '127.0.0.1', port: 0, token: LONG_TOKEN };
+  const { server } = createServer(options, { platform: 'darwin', spawnImpl: () => child });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { authorization: `Bearer ${LONG_TOKEN}` };
+  try {
+    assert.equal((await fetch(`${base}/v1/start`, { method: 'POST', headers })).status, 202);
+    child.exitCode = 0;
+    exitHandler?.(0, null);
+    const body = await (await fetch(`${base}/v1/status`, { headers })).json();
+    assert.equal(body.lastExit.reason, 'clean-exit');
+    assert.equal(body.driverState, undefined); // session mode has no driverState
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
