@@ -2896,12 +2896,26 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -17)
                     landing_y = result.get("landing_y", 0)
+                    # CONSUMED_BY_BETTER_MERGE: この候補自体が同じターゲットへ
+                    # DIRECT 併合するなら予約の消費ではなく正当な併合 (#397)
+                    _nnt_consumes = (
+                        merge_grade in ("DIRECT", "NEAR")
+                        and result.get("landing_hit_id") == p.get("id")
+                    )
+                    if _nnt_consumes:
+                        break
+                    horiz_dist = abs(x - p["x"])
                     if landing_y > piece_y:
-                        # 着地位置がnextNext typeのピースの上になる場合
-                        horiz_dist = abs(x - p["x"])
                         if horiz_dist < 0.4840:  # 着地位置がピースの真上に近い
-                            score -= 311.7  # 未来の併合機会を潰すためのペナルティ
+                            score -= 311.7  # DESTROYED: 未来の併合機会を潰す
                             reasons.append("AVOID_BLOCK_NEXTNEXT")
+                            break
+                        # DEGRADED (#397): future A が左右から target へ接触する
+                        # 進入レーンを、真上でない位置からも塞ぐ配置に弱いペナルティ。
+                        # 片側レーンのみなので真上埋没よりはるかに弱い係数にする。
+                        elif horiz_dist < 1.0:
+                            score -= 96.5
+                            reasons.append("DEGRADE_NEXTNEXT_ACCESS")
                             break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
