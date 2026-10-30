@@ -132,6 +132,13 @@ PY
 		_log "SKIP: prediction create blocked while A/B runtime toggle exists"
 		return 1
 	}
+	# soviet_now#641 (修正契約 3): A/B 候補が待機中なら新規予想を作らない。
+	# 既存ラウンドの確定後、次の試合境界を A/B へ渡す。
+	local ab_candidate_dir="${AB_CANDIDATE_DIR:-${TMP_STATE_DIR}/ab_candidate}"
+	[ ! -f "$ab_candidate_dir/meta.json" ] || [ ! -f "$ab_candidate_dir/strategy.py" ] || {
+		_log "SKIP: prediction create blocked while A/B candidate is pending"
+		return 1
+	}
 	local acc_file="${ACCUMULATED_GAMES_FILE:-${TMP_STATE_DIR}/accumulated_games.json}"
 	local acc_count
 	acc_count=$(python3 - "$acc_file" <<'PY' 2>/dev/null
@@ -787,17 +794,46 @@ create)
 		_log "SKIP: prediction create retry backoff active ($(_prediction_retry_remaining create)s)"
 		exit 0
 	fi
+
+	# soviet_now#641 (修正契約 2): 「A/B 側の再判定→作成予約の登録」を
+	# A/B gate の「未確定判定→開始」と同じ prediction_boundary.lock 上で
+	# 直列化する。以降の sync/recover/HTTP/publish 全行程で gate は予約
+	# ファイル (create_inflight) を見て開始を延期する。ロックの内側で
+	# A/B 側を再判定しないと、context_allowed 通過後に emit された候補や
+	# gate が開始した A/B とレースする。
+	_p641_boundary_lock="${PREDICTION_BOUNDARY_LOCK:-${TMP_STATE_DIR}/prediction_boundary.lock}"
+	_p641_locked=0
+	if command -v flock >/dev/null 2>&1; then
+		mkdir -p "${TMP_STATE_DIR}"
+		if exec 8>>"$_p641_boundary_lock" 2>/dev/null && flock -x 8 2>/dev/null; then
+			_p641_locked=1
+		fi
+	fi
+	_p641_ab_state="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
+	_p641_ab_cand="${AB_CANDIDATE_DIR:-${TMP_STATE_DIR}/ab_candidate}"
+	if [ -f "$_p641_ab_state" ] || [ -n "${SOREN_AB_ALT_STRATEGY:-}" ] || \
+		{ [ -f "$_p641_ab_cand/meta.json" ] && [ -f "$_p641_ab_cand/strategy.py" ]; }; then
+		_log "SKIP: prediction create blocked inside boundary lock (A/B pending or running)"
+		[ "$_p641_locked" = 1 ] && { flock -u 8 2>/dev/null; exec 8>&-; }
+		exit 0
+	fi
+	mkdir -p "$PREDICTION_RETRY_DIR"
+	: > "$PREDICTION_RETRY_DIR/create_inflight"
+	[ "$_p641_locked" = 1 ] && { flock -u 8 2>/dev/null; exec 8>&-; }
+
 	_sync_prediction_state_with_remote || true
 
-	# 既存の予想が残っていたらスキップ
+	# 既存の予想が残っていたらスキップ (state 残存が未確定を保持するので予約は畳む)
 	if [ -f "$PREDICTION_STATE_FILE" ]; then
 		_log "SKIP: prediction already active"
+		rm -f "$PREDICTION_RETRY_DIR/create_inflight"
 		cat "$PREDICTION_STATE_FILE"
 		exit 0
 	fi
 	# ローカル state を失った再起動でも、Twitch 側の ACTIVE/LOCKED 予想を
 	# 先に取り込み、同じサイクルで二重作成しない。
 	if _recover_remote_active_prediction; then
+		rm -f "$PREDICTION_RETRY_DIR/create_inflight"
 		cat "$PREDICTION_STATE_FILE"
 		exit 0
 	fi
@@ -836,7 +872,7 @@ PY
 		if printf '%s' "$api_message" | grep -qi "already" || { [ "$response_code" = "400" ] && printf '%s' "$response" | grep -qi "already"; }; then
 			_log "INFO: prediction already active on Twitch, syncing remote state"
 			if _recover_remote_active_prediction; then
-				rm -f "$response_file"
+				rm -f "$response_file" "$PREDICTION_RETRY_DIR/create_inflight"
 				_prediction_retry_clear create
 				cat "$PREDICTION_STATE_FILE"
 				exit 0
@@ -844,7 +880,8 @@ PY
 		fi
 		delay=$(_prediction_retry_record create "$response_code" "$api_message")
 		_log "WARN: prediction create failed (http=${response_code:-000}, message=${api_message:-unknown}, retry=${delay}s)"
-		rm -f "$response_file"
+		# create.json (retry record) が未確定を保持するので予約は畳む。
+		rm -f "$response_file" "$PREDICTION_RETRY_DIR/create_inflight"
 		exit 1
 	fi
 	rm -f "$response_file"
@@ -878,12 +915,18 @@ PY
 	if [ $? -ne 0 ] || [ -z "$result" ]; then
 		delay=$(_prediction_retry_record create "$response_code" "invalid prediction response")
 		_log "WARN: failed to parse prediction response (retry=${delay}s)"
+		rm -f "$PREDICTION_RETRY_DIR/create_inflight"
 		exit 1
 	fi
 	_prediction_retry_clear create
 
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
-	printf '%s\n' "$result" | python3 lib/prediction_round.py "$PREDICTION_STATE_FILE" publish || exit 1
+	# publish 失敗時は remote に予想が残って結果未確認のままなので、
+	# create_inflight 予約を残して gate 側の defer を維持する (修正契約 4)。
+	if ! printf '%s\n' "$result" | python3 lib/prediction_round.py "$PREDICTION_STATE_FILE" publish; then
+		exit 1
+	fi
+	rm -f "$PREDICTION_RETRY_DIR/create_inflight"
 	_prediction_display=$(python3 lib/prediction_round.py "$PREDICTION_STATE_FILE" display | head -n 1)
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	# 受付時間の表示: 60秒以上なら「N分」、未満なら「N秒」

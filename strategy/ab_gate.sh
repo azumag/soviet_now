@@ -2,7 +2,11 @@
 # 判定するゲート。既定オフ (.env AB_GATE_ENABLED=1 で有効、AB_GATE_DRY_RUN=1 なら判定をログするだけ)。
 #
 # 流れ: 改善ジョブ (eloop_improve.sh) が候補を tmp/state/ab_candidate/ に出力 (_ab_gate_emit_candidate)
-#   → 境界 (_ab_gate_before_game) で root(A) vs 候補(B) の A/B を自動開始 (_ab_start_from_bundle)
+#   → 境界 (_ab_gate_before_game) で root(A) vs 候補(B) の A/B を自動開始 (_ab_start_from_bundle)。
+#     未確定の予想ラウンドまたは作成/確定結果未確認の予約 (prediction_retry/*) が残る間は
+#     開始を延期して候補を保持する (soviet_now#641)。判定→開始は予想 publish と同じ
+#     prediction_boundary.lock 上で直列化し、逆方向は twitch_predictions.sh 側が
+#     候補待機/A/B 中の新規 create をブロックする。
 #   → 試合ごと (_ab_gate_after_game) に tools/ab_decide.py の逐次判定 → ADOPT なら root 差し替え、
 #     REJECT_*/ABORT なら棄却 (_ab_finish)。時間順ゲート (check_regression) は A/B 中 REGRESSION_DISABLED=1。
 AB_CANDIDATE_DIR="${AB_CANDIDATE_DIR:-${TMP_STATE_DIR:-tmp/state}/ab_candidate}"
@@ -24,6 +28,49 @@ _ab_gate_dry_run() {
 
 _ab_gate_candidate_pending() {
 	[ -f "$AB_CANDIDATE_DIR/meta.json" ] && [ -f "$AB_CANDIDATE_DIR/strategy.py" ]
+}
+
+# soviet_now#641 (修正契約 1/4): 未確定の予想ラウンド、または作成/確定の結果が
+# 未確認の予約が残る間は A/B 開始を延期する。state の中身は読まない —
+# legacy/不正/確定送信待ちも全て「remote 確定が確認できるまで」未確定として扱い、
+# invalid/unknown を理由に確定扱いしない。state ファイルの除去は予想 lane が
+# remote の RESOLVED/CANCELED を確認してから行う。
+_ab_gate_prediction_unresolved() {
+	local state_dir="${TMP_STATE_DIR:-tmp/state}"
+	local pred_file="${PREDICTION_STATE_FILE:-$state_dir/current_prediction.json}"
+	local retry_dir="${PREDICTION_RETRY_DIR:-$state_dir/prediction_retry}"
+	# ラウンド state (round_version 不問。legacy の生 id 行や壊れた JSON も残存=未確定)
+	[ -f "$pred_file" ] && return 0
+	# create HTTP 途中または publish 未了の予約 (crash 残存も fail-closed で延期)
+	[ -f "$retry_dir/create_inflight" ] && return 0
+	# create/resolve の retry record = 結果未確認
+	[ -f "$retry_dir/create.json" ] && return 0
+	[ -f "$retry_dir/resolve.json" ] && return 0
+	# 先送りされた作成 intent が残っていれば新ラウンドが立ち得る
+	[ -f "${HOT_STREAK_PREDICTION_PENDING_FILE:-$state_dir/hot_streak_prediction_pending}" ] && return 0
+	return 1
+}
+
+# 予想の check→remote create→local publish と同じ排他境界
+# (prediction_boundary.lock, prediction_round.py が publish で使う flock) を
+# 「判定→A/B 開始」の原子化に使う (修正契約 2)。flock 不在環境では無ロックで
+# 進む (既存コードと同じ degrade。本番 VM では常に存在する)。
+_ab_gate_acquire_prediction_boundary() {
+	_ab_gate_boundary_locked=0
+	command -v flock >/dev/null 2>&1 || return 0
+	mkdir -p "${TMP_STATE_DIR:-tmp/state}"
+	if exec 8>>"${PREDICTION_BOUNDARY_LOCK:-${TMP_STATE_DIR:-tmp/state}/prediction_boundary.lock}" 2>/dev/null \
+		&& flock -x 8 2>/dev/null; then
+		_ab_gate_boundary_locked=1
+	fi
+	return 0
+}
+
+_ab_gate_release_prediction_boundary() {
+	[ "${_ab_gate_boundary_locked:-0}" = 1 ] || return 0
+	flock -u 8 2>/dev/null || true
+	exec 8>&- 2>/dev/null || true
+	_ab_gate_boundary_locked=0
 }
 
 _ab_meta_get() {
@@ -416,6 +463,14 @@ _ab_gate_before_game() {
 		rm -rf "$AB_CANDIDATE_DIR"
 		return 0
 	fi
+	# soviet_now#641: 予想 publish と同じ境界ロックの内側で「未確定判定→開始」
+	# を行い、create HTTP 途中のラウンドとも直列化する。
+	_ab_gate_acquire_prediction_boundary
+	if _ab_gate_prediction_unresolved; then
+		log "[AB-GATE] 予想未確定 → 候補を保持してA/B開始を延期"
+		_ab_gate_release_prediction_boundary
+		return 0
+	fi
 	if _ab_gate_dry_run; then
 		if [ "$(_ab_meta_get dry_logged)" != "1" ]; then
 			log "[AB-GATE] (dry-run) would start A/B: A=${root:0:12} B=${cand:0:12}"
@@ -425,16 +480,19 @@ p = sys.argv[1]; d = json.load(open(p)); d["dry_logged"] = 1
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 PY
 		fi
+		_ab_gate_release_prediction_boundary
 		return 0
 	fi
 	local pattern
 	pattern=$(_ab_env_value SOREN_AB_PATTERN)
 	[ -n "$pattern" ] || pattern="ABBA"
 	if _ab_start_from_bundle "$AB_CANDIDATE_DIR" "$pattern"; then
+		_ab_gate_release_prediction_boundary
 		mkdir -p "$AB_HISTORY_DIR"
 		mv "$AB_CANDIDATE_DIR" "$AB_HISTORY_DIR/ab_candidate_$(date +%Y%m%d_%H%M%S)" 2>/dev/null || rm -rf "$AB_CANDIDATE_DIR"
 	else
 		local start_rc=$?
+		_ab_gate_release_prediction_boundary
 		if [ "$start_rc" -eq 75 ]; then
 			log "[AB-GATE] 改善起動と競合中 → 候補を保持して次の境界へ延期"
 			return 0
