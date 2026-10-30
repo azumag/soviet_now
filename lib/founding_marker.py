@@ -24,8 +24,10 @@ input, a retry, or a boundary ACK on their own.
 
 from __future__ import annotations
 
+import enum
 import json
 import os
+import time
 from pathlib import Path
 
 MARKER = Path("tmp/markers/.soviet_created")
@@ -36,6 +38,27 @@ OBSERVATION = Path("tmp/state/game_observation.json")
 # is never older than the board it was written next to.  This is far below the
 # 30s quiet window that a legacy STOP needs before it is called terminal.
 MTIME_GRACE_SECONDS = 5.0
+
+# soviet_now#714: an observation record only proves the match identity while it
+# is intact and fresh.  The bridge heartbeats it every <=1s while it sees the
+# game; anything older is a leftover, not live evidence.
+OBSERVATION_SCHEMA = 1
+OBSERVATION_FRESH_SECONDS = 15.0
+OBSERVATION_FUTURE_SECONDS = 5.0
+
+
+class FoundingMarkerVerdict(enum.Enum):
+    """Whether the marker may suppress the terminal decision for this board.
+
+    ``UNKNOWN`` exists because weak evidence must never end a board: a marker
+    that cannot be attributed either way still suppresses ``is_terminal``,
+    exactly like a current one, so no automatic retry is ever authorised on
+    unclear evidence (soviet_now#714).
+    """
+
+    CURRENT = "current"
+    STALE = "stale"
+    UNKNOWN = "unknown"
 
 
 def _identity(value) -> str | None:
@@ -48,15 +71,83 @@ def _identity(value) -> str | None:
     return token
 
 
-def observation_game_id(observation_path=OBSERVATION) -> str | None:
-    """Per-match identity from the bridge's own observation record, if it can be read."""
+def _observation_record(observation_path) -> dict | None:
+    """Raw observation record; callers that need trust must validate it."""
     try:
         record = json.loads(Path(observation_path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    return record if isinstance(record, dict) else None
+
+
+def observation_game_id(observation_path=OBSERVATION) -> str | None:
+    """Per-match identity from the bridge's own observation record, if it can be read.
+
+    Permissive accessor used where the *last reported* id is what matters
+    (e.g. recording it into the marker).  The terminal verdict path uses
+    :func:`_fresh_observation` instead, which also checks schema, epoch and
+    board consistency before trusting the id.
+    """
+    record = _observation_record(observation_path)
     if not isinstance(record, dict):
         return None
     return _identity(record.get("game_id"))
+
+
+_BOARD_FIELDS = ("state", "score", "makeSorenCount", "pieces")
+
+
+def _board_view(state):
+    """The board fields the bridge records, projected out of a full state."""
+    if not isinstance(state, dict):
+        return None
+    return {field: state.get(field) for field in _BOARD_FIELDS}
+
+
+def _live_observation(observation_path, *, now=None):
+    """Observation record that is intact and fresh, or ``None``.
+
+    soviet_now#714 HIGH: an unchecked read could match a marker against a
+    stale, foreign or half-written record.  A record only counts as live
+    evidence when its schema is known, the epoch is neither future-dated nor
+    stale, and it carries a usable match id and board.  Board-vs-board
+    agreement is checked by the caller with a re-read guard.
+    """
+    now = time.time() if now is None else now
+    record = _observation_record(observation_path)
+    if record is None or record.get("schema") != OBSERVATION_SCHEMA:
+        return None
+    if _identity(record.get("game_id")) is None:
+        return None
+    try:
+        epoch = float(record.get("observed_epoch"))
+    except (TypeError, ValueError):
+        return None
+    if epoch > now + OBSERVATION_FUTURE_SECONDS or now - epoch > OBSERVATION_FRESH_SECONDS:
+        return None
+    if not isinstance(record.get("board"), dict):
+        return None
+    return record
+
+
+def _fresh_observation(observation_path, state, *, now=None):
+    """Live observation describing ``state``'s board, or a verdict signal.
+
+    Returns the record when the live observation's board is the board being
+    decided on, ``False`` when a live observation exists but describes a
+    different board (contradictory evidence, not absence of evidence), and
+    ``None`` when no usable live observation exists at all.
+    """
+    wanted = _board_view(state)
+    record = _live_observation(observation_path, now=now)
+    if record is not None and (wanted is None or record["board"] == wanted):
+        return record
+    # Torn read guard: re-read once.  A stable mismatch means the observation
+    # really describes a different board; a torn first read does not.
+    record = _live_observation(observation_path, now=now)
+    if record is None:
+        return None
+    return record if (wanted is None or record["board"] == wanted) else False
 
 
 def marker_game_id(marker_path) -> str | None:
@@ -103,16 +194,29 @@ def _mtime(path) -> float | None:
         return None
 
 
-def founding_marker_is_current(root=Path("."), *, marker_path=None, state_path=None,
-                              observation_path=None) -> bool:
-    """True only when the marker belongs to the board it is being read next to.
+def _state_json(state_path):
+    try:
+        value = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
-    Identity wins whenever both sides have it: a marker recorded for another
-    match is stale even if it is recent, and a marker that matches the current
-    match is current even if the board changed after it.  Without both sides the
-    marker must not predate the board by more than ``MTIME_GRACE_SECONDS``.  An
-    unresolvable comparison keeps the marker current, which preserves the
-    pre-existing "never end a board on unclear evidence" behaviour.
+
+def founding_marker_verdict(root=Path("."), *, marker_path=None, state_path=None,
+                            observation_path=None, now=None) -> FoundingMarkerVerdict:
+    """Attribute the marker to the board being decided on, in three values.
+
+    ``CURRENT`` — live evidence says the marker belongs to this match.
+    ``STALE``   — live evidence says it belongs to another match (or there is
+                  no marker at all); it must not suppress the terminal decision.
+    ``UNKNOWN`` — evidence is absent, torn, stale or contradictory; soviet_now#714
+                  requires this to behave like CURRENT for suppression so an
+                  automatic retry is never authorised on unclear evidence.
+
+    Only a *fresh, schema-valid observation whose board is the board being
+    decided on* may authorise STALE.  A marker-vs-board mtime gap alone can no
+    longer do so: the board advancing past the marker does not prove a new
+    match (soviet_now#714 HIGH).
     """
 
     root = Path(root)
@@ -121,14 +225,41 @@ def founding_marker_is_current(root=Path("."), *, marker_path=None, state_path=N
     observation = Path(observation_path) if observation_path is not None else root / OBSERVATION
 
     if not marker.is_file():
-        return False
+        return FoundingMarkerVerdict.STALE
 
-    recorded = marker_game_id(marker)
-    observed = observation_game_id(observation)
-    if recorded is not None and observed is not None:
-        return recorded == observed
+    state_json = _state_json(state)
+    live = _fresh_observation(observation, state_json, now=now)
+    if live is False:
+        # A live bridge sees a different board: this board's marker cannot be
+        # attributed either way and must keep suppressing.
+        return FoundingMarkerVerdict.UNKNOWN
+    if live is not None:
+        recorded = marker_game_id(marker)
+        if recorded is None:
+            # A legacy marker cannot be tied to the live match id; a board that
+            # matches the observation does not prove the marker either.
+            return FoundingMarkerVerdict.UNKNOWN
+        observed = _identity(live.get("game_id"))
+        return (FoundingMarkerVerdict.CURRENT if recorded == observed
+                else FoundingMarkerVerdict.STALE)
 
     marker_mtime, state_mtime = _mtime(marker), _mtime(state)
     if marker_mtime is None or state_mtime is None:
-        return True
-    return marker_mtime + MTIME_GRACE_SECONDS >= state_mtime
+        return FoundingMarkerVerdict.UNKNOWN
+    if marker_mtime + MTIME_GRACE_SECONDS >= state_mtime:
+        return FoundingMarkerVerdict.CURRENT
+    return FoundingMarkerVerdict.UNKNOWN
+
+
+def founding_marker_is_current(root=Path("."), *, marker_path=None, state_path=None,
+                              observation_path=None, now=None) -> bool:
+    """True when the marker may suppress the terminal decision for this board.
+
+    Compatibility wrapper over :func:`founding_marker_verdict`: CURRENT and
+    UNKNOWN both suppress (weak evidence never ends a board); only STALE frees
+    the terminal decision.
+    """
+    return founding_marker_verdict(
+        root, marker_path=marker_path, state_path=state_path,
+        observation_path=observation_path, now=now,
+    ) is not FoundingMarkerVerdict.STALE

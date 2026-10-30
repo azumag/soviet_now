@@ -4,7 +4,7 @@
 
 `command_boundary` だけが、以下をすべて満たす同じ試合の建国 STOP で live runner の切替 ACK を許可する。
 
-- bridge の独立した `game_observation.json` は成功した実観測から更新され、静止中も最長1秒ごとに更新する。盤面・建国 counter・game nonce・STOP nonce を保持する。RETRY、bridge再起動、新試合は game nonce を、MOVE/観測欠落/盤面変更は STOP nonce を更新する。`game_state.json` のmtimeだけを観測鮮度と扱わない。
+- bridge の独立した `game_observation.json` は成功した実観測から更新され、静止中も最長1秒ごとに更新する。盤面・建国 counter・game nonce・STOP nonce を保持する。RETRY・page reload・GAMEOVER→MOVE の確認済み新試合境界は game nonce を、MOVE/観測欠落/盤面変更は STOP nonce を更新する。bridge 再起動（attach-only 再接続）は既存観測の game nonce を継承する（soviet_now#714 owner 決定: 同一試合を継承）。`game_state.json` のmtimeだけを観測鮮度と扱わない。
 - 現在の runner PID・試合番号・起動時刻、game_count、markerのinode/mtime/size、bridgeのgame/STOP nonce、盤面が一致する。Linuxではboot IDとprocess start ticksも照合し、PID再利用・再起動を拒否する。
 - この runner が同じ建国 STOP を、観測間隔3秒以内で連続300秒以上、monotonic clockで観測している。新runner、新marker、MOVE、観測欠落やwall-clockのジャンプは待機証拠をリセットする。現在の bridge観測とrunner証跡の両方が3秒以内で、未来timestamp、不正counter（NaN/Infinity/bool/非整数/0）を拒否する。
 
@@ -20,9 +20,11 @@ ACKは終端のbookkeepingやゲーム入力を発生させない。資源解放
 
 `tmp/markers/.soviet_created` は「どの試合が建国したか」を主張する。共有 `is_terminal()` に `founding_seen` として渡すのは、**いま読んでいる盤面に帰属する marker だけ**とする。`lib/founding_marker.py` が唯一の判定で、`core/game_state.sh:is_game_over()`、`strategy_runner.py`、`lib/game_lifecycle.py`、docich の `recover_soren_game` が同じ規則を使う。
 
-1. marker が無ければ `false`。
-2. marker と bridge 観測の両方に `game_id` があれば、その一致だけで決める。`game_id` は RETRY・bridge relaunch・新試合で更新されるため、前の試合の marker は一致しない。
-3. どちらか欠ける場合 (旧 runner/旧 bridge が書いた marker、観測欠落) は board mtime で判定し、marker が board より `MTIME_GRACE_SECONDS` (5s) を超えて古ければ `false`。`game_state.json` の mtime は盤面が変わった時だけ進むため、同じ STOP を保持している間は marker と board の前後関係が保たれる。
+判定は `founding_marker_verdict` の三値 (current/stale/unknown) で行い、`founding_marker_is_current` は stale だけを `false` に写像する。unknown は current と同じく終端を抑止し、不確かな証拠で自動 retry を許可しない（soviet_now#714）。
+
+1. marker が無ければ `stale` (`false`)。
+2. schema・鮮度 (`OBSERVATION_FRESH_SECONDS`=15s・未来日付拒否)・game_id・盤面を検証した「live」な観測が、いま読んでいる盤面そのものを指す場合だけ game_id を比較する。一致すれば `current`、不一致なら `stale`。盤面の照合は `state/score/makeSorenCount/pieces` の4項目で、不一致時は torn read 対策に1度だけ再読して確定する。bridge 再起動では game nonce は継承されるため、attach-only 再接続で同じ試合の marker は生きたままになる。RETRY・page reload・GAMEOVER→MOVE で回転した nonce は前の試合の marker と一致しない。
+3. live な観測が盤面と一致しない・legacy marker に identity が無い・観測が使えない場合は `unknown`。mtime だけの前後関係 (marker が board より `MTIME_GRACE_SECONDS`=5s 超古い) は新試合を証明しないため、旧来の `false` ではなく `unknown` を返す。marker が board より古くない場合は legacy 互換で `current` を維持する。`game_state.json` の mtime は盤面が変わった時だけ進むため、同じ STOP を保持している間は marker と board の前後関係が保たれる。
 
 2026-10-16 の15時間40分停止は、09:44 の建国 marker が 10:00 の bridge relaunch 後も残り、10:04 の新試合の GAME OVER(`STOP`) が `founding_seen` により非終端と読まれたため。runner は同じく新試合の `game_id` を観測した時点でメモリの建国フラグ・祝賀待機・marker を解除する。marker の妥当性判定は「盤面を終わらせてよいか」だけを答え、retry・入力・boundary ACK を単独で許可しない。
 

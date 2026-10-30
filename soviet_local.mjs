@@ -3294,6 +3294,11 @@ async function runLocalController() {
         if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
           console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
           try {
+            // A page reload discards the running match and starts a new one:
+            // rotate the match identity before the reloaded game is observed
+            // (soviet_now#714 — a kept id would bind an old founding marker to
+            // the new match and mask its real GAME OVER).
+            gameObservation.reset();
             await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
             // Wait for Unity canvas + Bridge to re-init
             for (let i = 0; i < 60; i++) {

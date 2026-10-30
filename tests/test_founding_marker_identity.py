@@ -27,7 +27,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import strategy_runner  # noqa: E402
 from lib.founding_marker import (  # noqa: E402
+    FoundingMarkerVerdict,
     founding_marker_is_current,
+    founding_marker_verdict,
     marker_game_id,
     write_founding_marker,
 )
@@ -43,11 +45,15 @@ def seed_match(root: Path, game_id: str, *, marker_age: float = 0.0, board_age: 
     (root / "tmp/markers").mkdir(parents=True, exist_ok=True)
     (root / "tmp/state").mkdir(parents=True, exist_ok=True)
     state_path = root / "game_state.json"
-    state_path.write_text(json.dumps({"state": "STOP", "score": 1976, "makeSorenCount": 0, "pieces": []}))
+    board = {"state": "STOP", "score": 1976, "makeSorenCount": 0, "pieces": []}
+    state_path.write_text(json.dumps(board))
     marker = root / "tmp/markers/.soviet_created"
     write_founding_marker(marker, 189, game_id or None)
+    # The observation only counts as live evidence while it describes the same
+    # board the verdict is asked about (soviet_now#714), so the fixture mirrors
+    # the board into both files like the real bridge/runner pair does.
     observation = {"schema": 1, "game_id": game_id, "stop_id": None,
-                   "board": {"state": "MOVE", "score": 0, "makeSorenCount": 0, "pieces": []},
+                   "board": dict(board),
                    "observed_epoch": time.time()}
     (root / "tmp/state/game_observation.json").write_text(json.dumps(observation))
     now = time.time()
@@ -90,12 +96,17 @@ class FoundingMarkerIdentityTest(unittest.TestCase):
                 )
             )
 
-    def test_legacy_marker_older_than_the_board_is_stale(self):
+    def test_mtime_gap_alone_is_unknown_not_stale(self):
+        """soviet_now#714 HIGH: the board advancing past the marker does not prove
+        a new match, so an mtime-only gap can no longer free the terminal
+        decision — it must stay suppressed as UNKNOWN."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             seed_match(root, MATCH_A, marker_age=STOP_QUIET_SECONDS + 60, board_age=0)
             (root / "tmp/state/game_observation.json").unlink()
-            self.assertFalse(founding_marker_is_current(root))
+            self.assertEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.UNKNOWN)
+            self.assertTrue(founding_marker_is_current(root))
 
     def test_legacy_marker_written_next_to_the_board_is_current(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -124,6 +135,67 @@ class FoundingMarkerIdentityTest(unittest.TestCase):
             self.assertIsNone(marker_game_id(marker))
             write_founding_marker(marker, 189, None)
             self.assertIsNone(marker_game_id(marker))
+
+    def _write_observation(self, root, **overrides):
+        path = root / "tmp/state/game_observation.json"
+        record = json.loads(path.read_text())
+        record.update(overrides)
+        path.write_text(json.dumps(record))
+
+    def test_stale_observation_epoch_cannot_decide(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_match(root, MATCH_A)
+            self._write_observation(root, game_id=MATCH_B,
+                                    observed_epoch=time.time() - 60)
+            # Stale evidence may not authorise STALE; the marker's own mtime
+            # (written next to this board) keeps it CURRENT.
+            self.assertEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.CURRENT)
+            self.assertTrue(founding_marker_is_current(root))
+
+    def test_future_observation_epoch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_match(root, MATCH_A)
+            self._write_observation(root, game_id=MATCH_B,
+                                    observed_epoch=time.time() + 120)
+            self.assertNotEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.STALE)
+
+    def test_observation_of_a_different_board_cannot_decide(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_match(root, MATCH_A)
+            self._write_observation(
+                root, game_id=MATCH_B,
+                board={"state": "MOVE", "score": 0, "makeSorenCount": 0, "pieces": []})
+            # The live bridge sees another board: this board's marker cannot be
+            # attributed either way, so it stays suppressed.
+            self.assertEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.UNKNOWN)
+            self.assertTrue(founding_marker_is_current(root))
+
+    def test_state_board_with_extra_fields_still_matches_observation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_match(root, MATCH_A)
+            state_path = root / "game_state.json"
+            state = json.loads(state_path.read_text())
+            state["jev_identity"] = {"player": "x"}
+            state_path.write_text(json.dumps(state))
+            self.assertEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.CURRENT)
+
+    def test_legacy_marker_with_live_observation_is_unknown(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            seed_match(root, MATCH_A)
+            marker = root / "tmp/markers/.soviet_created"
+            marker.write_text("189\n")  # legacy payload without identity
+            self.assertEqual(
+                founding_marker_verdict(root), FoundingMarkerVerdict.UNKNOWN)
+            self.assertTrue(founding_marker_is_current(root))
 
     def test_outer_loop_retries_after_a_bridge_relaunch(self):
         with tempfile.TemporaryDirectory() as temp:
