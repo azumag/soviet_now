@@ -152,6 +152,32 @@ rebuild = "n/a"
 retention = "keep"
 
 [[artifact]]
+pattern = "tmp_radio.txt"
+owner = "runtime"
+class = "data"
+source_of_truth = "git"
+rebuild = "no"
+retention = "keep"
+note = "tracked の radio 原稿データ。tmp* glob より先勝ちで指定（自動生成物ではない）"
+
+[[artifact]]
+pattern = "show-status"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+note = "tracked zsh script（生成物ではない。show-status* glob より先勝ち）"
+
+[[artifact]]
+pattern = "show-status-g"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
 pattern = "tmp*"
 owner = "runtime"
 class = "generated"
@@ -312,10 +338,11 @@ retention = "rotate"
 [[artifact]]
 pattern = "overlays"
 owner = "runtime"
-class = "generated"
-source_of_truth = "runtime"
-rebuild = "yes"
-retention = "bounded"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+note = "tracked の overlay HTML（direct_broadcast_overlay.html）。生成物ではない"
 
 [[artifact]]
 pattern = "show-status*"

@@ -67,6 +67,32 @@ class TestArtifactDoctor(unittest.TestCase):
         run_doctor("--dry-run")
         self.assertEqual(_tree_digest(ROOT), before)
 
+    def test_rebuildable_entries_are_untracked(self):
+        """受入条件: clean clone で rebuild 可能 artifact を再生成できる。
+
+        rebuild=yes と分類されたエントリは tracked であってはならない
+        （tracked なら clean clone に残り runtime 再生成でないため）。
+        先勝ちで tracked 用の個別エントリを置く（tmp_radio.txt /
+        show-status / show-status-g）ことで混同を防ぐ。
+        """
+        import tomllib
+        artifacts = tomllib.loads((ROOT / "artifacts.toml").read_text())["artifact"]
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout
+        sys.path.insert(0, str(ROOT / "tools"))
+        import artifact_doctor as ad
+        bad = []
+        for line in tracked.splitlines():
+            top = line.split("/", 1)[0]
+            if not top:
+                continue
+            entry = ad._classify(top, artifacts)
+            if entry and entry.get("rebuild") == "yes":
+                bad.append((top, entry.get("pattern")))
+        self.assertEqual(bad, [],
+                         f"tracked entries classified rebuild=yes: {sorted(set(bad))}")
+
     def test_unclassified_reports_unknown_needs_owner(self):
         """分類不能なエントリは unknown-needs-owner として報告される（別 sandbox で検証）。"""
         # doctor の _classify を直接検証: artifacts.toml に無い名前は None → 報告対象
