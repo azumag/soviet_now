@@ -1,0 +1,3 @@
+{"event_id": "anon-kick-001", "source": "kick", "user": "viewer_201", "comment": "kickから応援しています", "kind": "normal", "expected_category": "chitchat"}
+{"event_id": "anon-kick-002", "source": "kick", "user": "viewer_202", "comment": "ゲームが進行しなくなりました", "kind": "bug", "expected_category": "stream_bug_report"}
+{"event_id": "anon-kick-003", "source": "kick", "user": "viewer_203", "comment": "レイドお疲れ様です", "kind": "normal", "expected_category": "raid"}
