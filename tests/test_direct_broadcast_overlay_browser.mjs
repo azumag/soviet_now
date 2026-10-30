@@ -20,13 +20,13 @@ function fixture(kind) {
     : kind === 'metrics-low' ? 'low'
       : kind === 'metrics-unknown' ? 'unknown'
         : kind === 'metrics-stale' ? 'stale' : 'normal';
-  const metrics = metricsKind === 'high' ? { cpu: 92, memory: 91 }
-    : metricsKind === 'low' ? { cpu: 12, memory: 31 }
-      : ['unknown','initial'].includes(metricsKind) ? { cpu: null, memory: null }
-        : metricsKind === 'missing-time' ? { cpu: 50, memory: 50 }
-          : metricsKind === 'gaps' ? { cpu: 80, memory: 60 }
-        : metricsKind === 'stale' ? { cpu: 38, memory: 52, age: 30 }
-          : { cpu: 42, memory: 56 };
+  const metrics = metricsKind === 'high' ? { cpu: 92, memory: 91, disk: 91 }
+    : metricsKind === 'low' ? { cpu: 12, memory: 31, disk: 12 }
+      : ['unknown','initial'].includes(metricsKind) ? { cpu: null, memory: null, disk: null }
+        : metricsKind === 'missing-time' ? { cpu: 50, memory: 50, disk: 50 }
+          : metricsKind === 'gaps' ? { cpu: 80, memory: 60, disk: 78 }
+        : metricsKind === 'stale' ? { cpu: 38, memory: 52, disk: 52, age: 30 }
+          : { cpu: 42, memory: 56, disk: 42 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
     + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n'
     + '兵力: 9名 / 停滞 3秒\n占領記録 5城（現在の城数ではない）\n'
@@ -117,15 +117,18 @@ print('\\n'.join(sd.render_docich_corner_stats({'kind':'retro','label':'RETRO','
     showStatus:{text:ops.join('\n'), updatedAt:now, lineCount:ops.length},
     systemMetrics:{sampledAt:['initial','missing-time'].includes(metricsKind)?null:now-(metrics.age||0),cpuPercent:metrics.cpu,memoryPercent:metrics.memory,
       memoryUsedBytes:metrics.memory===null?null:Math.round(16*1073741824*metrics.memory/100),memoryTotalBytes:16*1073741824,
-      history:metricsKind==='gaps'?[{ts:now-10,cpuPercent:10,memoryPercent:20},{ts:now-5,cpuPercent:null,memoryPercent:null},{ts:now,cpuPercent:80,memoryPercent:60}]
+      diskPercent:metrics.disk,
+      diskUsedBytes:metrics.disk==null?null:Math.round(48*1073741824*metrics.disk/100),diskTotalBytes:metrics.disk==null?null:48*1073741824,
+      diskFreeBytes:metrics.disk==null?null:Math.round(48*1073741824*(100-metrics.disk)/100),
+      history:metricsKind==='gaps'?[{ts:now-10,cpuPercent:10,memoryPercent:20,diskPercent:78},{ts:now-5,cpuPercent:null,memoryPercent:null,diskPercent:null},{ts:now,cpuPercent:80,memoryPercent:60,diskPercent:78}]
         :metricsKind==='bad-timestamps'?Array.from({length:36},(_,index)=>{
-          const point={ts:now-((35-index)*5),cpuPercent:45,memoryPercent:60};
+          const point={ts:now-((35-index)*5),cpuPercent:45,memoryPercent:60,diskPercent:42};
           if(index===10){delete point.ts;point.cpuPercent=100;point.memoryPercent=100;}
           if(index===20){point.ts=null;point.cpuPercent=100;point.memoryPercent=100;}
           if(index===30){point.ts=-1;point.cpuPercent=100;point.memoryPercent=100;}
           return point;
         })
-        :Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1)}))},
+        :Array.from({length:36},(_,index)=>({ts:now-((35-index)*5),cpuPercent:metrics.cpu===null?null:Math.max(0,metrics.cpu+(index%5)-2),memoryPercent:metrics.memory===null?null:Math.max(0,metrics.memory+(index%3)-1),diskPercent:metrics.disk===null?null:Math.max(0,metrics.disk+(index%4)-1)}))},
     improve:{active:kind==='improve', updatedAt:now, logUpdatedAt:now, status:'running', phase:'comparison',
       detail:'検証中', logLines:['候補を比較中', '未採用 / 結果待ち'], lineCount:2},
   }, notifications:{visibleSec:18, events:[], generators:kind==='generator'?[{key:'comment',label:'コメント生成中',ts:now-60}]:[],
@@ -308,6 +311,18 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.ok(metricLayout.charts.every(chart=>!chart.clipped&&chart.chars>=2&&chart.chars*7<=chart.width+1),
           `${kind}: history uses the full time range without clipping the newest sample`);
         if(kind==='metrics-high') assert.match(metricsText,/RAM\s+91%\s+14[.]6\/16G/);
+        const diskValue=(await page.locator('#feed-s .ops-disk-value').textContent()||'').trim();
+        const diskSub=(await page.locator('#feed-s .ops-disk-sub').textContent()||'').trim();
+        if(kind==='metrics-high'){
+          assert.equal(diskValue,'4.3G','DISK KPI leads with free space');
+          assert.equal(diskSub,'91% USED','DISK KPI carries the df-compatible percentage');
+          assert.match(await page.locator('#feed-s .ops-disk-value').getAttribute('title')||'',/ROOT 43[.]7\/48 GiB used/);
+          assert.equal(layout.opsOverflow,false,`${kind}: DISK KPI keeps the OPS dashboard inside the rail`);
+        }
+        if(['metrics-initial','metrics-unknown','metrics-missing-time'].includes(kind)){
+          assert.equal(diskValue,'—',`${kind}: no sample leaves DISK unknown`);
+          assert.match(diskSub,/UNKNOWN/);
+        }
         if(artifacts) await page.screenshot({path:path.join(artifacts,`${kind}-sidebar.png`),clip:{x:960,y:0,width:320,height:720}});
       }
       if(kind==='stress') {
