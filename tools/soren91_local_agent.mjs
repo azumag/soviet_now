@@ -290,6 +290,37 @@ export function runWindowsReaper(spawnImpl = spawn, baseDir = here, { timeoutMs 
   });
 }
 
+// Exit-reason classification surfaced as status.lastExit.reason
+// (soviet_now#732, incident docich#2260). Fixed vocabulary, in precedence
+// order:
+// - the cdp-host's own session-end verdict, reported on its stdout as
+//   `SOREN91_CDP_HOST_END=<verdict>` ('deadline' / 'consumer-closed'; any
+//   future lowercase verdict is passed through as-is). This is the reason
+//   the host's own end determination fired, so it outranks every
+//   agent-side observation below.
+// - 'stop-requested': POST /v1/stop was received while the child was
+//   alive (operator-driven end, regardless of the resulting code/signal).
+// - 'signal': the child died by a signal with no stop request (external
+//   kill).
+// - 'clean-exit': the child exited code 0 on its own, with no verdict and
+//   no stop request. A cdp-host is expected to run until a verdict or a
+//   stop, so this bucket is the anomaly a ~seconds-long code-0 exit lands
+//   in (the incident: a 17s clean exit read as a normal end and hid the
+//   failure from the OCI side's readiness wait).
+// - 'failed': non-zero exit with no verdict and no stop request.
+export function classifyExitReason({ code = null, signal = null, verdict = null, stopRequested = false } = {}) {
+  if (verdict) return verdict;
+  if (stopRequested) return 'stop-requested';
+  if (signal) return 'signal';
+  if (code === 0) return 'clean-exit';
+  return 'failed';
+}
+
+// Matches the cdp-host's session-end marker on stdout, e.g.
+// `SOREN91_CDP_HOST_END=consumer-closed`. The value pattern stays a fixed
+// lowercase token so nothing arbitrary from the tail reaches the status.
+const CDP_HOST_END_RE = /^SOREN91_CDP_HOST_END=([a-z][a-z0-9-]{0,31})/m;
+
 export function createServer(options, {
   platform = process.platform, spawnImpl = spawn, mode, env = process.env, reapImpl = null,
 } = {}) {
@@ -306,6 +337,8 @@ export function createServer(options, {
   let lastExit = null;
   let cdpDriverState = 'idle';
   let cdpStdoutTail = '';
+  let sessionEndVerdict = null;
+  let stopRequested = false;
 
   const currentStatus = () => ({
     ok: true,
@@ -363,6 +396,10 @@ export function createServer(options, {
         cdpDriverState = 'waiting';
         cdpStdoutTail = '';
       }
+      // A new session clears the previous end markers: the next exit must
+      // be classified from its own verdict/stop state, never a stale one.
+      sessionEndVerdict = null;
+      stopRequested = false;
       // Windows cdp-host: stdin is the graceful-stop channel (see
       // stopProcessTree) and the host runs without a console window.
       child = spawnImpl(process.execPath, spawnArgs, {
@@ -383,10 +420,17 @@ export function createServer(options, {
           try { process.stdout.write(chunk); } catch {}
           cdpStdoutTail = (cdpStdoutTail + String(chunk)).slice(-512);
           if (cdpStdoutTail.includes('SOREN91_CDP_HOST_GAME_FOUND=1')) cdpDriverState = 'ready';
+          const verdict = CDP_HOST_END_RE.exec(cdpStdoutTail);
+          if (verdict) sessionEndVerdict = verdict[1];
         });
       }
       child.once('exit', (code, signal) => {
-        lastExit = { code, signal, at: new Date().toISOString() };
+        lastExit = {
+          code,
+          signal,
+          at: new Date().toISOString(),
+          reason: classifyExitReason({ code, signal, verdict: sessionEndVerdict, stopRequested }),
+        };
         if (sessionMode === 'cdp-host') {
           cdpDriverState = (!signal && code !== 0) ? 'failure' : 'idle';
           cdpStdoutTail = '';
@@ -402,6 +446,7 @@ export function createServer(options, {
       return json(res, 202, { ok: true, started: true, pid: child.pid });
     }
     if (req.method === 'POST' && req.url === '/v1/stop') {
+      if (child && child.exitCode == null) stopRequested = true;
       stopProcessTree(child, platform);
       return json(res, 202, { ok: true, stopping: true });
     }
