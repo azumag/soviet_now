@@ -1911,7 +1911,7 @@ PY
 
 _extract_named_block() {
 	local marker="$1"
-	python3 - "$marker" <<'PY'
+	python3 -c "$(cat <<'PY'
 import re
 import sys
 
@@ -1930,11 +1930,12 @@ for pattern in patterns:
         print(match.group(1).strip())
         raise SystemExit(0)
 PY
+)" "$marker"
 }
 
 _remove_named_block() {
 	local marker="$1"
-	python3 - "$marker" <<'PY'
+	python3 -c "$(cat <<'PY'
 import re
 import sys
 
@@ -1955,6 +1956,7 @@ for pattern in patterns:
 
 sys.stdout.write(updated)
 PY
+)" "$marker"
 }
 
 #=== コメント分類器 ===

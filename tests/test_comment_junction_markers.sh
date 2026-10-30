@@ -1,13 +1,9 @@
 #!/bin/bash
 # soviet_now#144: generate→deliver 結合部のマーカー抽出 seam の characterization。
-# 【重要】本テストが固定する現行動作には既知の不具合が含まれる:
-#   `_extract_named_block` / `_remove_named_block` は内部で
-#   `python3 - "$marker" <<'PY'` を呼び、heredoc が python のプログラムになる
-#   ため、パイプ経由のテキストは一切届かず sys.stdin.read() は常に空。
-#   結果として両関数は**任意入力で常に空出力・rc=0**を返す。
-#   呼出側は `if [ -n "$(...extract...)" ]` でゲートするため remove も発火せず、
-#   COMMENT_ADVICE/ADVICE/CODEX_ADVICE の抽出→advice file 追記経路は死んでおり、
-#   ===X=== ブロックは本文へ残って後段 sanitizer 任せになる（follow-up issue で追跡）。
+# soviet_now#739 で `_extract_named_block` / `_remove_named_block` の
+# heredoc stdin 消費バグ（python3 - 形式がプログラムに stdin を使い
+# パイプのテキストが届かない）を `python3 -c` 形式へ修正済み。
+# 本テストは修正後の正しい挙動（抽出・除去が実際に動く）を固定する。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,27 +20,31 @@ export ELOOP_LIB_DIR="$TMP"
 source broadcast/comment.sh
 log() { :; }
 
-# ==== 現行固定: named block extract/remove は常に空（既知不具合、仕様ではない） ====
+# ==== named block extract/remove はパイプ入力を処理する（#739 修正後） ====
 out=$(printf '本文\n===ADVICE===\n縦置きが有効\n===ADVICE===\n' | _extract_named_block ADVICE)
-[ -z "$out" ] && pass 'extract: closed block -> empty (dead path, piped text unreachable)' || not_ok "extract changed: '$out'"
+[ "$out" = '縦置きが有効' ] && pass 'extract: closed block -> inner text' || not_ok "extract changed: '$out'"
 out=$(printf '===COMMENT_ADVICE===\n一行目\n===ADVICE===\n他\n' | _extract_named_block COMMENT_ADVICE)
-[ -z "$out" ] && pass 'extract: open block -> empty (dead path)' || not_ok "open extract changed"
+[ "$out" = '一行目' ] && pass 'extract: open block -> text until next marker' || not_ok "open extract changed: '$out'"
 out=$(printf '===CODEX_ADVICE===\n全部\n' | _extract_named_block CODEX_ADVICE)
-[ -z "$out" ] && pass 'extract: EOF block -> empty (dead path)' || not_ok "eof extract changed"
-printf '===ADVICE===\nx\n===ADVICE===\n' | _extract_named_block ADVICE >/dev/null && pass 'extract rc=0 despite dead path' || not_ok 'extract rc!=0'
+[ "$out" = '全部' ] && pass 'extract: EOF block -> text until end' || not_ok "eof extract changed: '$out'"
+out=$(printf '普通の本文\n' | _extract_named_block ADVICE)
+[ -z "$out" ] && pass 'extract: no marker -> empty' || not_ok "no-marker extract changed: '$out'"
+printf '===ADVICE===\nx\n===ADVICE===\n' | _extract_named_block ADVICE >/dev/null && pass 'extract rc=0' || not_ok 'extract rc!=0'
 
 out=$(printf '前\n===ADVICE===\n除去対象\n===ADVICE===\n後\n' | _remove_named_block ADVICE)
-[ -z "$out" ] && pass 'remove: any input -> empty (dead path)' || not_ok "remove changed: '$out'"
+[ "$out" = '前
+後' ] && pass 'remove: closed block removed, text survives' || not_ok "remove changed: '$out'"
+out=$(printf 'そのまま本文\n' | _remove_named_block ADVICE)
+[ "$out" = 'そのまま本文' ] && pass 'remove: no marker -> passthrough' || not_ok "remove passthrough changed: '$out'"
 printf 'x\n' | _remove_named_block ADVICE >/dev/null && pass 'remove rc=0' || not_ok 'remove rc!=0'
 
-# ==== 帰結: 呼出側の `if [ -n "$part" ]` ゲートは発火しない → 本文は残る ====
-# （extract が空を返すため remove 経路に入らない = 生成本文は wipe されない）
+# ==== 帰結: 呼出側の `if [ -n "$part" ]` ゲートが発火し advice file 経路が生きる ====
 attempt_talk='本文と ===ADVICE=== マーカー入り'
 part=$(printf '%s' "$attempt_talk" | _extract_named_block ADVICE)
-[ -z "$part" ] && pass 'advice never routed to advice file (gate never fires)' || not_ok 'gate fired'
+[ -z "$part" ] && pass 'inline marker (no block) still yields empty extract' || not_ok 'inline marker extracted'
 
-# ==== _extract_sing_score / _remove_sing_score_block: 別実装で動作 ====
-# python3 -c 形式のため stdin のテキストが届き実際に動く（named block との非対称を固定）
+# ==== _extract_sing_score / _remove_sing_score_block ====
+# named block と同じ python3 -c 形式（#739 で揃った）。実動作を固定する。
 sing='{"notes":[{"key":60,"frame_length":45,"lyric":"き"}]}'
 out=$(printf '応答文\n===SING===\n%s\n===SING===\n' "$sing" | _extract_sing_score)
 printf '%s' "$out" | grep -q '"notes"' && pass 'sing score JSON extracted (works: -c form)' || not_ok "sing extract='$out'"
@@ -61,9 +61,9 @@ printf 'x {"a":1} y' | _extract_sing_score >/dev/null && not_ok 'non-score extra
 _is_valid_comment_talk() { [ -n "$1" ]; }
 _contains_provider_error_text() { return 1; }
 if _comment_is_valid_generation_candidate ""; then not_ok 'empty candidate accepted'; else pass 'empty candidate rejected'; fi
-# marker ブロックを含む生成候補は、現行の guard→clean→sanitize 連鎖で
-# 検証を通らず却下される（===ADVICE=== ブロックが本文から除去されず、
-# 後段の形式検証で弾かれる）。dead extract との整合をここでも固定する。
+# marker ブロックを含む生成候補は、guard→clean→sanitize 連鎖で
+# 検証を通らず却下される（候補検証は抽出より前の段階なので、
+# #739 の extract 修正とは独立に却下経路が維持される）。
 if _comment_is_valid_generation_candidate $'===ADVICE===\nx\n===ADVICE===\n有効な本文'; then not_ok 'marker candidate accepted'; else pass 'candidate containing ===ADVICE=== block is rejected downstream'; fi
 
 echo "== $ok passed, $fail failed =="
