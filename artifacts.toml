@@ -1,0 +1,409 @@
+# artifacts.toml — top-level artifact inventory (soviet_now#146)
+# 削除しない棚卸し。各エントリは owner/class/source_of_truth/rebuild/retention
+# を持つ。分類不能なものは doctor が unknown-needs-owner として報告する。
+# glob は top-level のみ（** 不可）。複数マッチ時は先勝ち。
+
+[[artifact]]
+pattern = ".git*"
+owner = "repo"
+class = "vcs"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "*.md"
+owner = "docs"
+class = "doc"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "handoff*"
+owner = "ops"
+class = "handoff"
+source_of_truth = "local-private"
+rebuild = "no"
+retention = "rotate"
+note = "private canonical handoff / archive"
+
+[[artifact]]
+pattern = "broadcast"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "lib"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "core"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "strategy"
+owner = "improve"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "strategy.py"
+owner = "improve"
+class = "live-strategy"
+source_of_truth = "reviewed-gitlineage"
+rebuild = "via upstream PR + docich gitlink"
+retention = "keep"
+note = "projection live-apply gate の対象（#2482/#707）。未review bytes は refuse+quarantine"
+
+[[artifact]]
+pattern = "strategy_versions*"
+owner = "improve"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "rotate"
+max_size_mb = 500
+
+[[artifact]]
+pattern = "strategy_backups"
+owner = "improve"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "rotate"
+
+[[artifact]]
+pattern = "tests"
+owner = "repo"
+class = "test"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "tools"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "prompts"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+note = "viewer_title.md は docich projection gateway 配布（AGENTS.md 参照）"
+
+[[artifact]]
+pattern = "docs"
+owner = "docs"
+class = "doc"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = ".github"
+owner = "repo"
+class = "ci"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "soren91"
+owner = "soren91"
+class = "subproject"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "sorengame"
+owner = "runtime"
+class = "subproject"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "infra"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "tmp*"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "yes"
+retention = "bounded"
+max_size_mb = 2048
+note = "state/lock/queue/work products。tracked の tmp_radio.txt 等は file 扱い"
+
+[[artifact]]
+pattern = "logs"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "yes"
+retention = "rotate"
+max_size_mb = 2048
+
+[[artifact]]
+pattern = "worktrees"
+owner = "agent"
+class = "worktree"
+source_of_truth = "local"
+rebuild = "yes"
+retention = "owner-controlled"
+note = "自動削除禁止（#146 確認済み）"
+
+[[artifact]]
+pattern = ".worktrees"
+owner = "agent"
+class = "worktree"
+source_of_truth = "local"
+rebuild = "yes"
+retention = "owner-controlled"
+
+[[artifact]]
+pattern = "__pycache__"
+owner = "runtime"
+class = "generated"
+source_of_truth = "build"
+rebuild = "yes"
+retention = "prunable"
+
+[[artifact]]
+pattern = "*.sh"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "*.py"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "*.mjs"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "*.json"
+owner = "runtime"
+class = "config"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "*.jsonl"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "review"
+
+[[artifact]]
+pattern = "*.png"
+owner = "runtime"
+class = "asset"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "review"
+
+[[artifact]]
+pattern = "*.txt"
+owner = "runtime"
+class = "data"
+source_of_truth = "mixed"
+rebuild = "review"
+retention = "review"
+note = "tracked data file と generated artifact が混在"
+
+[[artifact]]
+pattern = "*.html"
+owner = "runtime"
+class = "asset"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "review"
+
+[[artifact]]
+pattern = "package*.json"
+owner = "runtime"
+class = "config"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "config"
+owner = "runtime"
+class = "config"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "data"
+owner = "runtime"
+class = "data"
+source_of_truth = "mixed"
+rebuild = "review"
+retention = "review"
+
+[[artifact]]
+pattern = "experiments"
+owner = "improve"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "review"
+
+[[artifact]]
+pattern = "candidates"
+owner = "improve"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "rotate"
+note = "A/B 候補 staging（#707 gate 経由の upstream 手順あり）"
+
+[[artifact]]
+pattern = "celebrations"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "rotate"
+
+[[artifact]]
+pattern = "overlays"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "yes"
+retention = "bounded"
+
+[[artifact]]
+pattern = "show-status*"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "yes"
+retention = "bounded"
+
+[[artifact]]
+pattern = "memory"
+owner = "runtime"
+class = "generated"
+source_of_truth = "runtime"
+rebuild = "no"
+retention = "rotate"
+
+[[artifact]]
+pattern = "native"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "commands.txt"
+owner = "runtime"
+class = "data"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "review"
+
+[[artifact]]
+pattern = "diagnostics_runner.sh"
+owner = "ops"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "artifacts.toml"
+owner = "repo"
+class = "inventory"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+note = "本ファイル（artifact inventory 自身）"
+
+[[artifact]]
+pattern = ".node-version"
+owner = "runtime"
+class = "config"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "deploy"
+owner = "ops"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+
+[[artifact]]
+pattern = "strategy_helpers"
+owner = "improve"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
+note = "bundle apply 対象の helper modules（projection gate と同じ lineage 検査）"
+
+[[artifact]]
+pattern = "strategy.py.staging.backup"
+owner = "improve"
+class = "generated"
+source_of_truth = "local"
+rebuild = "no"
+retention = "prunable"
+note = "staging のローカル退避。live 反映物ではない"
+
+[[artifact]]
+pattern = "workers"
+owner = "runtime"
+class = "source"
+source_of_truth = "git"
+rebuild = "n/a"
+retention = "keep"
