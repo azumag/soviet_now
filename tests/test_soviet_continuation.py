@@ -64,10 +64,20 @@ class SovietContinuationTest(unittest.TestCase):
             root = Path(temp)
             (root / "tmp/markers").mkdir(parents=True)
             (root / "tmp/state").mkdir(parents=True)
-            # Marker belongs to an earlier match; the bridge already sees this one.
+            # Marker belongs to an earlier match; the bridge already sees this
+            # one. Only a schema-valid, fresh observation describing this same
+            # board counts as live evidence for the id comparison
+            # (soviet_now#714); strategy_runner.time.time is mocked to 401
+            # below, which also freezes lib.founding_marker's clock.
             (root / "tmp/markers/.soviet_created").write_text("189|11111111-1111-4111-8111-111111111111\n")
             (root / "tmp/state/game_observation.json").write_text(
-                json.dumps({"game_id": "22222222-2222-4222-8222-222222222222"})
+                json.dumps({
+                    "schema": 1,
+                    "game_id": "22222222-2222-4222-8222-222222222222",
+                    "stop_id": None,
+                    "board": dict(stop),
+                    "observed_epoch": 401,
+                })
             )
             old_cwd = os.getcwd()
             os.chdir(root)
