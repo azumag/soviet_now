@@ -581,9 +581,11 @@ PY
 	fi
 
 	winner_hash=$(python3 extract_decide_hash.py "$winner_path" 2>/dev/null || echo "")
-	strategy_runtime_atomic_apply_then \
-		"$winner_path" "$STRATEGY_FILE" \
-		"_atomic_pin_advance_after_apply" "$baseline_hash" "param-parallel"
+	if _improve_promote_via_pr_record "$winner_path" "param-parallel"; then
+		strategy_runtime_atomic_apply_then \
+			"$winner_path" "$STRATEGY_FILE" \
+			"_atomic_pin_advance_after_apply" "$baseline_hash" "param-parallel"
+	fi
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	winner_job=$(python3 - "$result_file" <<'PY' 2>/dev/null || true
 import json, sys
@@ -1132,6 +1134,26 @@ path.write_text(text, encoding="utf-8")
 PY
 }
 
+# soviet_now#707: IMPROVE_PROMOTE_VIA_PR=1 のとき勝者候補を live strategy.py へ
+# 直接適用せず candidates/ へ記録する（PR 経由の promotion 律速は owner 判断）。
+# return 0 = 通常どおり適用 / 1 = candidates へ記録して適用スキップ /
+# 2 = 記録失敗（fail-closed、適用しない）。
+_improve_promote_via_pr_record() {
+	local winner_path="$1" label="$2"
+	[ "${IMPROVE_PROMOTE_VIA_PR:-0}" = "1" ] || return 0
+	local cand_dir="${IMPROVE_CANDIDATES_DIR:-candidates}"
+	local h
+	h=$(python3 extract_decide_hash.py "$winner_path" 2>/dev/null || echo "")
+	local dest="$cand_dir/$(date -u +%Y%m%dT%H%M%SZ)-${label}-${h:0:12}.py"
+	mkdir -p "$cand_dir" 2>/dev/null || true
+	if cp "$winner_path" "$dest"; then
+		log "[IMPROVE] PROMOTE_VIA_PR: winner recorded as candidate ${dest} (live strategy.py untouched)"
+		return 1
+	fi
+	log "[IMPROVE] PROMOTE_VIA_PR: failed to record candidate ${dest}; skipping live apply (fail-closed)"
+	return 2
+}
+
 _improve_reset_sandbox_targets() {
 	# docich#2487: live strategy.py is no longer mutated here. The reviewed file
 	# in soviet_now main already carries FAST_DROP_DEADLINE_CONTACT, and a
@@ -1599,9 +1621,11 @@ PY
 			wildcard_parallel_restore_once
 			exit 1
 		fi
-		strategy_runtime_atomic_apply_then \
-			"$wildcard_winner_path" "$STRATEGY_FILE" \
-			"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-parallel"
+		if _improve_promote_via_pr_record "$wildcard_winner_path" "wildcard-parallel"; then
+			strategy_runtime_atomic_apply_then \
+				"$wildcard_winner_path" "$STRATEGY_FILE" \
+				"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-parallel"
+		fi
 		HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		# Commit immediately after applying the winner so strategy.py is preserved
 		# even if the process is killed before reaching the git_commit phase below.
@@ -1758,9 +1782,11 @@ except Exception:
 		exit 1
 	fi
 	# 摂動結果を適用
-	strategy_runtime_atomic_apply_then \
-		"strategy.py.staging" "$STRATEGY_FILE" \
-		"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-direct"
+	if _improve_promote_via_pr_record "strategy.py.staging" "wildcard-direct"; then
+		strategy_runtime_atomic_apply_then \
+			"strategy.py.staging" "$STRATEGY_FILE" \
+			"_atomic_pin_advance_after_apply" "$HASH_BEFORE" "wildcard-direct"
+	fi
 	rm -f "strategy.py.staging"
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	# wildcard 起源 hash を登録 (regression.sh の patience override 用)
