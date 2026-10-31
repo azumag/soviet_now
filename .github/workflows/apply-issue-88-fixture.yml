@@ -1,8 +1,7 @@
 name: Apply issue 88 fixture patch
 
 on:
-  push:
-    branches: ['fix/88-outbound-priority-order']
+  pull_request:
     paths:
       - '.github/workflows/apply-issue-88-fixture.yml'
 
