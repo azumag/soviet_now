@@ -25,6 +25,7 @@ class TestOutboundQueueYoutubeMirrorSplit(unittest.TestCase):
         self.work = Path(self.tmp.name)
         (self.work / "lib").mkdir()
         shutil.copy2(ROOT / "lib" / "outbound_queue.sh", self.work / "lib" / "outbound_queue.sh")
+        shutil.copy2(ROOT / "lib" / "outbound_queue_order.py", self.work / "lib" / "outbound_queue_order.py")
         # Never source the checkout's .env or invoke a real provider script.
         self.env = os.environ.copy()
         for name in list(self.env):

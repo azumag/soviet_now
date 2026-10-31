@@ -441,6 +441,9 @@ outbound_queue_consume_once() {
 
 	local msg_file
 	msg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)
+	if [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
+		msg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)
+	fi
 	[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
 
 	local basename claim_file
