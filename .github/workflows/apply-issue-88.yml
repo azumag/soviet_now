@@ -17,10 +17,27 @@ jobs:
         with:
           ref: fix/88-outbound-priority-order
           fetch-depth: 0
-      - name: Update isolated outbound queue fixtures
+      - name: Update queue selector fallback and isolated fixtures
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
+          queue = Path('lib/outbound_queue.sh')
+          text = queue.read_text(encoding='utf-8')
+          old = '''\tlocal msg_file
+\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)
+\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
+'''
+          new = '''\tlocal msg_file
+\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)
+\tif [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
+\t\tmsg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)
+\tfi
+\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
+'''
+          if text.count(old) != 1:
+              raise SystemExit('unexpected outbound queue selector shape')
+          queue.write_text(text.replace(old, new), encoding='utf-8')
 
           split_test = Path('tests/test_outbound_queue_youtube_split.py')
           text = split_test.read_text(encoding='utf-8')
@@ -51,5 +68,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'test: include outbound queue ordering helper in fixtures'
+          git commit -m 'fix: preserve delivery fallback for outbound priority queue'
           git push origin HEAD:fix/88-outbound-priority-order
