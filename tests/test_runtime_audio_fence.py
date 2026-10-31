@@ -277,7 +277,7 @@ _play_comment_queue
     def test_full_say_drops_expired_item_without_retry_or_failure_streak(self):
         shutil.copy2(ROOT / 'say_enqueue.sh', self.root / 'say_enqueue.sh')
         (self.root / 'lib').mkdir()
-        for name in ('outbound_queue.sh', 'runtime_audio_fence.py'):
+        for name in ('outbound_queue.sh', 'outbound_queue_order.py', 'runtime_audio_fence.py'):
             shutil.copy2(ROOT / 'lib' / name, self.root / 'lib' / name)
         self.set_state(lease='replacement')
         env = dict(self.env, SOREN_OBS_PLATFORM='linux', SAY_RETRY_MAX='6',

@@ -1,0 +1,31 @@
+name: Outbound queue priority
+
+on:
+  pull_request:
+    paths:
+      - 'lib/outbound_queue.sh'
+      - 'lib/outbound_queue_order.py'
+      - 'tests/test_outbound_queue_priority.py'
+      - '.github/workflows/outbound-queue-priority.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/outbound_queue.sh'
+      - 'lib/outbound_queue_order.py'
+      - 'tests/test_outbound_queue_priority.py'
+      - '.github/workflows/outbound-queue-priority.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  priority-order:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Run priority ordering regression tests
+        run: python3 -m unittest tests.test_outbound_queue_priority
+      - name: Check shell syntax
+        run: bash -n lib/outbound_queue.sh
