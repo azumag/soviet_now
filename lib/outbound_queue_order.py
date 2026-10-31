@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Select the next outbound chat item by priority, enqueue time, then id."""
+"""Select the next outbound chat item by priority, enqueue time, then id.
+
+The shell caller retains the legacy FIFO selector as a delivery fallback when
+this helper cannot run, so ordering improvements never turn into a queue stall.
+"""
 
 from __future__ import annotations
 
