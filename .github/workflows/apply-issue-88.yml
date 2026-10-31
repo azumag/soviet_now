@@ -24,17 +24,19 @@ jobs:
 
           queue = Path('lib/outbound_queue.sh')
           text = queue.read_text(encoding='utf-8')
-          old = '''\tlocal msg_file
-\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)
-\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
-'''
-          new = '''\tlocal msg_file
-\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)
-\tif [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then
-\t\tmsg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)
-\tfi
-\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1
-'''
+          old = (
+              '\tlocal msg_file\n'
+              '\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)\n'
+              '\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1\n'
+          )
+          new = (
+              '\tlocal msg_file\n'
+              '\tmsg_file=$(python3 "$(dirname "${BASH_SOURCE[0]}")/outbound_queue_order.py" "$OUTBOUND_CHAT_PENDING_DIR" 2>/dev/null || true)\n'
+              '\tif [ -z "$msg_file" ] || [ ! -f "$msg_file" ]; then\n'
+              '\t\tmsg_file=$(ls -1t "$OUTBOUND_CHAT_PENDING_DIR"/*.msg 2>/dev/null | tail -1)\n'
+              '\tfi\n'
+              '\t[ -n "$msg_file" ] && [ -f "$msg_file" ] || return 1\n'
+          )
           if text.count(old) != 1:
               raise SystemExit('unexpected outbound queue selector shape')
           queue.write_text(text.replace(old, new), encoding='utf-8')
