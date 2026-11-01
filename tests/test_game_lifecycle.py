@@ -195,6 +195,53 @@ class GameLifecycleBrokerTests(unittest.TestCase):
             self.assertEqual(waiting.returncode, 1)
             self.assertEqual(waiting_payload["status"], "waiting")
 
+    def _seed_frozen_jev(self, root: Path, run_id: str, *, report: bool, instance: str = "inst-frozen") -> None:
+        lifecycle = root / "tmp/state/game_lifecycle"
+        lifecycle.mkdir(parents=True, exist_ok=True)
+        (lifecycle / "player_state.json").write_text(json.dumps({
+            "schema": 1, "game": "sorengame", "game_generation": 7,
+            "policy": "jev", "player_generation": 3, "run_id": run_id,
+        }), encoding="utf-8")
+        board = {"state": "MOVE", "score": 1117, "pieces": [],
+                 "jev_identity": {"game_instance_id": instance}}
+        board_path = root / "game_state.json"
+        board_path.write_text(json.dumps(board), encoding="utf-8")
+        old = time.time() - 8000
+        os.utime(board_path, (old, old))
+        if report:
+            report_dir = root / "tmp/jev_player/runs" / run_id
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "report.json").write_text("{}", encoding="utf-8")
+
+    def test_frozen_jev_board_parks_only_with_runner_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            run_id = str(uuid.uuid4())
+            self._seed_frozen_jev(root, run_id, report=False)
+            waiting, _payload = self.run_broker(root, "mark-jev-one-game")
+            self.assertEqual(waiting.returncode, 1)
+
+            self._seed_frozen_jev(root, run_id, report=True)
+            parked, payload = self.run_broker(root, "mark-jev-one-game")
+            self.assertEqual(parked.returncode, 0)
+            marker = payload["marker"]
+            self.assertEqual(marker["boundary"], "frozen")
+            self.assertEqual(marker["game_instance_id"], "inst-frozen")
+
+    def test_missing_jev_board_parks_only_with_runner_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            run_id = str(uuid.uuid4())
+            self._seed_frozen_jev(root, run_id, report=False)
+            (root / "game_state.json").unlink()
+            self.assertEqual(self.run_broker(root, "mark-jev-one-game")[0].returncode, 1)
+            report_dir = root / "tmp/jev_player/runs" / run_id
+            report_dir.mkdir(parents=True, exist_ok=True)
+            (report_dir / "report.json").write_text("{}", encoding="utf-8")
+            parked, payload = self.run_broker(root, "mark-jev-one-game")
+            self.assertEqual(parked.returncode, 0)
+            self.assertEqual(payload["marker"]["boundary"], "frozen")
+
     def test_player_commit_clears_completed_jev_park(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
