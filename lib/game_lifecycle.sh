@@ -143,7 +143,7 @@ PY
 # cannot suppress an existing-policy runtime or a later JEV generation.
 game_lifecycle_jev_one_game_parked() {
 	[ "${GAME_LIFECYCLE_ENABLED:-1}" = "1" ] || return 1
-	python3 - "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" "$GAME_LIFECYCLE_PLAYER_STATE_FILE" <<'PY'
+	python3 - "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" "$GAME_LIFECYCLE_PLAYER_STATE_FILE" "$GAME_LIFECYCLE_ROOT/game_state.json" <<'PY'
 import json
 import sys
 
@@ -163,6 +163,19 @@ if marker.get("policy") != "jev" or state.get("policy") != "jev":
 for field in ("run_id", "game_generation", "player_generation"):
     if marker.get(field) != state.get(field):
         raise SystemExit(1)
+# A park taken on a frozen board (docich#3154) must not suppress the single
+# post-relaunch game that creates finish's terminal boundary.  Once the
+# board belongs to a different game instance the parked run's claim on this
+# board is spent; a completing game re-parks itself with its own instance,
+# which is what then blocks any further game.
+try:
+    board = json.load(open(sys.argv[3], encoding="utf-8"))
+except Exception:
+    board = {}
+identity = board.get("jev_identity") if isinstance(board, dict) else None
+current_instance = identity.get("game_instance_id") if isinstance(identity, dict) else None
+if marker.get("game_instance_id") and current_instance and marker["game_instance_id"] != current_instance:
+    raise SystemExit(1)
 raise SystemExit(0)
 PY
 }

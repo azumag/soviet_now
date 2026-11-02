@@ -650,4 +650,50 @@ set -e
 [ "$jev_terminal_rc" -eq 3 ]
 [ "$(wc -l <"$_jev_mark_calls_file" | tr -d ' ')" -eq 1 ]
 
+# docich#3154: a park taken on a frozen board is scoped to that board's game
+# instance.  A relaunched bridge starts a new instance, which must be allowed
+# to play exactly one boundary-forming game; the parked predicate therefore
+# reports "not parked" for a different instance only.
+write_player_state jev 6 8 "$jev_run_id"
+python3 - "$GAME_LIFECYCLE_JEV_ONE_GAME_FILE" "$jev_run_id" <<'PY'
+import json
+import sys
+
+marker_path, run_id = sys.argv[1], sys.argv[2]
+marker = {
+    "schema": 1, "game": "sorengame", "policy": "jev",
+    "run_id": run_id, "game_generation": 8, "player_generation": 6,
+    "game_instance_id": "inst-frozen-old", "boundary": "frozen",
+    "completed_at": "2026-10-31T00:00:00.000Z",
+}
+with open(marker_path, "w", encoding="utf-8") as handle:
+    json.dump(marker, handle)
+PY
+# Same instance board stays parked.
+python3 - "$GAME_LIFECYCLE_ROOT/game_state.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"state": "MOVE", "score": 0, "pieces": [],
+               "jev_identity": {"game_instance_id": "inst-frozen-old"}}, handle)
+PY
+game_lifecycle_jev_one_game_parked
+# A different instance lifts the park (the relaunch boundary game).
+python3 - "$GAME_LIFECYCLE_ROOT/game_state.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"state": "MOVE", "score": 0, "pieces": [],
+               "jev_identity": {"game_instance_id": "inst-new"}}, handle)
+PY
+if game_lifecycle_jev_one_game_parked; then
+	echo "FAIL: parked predicate kept suppressing a new game instance" >&2
+	exit 1
+fi
+# No board at all stays conservatively parked.
+rm -f "$GAME_LIFECYCLE_ROOT/game_state.json"
+game_lifecycle_jev_one_game_parked
+
 echo "game lifecycle shell tests passed"

@@ -338,6 +338,52 @@ function annotateJevState(state) {
   };
 }
 
+// page.evaluate has no built-in timeout.  When the renderer main thread
+// wedges during the game-over sequence (docich#3154) the call stays pending
+// forever while node timers keep running, so a Promise.race deadline still
+// fires in exactly that failure mode: the bridge emits the existing
+// [BRIDGE-FATAL] signature, which lib/bridge_recovery.sh's _br_fatal_in_log
+// already turns into an automatic relaunch — no new monitoring is needed.
+const EVALUATE_DEADLINE_MS = Number(process.env.SOREN_EVALUATE_DEADLINE_MS) || 30000;
+
+// Set for the duration of a JEV drop dispatch so the deadline path can leave
+// an outcome_unknown ack instead of silently losing the command outcome.
+let activeJevDropCommand = null;
+
+function bridgeFatalExit(reason) {
+  try { console.error('[BRIDGE-FATAL] ' + reason); } catch {}
+  const _f = setTimeout(() => process.exit(1), 3000);
+  if (_f.unref) _f.unref();
+  process.exit(1);
+}
+
+async function evaluateWithDeadline(page, fn, arg, label) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('EVALUATE_DEADLINE:' + label)), EVALUATE_DEADLINE_MS);
+  });
+  try {
+    const call = arg === undefined ? page.evaluate(fn) : page.evaluate(fn, arg);
+    return await Promise.race([call, deadline]);
+  } catch (e) {
+    if (e && e.message === 'EVALUATE_DEADLINE:' + label) {
+      if (activeJevDropCommand) {
+        try { writeJevAck(activeJevDropCommand, 'outcome_unknown', 'evaluate_deadline'); } catch {}
+      }
+      bridgeFatalExit('page.evaluate deadline exceeded (' + label + ')');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Test hook: drives the JEV-outcome side of evaluateWithDeadline without a
+// real drop dispatch.
+function setActiveJevDropCommandForTest(command) {
+  activeJevDropCommand = command;
+}
+
 function writeJevAck(command, status, reason = '') {
   if (!command || typeof command.run_id !== 'string' || !JEV_UUID_RE.test(command.run_id)) return;
   if (typeof command.game_instance_id !== 'string' || !JEV_UUID_RE.test(command.game_instance_id)) return;
@@ -1254,7 +1300,7 @@ async function getGameState(page) {
     // the next JEV game gets its identity and the finish path clears it from
     // the same long-lived process.
     refreshCommittedPlayerState();
-    const state = await page.evaluate(() => window.__sorenGameState);
+    const state = await evaluateWithDeadline(page, () => window.__sorenGameState, undefined, 'getGameState');
     const annotated = annotateJevState(state || null);
     gameObservation.observe(annotated);
     return annotated;
@@ -2118,21 +2164,28 @@ async function executeCommand(page, command, externalGameAudio = null, jevDropGu
     }
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     externalGameAudio?.playDrop();
-    await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
-    await page.waitForTimeout(500);
     if (command.player_policy === 'jev') {
-      const afterState = await getGameState(page);
-      const beforeId = currentState?.jev_identity?.drop_piece_id;
-      const afterId = afterState?.jev_identity?.drop_piece_id;
-      const phaseChanged = afterState?.state !== 'MOVE' && afterState?.phase !== 'MOVE';
-      const pieceAdvanced = Number.isInteger(afterId) && afterId !== beforeId;
-      if (!phaseChanged && !pieceAdvanced) {
-        writeJevAck(command, 'outcome_unknown', 'drop_transition_not_observed');
-        console.warn('[JEV] drop outcome unknown: no post-drop state transition observed');
-      } else {
-        writeJevAck(command, 'accepted');
+      activeJevDropCommand = command;
+    }
+    try {
+      await evaluateWithDeadline(page, (x) => { window.__sorenCommand = 'DROP:' + x; }, command.x, 'drop_dispatch');
+      await page.waitForTimeout(500);
+      if (command.player_policy === 'jev') {
+        const afterState = await getGameState(page);
+        const beforeId = currentState?.jev_identity?.drop_piece_id;
+        const afterId = afterState?.jev_identity?.drop_piece_id;
+        const phaseChanged = afterState?.state !== 'MOVE' && afterState?.phase !== 'MOVE';
+        const pieceAdvanced = Number.isInteger(afterId) && afterId !== beforeId;
+        if (!phaseChanged && !pieceAdvanced) {
+          writeJevAck(command, 'outcome_unknown', 'drop_transition_not_observed');
+          console.warn('[JEV] drop outcome unknown: no post-drop state transition observed');
+        } else {
+          writeJevAck(command, 'accepted');
+        }
+        return afterState || currentState;
       }
-      return afterState || currentState;
+    } finally {
+      activeJevDropCommand = null;
     }
   } else if (command.action === 'mute') {
     console.log('Executing: MUTE');
@@ -3349,6 +3402,8 @@ async function runLocalController() {
 }
 
 export {
+  evaluateWithDeadline,
+  setActiveJevDropCommandForTest,
   closeGameOnlyRuntime,
   lifecycleControlStillCurrent,
   lifecycleImproveStillActive,

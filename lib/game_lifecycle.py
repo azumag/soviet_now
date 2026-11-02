@@ -584,6 +584,50 @@ def command_commit_player(store: LifecycleStore, args: argparse.Namespace) -> in
         return _emit({"status": "committed", "player_state": player_state, "ack": committed}, RC_OK)
 
 
+# A MOVE board that has not been rewritten for this long can never settle to
+# the terminal boundary every other lifecycle operation requires; that is the
+# hung-bridge shape from docich#3154.  Twice the boundary timeout keeps the
+# threshold comfortably above a slow legitimate game over write.
+JEV_FROZEN_BOARD_AGE_SEC = 7200.0
+
+
+def _jev_board_game_instance(root: Path) -> Any:
+    state = _json_object(root / "game_state.json") or {}
+    identity = state.get("jev_identity")
+    value = identity.get("game_instance_id") if isinstance(identity, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _jev_frozen_mark_allowed(store: LifecycleStore, player_state: dict[str, Any]) -> bool:
+    """Whether a non-terminal board may still park the committed JEV run.
+
+    A hung bridge leaves ``game_state.json`` frozen at MOVE (or missing)
+    forever, so the terminal boundary that normally backs the park can never
+    arrive.  The park is then allowed only when the runner's own completion
+    report for the committed run exists, proving the game did end even
+    though the board never recorded it (docich#3154).  Every other case
+    keeps the normal "wait for a stable boundary" behaviour.
+    """
+
+    state_path = store.root / "game_state.json"
+    state = _json_object(state_path)
+    if state is not None:
+        if state.get("state") != "MOVE":
+            return False
+        try:
+            if time.time() - state_path.stat().st_mtime < JEV_FROZEN_BOARD_AGE_SEC:
+                return False
+        except OSError:
+            return False
+    elif state_path.exists():
+        return False
+    run_id = player_state.get("run_id")
+    if not isinstance(run_id, str) or not UUID_RE.fullmatch(run_id):
+        return False
+    report = store.root / "tmp/jev_player/runs" / run_id / "report.json"
+    return report.is_file()
+
+
 def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) -> int:
     """Durably park the supervisor after the explicitly requested JEV game."""
 
@@ -608,7 +652,10 @@ def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) 
         ):
             return _emit({"status": "conflict", "error": "committed JEV player state is invalid"}, RC_CONFLICT)
         snapshot = _read_game_snapshot(store.root)
-        if not snapshot.get("terminal") or snapshot.get("runner_alive"):
+        if snapshot.get("runner_alive"):
+            return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
+        terminal = bool(snapshot.get("terminal"))
+        if not terminal and not _jev_frozen_mark_allowed(store, player_state):
             return _emit({"status": "waiting", "error": "JEV game has not reached a stable boundary"}, RC_WAITING)
         marker = {
             "schema": SCHEMA_VERSION,
@@ -617,6 +664,8 @@ def command_mark_jev_one_game(store: LifecycleStore, _args: argparse.Namespace) 
             "run_id": run_id,
             "game_generation": player_state["game_generation"],
             "player_generation": player_state["player_generation"],
+            "game_instance_id": _jev_board_game_instance(store.root),
+            "boundary": "terminal" if terminal else "frozen",
             "completed_at": _utc_now(),
         }
         store.save_jev_one_game(marker)
