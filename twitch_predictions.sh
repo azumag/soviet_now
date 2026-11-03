@@ -994,6 +994,9 @@ PY
 			_log "prediction canceled: no contest (outcomes_with_bets=${contested})"
 			rm -f "$PREDICTION_STATE_FILE"
 			_prediction_retry_clear resolve
+			# no-contest cancel は全額返却で settle 済みの確定的終了なので、
+			# resolve と同じくコーナー解放の境界を打つ (docich#3291)。
+			python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
 			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
 			exit 0
 		fi
@@ -1112,6 +1115,7 @@ cancel)
 
 	_log "prediction canceled"
 	rm -f "$PREDICTION_STATE_FILE"
+	python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
 	printf '%s\n' '{"ok":true,"status":"canceled"}'
 	;;
 

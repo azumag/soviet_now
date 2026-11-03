@@ -1,4 +1,4 @@
-"""Publish only confirmed cycle completion; contains no trading or viewer actions."""
+"""Publish the confirmed end of a prediction cycle — resolve or no-contest cancel; contains no trading or viewer actions."""
 import json
 import os
 from pathlib import Path
