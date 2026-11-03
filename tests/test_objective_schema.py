@@ -24,8 +24,8 @@ EXPECTED_TABLE = {
 
 
 class ObjectiveSchemaTests(unittest.TestCase):
-    def test_schema_bumped_for_terminal_band_semantics(self):
-        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v3")
+    def test_schema_bumped_for_type16_terminal_inference(self):
+        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v4")
 
     def test_type_table_is_unchanged(self):
         self.assertEqual(TYPE_BONUS, EXPECTED_TABLE)
@@ -35,27 +35,30 @@ class ObjectiveSchemaTests(unittest.TestCase):
         self.assertGreater(SOVIET_CREATED_BONUS, 2 * TYPE_BONUS[15])
 
     def test_founding_dominates_extreme_nonterminal_frontier_score(self):
-        # Deliberately use a non-terminal raw score far above normal observed runs.
         before = eval_score(10_000_000, [15, 15, 14, 14], False)
         after = eval_score(0, [16], True)
         self.assertGreater(after, before)
 
-    def test_success_bonus_dominates_same_board_without_success_flag(self):
-        types = [16, 14, 10, 3]
-        self.assertEqual(
-            eval_score(500, types, True) - eval_score(500, types, False),
-            SOVIET_CREATED_BONUS,
-        )
+    def test_type16_infers_success_when_flag_is_missing(self):
+        inferred = eval_score(500, [16, 14, 10, 3], False)
+        explicit = eval_score(500, [16, 14, 10, 3], True)
+        self.assertEqual(inferred, explicit)
+        self.assertGreaterEqual(inferred, SOVIET_CREATED_BONUS)
+
+    def test_type15_does_not_infer_soviet_success(self):
+        without_flag = eval_score(500, [15, 15, 14], False)
+        with_flag = eval_score(500, [15, 15, 14], True)
+        self.assertEqual(with_flag - without_flag, SOVIET_CREATED_BONUS)
 
     def test_unknown_and_junk_types_are_zero(self):
-        self.assertEqual(terminal_bonus([99, None, "bad"], False), 0)
-        self.assertEqual(eval_score("bad", [99], False), 0)
+        self.assertEqual(terminal_bonus([99, None, "bad"], False), SOVIET_CREATED_BONUS)
+        self.assertEqual(eval_score("bad", [3], False), TYPE_BONUS[3])
 
     def test_monotonic_in_tier(self):
         for tier in range(3, 16):
             self.assertGreater(TYPE_BONUS[tier + 1], TYPE_BONUS[tier])
 
-    def test_version_stamp_separates_v3_from_legacy(self):
+    def test_version_stamp_separates_v4_from_legacy(self):
         current = stamp({"score": 2})
         legacy = {"score": 1}
         self.assertTrue(is_current(current))
