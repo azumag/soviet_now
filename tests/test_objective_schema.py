@@ -51,8 +51,8 @@ class ObjectiveSchemaTests(unittest.TestCase):
         self.assertEqual(with_flag - without_flag, SOVIET_CREATED_BONUS)
 
     def test_unknown_and_junk_types_are_zero(self):
-        self.assertEqual(terminal_bonus([99, None, "bad"], False), SOVIET_CREATED_BONUS)
-        self.assertEqual(eval_score("bad", [3], False), TYPE_BONUS[3])
+        self.assertEqual(terminal_bonus([99, None, "bad"], False), 0)
+        self.assertEqual(eval_score("bad", [99], False), 0)
 
     def test_monotonic_in_tier(self):
         for tier in range(3, 16):
