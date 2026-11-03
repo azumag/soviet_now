@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-# v5 adds an explicit double-Russia readiness band.  Reaching two T15s is the
-# immediate predecessor to founding, so search should prefer it over merely
-# accumulating a broad high-tier frontier.  Terminal Soviet success remains in
-# its separate 1e9 band and therefore always dominates this stage bonus.
-OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v5"
+# v6 adds a staged second-Russia pipeline band.  A board with one T15 and at
+# least two T14s is one deterministic merge away from the double-Russia state,
+# so preserve it ahead of unrelated frontier score while keeping T15x2 and the
+# terminal Soviet bands strictly dominant.
+OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v6"
 
 TYPE_BONUS = {
     1: 0,
@@ -27,6 +27,7 @@ TYPE_BONUS = {
     16: 25402,
 }
 
+SECOND_RUSSIA_PIPELINE_BONUS = 50_000
 SECOND_RUSSIA_READY_BONUS = 100_000
 SOVIET_CREATED_BONUS = 1_000_000_000
 
@@ -41,6 +42,11 @@ def _as_int(value):
 def terminal_bonus(final_types, soviet_created=False):
     types = [_as_int(value) for value in (final_types or ())]
     bonus = sum(TYPE_BONUS.get(value, 0) for value in types)
+    # One Russia plus two Kazakhstans is the immediate predecessor to T15x2:
+    # T14+T14 -> T15. Preserve that pipeline without double-counting the
+    # stronger double-Russia readiness band once two T15s already exist.
+    if types.count(15) == 1 and types.count(14) >= 2:
+        bonus += SECOND_RUSSIA_PIPELINE_BONUS
     # Two Russia pieces are the final non-terminal stage.  Give that state a
     # dedicated band so candidate culling/promotion does not trade it away for
     # unrelated frontier score before the final T15+T15 merge can happen.
