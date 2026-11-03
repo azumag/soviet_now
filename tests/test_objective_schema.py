@@ -24,20 +24,21 @@ EXPECTED_TABLE = {
 
 
 class ObjectiveSchemaTests(unittest.TestCase):
-    def test_schema_bumped_for_terminal_success_semantics(self):
-        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v2")
+    def test_schema_bumped_for_terminal_band_semantics(self):
+        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v3")
 
     def test_type_table_is_unchanged(self):
         self.assertEqual(TYPE_BONUS, EXPECTED_TABLE)
 
-    def test_soviet_bonus_exceeds_double_russia_frontier(self):
+    def test_soviet_bonus_reserves_a_separate_terminal_band(self):
+        self.assertGreaterEqual(SOVIET_CREATED_BONUS, 1_000_000_000)
         self.assertGreater(SOVIET_CREATED_BONUS, 2 * TYPE_BONUS[15])
 
-    def test_founding_has_decisive_margin_over_two_russias(self):
-        before = eval_score(100, [15, 15, 7, 3], False)
-        after = eval_score(236, [16, 7, 3], True)
+    def test_founding_dominates_extreme_nonterminal_frontier_score(self):
+        # Deliberately use a non-terminal raw score far above normal observed runs.
+        before = eval_score(10_000_000, [15, 15, 14, 14], False)
+        after = eval_score(0, [16], True)
         self.assertGreater(after, before)
-        self.assertGreaterEqual(after - before, 25000)
 
     def test_success_bonus_dominates_same_board_without_success_flag(self):
         types = [16, 14, 10, 3]
@@ -54,7 +55,7 @@ class ObjectiveSchemaTests(unittest.TestCase):
         for tier in range(3, 16):
             self.assertGreater(TYPE_BONUS[tier + 1], TYPE_BONUS[tier])
 
-    def test_version_stamp_separates_v2_from_legacy(self):
+    def test_version_stamp_separates_v3_from_legacy(self):
         current = stamp({"score": 2})
         legacy = {"score": 1}
         self.assertTrue(is_current(current))
