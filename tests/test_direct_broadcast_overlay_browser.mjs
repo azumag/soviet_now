@@ -29,7 +29,7 @@ function fixture(kind) {
           : { cpu: 42, memory: 56, disk: 42 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
     + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n'
-    + '兵力: 9名 / 停滞 3秒\n将軍数: 12人（完全名簿）\n占領記録 5城（現在の城数ではない）\n'
+    + '兵力: 9名 / 停滞 3秒\n将軍数: 12人（完全名簿）\n半熟レベル: 17 / 半熟値: 9999\n現在収入: 300G\n占領記録 5城（現在の城数ではない）\n'
     + '保有: カストーラ/スペンソニア\n戦闘結果: 4勝 / 1敗 / 未分類 1\n'
     + '交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
     + '駐留: アルマムーン=ゼウス/ユイートル\n行軍中: どうし→ナキューメラ\n'
@@ -261,7 +261,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
         assert.equal(await page.locator('.hanjuku-troops').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),24);
-        for(const selector of ['.hanjuku-duel','.hanjuku-holds']) {
+        assert.equal(await page.locator('.hanjuku-power').textContent(),'半熟Lv 17 / 半熟値 9999 / 収入 300G');
+        assert.equal(await page.locator('.hanjuku-power').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),15);
+        for(const selector of ['.hanjuku-duel']) {
           assert.equal(await page.locator(selector).evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),18,`${kind}: ${selector} stays readable`);
         }
         assert.equal(await page.locator('.hanjuku-orders').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),16);

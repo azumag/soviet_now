@@ -984,10 +984,11 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 }
 .hanjuku-detail-row + .hanjuku-detail-row { margin-top: 0; }
 .hanjuku-duel { background: #211b26; border-color: #493341; }
-.hanjuku-holds, .hanjuku-garrison, .hanjuku-marching {
+.hanjuku-garrison, .hanjuku-marching {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
+.hanjuku-power { color: #d9e8f2; font-size: 15px; line-height: 1.35; }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 5px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
@@ -1855,7 +1856,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // or 名簿N人＋加入M名. It is shown as-is (textContent) and bounded.
     const rosterSuffix = (roster?.[3] || '').slice(0, 40);
     const rosterPrevious = rosterSuffix.includes('前月');
-    const holds = pick(/^保有: (.{1,80})$/);
+    const power = pick(/^半熟レベル: (\d+|不明) \/ 半熟値: (\d+|不明)$/);
+    const income = pick(/^現在収入: (\d+|不明)(?:G)?$/);
     const lost = pick(/^失った城: (.{1,120})$/);
     const castleLosses = pick(/^城失陥: (\d+)件/);
     const garrison = pick(/^駐留: (.{1,120})$/);
@@ -1933,7 +1935,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       generalsPrevious:fresh && rosterPrevious,
       generalsSuffix:fresh ? rosterSuffix : '',
       stalled:fresh ? number(troops?.[2]) : null,
-      holds:fresh ? (holds?.[1] || null) : null,
+      level:fresh ? number(power?.[1]) : null,
+      hValue:fresh ? number(power?.[2]) : null,
+      income:fresh ? number(income?.[1]) : null,
       lost:fresh ? (lost?.[1] || null) : null,
       castleLosses:fresh ? number(castleLosses?.[1]) : null,
       garrison:fresh ? (garrison?.[1] || null) : null,
@@ -2018,10 +2022,15 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // The left gap no longer carries the status card. Keep the status on the
     // right whenever a live battle's reference block does not need the room.
     const statusVisible = !value.gap || !value.duel;
-    if (statusVisible && value.holds) {
-      const territory = group('占領した拠点（累計記録）');
-      territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
-    }
+    // Owner 2026-11-03: 占領した拠点の一覧は不要。半熟レベル・半熟値・
+    // 現在収入を国力として表示する（収入は国のステータス頁のしゅうにゅう）。
+    const powerValues = [
+      `半熟Lv ${shown(value.level)}`,
+      `半熟値 ${shown(value.hValue)}`,
+      `収入 ${value.income === null ? '—' : `${value.income}G`}`,
+    ];
+    const powerSection = group('国力');
+    powerSection.appendChild(node('hanjuku-power', powerValues.join(' / ')));
     // Owner 2026-11-03: 駐留/行軍中は不要（出撃は左のチャートで示す）。
     if (statusVisible && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);

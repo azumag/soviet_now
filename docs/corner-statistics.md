@@ -46,10 +46,12 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 | 話数・所持金・ゲーム内年月 | policy の `chapter` / `gold` / `month`（最終観測） |
 | 兵力・停滞秒数 | policy `soldiers_seen` / run `unchanged_seconds` |
 | 将軍数 | policy `recruit_roster` / 完了済み `roster_survey.receipt` / `roster_last_complete` の完全名簿の人数（当月、なければ前月） |
-| 占領記録・保有・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
+| 占領記録・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
+| 半熟レベル・半熟値 | policy `hanjuku_level` / `hanjuku_value`（当月の国ステータス読取のみ） |
+| 現在収入 | policy `country_income`（国ステータス1頁の `しゅうにゅう`、当月スコープのみ） |
 | 戦闘結果（勝/敗/未分類）・戦闘開始終了・切り札確定 | policy `stats` / run `battles_*` |
 | 交戦HP | policy `battle` の `enemy_hp` / `ally_hp` と将軍名 |
-| 駐留・行軍中・卵 | policy `garrison` / `sorties` / `egg_uses` |
+| 卵 | policy `egg_uses`（出撃は左の出撃チャートで示す） |
 | 出撃成立/失敗 | policy `orders` の `launched` / `failed` |
 | 画面・方針・計画段階・保留計画・実入力・観測回数 | bot `screen_kind` / policy `variant` / `active` / run |
 

@@ -1112,6 +1112,9 @@ w(rt / 'hanjuku_run.json', dict(ident, observed_at=time.time(), phase='battle', 
 w(rt / 'hanjuku_bot.json', dict(decision_trace=ident, screen_kind='battle_menu', policy=dict(
     chapter=2, gold=176, month='1-11', captured=['カストーラ', 'スペンソニア'], lost=['ジョンリギ'],
     home_lost=False, active='J3', variant='chart_adjusted',
+    hanjuku_level=17, hanjuku_value=9999,
+    hanjuku_level_seen={'scope': [2, '1-11'], 'tick': 5300},
+    country_income={'scope': [2, '1-11'], 'tick': 5300, 'income': 300},
     stats=dict(wins=4, losses=1, unclassified=1, cards_confirmed=4), soldiers_seen=9, tick=5300,
     recruit_roster=dict(chapter=2, month='1-11', tick=5290, complete=True, identity=dict(ident),
         names=['どうし', 'ゼウス', 'ユイートル', 'ココット', 'ヴィーナス', 'トレビス',
@@ -1154,7 +1157,7 @@ function hanjukuFixture(overrides = {}) {
     feeds:{showStatusG:{updatedAt:1780001000,lineCount:10,text:
       'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
       + '  第2話 / 所持金 123G\n  ゲーム内: 1年11月（最終観測）\n'
-      + '  兵力: 9名 / 停滞 3秒\n  将軍数: 12人（完全名簿）\n  占領記録 5城（現在の城数ではない）\n'
+      + '  兵力: 9名 / 停滞 3秒\n  将軍数: 12人（完全名簿）\n  半熟レベル: 17 / 半熟値: 9999\n  現在収入: 300G\n  占領記録 5城（現在の城数ではない）\n'
       + '  保有: カストーラ/スペンソニア\n  戦闘結果: 4勝 / 1敗 / 未分類 1\n'
       + '  交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
       + '  駐留: アルマムーン=ゼウス/ユイートル\n  行軍中: どうし→ナキューメラ\n'
@@ -1247,7 +1250,7 @@ test('Hanjuku shows a meaningful stall while omitting brief input pauses', async
 test('Hanjuku card surfaces the live observed battle, roster and sortie state', async () => {
   const ui = await runBroadcastOverlayScript(hanjukuFixture());
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
-  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-power').textContent, '半熟Lv 17 / 半熟値 9999 / 収入 300G');
   // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
   assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
@@ -1300,7 +1303,7 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 キッシュ 20 / ココット 24');
-  assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
+  assert.equal(ui.feedG.querySelector('.hanjuku-power').textContent, '半熟Lv 17 / 半熟値 9999 / 収入 300G');
   // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
   assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
