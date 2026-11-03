@@ -47,6 +47,8 @@ _CONTROL_RE = re.compile(
 # (~10 min at 1.5 s).  A sortie older than this is not "still marching" and must
 # not be shown as one.
 SORTIE_BUSY_TICKS = 400
+# docich hanjuku roster walks stop at this many generals (roster.MAX_GENERALS).
+HANJUKU_MAX_GENERALS = 32
 
 
 def resolve_state_dir(value: str | os.PathLike[str] | None = None) -> Path:
@@ -846,6 +848,50 @@ def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
     return rows
 
 
+def _hanjuku_roster_count(receipt, policy, identity):
+    """The general count of one complete roster receipt, or None.
+
+    Only a complete same-run/same-chapter/same-month roster names the whole
+    army. A partial page (``complete`` false) is not a count, so it must not
+    become one on the card.
+    """
+    if not isinstance(receipt, dict) or receipt.get("complete") is not True:
+        return None
+    names, tick, current = receipt.get("names"), receipt.get("tick"), policy.get("tick")
+    chapter = policy.get("chapter")
+    if (receipt.get("identity") != identity
+            or type(chapter) is not int or chapter <= 0
+            or receipt.get("chapter") != chapter
+            or not isinstance(receipt.get("month"), str)
+            or receipt.get("month") != policy.get("month")):
+        return None
+    if (not isinstance(names, list) or not 1 <= len(names) <= HANJUKU_MAX_GENERALS
+            or any(not isinstance(name, str) or not 1 <= len(name) <= 32 for name in names)
+            or len(set(names)) != len(names)
+            or type(tick) is not int or type(current) is not int
+            or not 0 <= tick <= current):
+        return None
+    return len(names)
+
+
+def _hanjuku_generals(policy: Mapping[str, object], identity):
+    """Generals on this month's complete house roster, or None when unproven.
+
+    The roster is the game's own list of employed generals (the hero included).
+    ``roster_survey`` keeps the receipt of a completed status walk; otherwise
+    ``recruit_roster`` carries the same receipt. Both are accepted only under
+    the identity/scope bounds above, so another run's list never reaches the
+    card and an unread or partial walk shows 不明 instead of a guessed count.
+    """
+    scope = [policy.get("chapter"), policy.get("month")]
+    survey = policy.get("roster_survey")
+    if isinstance(survey, dict) and survey.get("scope") == scope:
+        count = _hanjuku_roster_count(survey.get("receipt"), policy, identity)
+        if count is not None:
+            return count
+    return _hanjuku_roster_count(policy.get("recruit_roster"), policy, identity)
+
+
 def _hanjuku_gap(runtime, policy, now):
     """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
@@ -1004,6 +1050,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "marching": _hanjuku_marching(policy, tick),
                   "active_order": _hanjuku_active_order(policy),
                   "soldiers": number(policy.get("soldiers_seen")),
+                  "generals": _hanjuku_generals(policy, identity),
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),
                   # Policy-side battle accounting. Distinct from the

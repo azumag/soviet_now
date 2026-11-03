@@ -45,6 +45,7 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 |---|---|
 | 話数・所持金・ゲーム内年月 | policy の `chapter` / `gold` / `month`（最終観測） |
 | 兵力・停滞秒数 | policy `soldiers_seen` / run `unchanged_seconds` |
+| 将軍数 | policy `recruit_roster`（または完了済み `roster_survey.receipt`）の当月完全名簿の人数 |
 | 占領記録・保有・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
 | 戦闘結果（勝/敗/未分類）・戦闘開始終了・切り札確定 | policy `stats` / run `battles_*` |
 | 交戦HP | policy `battle` の `enemy_hp` / `ally_hp` と将軍名 |
@@ -56,6 +57,10 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 
 - `battle` がない時は交戦HPを「戦闘記録なし」とし、HPを推測しない。片側だけの
   読み取りも表示しない。
+- 将軍数は本人を含む在籍将軍の人数で、ゲーム内の名簿（家メニュー）を当月に
+  最後まで読めた `complete=True` の記録だけを使う。途中までのページ・別run・
+  別月・不正な名前やtickは人数にせず「不明」と出す。名簿の人数は32人を上限とし、
+  部分ページの件数を総数として出さない。
 - 行軍中は policy 自身の判定（`en_route` / `launched_unconfirmed`、busy 400観測以内）
   と同じ条件で行う。行き先未確定は「未確定」と出す。解決済み・tick 不正は出さない。
 - 城名・将軍名・卵・将軍名は画面から読めた名前だけを最大3件・各10文字で出す。
