@@ -1248,8 +1248,9 @@ test('Hanjuku card surfaces the live observed battle, roster and sortie state', 
   const ui = await runBroadcastOverlayScript(hanjukuFixture());
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
   assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
-  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
-  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
   assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[2].querySelector('.hanjuku-value').textContent, '9名');
   assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '12人');
@@ -1300,8 +1301,9 @@ test('the card parsers still read every field the real renderer emits', async ()
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 キッシュ 20 / ココット 24');
   assert.equal(ui.feedG.querySelector('.hanjuku-holds').textContent, 'カストーラ ・ スペンソニア');
-  assert.equal(ui.feedG.querySelector('.hanjuku-garrison').textContent, 'アルマムーン=ゼウス/ユイートル');
-  assert.equal(ui.feedG.querySelector('.hanjuku-marching').textContent, 'どうし→ナキューメラ');
+  // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
+  assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
+  assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
   assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '12人');
   assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);

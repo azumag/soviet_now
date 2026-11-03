@@ -84,6 +84,12 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
+    // No redundant 速報 heading on the card.
+    assert.ok(!result.text.includes('速報'));
+    // A poll without changes must not recreate the toast DOM (flicker guard).
+    await page.evaluate(()=>{const t=document.querySelector('#hanjuku-gap .hanjuku-gap-toast'); if(t) t.dataset.probe='kept';});
+    await page.waitForTimeout(1200);
+    assert.equal(await page.evaluate(()=>document.querySelector('#hanjuku-gap .hanjuku-gap-toast')?.dataset.probe||null),'kept');
     if(process.env.SOREN_OVERLAY_ARTIFACT_DIR){fs.mkdirSync(process.env.SOREN_OVERLAY_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SOREN_OVERLAY_ARTIFACT_DIR,'hanjuku-gap.png')});}
     // Exact deadline, even if the status feed mtime does not change.
     await page.evaluate(()=>window.gapClock+=31);

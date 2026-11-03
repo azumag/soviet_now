@@ -261,7 +261,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
         assert.equal(await page.locator('.hanjuku-troops').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),24);
-        for(const selector of ['.hanjuku-duel','.hanjuku-holds','.hanjuku-garrison','.hanjuku-marching']) {
+        for(const selector of ['.hanjuku-duel','.hanjuku-holds']) {
           assert.equal(await page.locator(selector).evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),18,`${kind}: ${selector} stays readable`);
         }
         assert.equal(await page.locator('.hanjuku-orders').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),16);

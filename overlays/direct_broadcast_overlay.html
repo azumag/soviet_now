@@ -1041,10 +1041,6 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   overflow-wrap: anywhere; white-space: normal; }
 #hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
 /* Left gap: 速報 toasts + the current sortie chart (who goes where). */
-.hanjuku-gap-head { display: flex; align-items: baseline; justify-content: space-between;
-  gap: 8px; margin-bottom: 7px; }
-.hanjuku-gap-head-title { color: #a5e6f3; font-size: 16px; font-weight: 700; letter-spacing: .08em; }
-.hanjuku-gap-head-meta { color: #9fb4c4; font-size: 13px; }
 .hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 168px;
   overflow: hidden; margin-bottom: 8px; }
 .hanjuku-gap-toast { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px;
@@ -2026,8 +2022,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const territory = group('占領した拠点（累計記録）');
       territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
     }
-    if (statusVisible && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
-    if (statusVisible && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    // Owner 2026-11-03: 駐留/行軍中は不要（出撃は左のチャートで示す）。
     if (statusVisible && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
     const records = node('hanjuku-records');
@@ -2045,7 +2040,16 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     container.replaceChildren(card);
   }
   const gapLive = {last: null, toasts: [], seq: 0};
-  function gapResetLive() { gapLive.last = null; gapLive.toasts = []; }
+  const gapDom = {toastBox:null, flow:null, toasts:new Map(), flowSig:null, idle:null};
+  function gapResetLive() {
+    gapLive.last = null;
+    gapLive.toasts = [];
+    if (gapDom.toastBox) gapDom.toastBox.replaceChildren();
+    if (gapDom.flow) gapDom.flow.replaceChildren();
+    gapDom.toasts.clear();
+    gapDom.flowSig = null;
+    gapDom.idle = null;
+  }
   function gapNameSet(text) {
     return new Set(String(text || '').split(/\s*[\/／]\s*/).map(n => n.trim()).filter(Boolean));
   }
@@ -2075,14 +2079,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       out.push([`✕ 敗北（${value.losses}敗）`, 'loss']);
     if (Number.isFinite(value.battlesStarted) && Number.isFinite(previous?.battlesStarted)
         && value.battlesStarted > previous.battlesStarted)
-      out.push(['⚔ 戦闘開始', 'battle']);
+      out.push(['● 戦闘開始', 'battle']);
     if (Number.isFinite(value.battlesFinished) && Number.isFinite(previous?.battlesFinished)
         && value.battlesFinished > previous.battlesFinished)
-      out.push(['⚔ 戦闘終了', 'battle']);
+      out.push(['● 戦闘終了', 'battle']);
     if (previous && value.chapter !== previous.chapter)
-      out.push([`◷ 第${value.chapter ?? '—'}話`, 'month']);
+      out.push([`月 第${value.chapter ?? '—'}話`, 'month']);
     if (previous && (value.year !== previous.year || value.month !== previous.month))
-      out.push([`◷ ${value.year ?? '—'}年${value.month ?? '—'}月`, 'month']);
+      out.push([`月 ${value.year ?? '—'}年${value.month ?? '—'}月`, 'month']);
     if (Number.isFinite(value.generals) && Number.isFinite(previous?.generals)
         && value.generals !== previous.generals) {
       const delta = value.generals - previous.generals;
@@ -2094,60 +2098,82 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       out.push([`▸ 保留 ${value.pending}`, 'plan']);
     return out;
   }
+  function gapBuildSkeleton(surface) {
+    surface.replaceChildren();
+    gapDom.toastBox = document.createElement('div'); gapDom.toastBox.className = 'hanjuku-gap-toasts';
+    gapDom.flow = document.createElement('div'); gapDom.flow.className = 'hanjuku-gap-flow';
+    surface.append(gapDom.toastBox, gapDom.flow);
+    gapDom.toasts.clear(); gapDom.flowSig = null; gapDom.idle = null;
+  }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
-    surface.replaceChildren(); surface.style.display = 'none';
     const frame = SURFACE_REGION === 'game-gap' ? window.frameElement : null;
-    // Transparent empty iframes can still cover WebGL with Chromium's dark
-    // canvas on Xvfb. Remove the whole surface until measured padding exists.
-    if (frame) frame.style.display = 'none';
-    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) { gapResetLive(); return; }
+    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) {
+      // Hide once; never toggle the surface every poll (that flickers the card).
+      if (surface.style.display !== 'none') surface.style.display = 'none';
+      if (frame && frame.style.display !== 'none') frame.style.display = 'none';
+      gapResetLive();
+      return;
+    }
     const gap = value.gap;
     if (frame) {
       // Crop the iframe itself; transparent space must not overlap game pixels.
       frame.style.left = `${gap.left}px`;
       frame.style.width = `${gap.width}px`;
-      frame.style.display = 'block';
+      if (frame.style.display !== 'block') frame.style.display = 'block';
     }
     surface.style.left = `${frame ? 0 : gap.left}px`; surface.style.width = `${gap.width}px`;
-    surface.style.display = 'block';
+    if (surface.style.display !== 'block') surface.style.display = 'block';
+    if (!gapDom.toastBox || !surface.contains(gapDom.toastBox)) gapBuildSkeleton(surface);
     const now = Date.now();
     if (gapLive.last?.gap) {
       for (const [text, tone] of gapChanges(gapLive.last, value)) gapPushToast(text, tone, now);
     }
     gapLive.last = value;
-    const shown = v => v === null || v === undefined ? '—' : String(v);
-    const head = document.createElement('div'); head.className = 'hanjuku-gap-head';
-    const title = document.createElement('span'); title.className = 'hanjuku-gap-head-title';
-    title.textContent = '速報';
-    const meta = document.createElement('span'); meta.className = 'hanjuku-gap-head-meta';
-    meta.textContent = `第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月`;
-    head.append(title, meta); surface.appendChild(head);
-    const toasts = document.createElement('div'); toasts.className = 'hanjuku-gap-toasts';
-    const live = gapLive.toasts.filter(t => now - t.at <= 45000);
-    if (!live.length) {
-      const idle = document.createElement('div'); idle.className = 'hanjuku-gap-toast tone-idle';
-      idle.textContent = '状態変化を待っています'; toasts.appendChild(idle);
-    } else {
-      for (const toast of live.slice(-4).reverse()) {
-        const el = document.createElement('div'); el.className = `hanjuku-gap-toast tone-${toast.tone}`;
+    // Update only the toast elements that changed: re-creating them every poll
+    // restarted the enter animation and made the strip flicker.
+    const live = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-4);
+    const ids = new Set(live.map(t => t.id));
+    for (const [id, el] of gapDom.toasts) {
+      if (!ids.has(id)) { el.remove(); gapDom.toasts.delete(id); }
+    }
+    for (const toast of live) {
+      let el = gapDom.toasts.get(toast.id);
+      if (!el) {
+        el = document.createElement('div'); el.className = `hanjuku-gap-toast tone-${toast.tone}`;
         const body = document.createElement('span'); body.className = 'hanjuku-gap-toast-text';
         body.textContent = toast.text;
         const age = document.createElement('span'); age.className = 'hanjuku-gap-toast-age';
-        age.textContent = `${Math.max(0, Math.round((now - toast.at) / 1000))}秒`;
-        el.append(body, age); toasts.appendChild(el);
+        el.append(body, age);
+        gapDom.toastBox.prepend(el);  // newest first; existing nodes are not re-created
+        gapDom.toasts.set(toast.id, el);
       }
+      const ageEl = el.querySelector('.hanjuku-gap-toast-age');
+      if (ageEl) ageEl.textContent = `${Math.max(0, Math.round((now - toast.at) / 1000))}秒`;
     }
-    surface.appendChild(toasts);
-    const flow = document.createElement('div'); flow.className = 'hanjuku-gap-flow';
+    if (!live.length) {
+      if (!gapDom.idle) {
+        gapDom.idle = document.createElement('div'); gapDom.idle.className = 'hanjuku-gap-toast tone-idle';
+        gapDom.idle.textContent = '状態変化を待っています';
+        gapDom.toastBox.appendChild(gapDom.idle);
+      }
+    } else if (gapDom.idle) { gapDom.idle.remove(); gapDom.idle = null; }
+    const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
+    const moves = gap.moves || [];
+    // The chart is static between observations; re-rendering it every poll
+    // also restarted its layout. Rebuild only when its inputs change.
+    const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
+                                plan:value.plan, pending:value.pending});
+    if (sig === gapDom.flowSig) return;
+    gapDom.flowSig = sig;
+    const flow = gapDom.flow;
+    flow.replaceChildren();
     const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
     const plan = document.createElement('span'); plan.className = 'hanjuku-gap-plan';
     plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
                         value.pending ? `保留 ${value.pending}` : ''].filter(Boolean).join(' / ');
     flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
-    const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
-    const moves = gap.moves || [];
     if (!moves.length) {
       const empty = document.createElement('div'); empty.className = 'hanjuku-gap-empty';
       empty.textContent = '出撃中の将軍はいません'; flow.appendChild(empty);
@@ -2173,7 +2199,6 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         row.append(rowHead, route); flow.appendChild(row);
       }
     }
-    surface.appendChild(flow);
   }
   function setPanelState(element, label, tone) {
     if (!element) return;
