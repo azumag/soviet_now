@@ -636,6 +636,25 @@ class HanjukuStatusTest(unittest.TestCase):
         _write_json(self.runtime / 'hanjuku_bot.json', data)
         return data
 
+    def test_country_power_and_income_are_limited_to_the_current_month(self):
+        self._policy(chapter=5, month='46-5', hanjuku_level=17, hanjuku_value=9999,
+                     hanjuku_level_seen={'scope': [5, '46-5'], 'tick': 500},
+                     country_income={'scope': [5, '46-5'], 'tick': 500, 'income': 300})
+        value = self.snapshot()['hanjuku']
+        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income']),
+                         (17, 9999, 300))
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertIn('半熟レベル: 17 / 半熟値: 9999', text)
+        self.assertIn('現在収入: 300G', text)
+        # A month rollover must not present the previous month's page as current.
+        self._policy(month='46-6')
+        value = self.snapshot()['hanjuku']
+        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income']),
+                         (None, None, None))
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertIn('半熟レベル: 不明 / 半熟値: 不明', text)
+        self.assertIn('現在収入: 不明', text)
+
     def test_right_status_shows_generals_cards_and_shared_egg_drop_arithmetic(self):
         import time
         now = time.time()
