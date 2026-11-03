@@ -26,9 +26,6 @@ TYPE_BONUS = {
     16: 25402,
 }
 
-# Terminal success is the real objective.  Put it in a deliberately separate
-# scalar band so ordinary score/frontier noise cannot outweigh a founding event
-# in search/regression averages.
 SOVIET_CREATED_BONUS = 1_000_000_000
 
 
@@ -42,9 +39,10 @@ def _as_int(value):
 def terminal_bonus(final_types, soviet_created=False):
     types = [_as_int(value) for value in (final_types or ())]
     bonus = sum(TYPE_BONUS.get(value, 0) for value in types)
-    # Type 16 is the Soviet Union itself.  Treat its presence as authoritative
+    # Type 16 is the Soviet Union itself. Treat its presence as authoritative
     # terminal evidence even when a runner/archive omitted the boolean flag.
-    if soviet_created or any(value >= 16 for value in types):
+    # Do not use >=16: unknown/corrupt future type IDs must not become successes.
+    if soviet_created or 16 in types:
         bonus += SOVIET_CREATED_BONUS
     return bonus
 
