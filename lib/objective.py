@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-# v2 strengthens the terminal-success objective.  v1 only added 800 points for
-# an actual Soviet founding, so one rare successful game could be diluted by the
-# frontier-heavy scalar distribution used by regression / wildcard evaluation.
-# Keep old and new samples separate by bumping the schema version.
-OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v2"
+# v3 reserves a separate scalar band for actual Soviet founding.  v2 fixed the
+# T15x2 inversion with +25,403, but that margin was still comparable to normal
+# score/frontier variance, so a rare terminal success could be diluted by a
+# high-scoring non-terminal run.  Keep samples separate when semantics change.
+OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v3"
 
 TYPE_BONUS = {
     1: 0,
@@ -27,13 +27,11 @@ TYPE_BONUS = {
     16: 25402,
 }
 
-# A completed Soviet is the terminal objective, not merely another small score
-# feature.  25,403 is one point above the T16 type bonus itself and larger than
-# the complete T15x2 pre-founding frontier (24,192).  A successful terminal board
-# therefore gets a decisive success margin while retaining raw score/tier ordering
-# among successes.  This does not change live placement; it changes evaluation and
-# promotion pressure toward strategies that actually found the Soviet Union.
-SOVIET_CREATED_BONUS = 25403
+# Terminal success is the real objective.  Put it in a deliberately separate
+# scalar band so ordinary score/frontier noise cannot outweigh a founding event
+# in search/regression averages.  1e9 is far above the observed game-score
+# scale while remaining exactly representable and harmless for Python stats.
+SOVIET_CREATED_BONUS = 1_000_000_000
 
 
 def _as_int(value):
