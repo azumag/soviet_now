@@ -3490,7 +3490,13 @@ def render_hanjuku_status(value):
     # (docich_corner_stats._hanjuku_generals).
     generals = value.get("generals")
     if type(generals) is int and generals >= 0:
-        basis = "前月の完全名簿" if value.get("generals_previous") is True else "完全名簿"
+        base, joins = value.get("generals_roster"), value.get("generals_joins")
+        if type(joins) is int and joins > 0 and type(base) is int:
+            # A confirmed 加入 is added to the last complete list, so a month
+            # command that recruits still shows a number (not 不明).
+            basis = f"{'前月' if value.get('generals_previous') is True else '名簿'}{base}人＋加入{joins}名"
+        else:
+            basis = "前月の完全名簿" if value.get("generals_previous") is True else "完全名簿"
         generals_text = f"{generals}人（{basis}）"
     else:
         generals_text = "不明"

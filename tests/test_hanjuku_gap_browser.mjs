@@ -70,7 +70,7 @@ test('measured gap keeps large complete cards, expires observations and clears o
     assert.ok([...observed].some(s=>s.includes('戦績・戦闘') && s.includes('城失陥 1')));
     assert.ok([...observed].some(s=>s.includes('入力・観測') && s.includes('530回')));
     assert.ok([...observed].some(s=>s.includes('交戦詳細') && s.includes('敵 4 / 我 7')));
-    assert.ok([...observed].some(s=>s.includes('現在状況') && s.includes('将軍 12人（前月）')));
+    assert.ok([...observed].some(s=>s.includes('現在状況') && s.includes('将軍 12人（前月の完全名簿）')));
     assert.ok([...observed].some(s=>s.includes('現在の出撃意図') && s.includes('アルマムーン→ナキューメラ')));
     assert.ok([...observed].some(s=>s.includes('AI戦闘計画') && s.includes('攻撃 ナキューメラ')));
     assert.ok([...observed].some(s=>s.includes('切り札状況') && s.includes('ゼンマイン')));
