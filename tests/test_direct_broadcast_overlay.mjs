@@ -1270,6 +1270,15 @@ test('Hanjuku previous-month general count is labelled 前月', async () => {
   assert.equal(cell.querySelector('.hanjuku-value').textContent, '12人');
 });
 
+test('Hanjuku confirmed joins are added to the last complete roster', async () => {
+  const text = hanjukuFixture().feeds.showStatusG.text.replace(
+    '将軍数: 12人（完全名簿）', '将軍数: 20人（名簿18人＋加入2名）');
+  const ui = await runBroadcastOverlayScript(hanjukuFixture({ text }));
+  const cell = ui.feedG.querySelector('.hanjuku-kpis').children[3];
+  assert.equal(cell.querySelector('.hanjuku-label').textContent, '将軍数');
+  assert.equal(cell.querySelector('.hanjuku-value').textContent, '20人');
+});
+
 test('Hanjuku card omits the live-battle strip when no battle is observed', async () => {
   const ui = await runBroadcastOverlayScript(hanjukuFixture({
     text:'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'

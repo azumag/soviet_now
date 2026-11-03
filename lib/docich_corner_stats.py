@@ -877,29 +877,50 @@ def _hanjuku_previous_month(month):
     return f"{year - 1}-12" if year > 1 else None
 
 
+def _hanjuku_pending_joins(policy, base_names):
+    """Confirmed joins not already on the base list, bounded and de-duplicated."""
+    raw = policy.get("roster_pending_joins")
+    if not isinstance(raw, list):
+        return 0
+    known = set(base_names or ())
+    count = 0
+    for name in raw:
+        if (not isinstance(name, str) or not 1 <= len(name) <= 32 or name in known):
+            continue
+        known.add(name)
+        count += 1
+        if count >= HANJUKU_MAX_GENERALS:
+            break
+    return count
+
+
 def _hanjuku_generals(policy: Mapping[str, object], identity):
-    """(count, month) from the newest complete roster, or (None, None).
+    """(count, month, base, joins) from the newest complete roster.
 
     The roster is the game's own list of employed generals (the hero included).
     ``roster_survey`` keeps the receipt of a completed status walk and
     ``recruit_roster`` the same receipt; ``roster_last_complete`` keeps the
     brain's last proven list after a partial page or a month change. The
-    current month wins; the immediately previous month is accepted so the card
-    can say 前月 until this month's complete walk finishes. Anything older,
-    another run, another chapter or an invalid shape stays unknown.
+    current month's live receipt is exact (its count already includes every
+    confirmed general). A kept list from this or the previous month adds the
+    confirmed 加入 announcements (``roster_pending_joins``), so a month command
+    that recruits still shows 名簿人数＋加入人数 instead of 不明; a confirmed
+    departure is already removed from those lists by the brain. Anything
+    older, another run/chapter or an invalid shape stays unknown.
     """
     chapter, current_month = policy.get("chapter"), policy.get("month")
     current_tick = policy.get("tick")
     if (type(chapter) is not int or chapter <= 0
             or not isinstance(current_month, str) or type(current_tick) is not int):
-        return None, None
+        return None, None, None, None
     previous_month = _hanjuku_previous_month(current_month)
     survey = policy.get("roster_survey")
-    candidates = ([survey.get("receipt")]
+    candidates = ([("receipt", survey.get("receipt"))]
                   if isinstance(survey, dict) and survey.get("scope") == [chapter, current_month]
                   else [])
-    candidates += [policy.get("recruit_roster"), policy.get("roster_last_complete")]
-    for receipt in candidates:
+    candidates += [("receipt", policy.get("recruit_roster")),
+                   ("record", policy.get("roster_last_complete"))]
+    for kind, receipt in candidates:
         parsed = _hanjuku_roster_names(receipt)
         if parsed is None or receipt.get("identity") != identity:
             continue
@@ -907,8 +928,12 @@ def _hanjuku_generals(policy: Mapping[str, object], identity):
         if (roster_chapter != chapter or not 0 <= tick <= current_tick
                 or roster_month not in (current_month, previous_month)):
             continue
-        return len(names), roster_month
-    return None, None
+        base = len(names)
+        joins = 0
+        if kind == "record" or roster_month == previous_month:
+            joins = _hanjuku_pending_joins(policy, names)
+        return base + joins, roster_month, base, joins
+    return None, None, None, None
 
 
 def _hanjuku_gap(runtime, policy, now):
@@ -1055,7 +1080,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         orders = policy.get("orders") if isinstance(policy.get("orders"), dict) else None
         egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
         # Chapter and currency are last observations, not predictions or orders.
-        generals, generals_month = _hanjuku_generals(policy, identity)
+        generals, generals_month, generals_base, generals_joins = _hanjuku_generals(policy, identity)
         result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
@@ -1072,6 +1097,8 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "soldiers": number(policy.get("soldiers_seen")),
                   "generals": generals,
                   "generals_previous": generals is not None and generals_month != policy.get("month"),
+                  "generals_roster": generals_base,
+                  "generals_joins": generals_joins,
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),
                   # Policy-side battle accounting. Distinct from the

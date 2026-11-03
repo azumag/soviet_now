@@ -907,7 +907,8 @@ class HanjukuStatusTest(unittest.TestCase):
         record = dict(schema=1, identity=dict(self.identity), chapter=2, month='5-3',
                       tick=100, complete=True, names=[f'将軍{i}' for i in range(12)])
         record.update(extra)
-        self._policy(tick=200, month='5-4', roster_last_complete=record)
+        self._policy(tick=200, month='5-4', roster_last_complete=record,
+                     roster_pending_joins=None)
         return record
 
     def test_previous_month_complete_roster_is_kept_and_labelled(self):
@@ -954,6 +955,43 @@ class HanjukuStatusTest(unittest.TestCase):
         self._policy(month='6-1')
         result = self.snapshot()['hanjuku']
         self.assertEqual((result['generals'], result['generals_previous']), (12, True))
+
+    def test_confirmed_joins_are_added_to_the_kept_count(self):
+        self._last_complete(month='5-4', names=[f'将軍{i}' for i in range(18)])
+        self._policy(roster_pending_joins=['ココット', 'ゼウス'])
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous'],
+                          result['generals_roster'], result['generals_joins']), (20, False, 18, 2))
+        self.assertIn('将軍数: 20人（名簿18人＋加入2名）',
+                      '\n'.join(sd.render_hanjuku_status(result)))
+
+    def test_confirmed_joins_are_added_to_the_previous_month_count(self):
+        self._last_complete()
+        self._policy(roster_pending_joins=['ココット'])
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous'],
+                          result['generals_roster'], result['generals_joins']), (13, True, 12, 1))
+        self.assertIn('将軍数: 13人（前月12人＋加入1名）',
+                      '\n'.join(sd.render_hanjuku_status(result)))
+
+    def test_pending_joins_are_bounded_deduplicated_and_never_double_counted(self):
+        self._last_complete()
+        self._policy(roster_pending_joins=['', '将軍0', 'ココット', 'ココット', 7,
+                                          '将軍' * 40, 'ゼウス'])
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_joins']), (14, 2))
+        # A current live receipt already contains the joins: do not add again.
+        self._policy(recruit_roster=dict(chapter=2, month='5-4', tick=150, complete=True,
+                                         identity=dict(self.identity),
+                                         names=['どうし', 'ゼウス', 'ヴィーナス']))
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_joins']), (3, 0))
+        # Pending joins without any complete list cannot invent a count.
+        self._policy(recruit_roster=None, roster_last_complete=None,
+                     roster_pending_joins=['ココット'])
+        result = self.snapshot()['hanjuku']
+        self.assertIsNone(result['generals'])
+        self.assertIn('将軍数: 不明', '\n'.join(sd.render_hanjuku_status(result)))
 
     def test_unread_values_stay_unknown_rather_than_zero(self):
         result = self.snapshot()['hanjuku']
