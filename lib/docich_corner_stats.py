@@ -936,6 +936,43 @@ def _hanjuku_generals(policy: Mapping[str, object], identity):
     return None, None, None, None
 
 
+def _hanjuku_moves(policy, tick, limit=8, each=24):
+    """Current sorties as bounded source→target rows for the left gap chart.
+
+    "Current" is the same busy window as ``_hanjuku_marching``. A row carries
+    the planned target when arrival is unconfirmed and the launched order's
+    source when the sortie did not record one, so the chart never guesses a
+    route from names alone.
+    """
+    raw = policy.get("sorties")
+    if not isinstance(raw, dict) or type(tick) is not int:
+        return []
+    launched = policy.get("launched_orders")
+    launched = launched if isinstance(launched, dict) else {}
+    rows = []
+    for step in sorted(raw):
+        sortie = raw[step]
+        if not isinstance(sortie, dict) or sortie.get("status") not in ("en_route", "launched_unconfirmed"):
+            continue
+        seen = sortie.get("tick")
+        if type(seen) is not int or not 0 <= tick - seen < SORTIE_BUSY_TICKS:
+            continue
+        order = launched.get(step)
+        order = order if isinstance(order, dict) else {}
+        general = _hanjuku_name(sortie.get("general"), each=each)
+        source = _hanjuku_name(sortie.get("source") or order.get("source"), each=each)
+        target = _hanjuku_name(sortie.get("target") or sortie.get("planned_target")
+                               or order.get("target"), each=each)
+        if general is None or (source is None and target is None):
+            continue
+        rows.append({"general": general, "source": source or "", "target": target or "",
+                     "status": sortie["status"], "step": _hanjuku_text(step, 24) or "",
+                     "purpose": _hanjuku_text(order.get("purpose"), 16) or ""})
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def _hanjuku_gap(runtime, policy, now):
     """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
@@ -1010,6 +1047,7 @@ def _hanjuku_gap(runtime, policy, now):
     return {'width': 960-w, 'left': gap_left, 'side': 'right' if align == 'left' else 'left',
             'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
+            'moves': _hanjuku_moves(policy, policy.get('tick')),
             'active_order': _hanjuku_active_order(policy),
             'hp': hp, 'battle': battle_detail}
 

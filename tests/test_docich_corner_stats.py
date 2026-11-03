@@ -431,6 +431,8 @@ class HanjukuStatusTest(unittest.TestCase):
             orders={'J3':'launched'},
             launched_orders={'J3': {'step':'J3','general':'どうし','source':'アルマムーン',
                                      'target':'ナキューメラ','purpose':'attack'}},
+            sorties={'J4': {'general':'パプリカ','source':'カルーン','target':'ジュメルズ',
+                            'status':'en_route','tick':90}},
             battle=dict(
                 enemy='シェーブル', ally='どうし', enemy_hp=55, ally_hp=70,
                 hp_observed_at=now-3, enemy_soldiers=4, ally_soldiers=7,
@@ -461,7 +463,12 @@ class HanjukuStatusTest(unittest.TestCase):
             'step':'J3','general':'どうし','source':'アルマムーン',
             'target':'ナキューメラ','purpose':'attack','status':'launched'})
         self.assertEqual(value['active_order'], gap['active_order'])
+        self.assertEqual(gap['moves'][0]['general'], 'パプリカ')
+        self.assertEqual((gap['moves'][0]['source'], gap['moves'][0]['target']),
+                         ('カルーン', 'ジュメルズ'))
+        self.assertEqual(gap['moves'][0]['status'], 'en_route')
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
+        self.assertIn('余白出撃: パプリカ / カルーン→ジュメルズ / 行軍中', text)
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
         self.assertIn('余白交戦兵数:',text)
@@ -992,6 +999,32 @@ class HanjukuStatusTest(unittest.TestCase):
         result = self.snapshot()['hanjuku']
         self.assertIsNone(result['generals'])
         self.assertIn('将軍数: 不明', '\n'.join(sd.render_hanjuku_status(result)))
+
+    def test_gap_moves_use_the_planned_target_and_skip_stale_or_settled_sorties(self):
+        import time
+        now = time.time()
+        _write_json(self.runtime / 'presentation.json', dict(
+            status='ready', projection=dict(align='right', viewport=[0,90,960,540], content=[239,0,721,540])))
+        self._policy(tick=5000, month='5-3',
+                     sorties={
+                         'A': {'general': 'どうし', 'planned_target': 'ナキューメラ',
+                               'status': 'launched_unconfirmed', 'tick': 4990},
+                         'B': {'general': '古い', 'source': '古', 'target': '先',
+                               'status': 'en_route', 'tick': 4000},
+                         'C': {'general': '到着', 'source': 'カ', 'target': 'ス',
+                               'status': 'arrived', 'tick': 4999},
+                         'D': {'source': 'カ', 'target': 'ス', 'status': 'en_route', 'tick': 4999},
+                         'E': {'general': '不明先', 'source': 'カ', 'status': 'en_route', 'tick': 4999},
+                     },
+                     launched_orders={'A': {'source': 'アルマムーン', 'target': 'ナキューメラ',
+                                            'purpose': 'attack'}})
+        moves = self.snapshot()['hanjuku']['gap']['moves']
+        self.assertEqual([m['general'] for m in moves], ['どうし', '不明先'])
+        self.assertEqual((moves[0]['source'], moves[0]['target']), ('アルマムーン', 'ナキューメラ'))
+        self.assertEqual((moves[0]['status'], moves[0]['purpose']), ('launched_unconfirmed', 'attack'))
+        # No source/target at all is not a route the chart can draw.
+        self.assertEqual(moves[1]['source'], 'カ')
+        self.assertEqual(moves[1]['target'], '')
 
     def test_unread_values_stay_unknown_rather_than_zero(self):
         result = self.snapshot()['hanjuku']

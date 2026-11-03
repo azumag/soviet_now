@@ -1034,11 +1034,62 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 
 /* Dedicated surface behind the native game window. It draws only measured padding. */
 #hanjuku-gap { display: none; position: absolute; top: 90px; height: 540px;
-  padding: 12px; background: #040e17; overflow: hidden; font-family: system-ui,sans-serif; }
+  padding: 12px; background: #040e17; overflow: hidden; font-family: system-ui,sans-serif;
+  color: #e6f2f8; }
 .hanjuku-gap-title { font-size: 15px; color: #bdcdd9; margin-bottom: 8px; }
 #hanjuku-gap .hanjuku-group { font-size: 18px; line-height: 1.4; margin-bottom: 8px;
   overflow-wrap: anywhere; white-space: normal; }
 #hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
+/* Left gap: 速報 toasts + the current sortie chart (who goes where). */
+.hanjuku-gap-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 7px; }
+.hanjuku-gap-head-title { color: #a5e6f3; font-size: 16px; font-weight: 700; letter-spacing: .08em; }
+.hanjuku-gap-head-meta { color: #9fb4c4; font-size: 13px; }
+.hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 168px;
+  overflow: hidden; margin-bottom: 8px; }
+.hanjuku-gap-toast { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px;
+  border-left: 3px solid #4b6b80; border-radius: 4px; background: #081b26;
+  color: #e6f2f8; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere;
+  animation: gapToastIn .22s ease-out; }
+.hanjuku-gap-toast-text { min-width: 0; }
+.hanjuku-gap-toast-age { margin-left: auto; flex: 0 0 auto; color: #8fa8bb; font-size: 11px;
+  font-variant-numeric: tabular-nums; }
+.hanjuku-gap-toast.tone-idle { border-color: #36566b; color: #9fb4c4; }
+.hanjuku-gap-toast.tone-move { border-color: #4fc3e8; }
+.hanjuku-gap-toast.tone-end { border-color: #6b7f8f; color: #c4d3dd; }
+.hanjuku-gap-toast.tone-gain { border-color: #3ddc97; }
+.hanjuku-gap-toast.tone-loss { border-color: #f0708a; }
+.hanjuku-gap-toast.tone-win { border-color: #3ddc97; }
+.hanjuku-gap-toast.tone-battle { border-color: #f0b84d; }
+.hanjuku-gap-toast.tone-month { border-color: #8fa8bb; }
+.hanjuku-gap-toast.tone-general { border-color: #7ee0c4; }
+.hanjuku-gap-toast.tone-plan { border-color: #75daec; }
+@keyframes gapToastIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.hanjuku-gap-flow { display: flex; flex-direction: column; gap: 6px; }
+.hanjuku-gap-flow-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; color: #bdcdd9; font-size: 15px; font-weight: 700; }
+.hanjuku-gap-plan { color: #8fa8bb; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.hanjuku-gap-move { border: 1px solid #28404f; border-radius: 8px; background: #0b1c28;
+  padding: 6px 9px; }
+.hanjuku-gap-move-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; color: #ffe6a2; font-size: 16px; font-weight: 700; }
+.hanjuku-gap-state { flex: 0 0 auto; color: #9fb4c4; font-size: 11px; font-weight: 400; }
+.hanjuku-gap-route { display: flex; flex-direction: column; align-items: flex-start;
+  gap: 2px; margin-top: 5px; }
+.hanjuku-gap-node { flex: 0 0 auto; max-width: 100%; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid #4b6b80; background: #0a2433; font-size: 15px; white-space: normal;
+  overflow-wrap: anywhere; }
+.hanjuku-gap-node.own { border-color: #3fa9c9; background: #0d3a4f; }
+.hanjuku-gap-node.lost { border-color: #c2566a; background: #3a1420; }
+.hanjuku-gap-node.enemy { border-color: #5b6c7c; background: #141f2a; color: #c4d3dd; }
+.hanjuku-gap-node.unknown { border-style: dashed; color: #9fb4c4; }
+.hanjuku-gap-arrow { position: relative; width: 12px; height: 14px; margin-left: 10px; }
+.hanjuku-gap-arrow::before { content: ''; position: absolute; left: 5px; top: 0; width: 2px;
+  height: 8px; background: linear-gradient(180deg,#3f7f97,#e9b84d); }
+.hanjuku-gap-arrow::after { content: ''; position: absolute; left: 2px; bottom: 0;
+  border-top: 7px solid #e9b84d; border-left: 4px solid transparent; border-right: 4px solid transparent; }
+.hanjuku-gap-empty { border: 1px dashed #3a596d; border-radius: 8px; padding: 9px 10px;
+  color: #9fb4c4; font-size: 15px; }
 html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
 html[data-soren-region="game-gap"] #broadcast-overlay { width: 960px; height: 540px; }
 html[data-soren-region="game-gap"] #hanjuku-gap { top: 0; }
@@ -1844,8 +1895,16 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       : gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960;
     const timedRows = prefix => lines.filter(s=>s.startsWith(prefix)).map(s=>s.slice(prefix.length).match(/^until=(\d+(?:\.\d+)?) (.{1,500})$/))
       .filter(m=>m && now <= Number(m[1]) && Number(m[1])-now <= 30).map(m=>m[2]);
+    const gapMoves = lines.filter(line => line.startsWith('余白出撃: ')).map(line => {
+      const parts = line.slice('余白出撃: '.length).split(' / ');
+      const route = String(parts[1] || '').split('→');
+      return {general:(parts[0] || '').trim(), source:(route[0] || '').trim(),
+              target:(route[1] || '').trim(), status:(parts[2] || '').trim(),
+              step:String(parts[3] || '').replace(/^段階\s*/, '').trim()};
+    }).filter(m => m.general && (m.source || m.target)).slice(0, 8);
     const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
       ? {left:gapLeft, width:gapWidth, side:gapSide,
+         moves:gapMoves,
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
@@ -1960,21 +2019,80 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       for (const card of value.duel.cards) line('hanjuku-cardline', `切り札: ${card}`);
       if (value.duel.note) line('hanjuku-cardline', value.duel.note);
     }
-    if (!value.gap && value.holds) {
+    // The left gap no longer carries the status card. Keep the status on the
+    // right whenever a live battle's reference block does not need the room.
+    const statusVisible = !value.gap || !value.duel;
+    if (statusVisible && value.holds) {
       const territory = group('占領した拠点（累計記録）');
       territory.appendChild(node('hanjuku-holds', value.holds.replace(/\s*[／/]\s*/g, ' ・ ')));
     }
-    if (!value.gap && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
-    if (!value.gap && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
-    if (!value.gap && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
+    if (statusVisible && value.garrison) detail(details, 'hanjuku-garrison', '駐留', value.garrison);
+    if (statusVisible && value.marching) detail(details, 'hanjuku-marching', '行軍中', value.marching);
+    if (statusVisible && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
     const records = node('hanjuku-records');
     records.appendChild(node('hanjuku-castles', `占領記録 ${shown(value.captured)}城（累計）`));
     if (value.launched !== null) records.appendChild(node('hanjuku-orders', `出撃 成立 ${value.launched} / 失敗 ${value.failed}`));
+    // The left card is now a live toast/chart surface. Keep its compact
+    // territory/egg facts on the right while no live battle owns the card.
+    if (value.gap && !value.duel) {
+      if (value.lost) records.appendChild(node('hanjuku-lost', `失城: ${value.lost.replace(/\s*[／/]\s*/g, ' ・ ')}`));
+      if (value.eggs) records.appendChild(node('hanjuku-eggs', `卵: ${value.eggs.replace(/\s*[／/]\s*/g, ' ・ ')}`));
+    }
     details.appendChild(records);
     card.appendChild(details);
     if (!value.fresh) card.appendChild(node('hanjuku-note', '観測が古いため数値は非表示'));
     container.replaceChildren(card);
+  }
+  const gapLive = {last: null, toasts: [], seq: 0};
+  function gapResetLive() { gapLive.last = null; gapLive.toasts = []; }
+  function gapNameSet(text) {
+    return new Set(String(text || '').split(/\s*[\/／]\s*/).map(n => n.trim()).filter(Boolean));
+  }
+  function gapPushToast(text, tone, now) {
+    gapLive.toasts.push({id:++gapLive.seq, text, tone, at:now});
+    gapLive.toasts = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-5);
+  }
+  function gapChanges(previous, value) {
+    const out = [];
+    const oldGap = previous?.gap || {};
+    const gap = value.gap;
+    const moveKey = m => `${m.general}|${m.source}|${m.target}`;
+    const seen = new Map((oldGap.moves || []).map(m => [moveKey(m), m]));
+    for (const move of gap.moves || []) {
+      const key = moveKey(move);
+      if (!seen.has(key)) out.push([`▲ 出撃 ${move.general} → ${move.target || '未確認'}`, 'move']);
+      seen.delete(key);
+    }
+    for (const move of seen.values()) out.push([`■ ${move.general} の行軍が終了`, 'end']);
+    const owned = gapNameSet(gap.captured), oldOwned = gapNameSet(oldGap.captured);
+    for (const name of owned) if (!oldOwned.has(name)) out.push([`＋ 城を奪取 ${name}`, 'gain']);
+    const lost = gapNameSet(value.lost), oldLost = gapNameSet(previous?.lost);
+    for (const name of lost) if (!oldLost.has(name)) out.push([`✕ 城を失陥 ${name}`, 'loss']);
+    if (Number.isFinite(value.wins) && Number.isFinite(previous?.wins) && value.wins > previous.wins)
+      out.push([`✓ 勝利（${value.wins}勝）`, 'win']);
+    if (Number.isFinite(value.losses) && Number.isFinite(previous?.losses) && value.losses > previous.losses)
+      out.push([`✕ 敗北（${value.losses}敗）`, 'loss']);
+    if (Number.isFinite(value.battlesStarted) && Number.isFinite(previous?.battlesStarted)
+        && value.battlesStarted > previous.battlesStarted)
+      out.push(['⚔ 戦闘開始', 'battle']);
+    if (Number.isFinite(value.battlesFinished) && Number.isFinite(previous?.battlesFinished)
+        && value.battlesFinished > previous.battlesFinished)
+      out.push(['⚔ 戦闘終了', 'battle']);
+    if (previous && value.chapter !== previous.chapter)
+      out.push([`◷ 第${value.chapter ?? '—'}話`, 'month']);
+    if (previous && (value.year !== previous.year || value.month !== previous.month))
+      out.push([`◷ ${value.year ?? '—'}年${value.month ?? '—'}月`, 'month']);
+    if (Number.isFinite(value.generals) && Number.isFinite(previous?.generals)
+        && value.generals !== previous.generals) {
+      const delta = value.generals - previous.generals;
+      out.push([`★ 将軍 ${delta > 0 ? '+' : ''}${delta}人`, 'general']);
+    }
+    if (previous && value.plan !== previous.plan && value.plan)
+      out.push([`▸ 計画 ${value.plan}`, 'plan']);
+    if (previous && value.pending !== previous.pending && value.pending)
+      out.push([`▸ 保留 ${value.pending}`, 'plan']);
+    return out;
   }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
@@ -1983,7 +2101,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // Transparent empty iframes can still cover WebGL with Chromium's dark
     // canvas on Xvfb. Remove the whole surface until measured padding exists.
     if (frame) frame.style.display = 'none';
-    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) return;
+    if (!value?.gap || !['full','game-gap'].includes(SURFACE_REGION)) { gapResetLive(); return; }
     const gap = value.gap;
     if (frame) {
       // Crop the iframe itself; transparent space must not overlap game pixels.
@@ -1993,64 +2111,69 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }
     surface.style.left = `${frame ? 0 : gap.left}px`; surface.style.width = `${gap.width}px`;
     surface.style.display = 'block';
-    const title = document.createElement('div'); title.className = 'hanjuku-gap-title';
-    title.textContent = '最終観測・記録'; surface.appendChild(title);
-    const items = [];
-    const add = (label, text) => {
-      const card = document.createElement('div'); card.className = 'hanjuku-group';
-      const head = document.createElement('div'); head.className = 'hanjuku-group-title'; head.textContent = label;
-      const body = document.createElement('div'); body.textContent = text;
-      card.append(head, body); items.push(card);
-    };
+    const now = Date.now();
+    if (gapLive.last?.gap) {
+      for (const [text, tone] of gapChanges(gapLive.last, value)) gapPushToast(text, tone, now);
+    }
+    gapLive.last = value;
     const shown = v => v === null || v === undefined ? '—' : String(v);
-    add('現在状況',
-      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名 / 将軍 ${shown(value.generals)}人${value.generalsSuffix ? `（${value.generalsSuffix}）` : ''}`);
-    add('戦績・戦闘',
-      `${shown(value.wins)}勝 ${shown(value.losses)}敗 / 開始 ${shown(value.battlesStarted)} / 終了 ${shown(value.battlesFinished)} / 切り札 ${shown(value.cardsConfirmed)} / 城失陥 ${shown(value.castleLosses)}`);
-    if (value.launched !== null || value.failed !== null || value.plan || value.pending) {
-      add('出撃・計画',
-        `成立 ${shown(value.launched)} / 失敗 ${shown(value.failed)} / 計画 ${value.plan || '—'} / 保留 ${value.pending || '—'}`);
+    const head = document.createElement('div'); head.className = 'hanjuku-gap-head';
+    const title = document.createElement('span'); title.className = 'hanjuku-gap-head-title';
+    title.textContent = '速報';
+    const meta = document.createElement('span'); meta.className = 'hanjuku-gap-head-meta';
+    meta.textContent = `第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月`;
+    head.append(title, meta); surface.appendChild(head);
+    const toasts = document.createElement('div'); toasts.className = 'hanjuku-gap-toasts';
+    const live = gapLive.toasts.filter(t => now - t.at <= 45000);
+    if (!live.length) {
+      const idle = document.createElement('div'); idle.className = 'hanjuku-gap-toast tone-idle';
+      idle.textContent = '状態変化を待っています'; toasts.appendChild(idle);
+    } else {
+      for (const toast of live.slice(-4).reverse()) {
+        const el = document.createElement('div'); el.className = `hanjuku-gap-toast tone-${toast.tone}`;
+        const body = document.createElement('span'); body.className = 'hanjuku-gap-toast-text';
+        body.textContent = toast.text;
+        const age = document.createElement('span'); age.className = 'hanjuku-gap-toast-age';
+        age.textContent = `${Math.max(0, Math.round((now - toast.at) / 1000))}秒`;
+        el.append(body, age); toasts.appendChild(el);
+      }
     }
-    if (value.eggs) add('卵残回数', value.eggs.replace(/\s*[／/]\s*/g, ' ・ '));
-    if (value.lost) add('失った城', value.lost.replace(/\s*[／/]\s*/g, ' ・ '));
-    if (value.actions !== null || value.observations !== null || value.observationAge !== null) {
-      add('入力・観測',
-        `実入力 ${shown(value.actions)}回 / 観測 ${shown(value.observations)}回 / 最新 ${shown(value.observationAge)}秒前`);
+    surface.appendChild(toasts);
+    const flow = document.createElement('div'); flow.className = 'hanjuku-gap-flow';
+    const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
+    const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
+    const plan = document.createElement('span'); plan.className = 'hanjuku-gap-plan';
+    plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
+                        value.pending ? `保留 ${value.pending}` : ''].filter(Boolean).join(' / ');
+    flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
+    const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
+    const moves = gap.moves || [];
+    if (!moves.length) {
+      const empty = document.createElement('div'); empty.className = 'hanjuku-gap-empty';
+      empty.textContent = '出撃中の将軍はいません'; flow.appendChild(empty);
+    } else {
+      for (const move of moves) {
+        const row = document.createElement('div'); row.className = 'hanjuku-gap-move';
+        const rowHead = document.createElement('div'); rowHead.className = 'hanjuku-gap-move-head';
+        const general = document.createElement('span'); general.className = 'hanjuku-gap-general';
+        general.textContent = move.general;
+        const state = document.createElement('span'); state.className = 'hanjuku-gap-state';
+        state.textContent = move.status || '行軍中';
+        rowHead.append(general, state);
+        const owner = name => !name ? 'unknown' : owned.has(name) ? 'own' : lost.has(name) ? 'lost' : 'enemy';
+        const route = document.createElement('div'); route.className = 'hanjuku-gap-route';
+        const source = document.createElement('span');
+        source.className = `hanjuku-gap-node ${owner(move.source)}`;
+        source.textContent = move.source || '未確認';
+        const arrow = document.createElement('span'); arrow.className = 'hanjuku-gap-arrow';
+        const target = document.createElement('span');
+        target.className = `hanjuku-gap-node ${owner(move.target)}`;
+        target.textContent = move.target || '未確認';
+        route.append(source, arrow, target);
+        row.append(rowHead, route); flow.appendChild(row);
+      }
     }
-    if (gap.hp || gap.soldiers) {
-      add('交戦詳細（10秒以内の観測）', [gap.hp, gap.soldiers].filter(Boolean).join(' / '));
-    }
-    if (gap.intent) add('現在の出撃意図', gap.intent);
-    if (gap.tactics) add('AI戦闘計画（10秒以内）', gap.tactics);
-    if (gap.cards) add('切り札状況（10秒以内）', gap.cards);
-    if (gap.egg) add('卵・奥の手（10秒以内）', gap.egg);
-    if (gap.decision) add('判断理由（10秒以内）', gap.decision);
-    for (const row of gap.garrison) {
-      const [castle, generals] = row.split('=');
-      const names = (generals || '').split('/').filter(Boolean);
-      for (let i=0;i<names.length;i+=3) add(`駐留 ${castle}（30秒以内）`, names.slice(i,i+3).join(' ・ '));
-    }
-    for (const row of gap.marching) add('行軍（成立未確認を含む）', row);
-    const castles = (gap.captured || '').split(' / ').filter(Boolean);
-    for (let i=0;i<castles.length;i+=3) add('占領した拠点（累計記録）', castles.slice(i,i+3).join(' ・ '));
-    if (!items.length) add('観測詳細', '新しい観測を待っています');
-    // Keep large type and whole cards. Paginate using actual DOM heights;
-    // every bounded roster/castle row is available without a two-line clamp.
-    const pages = [[]]; let used = 0;
-    const capacity = surface.clientHeight - title.offsetHeight - 44;
-    for (const card of items) {
-      surface.appendChild(card);
-      const height = card.getBoundingClientRect().height + 8;
-      card.remove();
-      if (used && used + height > capacity) {pages.push([]); used = 0;}
-      pages.at(-1).push(card); used += height;
-    }
-    const index = Math.floor(Date.now()/10000) % pages.length;
-    surface.append(...pages[index]);
-    if (pages.length > 1) {
-      const footer = document.createElement('div'); footer.className = 'hanjuku-gap-pages';
-      footer.textContent = `${index+1} / ${pages.length}`; surface.appendChild(footer);
-    }
+    surface.appendChild(flow);
   }
   function setPanelState(element, label, tone) {
     if (!element) return;
