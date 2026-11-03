@@ -848,48 +848,67 @@ def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
     return rows
 
 
-def _hanjuku_roster_count(receipt, policy, identity):
-    """The general count of one complete roster receipt, or None.
+HANJUKU_MONTH_RE = re.compile(r"^([1-9][0-9]*)-(1[0-2]|[1-9])$")
 
-    Only a complete same-run/same-chapter/same-month roster names the whole
-    army. A partial page (``complete`` false) is not a count, so it must not
-    become one on the card.
-    """
+
+def _hanjuku_roster_names(receipt):
+    """Validated (chapter, month, tick, names) of a complete roster receipt."""
     if not isinstance(receipt, dict) or receipt.get("complete") is not True:
         return None
-    names, tick, current = receipt.get("names"), receipt.get("tick"), policy.get("tick")
-    chapter = policy.get("chapter")
-    if (receipt.get("identity") != identity
-            or type(chapter) is not int or chapter <= 0
-            or receipt.get("chapter") != chapter
-            or not isinstance(receipt.get("month"), str)
-            or receipt.get("month") != policy.get("month")):
-        return None
-    if (not isinstance(names, list) or not 1 <= len(names) <= HANJUKU_MAX_GENERALS
+    chapter, month = receipt.get("chapter"), receipt.get("month")
+    names, tick = receipt.get("names"), receipt.get("tick")
+    if (type(chapter) is not int or chapter <= 0
+            or not isinstance(month, str) or HANJUKU_MONTH_RE.fullmatch(month) is None
+            or not isinstance(names, list) or not 1 <= len(names) <= HANJUKU_MAX_GENERALS
             or any(not isinstance(name, str) or not 1 <= len(name) <= 32 for name in names)
             or len(set(names)) != len(names)
-            or type(tick) is not int or type(current) is not int
-            or not 0 <= tick <= current):
+            or type(tick) is not int):
         return None
-    return len(names)
+    return chapter, month, tick, names
+
+
+def _hanjuku_previous_month(month):
+    match = HANJUKU_MONTH_RE.fullmatch(month) if isinstance(month, str) else None
+    if match is None:
+        return None
+    year, month_number = int(match[1]), int(match[2])
+    if month_number > 1:
+        return f"{year}-{month_number - 1}"
+    return f"{year - 1}-12" if year > 1 else None
 
 
 def _hanjuku_generals(policy: Mapping[str, object], identity):
-    """Generals on this month's complete house roster, or None when unproven.
+    """(count, month) from the newest complete roster, or (None, None).
 
     The roster is the game's own list of employed generals (the hero included).
-    ``roster_survey`` keeps the receipt of a completed status walk; otherwise
-    ``recruit_roster`` carries the same receipt. Both are accepted only under
-    the identity/scope bounds above, so another run's list never reaches the
-    card and an unread or partial walk shows 不明 instead of a guessed count.
+    ``roster_survey`` keeps the receipt of a completed status walk and
+    ``recruit_roster`` the same receipt; ``roster_last_complete`` keeps the
+    brain's last proven list after a partial page or a month change. The
+    current month wins; the immediately previous month is accepted so the card
+    can say 前月 until this month's complete walk finishes. Anything older,
+    another run, another chapter or an invalid shape stays unknown.
     """
-    scope = [policy.get("chapter"), policy.get("month")]
+    chapter, current_month = policy.get("chapter"), policy.get("month")
+    current_tick = policy.get("tick")
+    if (type(chapter) is not int or chapter <= 0
+            or not isinstance(current_month, str) or type(current_tick) is not int):
+        return None, None
+    previous_month = _hanjuku_previous_month(current_month)
     survey = policy.get("roster_survey")
-    if isinstance(survey, dict) and survey.get("scope") == scope:
-        count = _hanjuku_roster_count(survey.get("receipt"), policy, identity)
-        if count is not None:
-            return count
-    return _hanjuku_roster_count(policy.get("recruit_roster"), policy, identity)
+    candidates = ([survey.get("receipt")]
+                  if isinstance(survey, dict) and survey.get("scope") == [chapter, current_month]
+                  else [])
+    candidates += [policy.get("recruit_roster"), policy.get("roster_last_complete")]
+    for receipt in candidates:
+        parsed = _hanjuku_roster_names(receipt)
+        if parsed is None or receipt.get("identity") != identity:
+            continue
+        roster_chapter, roster_month, tick, names = parsed
+        if (roster_chapter != chapter or not 0 <= tick <= current_tick
+                or roster_month not in (current_month, previous_month)):
+            continue
+        return len(names), roster_month
+    return None, None
 
 
 def _hanjuku_gap(runtime, policy, now):
@@ -1036,6 +1055,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         orders = policy.get("orders") if isinstance(policy.get("orders"), dict) else None
         egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
         # Chapter and currency are last observations, not predictions or orders.
+        generals, generals_month = _hanjuku_generals(policy, identity)
         result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
@@ -1050,7 +1070,8 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "marching": _hanjuku_marching(policy, tick),
                   "active_order": _hanjuku_active_order(policy),
                   "soldiers": number(policy.get("soldiers_seen")),
-                  "generals": _hanjuku_generals(policy, identity),
+                  "generals": generals,
+                  "generals_previous": generals is not None and generals_month != policy.get("month"),
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),
                   # Policy-side battle accounting. Distinct from the

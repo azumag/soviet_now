@@ -856,10 +856,10 @@ class HanjukuStatusTest(unittest.TestCase):
         result = self.snapshot()['hanjuku']
         self.assertEqual(result['generals'], 3)
         self.assertIn('将軍数: 3人（完全名簿）', '\n'.join(sd.render_hanjuku_status(result)))
-        # A partial page, another month/run or a malformed receipt is not a
+        # A partial page, another run/chapter or a malformed receipt is not a
         # count: the card says 不明 instead of the page size.
         for extra in [dict(complete=False), dict(complete='true'),
-                      dict(month='5-2'), dict(chapter=1), dict(chapter=None),
+                      dict(chapter=1), dict(chapter=None),
                       dict(identity={**self.identity, 'lease_id': 'other'}),
                       dict(identity=None), dict(tick=121), dict(tick=True),
                       dict(tick='100'), dict(names=['どうし', 'どうし']),
@@ -873,6 +873,12 @@ class HanjukuStatusTest(unittest.TestCase):
                 text = '\n'.join(sd.render_hanjuku_status(result))
                 self.assertIn('将軍数: 不明', text)
                 self.assertNotIn('完全名簿', text)
+        # A complete last-month receipt is the 前月 fallback, not 不明.
+        self._roster(month='5-2')
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous']), (3, True))
+        self.assertIn('将軍数: 3人（前月の完全名簿）',
+                      '\n'.join(sd.render_hanjuku_status(result)))
 
     def test_completed_status_survey_supplies_the_count_while_a_page_is_partial(self):
         names = [f'将軍{i}' for i in range(12)]
@@ -896,6 +902,58 @@ class HanjukuStatusTest(unittest.TestCase):
                                                 receipt=dict(receipt, identity=receipt_identity),
                                                 statuses={}, dirty={}))
                 self.assertIsNone(self.snapshot()['hanjuku']['generals'])
+
+    def _last_complete(self, **extra):
+        record = dict(schema=1, identity=dict(self.identity), chapter=2, month='5-3',
+                      tick=100, complete=True, names=[f'将軍{i}' for i in range(12)])
+        record.update(extra)
+        self._policy(tick=200, month='5-4', roster_last_complete=record)
+        return record
+
+    def test_previous_month_complete_roster_is_kept_and_labelled(self):
+        self._last_complete()
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous']), (12, True))
+        self.assertIn('将軍数: 12人（前月の完全名簿）',
+                      '\n'.join(sd.render_hanjuku_status(result)))
+
+    def test_current_month_complete_roster_is_not_labelled_previous(self):
+        self._last_complete(month='5-4')
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous']), (12, False))
+        text = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('将軍数: 12人（完全名簿）', text)
+        self.assertNotIn('前月の完全名簿', text)
+
+    def test_current_complete_receipt_wins_over_the_kept_copy(self):
+        self._last_complete()
+        self._policy(recruit_roster=dict(chapter=2, month='5-4', tick=150, complete=True,
+                                         identity=dict(self.identity),
+                                         names=['どうし', 'ゼウス', 'ヴィーナス', 'ココット', 'バジル']))
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous']), (5, False))
+
+    def test_older_other_chapter_or_malformed_kept_copy_stays_unknown(self):
+        for extra in [dict(month='5-2'), dict(month='5-12'), dict(chapter=1), dict(complete=False),
+                      dict(identity={**self.identity, 'generation': 9}),
+                      dict(identity=None), dict(tick=True), dict(tick=201),
+                      dict(names=[]), dict(names=['どうし', 'どうし']),
+                      dict(names=['将軍' * 40]), dict(names=['どうし', 7]),
+                      dict(month='13-1'), dict(month=None)]:
+            with self.subTest(extra=extra):
+                self._last_complete(**extra)
+                result = self.snapshot()['hanjuku']
+                self.assertIsNone(result['generals'])
+                self.assertFalse(result['generals_previous'])
+                text = '\n'.join(sd.render_hanjuku_status(result))
+                self.assertIn('将軍数: 不明', text)
+                self.assertNotIn('完全名簿', text)
+
+    def test_year_boundary_previous_month_is_accepted(self):
+        self._last_complete(month='5-12')
+        self._policy(month='6-1')
+        result = self.snapshot()['hanjuku']
+        self.assertEqual((result['generals'], result['generals_previous']), (12, True))
 
     def test_unread_values_stay_unknown_rather_than_zero(self):
         result = self.snapshot()['hanjuku']

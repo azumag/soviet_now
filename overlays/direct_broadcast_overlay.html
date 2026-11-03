@@ -1803,7 +1803,10 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const troops = pick(/^兵力: (\d+|不明)名 \/ 停滞 (\d+|不明)秒$/);
     // The count of generals on the game's own complete roster, bounded by the
     // roster's 32-general cap: a longer number is not a count.
-    const roster = pick(/^将軍数: (\d+|不明)人/);
+    const roster = pick(/^将軍数: (\d+|不明)人(（前月[^）]*）)?/);
+    // The brain keeps its last complete roster across a month change. That
+    // count is still a confirmed number, so it renders with a 前月 basis.
+    const rosterPrevious = Boolean(roster?.[2]);
     const holds = pick(/^保有: (.{1,80})$/);
     const lost = pick(/^失った城: (.{1,120})$/);
     const castleLosses = pick(/^城失陥: (\d+)件/);
@@ -1871,6 +1874,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       observations:fresh ? number(inputs?.[3]) : null,
       soldiers:fresh ? number(troops?.[1]) : null,
       generals:fresh && rosterCount !== null && rosterCount <= 32 ? rosterCount : null,
+      generalsPrevious:fresh && rosterPrevious,
       stalled:fresh ? number(troops?.[2]) : null,
       holds:fresh ? (holds?.[1] || null) : null,
       lost:fresh ? (lost?.[1] || null) : null,
@@ -1916,7 +1920,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     for (const [label, text] of [['所持金', `${shown(value.gold)} G`],
       ['勝 / 敗（累計）', `${shown(value.wins)} / ${shown(value.losses)}`],
       ['兵力', `${shown(value.soldiers)}名`],
-      ['将軍数', `${shown(value.generals)}人`]]) {
+      [value.generalsPrevious ? '将軍数（前月）' : '将軍数', `${shown(value.generals)}人`]]) {
       const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
       cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
     }
@@ -1998,7 +2002,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     };
     const shown = v => v === null || v === undefined ? '—' : String(v);
     add('現在状況',
-      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名 / 将軍 ${shown(value.generals)}人`);
+      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名 / 将軍 ${shown(value.generals)}人${value.generalsPrevious ? '（前月）' : ''}`);
     add('戦績・戦闘',
       `${shown(value.wins)}勝 ${shown(value.losses)}敗 / 開始 ${shown(value.battlesStarted)} / 終了 ${shown(value.battlesFinished)} / 切り札 ${shown(value.cardsConfirmed)} / 城失陥 ${shown(value.castleLosses)}`);
     if (value.launched !== null || value.failed !== null || value.plan || value.pending) {
