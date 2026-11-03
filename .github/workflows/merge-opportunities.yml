@@ -25,6 +25,7 @@ on:
       - 'tests/test_merge_burial_baseline.py'
       - 'tools/merge_burial_baseline.py'
       - 'tests/fixtures/merge_opportunities/**'
+      - 'tests/test_v763_weight_constant.py'
       - '.github/workflows/merge-opportunities.yml'
   push:
     branches: [main]
@@ -72,4 +73,4 @@ jobs:
           tests.test_policy_bundle tests.test_v747_endgame_merge
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
           tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct
-          tests.test_strategy_semantic_lint
+          tests.test_strategy_semantic_lint tests.test_v763_weight_constant

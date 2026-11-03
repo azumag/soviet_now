@@ -54,7 +54,6 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 # True  = deadline contact skips settle wait and drops immediately.
 # False = even during deadline contact, wait until the board is settled.
 import math
-import os
 
 from strategy_helpers import board_stats
 
@@ -73,22 +72,27 @@ from strategy_helpers import board_stats
 #   2. 露出判定を _v742_open_twin と同一基準にする（素朴な真上判定は的中 13.8%、この基準は 86.5%）
 #   3. 落とした駒自身の露出を数える（drop_type は必ず露出型として残る）
 #   4. type15_count == 0 のゲートを撤去する
-# V763_DIVERSITY_W=0 (既定) で従来と完全一致する。
+# 重みはモジュール定数 _V763_DIVERSITY_W（0 で従来と完全一致、上限 8）。本番値 1.0 を定数で持つ。
+# env では切り替えない: 候補の AST deny gate (strategy/sandbox.sh) は `import os` を禁じるため、
+# env を読む版から派生した LLM 候補は os を削り _v763_weight() を 0 に書き換えて gate を通し、
+# B 腕だけ v763 が黙って無効になっていた (2026-10-25〜11-03 に実測)。
 _V763_BASE_BONUS = 260.0
+_V763_DIVERSITY_W = 1.0
 
 
-def _v763_weight():
-    """V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
-    raw = str(os.environ.get("V763_DIVERSITY_W", "0") or "").strip()
-    if raw in ("", "0", "false", "no", "off"):
-        return 0.0
+def _clamp_weight(w, cap):
     try:
-        w = float(raw)
+        w = float(w)
     except (TypeError, ValueError):
         return 0.0
     if w != w or w < 0.0:
         return 0.0
-    return min(w, 8.0)
+    return min(w, cap)
+
+
+def _v763_weight():
+    """_V763_DIVERSITY_W: 0=無効。1 で「露出型 +1」に +260。"""
+    return _clamp_weight(_V763_DIVERSITY_W, 8.0)
 
 
 def _v763_open_by_type(pieces):
