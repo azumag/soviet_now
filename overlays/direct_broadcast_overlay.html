@@ -988,7 +988,9 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.hanjuku-power { color: #d9e8f2; font-size: 15px; line-height: 1.35; }
+.hanjuku-power { margin-top: 6px; padding: 5px 10px; border: 1px solid #28404f;
+  border-radius: 7px; background: #0b1c28; color: #d9e8f2; font-size: 15px;
+  line-height: 1.3; }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 5px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
@@ -2024,13 +2026,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const statusVisible = !value.gap || !value.duel;
     // Owner 2026-11-03: 占領した拠点の一覧は不要。半熟レベル・半熟値・
     // 現在収入を国力として表示する（収入は国のステータス頁のしゅうにゅう）。
-    const powerValues = [
-      `半熟Lv ${shown(value.level)}`,
-      `半熟値 ${shown(value.hValue)}`,
-      `収入 ${value.income === null ? '—' : `${value.income}G`}`,
-    ];
-    const powerSection = group('国力');
-    powerSection.appendChild(node('hanjuku-power', powerValues.join(' / ')));
+    // A single compact row keeps the card inside the feed when a live battle
+    // reference block is also present.
+    const powerValue = `半熟Lv ${shown(value.level)} / 半熟値 ${shown(value.hValue)}`
+      + ` / 収入 ${value.income === null ? '—' : `${value.income}G`}`;
+    card.appendChild(node('hanjuku-power', powerValue));
     // Owner 2026-11-03: 駐留/行軍中は不要（出撃は左のチャートで示す）。
     if (statusVisible && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
