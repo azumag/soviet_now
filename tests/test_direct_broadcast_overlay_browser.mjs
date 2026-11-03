@@ -29,7 +29,7 @@ function fixture(kind) {
           : { cpu: 42, memory: 56, disk: 42 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
     + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n'
-    + '兵力: 9名 / 停滞 3秒\n占領記録 5城（現在の城数ではない）\n'
+    + '兵力: 9名 / 停滞 3秒\n将軍数: 12人（完全名簿）\n占領記録 5城（現在の城数ではない）\n'
     + '保有: カストーラ/スペンソニア\n戦闘結果: 4勝 / 1敗 / 未分類 1\n'
     + '交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
     + '駐留: アルマムーン=ゼウス/ユイートル\n行軍中: どうし→ナキューメラ\n'
@@ -186,6 +186,9 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           gameChrome:(()=>{const panel=document.querySelector('.panel-g'),head=panel?.querySelector('.panel-head'),kpi=panel?.querySelector('.dash-kpi'); if(!panel)return null; const p=getComputedStyle(panel); return {structured:panel.classList.contains('structured'),border:[p.borderTopWidth,p.borderRightWidth,p.borderBottomWidth,p.borderLeftWidth],shadow:p.boxShadow,headDisplay:head?getComputedStyle(head).display:null,kpiShadow:kpi?getComputedStyle(kpi).boxShadow:null};})(),
           gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
+          generalsKpi:document.querySelectorAll('.hanjuku-kpis .hanjuku-kpi')[3]?.textContent || '',
+          kpiRows:(()=>{const cells=[...document.querySelectorAll('.hanjuku-kpis .hanjuku-kpi')];
+            return cells.length?new Set(cells.map(e=>Math.round(e.getBoundingClientRect().top))).size:0;})(),
           opsAlerts:document.querySelectorAll('.ops-alert').length};
       });
       assert.deepEqual(layout.sidebar,[960,0,320,720],kind);
@@ -198,6 +201,12 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(layout.dotsVisible,false);
       assert.equal(layout.headingVisible,false,`${kind}: redundant data heading removed`);
       assert.doesNotMatch(layout.opsBrands,/FFMPEG|OBS/);
+      if(layout.generalsKpi) {
+        assert.match(layout.generalsKpi, kind==='stale' ? /将軍数—人/ : /将軍数12人/, `${kind}: general count`);
+        // 兵力 and 将軍数 share a row so the two army sizes read together.
+        // (improve hides the GAME panel, so its card has no laid-out rows.)
+        if(kind!=='improve') assert.equal(layout.kpiRows,2,`${kind}: two KPI rows`);
+      }
       if(layout.contentInsets && kind!=='improve') assert.deepEqual(layout.contentInsets[0],layout.contentInsets[1],`${kind}: game and health content edges align`);
       if(['work','long','work-two-line'].includes(kind)) {
         const workBounds=await page.locator('#work').evaluate(el=>{

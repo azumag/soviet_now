@@ -940,10 +940,14 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-period { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 7px; }
 .hanjuku-chapter { font-size: 26px; line-height: 1.2; letter-spacing: 0; }
 .hanjuku-month { margin: 0; font-size: 12px; }
-.hanjuku-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 14px; margin-bottom: 16px; }
-.hanjuku-kpi:nth-child(1) { order: 0; }
-.hanjuku-kpi:nth-child(2) { order: 2; }
-.hanjuku-kpi:nth-child(3) { order: 1; }
+/* 兵力 and 将軍数 share the first row: both are army-size observations.
+   The two rows stay within the height the single row occupied by trimming
+   the surrounding spacing, so the OPS rail below keeps its measured room. */
+.hanjuku-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 12px; margin-top: 6px; margin-bottom: 6px; }
+.hanjuku-kpi:nth-child(1) { order: 2; }
+.hanjuku-kpi:nth-child(2) { order: 3; }
+.hanjuku-kpi:nth-child(3) { order: 0; }
+.hanjuku-kpi:nth-child(4) { order: 1; }
 .hanjuku-label { white-space: nowrap; }
 .hanjuku-detail-row + .hanjuku-detail-row { margin-top: 5px; }
 .hanjuku-details { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; color: #edf5fb; font-size: 18px; line-height: 1.35; }
@@ -970,12 +974,12 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-kpi { padding: 0; border: 0; background: transparent; }
 .hanjuku-label { color: #bdcdd9; font-size: 12px; }
 .hanjuku-value, .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 24px; line-height: 1.25; }
-.hanjuku-status { padding: 0; border: 0; background: transparent; font-size: 17px; }
+.hanjuku-status { margin-top: 6px; padding: 0; border: 0; background: transparent; font-size: 17px; }
 .hanjuku-duel { padding: 0; border: 0; background: transparent; font-size: 18px; line-height: 1.35; }
 /* Game details are distinct cards, without decorative edge accents. */
-.hanjuku-details { gap: 6px; }
+.hanjuku-details { gap: 4px; margin-top: 8px; }
 .hanjuku-group, .hanjuku-detail-row, .hanjuku-duel {
-  box-sizing: border-box; padding: 7px 10px; border: 1px solid #28404f;
+  box-sizing: border-box; padding: 5px 10px; border: 1px solid #28404f;
   border-radius: 7px; background: #0b1c28;
 }
 .hanjuku-detail-row + .hanjuku-detail-row { margin-top: 0; }
@@ -984,7 +988,7 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 7px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
+.hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 5px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) #feed-g { height: 100%; }
@@ -1797,6 +1801,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const battleFlow = pick(/^戦闘: 開始 (\d+|不明) \/ 終了 (\d+|不明) \/ 切り札確定 (\d+|不明)$/);
     const duel = pick(/^交戦HP: 敵 (\d+)（([^）]*)） \/ 我 (\d+)（([^）]*)）$/);
     const troops = pick(/^兵力: (\d+|不明)名 \/ 停滞 (\d+|不明)秒$/);
+    // The count of generals on the game's own complete roster, bounded by the
+    // roster's 32-general cap: a longer number is not a count.
+    const roster = pick(/^将軍数: (\d+|不明)人/);
     const holds = pick(/^保有: (.{1,80})$/);
     const lost = pick(/^失った城: (.{1,120})$/);
     const castleLosses = pick(/^城失陥: (\d+)件/);
@@ -1815,6 +1822,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const screen = pick(/^画面: ([A-Za-z_]+|不明) \/ ([A-Za-z_]+|不明)/);
     const number = value => /^\d{1,7}$/.test(value || '') && Number(value) <= 1000000 ? Number(value) : null;
     const chapter = number(values?.[1]);
+    const rosterCount = number(roster?.[1]);
     const age = now - Number(feed?.updatedAt || 0);
     const fresh = Number.isFinite(age) && age >= 0 && age <= 30
       && lines.includes('半熟英雄 / 最終観測・記録') && Boolean(values);
@@ -1862,6 +1870,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       observationAge:fresh ? number(inputs?.[2]) : null,
       observations:fresh ? number(inputs?.[3]) : null,
       soldiers:fresh ? number(troops?.[1]) : null,
+      generals:fresh && rosterCount !== null && rosterCount <= 32 ? rosterCount : null,
       stalled:fresh ? number(troops?.[2]) : null,
       holds:fresh ? (holds?.[1] || null) : null,
       lost:fresh ? (lost?.[1] || null) : null,
@@ -1906,7 +1915,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const kpis = node('hanjuku-kpis');
     for (const [label, text] of [['所持金', `${shown(value.gold)} G`],
       ['勝 / 敗（累計）', `${shown(value.wins)} / ${shown(value.losses)}`],
-      ['兵力', `${shown(value.soldiers)}名`]]) {
+      ['兵力', `${shown(value.soldiers)}名`],
+      ['将軍数', `${shown(value.generals)}人`]]) {
       const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
       cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
     }
@@ -1988,7 +1998,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     };
     const shown = v => v === null || v === undefined ? '—' : String(v);
     add('現在状況',
-      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名`);
+      `${value.status} / 第${shown(value.chapter)}話 / ${shown(value.year)}年${shown(value.month)}月 / 所持金 ${shown(value.gold)}G / 兵力 ${shown(value.soldiers)}名 / 将軍 ${shown(value.generals)}人`);
     add('戦績・戦闘',
       `${shown(value.wins)}勝 ${shown(value.losses)}敗 / 開始 ${shown(value.battlesStarted)} / 終了 ${shown(value.battlesFinished)} / 切り札 ${shown(value.cardsConfirmed)} / 城失陥 ${shown(value.castleLosses)}`);
     if (value.launched !== null || value.failed !== null || value.plan || value.pending) {

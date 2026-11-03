@@ -843,6 +843,60 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertNotIn('範囲外', text)
         self.assertNotIn('不正', text)
 
+    def _roster(self, names=None, **extra):
+        names = list(names if names is not None else ['どうし', 'ゼウス', 'ユイートル'])
+        receipt = dict(chapter=2, month='5-3', tick=100, complete=True,
+                       identity=dict(self.identity), names=names)
+        receipt.update(extra)
+        self._policy(tick=120, month='5-3', recruit_roster=receipt)
+        return receipt
+
+    def test_complete_roster_counts_generals_and_partial_pages_do_not(self):
+        self._roster()
+        result = self.snapshot()['hanjuku']
+        self.assertEqual(result['generals'], 3)
+        self.assertIn('将軍数: 3人（完全名簿）', '\n'.join(sd.render_hanjuku_status(result)))
+        # A partial page, another month/run or a malformed receipt is not a
+        # count: the card says 不明 instead of the page size.
+        for extra in [dict(complete=False), dict(complete='true'),
+                      dict(month='5-2'), dict(chapter=1), dict(chapter=None),
+                      dict(identity={**self.identity, 'lease_id': 'other'}),
+                      dict(identity=None), dict(tick=121), dict(tick=True),
+                      dict(tick='100'), dict(names=['どうし', 'どうし']),
+                      dict(names=['']), dict(names=['将軍' * 40]),
+                      dict(names=[f'将軍{i}' for i in range(33)]),
+                      dict(names=['どうし', 7])]:
+            with self.subTest(extra=extra):
+                self._roster(**extra)
+                result = self.snapshot()['hanjuku']
+                self.assertIsNone(result['generals'])
+                text = '\n'.join(sd.render_hanjuku_status(result))
+                self.assertIn('将軍数: 不明', text)
+                self.assertNotIn('完全名簿', text)
+
+    def test_completed_status_survey_supplies_the_count_while_a_page_is_partial(self):
+        names = [f'将軍{i}' for i in range(12)]
+        receipt = dict(chapter=2, month='5-3', tick=100, complete=True,
+                       identity=dict(self.identity), names=names)
+        self._policy(tick=120, month='5-3',
+                     recruit_roster=dict(chapter=2, month='5-3', tick=118, complete=False,
+                                         identity=dict(self.identity), names=names[:2]),
+                     roster_survey=dict(schema=1, identity=dict(self.identity), scope=[2, '5-3'],
+                                        receipt=dict(receipt), statuses={}, dirty={}))
+        self.assertEqual(self.snapshot()['hanjuku']['generals'], 12)
+        # A survey of another month or another run cannot supply it either.
+        for scope, receipt_identity in [([2, '5-2'], dict(self.identity)),
+                                        ([2, '5-3'], {**self.identity, 'runtime_id': 'g2-abcdef12'})]:
+            with self.subTest(scope=scope, identity=receipt_identity):
+                self._policy(tick=120, month='5-3',
+                             recruit_roster=dict(chapter=2, month='5-3', tick=118,
+                                                 complete=False, identity=dict(self.identity),
+                                                 names=names[:2]),
+                             roster_survey=dict(schema=1, identity=dict(self.identity), scope=scope,
+                                                receipt=dict(receipt, identity=receipt_identity),
+                                                statuses={}, dirty={}))
+                self.assertIsNone(self.snapshot()['hanjuku']['generals'])
+
     def test_unread_values_stay_unknown_rather_than_zero(self):
         result = self.snapshot()['hanjuku']
         text = '\n'.join(sd.render_hanjuku_status(result))

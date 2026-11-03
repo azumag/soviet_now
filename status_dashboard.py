@@ -3483,11 +3483,18 @@ def render_hanjuku_status(value):
             out.append(f"  切り札在庫: ほか {total_cards - shown}枚（実測分・表示上限）")
         return out
 
+    # The general count comes from the game's own house roster, so it is shown
+    # only when the whole current-month list was read. A partial page is not a
+    # count: 不明, never the page size (docich_corner_stats.generals).
+    generals = value.get("generals")
+    generals_text = (f"{generals}人（完全名簿）"
+                     if type(generals) is int and generals >= 0 else "不明")
     lines = [
         "半熟英雄 / 最終観測・記録",
         f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
         f"  ゲーム内: {num('year')}年{num('month')}月（最終観測）",
         f"  兵力: {num('soldiers')}名 / 停滞 {num('unchanged_seconds')}秒",
+        f"  将軍数: {generals_text}",
         f"  占領記録 {num('captured')}城（現在の城数ではない）",
         f"  保有: {_hanjuku_join(value.get('captured_names'))}",
     ]
