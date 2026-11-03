@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-# v3 reserves a separate scalar band for actual Soviet founding.  v2 fixed the
-# T15x2 inversion with +25,403, but that margin was still comparable to normal
-# score/frontier variance, so a rare terminal success could be diluted by a
-# high-scoring non-terminal run.  Keep samples separate when semantics change.
-OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v3"
+# v4 makes terminal detection robust to producers that omit the explicit
+# soviet_created flag while still reporting a type-16 Soviet in final_types.
+# Keep samples separate when evaluator semantics change.
+OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v4"
 
 TYPE_BONUS = {
     1: 0,
@@ -29,8 +28,7 @@ TYPE_BONUS = {
 
 # Terminal success is the real objective.  Put it in a deliberately separate
 # scalar band so ordinary score/frontier noise cannot outweigh a founding event
-# in search/regression averages.  1e9 is far above the observed game-score
-# scale while remaining exactly representable and harmless for Python stats.
+# in search/regression averages.
 SOVIET_CREATED_BONUS = 1_000_000_000
 
 
@@ -42,8 +40,11 @@ def _as_int(value):
 
 
 def terminal_bonus(final_types, soviet_created=False):
-    bonus = sum(TYPE_BONUS.get(_as_int(value), 0) for value in (final_types or ()))
-    if soviet_created:
+    types = [_as_int(value) for value in (final_types or ())]
+    bonus = sum(TYPE_BONUS.get(value, 0) for value in types)
+    # Type 16 is the Soviet Union itself.  Treat its presence as authoritative
+    # terminal evidence even when a runner/archive omitted the boolean flag.
+    if soviet_created or any(value >= 16 for value in types):
         bonus += SOVIET_CREATED_BONUS
     return bonus
 
