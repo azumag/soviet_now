@@ -52,6 +52,7 @@ function fixture(kind) {
       // room for the live battle reference block.
       + `\n投影余白: side=left x=0 w=239 until=${Math.floor(Date.now() / 1000) + 30}`;
   }
+  if(kind==='roster-previous') text=text.replace('将軍数: 12人（完全名簿）','将軍数: 12人（前月の完全名簿）');
   if(kind==='long-card'||kind==='stress') text=text.replace('カストーラ/スペンソニア','保有将軍'.repeat(10))
     .replace('アルマムーン=ゼウス/ユイートル','駐留将軍'.repeat(15))
     .replace('どうし→ナキューメラ','行軍将軍'.repeat(15));
@@ -158,7 +159,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
   try {
     if(artifacts) fs.mkdirSync(artifacts,{recursive:true});
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    for(const kind of ['normal','duel','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','metrics-bad-timestamps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
+    for(const kind of ['normal','duel','roster-previous','metrics-initial','metrics-missing-time','metrics-high','metrics-low','metrics-unknown','metrics-stale','metrics-gaps','metrics-bad-timestamps','work','generator','stale','long','long-card','improve','prediction','stress','work-two-line','soren91','jev','monitor','console','console-empty','console-restore','console-unknown','console-old','console-saved-stop','console-forced-stop','console-timeout']) {
       state=fixture(kind);
       await page.goto(origin+'/overlay');
       await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
@@ -202,7 +203,8 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(layout.headingVisible,false,`${kind}: redundant data heading removed`);
       assert.doesNotMatch(layout.opsBrands,/FFMPEG|OBS/);
       if(layout.generalsKpi) {
-        assert.match(layout.generalsKpi, kind==='stale' ? /将軍数—人/ : /将軍数12人/, `${kind}: general count`);
+        assert.match(layout.generalsKpi, kind==='stale' ? /将軍数—人/
+          : kind==='roster-previous' ? /将軍数（前月）12人/ : /将軍数12人/, `${kind}: general count`);
         // 兵力 and 将軍数 share a row so the two army sizes read together.
         // (improve hides the GAME panel, so its card has no laid-out rows.)
         if(kind!=='improve') assert.equal(layout.kpiRows,2,`${kind}: two KPI rows`);
