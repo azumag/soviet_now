@@ -164,7 +164,7 @@ def fit_dashboard_lines(lines, width=W):
     # Bounded, sanitized projection records are machine-readable data for the
     # dedicated large-type cards, not terminal rows. Never truncate their names.
     prefixes = (
-        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃意図:', '  余白交戦HP:',
+        '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
         '  出撃意図:', '  敵将軍:', '  味方将軍:', '  卵落:', '  切り札:', '  切り札在庫:',
     )
@@ -3519,6 +3519,23 @@ def render_hanjuku_status(value):
             lines.append(f"  余白駐留: until={g['until']:.3f} " + g['castle'] + "=" + "/".join(g['generals']))
         for m in gap.get('marching') or []:
             lines.append("  余白行軍: " + m['general'] + "→" + (m['target'] or '未確認'))
+        for move in gap.get('moves') or []:
+            if not isinstance(move, dict):
+                continue
+            general = text(move.get('general'), '', 24)
+            if not general:
+                continue
+            source = text(move.get('source'), '', 24)
+            target = text(move.get('target'), '', 24)
+            status = {'en_route': '行軍中', 'launched_unconfirmed': '成立未確認'}.get(
+                move.get('status'), '')
+            step = text(move.get('step'), '', 24)
+            parts = [general, (source or '未確認') + '→' + (target or '未確認')]
+            if status:
+                parts.append(status)
+            if step:
+                parts.append('段階 ' + step)
+            lines.append("  余白出撃: " + " / ".join(parts))
         active_order = gap.get('active_order')
         if isinstance(active_order, dict):
             purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
