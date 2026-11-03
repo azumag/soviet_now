@@ -7,6 +7,7 @@ sys.path.insert(0, ROOT)
 
 from lib.objective import (
     OBJECTIVE_SCHEMA_VERSION,
+    SECOND_RUSSIA_READY_BONUS,
     SOVIET_CREATED_BONUS,
     TYPE_BONUS,
     eval_score,
@@ -24,17 +25,32 @@ EXPECTED_TABLE = {
 
 
 class ObjectiveSchemaTests(unittest.TestCase):
-    def test_schema_bumped_for_type16_terminal_inference(self):
-        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v4")
+    def test_schema_bumped_for_double_russia_readiness(self):
+        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v5")
 
     def test_type_table_is_unchanged(self):
         self.assertEqual(TYPE_BONUS, EXPECTED_TABLE)
 
     def test_soviet_bonus_reserves_a_separate_terminal_band(self):
         self.assertGreaterEqual(SOVIET_CREATED_BONUS, 1_000_000_000)
-        self.assertGreater(SOVIET_CREATED_BONUS, 2 * TYPE_BONUS[15])
+        self.assertGreater(SOVIET_CREATED_BONUS, SECOND_RUSSIA_READY_BONUS)
 
-    def test_founding_dominates_extreme_nonterminal_frontier_score(self):
+    def test_double_russia_gets_dedicated_preterminal_band(self):
+        one_russia = eval_score(0, [15, 14, 14, 13], False)
+        two_russia = eval_score(0, [15, 15], False)
+        self.assertEqual(
+            two_russia,
+            2 * TYPE_BONUS[15] + SECOND_RUSSIA_READY_BONUS,
+        )
+        self.assertGreater(two_russia, one_russia)
+
+    def test_readiness_bonus_requires_two_actual_type15s(self):
+        one = terminal_bonus([15, 14, 14, 14], False)
+        expected = TYPE_BONUS[15] + 3 * TYPE_BONUS[14]
+        self.assertEqual(one, expected)
+        self.assertEqual(terminal_bonus([99, 15], False), TYPE_BONUS[15])
+
+    def test_founding_still_dominates_double_russia_and_extreme_frontier(self):
         before = eval_score(10_000_000, [15, 15, 14, 14], False)
         after = eval_score(0, [16], True)
         self.assertGreater(after, before)
@@ -46,8 +62,8 @@ class ObjectiveSchemaTests(unittest.TestCase):
         self.assertGreaterEqual(inferred, SOVIET_CREATED_BONUS)
 
     def test_type15_does_not_infer_soviet_success(self):
-        without_flag = eval_score(500, [15, 15, 14], False)
-        with_flag = eval_score(500, [15, 15, 14], True)
+        without_flag = eval_score(500, [15, 14], False)
+        with_flag = eval_score(500, [15, 14], True)
         self.assertEqual(with_flag - without_flag, SOVIET_CREATED_BONUS)
 
     def test_unknown_and_junk_types_are_zero(self):
@@ -58,7 +74,7 @@ class ObjectiveSchemaTests(unittest.TestCase):
         for tier in range(3, 16):
             self.assertGreater(TYPE_BONUS[tier + 1], TYPE_BONUS[tier])
 
-    def test_version_stamp_separates_v4_from_legacy(self):
+    def test_version_stamp_separates_v5_from_legacy(self):
         current = stamp({"score": 2})
         legacy = {"score": 1}
         self.assertTrue(is_current(current))

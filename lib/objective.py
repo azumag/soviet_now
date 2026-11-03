@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-# v4 makes terminal detection robust to producers that omit the explicit
-# soviet_created flag while still reporting a type-16 Soviet in final_types.
-# Keep samples separate when evaluator semantics change.
-OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v4"
+# v5 adds an explicit double-Russia readiness band.  Reaching two T15s is the
+# immediate predecessor to founding, so search should prefer it over merely
+# accumulating a broad high-tier frontier.  Terminal Soviet success remains in
+# its separate 1e9 band and therefore always dominates this stage bonus.
+OBJECTIVE_SCHEMA_VERSION = "soviet-terminal-v5"
 
 TYPE_BONUS = {
     1: 0,
@@ -26,6 +27,7 @@ TYPE_BONUS = {
     16: 25402,
 }
 
+SECOND_RUSSIA_READY_BONUS = 100_000
 SOVIET_CREATED_BONUS = 1_000_000_000
 
 
@@ -39,6 +41,11 @@ def _as_int(value):
 def terminal_bonus(final_types, soviet_created=False):
     types = [_as_int(value) for value in (final_types or ())]
     bonus = sum(TYPE_BONUS.get(value, 0) for value in types)
+    # Two Russia pieces are the final non-terminal stage.  Give that state a
+    # dedicated band so candidate culling/promotion does not trade it away for
+    # unrelated frontier score before the final T15+T15 merge can happen.
+    if types.count(15) >= 2:
+        bonus += SECOND_RUSSIA_READY_BONUS
     # Type 16 is the Soviet Union itself. Treat its presence as authoritative
     # terminal evidence even when a runner/archive omitted the boolean flag.
     # Do not use >=16: unknown/corrupt future type IDs must not become successes.
