@@ -134,7 +134,11 @@ async function contract(headed) {
     setGap(); await waitCard();
     let visible = (await frames()).filter(f => f.visible);
     assert.equal(visible.length, 1); assert.deepEqual(visible[0].box, [0, 90, 239, 540]);
-    assert.match(visible[0].text, /出撃チャート/); await pixels('card', true);
+    assert.match(visible[0].text, /出撃チャート/);
+    // The iframe is re-shown after being hidden; let the X11 compositor paint
+    // the new surface before sampling the padding pixels.
+    await page.waitForTimeout(250);
+    await pixels('card', true);
     const oldActive = visible[0].id;
     version++;
     await page.waitForFunction(({id, oldActive}) => [id, `${id}-buffer`].some(id => {
