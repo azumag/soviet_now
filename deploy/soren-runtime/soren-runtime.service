@@ -17,6 +17,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/1001
 Environment=PULSE_SERVER=unix:/run/user/1001/pulse/native
 Environment=SOREN_SOVIET_WATCHDOG_ENABLED=1
 Environment=SOREN_STATUS_OVERLAY_WATCHERS_ENABLED=1
+Environment=IMPROVE_PROMOTE_VIA_PR=1
 ExecStartPre=/home/ubuntu/soren/wait_soren_runtime_prereqs.sh
 ExecStart=/bin/bash /home/ubuntu/soren/start_all.sh --supervisor
 ExecStopPost=-/usr/bin/tmux kill-session -t soren_bridge
