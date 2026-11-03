@@ -371,7 +371,13 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
     await page.goto(origin+'/overlay');
     await page.waitForFunction(()=>window.__sorenBroadcastOverlayHealth?.updatedAt>0);
     await page.evaluate(()=>{window.__savedOpsRoot=document.querySelector('.ops-dashboard');});
-    state=fixture('metrics-high');
+    // Metrics-only update: the OPS text/updatedAt stay byte-identical so this
+    // asserts DOM retention, not a full feed re-render. (Two fixture() calls
+    // can straddle a second boundary and renew showStatus.updatedAt, which
+    // legitimately rebuilds the dashboard.)
+    const metricsHigh=fixture('metrics-high');
+    state={...state, updatedAt:metricsHigh.updatedAt,
+      feeds:{...state.feeds, systemMetrics:metricsHigh.feeds.systemMetrics}};
     await page.waitForFunction(()=>document.querySelector('.ops-system-metrics .ops-metric-value')?.textContent==='92%');
     assert.equal(await page.evaluate(()=>window.__savedOpsRoot===document.querySelector('.ops-dashboard')),
       true,'CPU/RAM updates retain the OPS dashboard DOM');
