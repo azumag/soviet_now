@@ -642,32 +642,39 @@ class HanjukuStatusTest(unittest.TestCase):
         _write_json(self.runtime / 'hanjuku_bot.json', data)
         return data
 
-    def test_country_power_and_income_survive_until_the_next_read(self):
+    def test_country_power_income_and_wages_survive_until_the_next_read(self):
         self._policy(chapter=5, month='46-5', hanjuku_level=17, hanjuku_value=9999,
                      hanjuku_level_seen={'scope': [5, '46-5'], 'tick': 500},
-                     country_income={'scope': [5, '46-5'], 'tick': 500, 'income': 300})
+                     country_income={'scope': [5, '46-5'], 'tick': 500, 'income': 300},
+                     country_wages={'scope': [5, '46-5'], 'tick': 500, 'wages': 150})
         value = self.snapshot()['hanjuku']
-        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income']),
-                         (17, 9999, 300))
+        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income'],
+                          value['wages']), (17, 9999, 300, 150))
         text = '\n'.join(sd.render_hanjuku_status(value))
         self.assertIn('半熟レベル: 17 / 半熟値: 9999', text)
         self.assertIn('現在収入: 300G', text)
+        self.assertIn('総賃金: 150G', text)
         # Owner 2026-11-04: a month rollover before the page is re-read keeps
-        # the last observation. It must not overwrite the three values with 不明.
+        # the last observation. It must not overwrite the four values with 不明.
         self._policy(month='46-6')
         value = self.snapshot()['hanjuku']
-        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income']),
-                         (17, 9999, 300))
+        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income'],
+                          value['wages']), (17, 9999, 300, 150))
         text = '\n'.join(sd.render_hanjuku_status(value))
         self.assertIn('半熟レベル: 17 / 半熟値: 9999', text)
         self.assertIn('現在収入: 300G', text)
-        # The next successful page read rewrites all three.
+        self.assertIn('総賃金: 150G', text)
+        # The next successful page read rewrites all four.
         self._policy(month='46-6', hanjuku_level=18, hanjuku_value=12000,
                      hanjuku_level_seen={'scope': [5, '46-6'], 'tick': 700},
-                     country_income={'scope': [5, '46-6'], 'tick': 700, 'income': 350})
+                     country_income={'scope': [5, '46-6'], 'tick': 700, 'income': 350},
+                     country_wages={'scope': [5, '46-6'], 'tick': 700, 'wages': 160})
         value = self.snapshot()['hanjuku']
-        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income']),
-                         (18, 12000, 350))
+        self.assertEqual((value['hanjuku_level'], value['hanjuku_value'], value['income'],
+                          value['wages']), (18, 12000, 350, 160))
+        text = '\n'.join(sd.render_hanjuku_status(value))
+        self.assertIn('現在収入: 350G', text)
+        self.assertIn('総賃金: 160G', text)
 
     def test_right_status_shows_generals_cards_and_shared_egg_drop_arithmetic(self):
         import time

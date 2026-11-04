@@ -3502,6 +3502,8 @@ def render_hanjuku_status(value):
         generals_text = "不明"
     income = value.get("income")
     income_text = f"{income}G" if type(income) is int and income >= 0 else "不明"
+    wages = value.get("wages")
+    wages_text = f"{wages}G" if type(wages) is int and wages >= 0 else "不明"
     lines = [
         "半熟英雄 / 最終観測・記録",
         f"  第{num('chapter')}話 / 所持金 {num('gold')}G",
@@ -3510,6 +3512,7 @@ def render_hanjuku_status(value):
         f"  将軍数: {generals_text}",
         f"  半熟レベル: {num('hanjuku_level')} / 半熟値: {num('hanjuku_value')}",
         f"  現在収入: {income_text}",
+        f"  総賃金: {wages_text}",
         f"  占領記録 {num('captured')}城（現在の城数ではない）",
         f"  保有: {_hanjuku_join(value.get('captured_names'))}",
     ]

@@ -29,7 +29,7 @@ function fixture(kind) {
           : { cpu: 42, memory: 56, disk: 42 };
   let text = 'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
     + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n'
-    + '兵力: 9名 / 停滞 3秒\n将軍数: 12人（完全名簿）\n半熟レベル: 17 / 半熟値: 9999\n現在収入: 300G\n占領記録 5城（現在の城数ではない）\n'
+    + '兵力: 9名 / 停滞 3秒\n将軍数: 12人（完全名簿）\n半熟レベル: 17 / 半熟値: 9999\n現在収入: 300G\n総賃金: 150G\n占領記録 5城（現在の城数ではない）\n'
     + '保有: カストーラ/スペンソニア\n戦闘結果: 4勝 / 1敗 / 未分類 1\n'
     + '交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
     + '駐留: アルマムーン=ゼウス/ユイートル\n行軍中: どうし→ナキューメラ\n'
@@ -188,7 +188,10 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
           gameChrome:(()=>{const panel=document.querySelector('.panel-g'),head=panel?.querySelector('.panel-head'),kpi=panel?.querySelector('.dash-kpi'); if(!panel)return null; const p=getComputedStyle(panel); return {structured:panel.classList.contains('structured'),border:[p.borderTopWidth,p.borderRightWidth,p.borderBottomWidth,p.borderLeftWidth],shadow:p.boxShadow,headDisplay:head?getComputedStyle(head).display:null,kpiShadow:kpi?getComputedStyle(kpi).boxShadow:null};})(),
           gameOverflow:(()=>{const el=document.querySelector('.game-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
           opsOverflow:(()=>{const el=document.querySelector('.ops-dashboard');return el?el.scrollHeight>el.clientHeight+1:false;})(),
-          generalsKpi:document.querySelectorAll('.hanjuku-kpis .hanjuku-kpi')[3]?.textContent || '',
+          kpiCells:(()=>{const cells=[...document.querySelectorAll('.hanjuku-kpis .hanjuku-kpi')];
+            return Object.fromEntries(cells.map(e=>[
+              (e.querySelector('.hanjuku-label')?.textContent||'').trim(),
+              (e.querySelector('.hanjuku-value')?.textContent||'').trim()]));})(),
           kpiRows:(()=>{const cells=[...document.querySelectorAll('.hanjuku-kpis .hanjuku-kpi')];
             return cells.length?new Set(cells.map(e=>Math.round(e.getBoundingClientRect().top))).size:0;})(),
           opsAlerts:document.querySelectorAll('.ops-alert').length};
@@ -203,13 +206,14 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       assert.equal(layout.dotsVisible,false);
       assert.equal(layout.headingVisible,false,`${kind}: redundant data heading removed`);
       assert.doesNotMatch(layout.opsBrands,/FFMPEG|OBS/);
-      if(layout.generalsKpi) {
-        assert.match(layout.generalsKpi, kind==='stale' ? /将軍数—人/
-          : kind==='roster-previous' ? /将軍数（前月）12人/
-            : kind==='roster-joins' ? /将軍数20人/ : /将軍数12人/, `${kind}: general count`);
-        // 兵力 and 将軍数 share a row so the two army sizes read together.
+      if(Object.keys(layout.kpiCells).length) {
+        const generals = layout.kpiCells['将軍数（前月）'] || layout.kpiCells['将軍数'];
+        assert.match(generals || '', kind==='stale' ? /—人/
+          : kind==='roster-previous' ? /12人/
+            : kind==='roster-joins' ? /20人/ : /12人/, `${kind}: general count`);
+        // 兵力/将軍数, 所持金/勝敗, 収入/総賃金, 半熟Lv/半熟値 are four rows.
         // (improve hides the GAME panel, so its card has no laid-out rows.)
-        if(kind!=='improve') assert.equal(layout.kpiRows,2,`${kind}: two KPI rows`);
+        if(kind!=='improve') assert.equal(layout.kpiRows,4,`${kind}: four KPI rows`);
       }
       if(layout.contentInsets && kind!=='improve') assert.deepEqual(layout.contentInsets[0],layout.contentInsets[1],`${kind}: game and health content edges align`);
       if(['work','long','work-two-line'].includes(kind)) {
@@ -246,6 +250,7 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
       if(kind==='stale') {
         assert.equal(await page.locator('.hanjuku-chapter').textContent(),'話数 未確認');
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
+        assert.equal(layout.kpiCells['総賃金'],'— G');
       } else if(kind==='duel') {
         assert.equal(await page.locator('.hanjuku-general').count(),2);
         assert.equal(await page.locator('.hanjuku-cardline').count(),3);
@@ -261,8 +266,11 @@ test('approved v2 rails keep geometry, observed details and region crops in Chro
         assert.equal(await page.locator('.hanjuku-plan').count(),0);
         assert.equal(await page.locator('.hanjuku-inputs').count(),0);
         assert.equal(await page.locator('.hanjuku-troops').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),24);
-        assert.equal(await page.locator('.hanjuku-power').textContent(),'半熟Lv 17 / 半熟値 9999 / 収入 300G');
-        assert.equal(await page.locator('.hanjuku-power').evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),15);
+        assert.equal(await page.locator('.hanjuku-power').count(),0);
+        assert.equal(layout.kpiCells['収入'],'300 G');
+        assert.equal(layout.kpiCells['総賃金'],'150 G');
+        assert.equal(layout.kpiCells['半熟Lv'],'17');
+        assert.equal(layout.kpiCells['半熟値'],'9999');
         for(const selector of ['.hanjuku-duel']) {
           assert.equal(await page.locator(selector).evaluate(e=>parseFloat(getComputedStyle(e).fontSize)),18,`${kind}: ${selector} stays readable`);
         }

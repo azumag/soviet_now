@@ -1115,6 +1115,7 @@ w(rt / 'hanjuku_bot.json', dict(decision_trace=ident, screen_kind='battle_menu',
     hanjuku_level=17, hanjuku_value=9999,
     hanjuku_level_seen={'scope': [2, '1-11'], 'tick': 5300},
     country_income={'scope': [2, '1-11'], 'tick': 5300, 'income': 300},
+    country_wages={'scope': [2, '1-11'], 'tick': 5300, 'wages': 150},
     stats=dict(wins=4, losses=1, unclassified=1, cards_confirmed=4), soldiers_seen=9, tick=5300,
     recruit_roster=dict(chapter=2, month='1-11', tick=5290, complete=True, identity=dict(ident),
         names=['どうし', 'ゼウス', 'ユイートル', 'ココット', 'ヴィーナス', 'トレビス',
@@ -1152,12 +1153,23 @@ print("\\n".join(sd.render_docich_corner_stats(load_active_corner(root))))
 // The card parsers anchor on the leading fields of each status_dashboard.py
 // line. Keep this text byte-identical to the current renderer output so a new
 // card field cannot silently stop reaching the broadcast sidebar.
+// The KPI cells are ordered in the DOM; find one by its label so a new
+// metric cannot silently shift the others' indices in these assertions.
+function hanjukuKpi(ui, label) {
+  return [...ui.feedG.querySelectorAll('.hanjuku-kpi')]
+    .find(cell => cell.querySelector('.hanjuku-label').textContent === label);
+}
+
+function hanjukuKpiValue(ui, label) {
+  return hanjukuKpi(ui, label).querySelector('.hanjuku-value').textContent;
+}
+
 function hanjukuFixture(overrides = {}) {
   return { version:1, updatedAt:1780001000,
     feeds:{showStatusG:{updatedAt:1780001000,lineCount:10,text:
       'SOREN/CORNER: RETRO / hanjuku-hero / 進行中\n半熟英雄 / 最終観測・記録\n'
       + '  第2話 / 所持金 123G\n  ゲーム内: 1年11月（最終観測）\n'
-      + '  兵力: 9名 / 停滞 3秒\n  将軍数: 12人（完全名簿）\n  半熟レベル: 17 / 半熟値: 9999\n  現在収入: 300G\n  占領記録 5城（現在の城数ではない）\n'
+      + '  兵力: 9名 / 停滞 3秒\n  将軍数: 12人（完全名簿）\n  半熟レベル: 17 / 半熟値: 9999\n  現在収入: 300G\n  総賃金: 150G\n  占領記録 5城（現在の城数ではない）\n'
       + '  保有: カストーラ/スペンソニア\n  戦闘結果: 4勝 / 1敗 / 未分類 1\n'
       + '  交戦HP: 敵 31（dragon） / 我 44（ゼウス）\n'
       + '  駐留: アルマムーン=ゼウス/ユイートル\n  行軍中: どうし→ナキューメラ\n'
@@ -1173,8 +1185,8 @@ test('Hanjuku sidebar uses large current-chapter cards without changing the top 
   assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
   assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '123 G');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '12人');
+  assert.equal(hanjukuKpiValue(ui, '所持金'), '123 G');
+  assert.equal(hanjukuKpiValue(ui, '将軍数'), '12人');
   assert.equal(ui.feedG.querySelector('.hanjuku-dots').children.filter(x => x.className.includes('current')).length, 1);
   assert.match(state.feeds.showStatusG.text, /SOREN\/CORNER/);
 });
@@ -1184,8 +1196,8 @@ test('Hanjuku cached figures disappear when source stops updating even without a
   await ui.tick(31);
   assert.equal(ui.feedG.querySelector('.hanjuku-badge').textContent, '要確認');
   assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '話数 未確認');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '— G');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '—人');
+  assert.equal(hanjukuKpiValue(ui, '所持金'), '— G');
+  assert.equal(hanjukuKpiValue(ui, '将軍数'), '—人');
 });
 
 test('Hanjuku general count is hidden when the roster is not a complete count', async () => {
@@ -1194,7 +1206,7 @@ test('Hanjuku general count is hidden when the roster is not a complete count', 
       + '第2話 / 所持金 123G\nゲーム内: 1年11月（最終観測）\n兵力: 9名 / 停滞 3秒\n'
       + line + '\n画面: world_map / field';
     const ui = await runBroadcastOverlayScript(hanjukuFixture({ text }));
-    assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '—人', line);
+    assert.equal(hanjukuKpiValue(ui, '将軍数'), '—人', line);
   }
 });
 
@@ -1250,18 +1262,23 @@ test('Hanjuku shows a meaningful stall while omitting brief input pauses', async
 test('Hanjuku card surfaces the live observed battle, roster and sortie state', async () => {
   const ui = await runBroadcastOverlayScript(hanjukuFixture());
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 dragon 31 / ゼウス 44');
-  assert.equal(ui.feedG.querySelector('.hanjuku-power').textContent, '半熟Lv 17 / 半熟値 9999 / 収入 300G');
+  // 国力4値も兵力・将軍数・所持金と同じKPIセルで並ぶ。
+  assert.equal(ui.feedG.querySelector('.hanjuku-power'), null);
+  assert.equal(hanjukuKpiValue(ui, '収入'), '300 G');
+  assert.equal(hanjukuKpiValue(ui, '総賃金'), '150 G');
+  assert.equal(hanjukuKpiValue(ui, '半熟Lv'), '17');
+  assert.equal(hanjukuKpiValue(ui, '半熟値'), '9999');
   // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
   assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[2].querySelector('.hanjuku-value').textContent, '9名');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '12人');
+  assert.equal(hanjukuKpiValue(ui, '兵力'), '9名');
+  assert.equal(hanjukuKpiValue(ui, '将軍数'), '12人');
   assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 4 / 失敗 1');
   // The battle line carries a trailing strategy field; it must not hide the screen.
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4 / 1');
+  assert.equal(hanjukuKpiValue(ui, '勝 / 敗（累計）'), '4 / 1');
 });
 
 test('Hanjuku previous-month general count is labelled 前月', async () => {
@@ -1269,18 +1286,15 @@ test('Hanjuku previous-month general count is labelled 前月', async () => {
   const previous = current.replace('将軍数: 12人（完全名簿）', '将軍数: 12人（前月の完全名簿）');
   assert.notEqual(previous, current);
   const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: previous }));
-  const cell = ui.feedG.querySelector('.hanjuku-kpis').children[3];
-  assert.equal(cell.querySelector('.hanjuku-label').textContent, '将軍数（前月）');
-  assert.equal(cell.querySelector('.hanjuku-value').textContent, '12人');
+  assert.equal(hanjukuKpi(ui, '将軍数（前月）').querySelector('.hanjuku-value').textContent, '12人');
+  assert.equal(hanjukuKpi(ui, '将軍数'), undefined);
 });
 
 test('Hanjuku confirmed joins are added to the last complete roster', async () => {
   const text = hanjukuFixture().feeds.showStatusG.text.replace(
     '将軍数: 12人（完全名簿）', '将軍数: 20人（名簿18人＋加入2名）');
   const ui = await runBroadcastOverlayScript(hanjukuFixture({ text }));
-  const cell = ui.feedG.querySelector('.hanjuku-kpis').children[3];
-  assert.equal(cell.querySelector('.hanjuku-label').textContent, '将軍数');
-  assert.equal(cell.querySelector('.hanjuku-value').textContent, '20人');
+  assert.equal(hanjukuKpiValue(ui, '将軍数'), '20人');
 });
 
 test('Hanjuku card omits the live-battle strip when no battle is observed', async () => {
@@ -1298,17 +1312,21 @@ test('the card parsers still read every field the real renderer emits', async ()
   const ui = await runBroadcastOverlayScript(hanjukuFixture({ text: rendered }));
   assert.equal(ui.documentElement.dataset.hanjukuActive, '1');
   assert.equal(ui.feedG.querySelector('.hanjuku-chapter').textContent, '第 2 話');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[0].querySelector('.hanjuku-value').textContent, '176 G');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[1].querySelector('.hanjuku-value').textContent, '4 / 1');
+  assert.equal(hanjukuKpiValue(ui, '所持金'), '176 G');
+  assert.equal(hanjukuKpiValue(ui, '勝 / 敗（累計）'), '4 / 1');
+  assert.equal(hanjukuKpiValue(ui, '収入'), '300 G');
+  assert.equal(hanjukuKpiValue(ui, '総賃金'), '150 G');
+  assert.equal(hanjukuKpiValue(ui, '半熟Lv'), '17');
+  assert.equal(hanjukuKpiValue(ui, '半熟値'), '9999');
   assert.equal(ui.feedG.querySelector('.hanjuku-month').textContent, '1年 11月（最終観測）');
   assert.equal(ui.feedG.querySelector('.hanjuku-status').textContent, '作戦選択');
   assert.equal(ui.feedG.querySelector('.hanjuku-duel').textContent, '交戦 キッシュ 20 / ココット 24');
-  assert.equal(ui.feedG.querySelector('.hanjuku-power').textContent, '半熟Lv 17 / 半熟値 9999 / 収入 300G');
+  assert.equal(ui.feedG.querySelector('.hanjuku-power'), null);
   // 駐留・行軍中は右カードに出さない（出撃は左のチャートで示す）。
   assert.equal(ui.feedG.querySelector('.hanjuku-garrison'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-marching'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-troops').textContent, '9名');
-  assert.equal(ui.feedG.querySelector('.hanjuku-kpis').children[3].querySelector('.hanjuku-value').textContent, '12人');
+  assert.equal(hanjukuKpiValue(ui, '将軍数'), '12人');
   assert.equal(ui.feedG.querySelector('.hanjuku-stalled'), null);
   assert.equal(ui.feedG.querySelector('.hanjuku-orders').textContent, '出撃 成立 1 / 失敗 1');
   assert.match(ui.feedG.querySelector('.hanjuku-castles').textContent, /2城/);
