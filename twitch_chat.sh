@@ -315,6 +315,62 @@ _start() {
     _log "daemon起動 (PID=$dpid)"
 }
 
+# docich#3372: pending.log へ append された正規化済み行を docich の
+# puyo chat_inbox writer へ1行ずつ渡す。
+#
+# 対象は通常 PRIVMSG の sanitize 済み行のみ:
+# - pending 行形式は `id=<msgid>	user-id=<uid>	login=<l>	display=<d>	flags=<f>	<text>`
+# - subscription / 視聴記録 / identity などの合成行は user-id を持たないので除外
+# - <text> は daemon が `<[BITS] ><author>: <msg>` に整形済みなので、
+#   chat_inbox 契約の `text`(本文のみ) を復元するため表示用 prefix を剥がす。
+#   prefix が復元できない行 (self の trusted-card/trusted-prediction 整形など)
+#   は解釈を推測せず送らない (fail-closed)
+# - `!puyo join/leave/<action>` 等のコマンド解釈は consumer
+#   (puyo_corner.observe_chat) の責務。producer はコマンド行も通常行も
+#   そのまま通し、コマンドでない行は consumer 側が "ignored" で捨てる
+_mirror_puyo_chat_inbox() {
+    local inbox_cli="${DOCICH_PUYO_CHAT_INBOX_CLI:-/home/ubuntu/docich/bin/docich-puyo-chat-inbox}"
+    # VM 以外の環境 (writer 未配備) では黙って no-op。
+    [ -x "$inbox_cli" ] || return 0
+    local file="$1"
+    [ -f "$file" ] || return 0
+    local f_id f_uid f_login f_disp f_flags f_text author body
+    while IFS=$'\t' read -r f_id f_uid f_login f_disp f_flags f_text; do
+        f_id="${f_id#id=}"
+        f_uid="${f_uid#user-id=}"
+        f_login="${f_login#login=}"
+        f_disp="${f_disp#display=}"
+        f_flags="${f_flags#flags=}"
+        # user-id を持たない行 (subscription/視聴記録等の合成行) は対象外。
+        [ -n "$f_uid" ] || continue
+        author="$f_disp"
+        [ -n "$author" ] || author="$f_login"
+        [ -n "$author" ] || continue
+        body="$f_text"
+        body="${body#'[BITS] '}"
+        case "$body" in
+            "$author: "*) body="${body#"$author: "}" ;;
+            *) continue ;;  # 想定外の整形は推測せず送らない
+        esac
+        [ -n "$body" ] || continue
+        # ${var:+--msg-id ...} は置換文字列内の引用符が再解釈されないため
+        # 使わず、引数を明示して分岐する。
+        if [ -n "$f_id" ]; then
+            "$inbox_cli" \
+                --user-id "$f_uid" \
+                --display-name "$author" \
+                --text "$body" \
+                --msg-id "$f_id" >/dev/null 2>&1 || true
+        else
+            "$inbox_cli" \
+                --user-id "$f_uid" \
+                --display-name "$author" \
+                --text "$body" >/dev/null 2>&1 || true
+        fi
+    done < "$file"
+    return 0
+}
+
 #--- fetch: 前回からの差分を取得してサニタイズ → pending.logに蓄積 ---
 _fetch_nolock() {
     local new_sanitized=""
@@ -471,6 +527,14 @@ _fetch_nolock() {
                 if [ "$after_count" -gt 0 ]; then
                     cat "$dedup_tmp" >> "$PENDING_LOG"
                     added_count="$after_count"
+                    # docich#3372: ぷよぷよコーナー live 中は同じ正規化済み行を
+                    # chat_inbox.jsonl へミラーする。pending.log はコメント応答が
+                    # ack/ack-batch/claim で排他 drain する共有キュー、raw.log は
+                    # fetch が mv で rotate するため、bridge の独立読み出し元には
+                    # 使えない。新規行を pending へ append する同一ポイント
+                    # (単一 writer の瞬間) で複製するのが正本の tap ポイント。
+                    # writer 側が active slot を解決し、ぷよ非稼働時は no-op。
+                    _mirror_puyo_chat_inbox "$dedup_tmp" || true
                 fi
             fi
 
