@@ -1130,8 +1130,12 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         # the bot when to read the page again, it no longer hides the value.
         hanjuku_level = number(policy.get("hanjuku_level"))
         hanjuku_value = number(policy.get("hanjuku_value"))
+        # 総賃金 is read on the same country-status page as しゅうにゅう and
+        # kept as a last observation exactly like 現在収入.
         income_row = policy.get("country_income")
         income = number(income_row.get("income")) if isinstance(income_row, dict) else None
+        wages_row = policy.get("country_wages")
+        wages = number(wages_row.get("wages")) if isinstance(wages_row, dict) else None
         result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
@@ -1153,6 +1157,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
                   "hanjuku_level": hanjuku_level,
                   "hanjuku_value": hanjuku_value,
                   "income": income,
+                  "wages": wages,
                   "wins": number(stats.get("wins")), "losses": number(stats.get("losses")),
                   "unclassified": number(stats.get("unclassified")),
                   # Policy-side battle accounting. Distinct from the

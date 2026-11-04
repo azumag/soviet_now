@@ -937,17 +937,13 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-card.stale { background: transparent; }
 /* Prioritize the game state over automation telemetry. */
 .hanjuku-card { font-family: system-ui, sans-serif; }
-.hanjuku-period { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 7px; }
+.hanjuku-period { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 5px; }
 .hanjuku-chapter { font-size: 26px; line-height: 1.2; letter-spacing: 0; }
 .hanjuku-month { margin: 0; font-size: 12px; }
-/* 兵力 and 将軍数 share the first row: both are army-size observations.
-   The two rows stay within the height the single row occupied by trimming
-   the surrounding spacing, so the OPS rail below keeps its measured room. */
-.hanjuku-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 12px; margin-top: 6px; margin-bottom: 6px; }
-.hanjuku-kpi:nth-child(1) { order: 2; }
-.hanjuku-kpi:nth-child(2) { order: 3; }
-.hanjuku-kpi:nth-child(3) { order: 0; }
-.hanjuku-kpi:nth-child(4) { order: 1; }
+/* 兵力/将軍数, 所持金/勝敗, 収入/総賃金, 半熟Lv/半熟値 share two columns.
+   The rows are written in display order so no grid reordering is needed, and
+   the gap/margins stay tight so the OPS rail below keeps its measured room. */
+.hanjuku-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 4px 12px; margin-top: 4px; margin-bottom: 2px; }
 .hanjuku-label { white-space: nowrap; }
 .hanjuku-detail-row + .hanjuku-detail-row { margin-top: 5px; }
 .hanjuku-details { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; color: #edf5fb; font-size: 18px; line-height: 1.35; }
@@ -963,7 +959,7 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
    with two generals and the whole carried kit. */
 .hanjuku-duel-row { padding: 2px 7px; }
 .hanjuku-duel-row + .hanjuku-duel-row { margin-top: 2px; }
-.hanjuku-group-title { margin-bottom: 4px; color: #bdcdd9; font-size: 14px; font-weight: 600; }
+.hanjuku-group-title { margin-bottom: 2px; color: #bdcdd9; font-size: 14px; font-weight: 600; }
 .hanjuku-detail-row { display: block; margin-top: 0; }
 .hanjuku-detail-label { margin-bottom: 3px; color: #bdcdd9; font-size: 14px; }
 .hanjuku-detail-row > :last-child { min-width: 0; overflow-wrap: anywhere; }
@@ -973,11 +969,11 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
 .hanjuku-note { font-size: 11px; line-height: 1.4; color: #bdcdd9; }
 .hanjuku-kpi { padding: 0; border: 0; background: transparent; }
 .hanjuku-label { color: #bdcdd9; font-size: 12px; }
-.hanjuku-value, .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 24px; line-height: 1.25; }
-.hanjuku-status { margin-top: 6px; padding: 0; border: 0; background: transparent; font-size: 17px; }
+.hanjuku-value, .hanjuku-kpi:nth-child(2) .hanjuku-value { font-size: 24px; line-height: 1.12; }
+.hanjuku-status { margin-top: 4px; padding: 0; border: 0; background: transparent; font-size: 17px; }
 .hanjuku-duel { padding: 0; border: 0; background: transparent; font-size: 18px; line-height: 1.35; }
 /* Game details are distinct cards, without decorative edge accents. */
-.hanjuku-details { gap: 4px; margin-top: 8px; }
+.hanjuku-details { gap: 4px; margin-top: 4px; }
 .hanjuku-group, .hanjuku-detail-row, .hanjuku-duel {
   box-sizing: border-box; padding: 5px 10px; border: 1px solid #28404f;
   border-radius: 7px; background: #0b1c28;
@@ -988,9 +984,6 @@ html[data-prediction-active="1"] #feed { margin-top: 8px; height: 616px; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.hanjuku-power { margin-top: 6px; padding: 5px 10px; border: 1px solid #28404f;
-  border-radius: 7px; background: #0b1c28; color: #d9e8f2; font-size: 15px;
-  line-height: 1.3; }
 .hanjuku-records { display: flex; flex-direction: column; gap: 4px; padding: 5px 10px; border: 1px solid #28404f; border-radius: 7px; background: #0b1c28; }
 .hanjuku-records > div { padding: 0; }
 html[data-soren-monitor="1"]:not([data-improve-active="1"]) .feed-panel.panel-g { flex: 1 1 0; }
@@ -1860,6 +1853,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const rosterPrevious = rosterSuffix.includes('前月');
     const power = pick(/^半熟レベル: (\d+|不明) \/ 半熟値: (\d+|不明)$/);
     const income = pick(/^現在収入: (\d+|不明)(?:G)?$/);
+    const wages = pick(/^総賃金: (\d+|不明)(?:G)?$/);
     const lost = pick(/^失った城: (.{1,120})$/);
     const castleLosses = pick(/^城失陥: (\d+)件/);
     const garrison = pick(/^駐留: (.{1,120})$/);
@@ -1940,6 +1934,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       level:fresh ? number(power?.[1]) : null,
       hValue:fresh ? number(power?.[2]) : null,
       income:fresh ? number(income?.[1]) : null,
+      wages:fresh ? number(wages?.[1]) : null,
       lost:fresh ? (lost?.[1] || null) : null,
       castleLosses:fresh ? number(castleLosses?.[1]) : null,
       garrison:fresh ? (garrison?.[1] || null) : null,
@@ -1979,13 +1974,21 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const dots = node('hanjuku-dots');
     for (let i = 1; i <= 12; i++) dots.appendChild(node(`hanjuku-dot${i === value.chapter ? ' current' : ''}`));
     card.appendChild(dots);
+    // owner 2026-11-04: 国力（半熟Lv・半熟値・収入・総賃金）も、兵力・
+    // 将軍数・所持金と同じ「ラベル＋値＋単位」のセルで並べる。兵力と
+    // 将軍数、所持金と勝敗、収入と総賃金、半熟Lvと半熟値を同じ行にする。
     const kpis = node('hanjuku-kpis');
-    for (const [label, text] of [['所持金', `${shown(value.gold)} G`],
+    for (const [label, text, cls] of [
+      ['兵力', `${shown(value.soldiers)}名`, 'hanjuku-troops'],
+      [value.generalsPrevious ? '将軍数（前月）' : '将軍数', `${shown(value.generals)}人`],
+      ['所持金', `${shown(value.gold)} G`],
       ['勝 / 敗（累計）', `${shown(value.wins)} / ${shown(value.losses)}`],
-      ['兵力', `${shown(value.soldiers)}名`],
-      [value.generalsPrevious ? '将軍数（前月）' : '将軍数', `${shown(value.generals)}人`]]) {
+      ['収入', `${shown(value.income)} G`],
+      ['総賃金', `${shown(value.wages)} G`],
+      ['半熟Lv', shown(value.level)],
+      ['半熟値', shown(value.hValue)]]) {
       const cell = node('hanjuku-kpi'); cell.appendChild(node('hanjuku-label', label));
-      cell.appendChild(node(label === '兵力' ? 'hanjuku-value hanjuku-troops' : 'hanjuku-value', text)); kpis.appendChild(cell);
+      cell.appendChild(node(cls ? `hanjuku-value ${cls}` : 'hanjuku-value', text)); kpis.appendChild(cell);
     }
     card.appendChild(kpis);
     if (!value.gap && value.enemyHp !== null) {
@@ -2024,13 +2027,6 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // The left gap no longer carries the status card. Keep the status on the
     // right whenever a live battle's reference block does not need the room.
     const statusVisible = !value.gap || !value.duel;
-    // Owner 2026-11-03: 占領した拠点の一覧は不要。半熟レベル・半熟値・
-    // 現在収入を国力として表示する（収入は国のステータス頁のしゅうにゅう）。
-    // A single compact row keeps the card inside the feed when a live battle
-    // reference block is also present.
-    const powerValue = `半熟Lv ${shown(value.level)} / 半熟値 ${shown(value.hValue)}`
-      + ` / 収入 ${value.income === null ? '—' : `${value.income}G`}`;
-    card.appendChild(node('hanjuku-power', powerValue));
     // Owner 2026-11-03: 駐留/行軍中は不要（出撃は左のチャートで示す）。
     if (statusVisible && value.intent) detail(details, 'hanjuku-intent', '出撃意図', value.intent);
     if (value.stalled >= 30) detail(details, 'hanjuku-stalled', '進展なし', `${shown(value.stalled)}秒`);
