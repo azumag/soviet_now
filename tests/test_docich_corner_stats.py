@@ -432,7 +432,9 @@ class HanjukuStatusTest(unittest.TestCase):
             launched_orders={'J3': {'step':'J3','general':'どうし','source':'アルマムーン',
                                      'target':'ナキューメラ','purpose':'attack'}},
             sorties={'J4': {'general':'パプリカ','source':'カルーン','target':'ジュメルズ',
-                            'status':'en_route','tick':90}},
+                            'status':'en_route','tick':90},
+                     'J5': {'general':'キッシュ','source':'アルマムーン','planned_target':'ジュメルズ',
+                            'status':'overdue','tick':95}},
             battle=dict(
                 enemy='シェーブル', ally='どうし', enemy_hp=55, ally_hp=70,
                 hp_observed_at=now-3, enemy_soldiers=4, ally_soldiers=7,
@@ -467,8 +469,12 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual((gap['moves'][0]['source'], gap['moves'][0]['target']),
                          ('カルーン', 'ジュメルズ'))
         self.assertEqual(gap['moves'][0]['status'], 'en_route')
+        self.assertEqual(gap['moves'][1]['status'], 'overdue')
+        self.assertEqual((gap['moves'][1]['source'], gap['moves'][1]['target']),
+                         ('アルマムーン', 'ジュメルズ'))
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
         self.assertIn('余白出撃: パプリカ / カルーン→ジュメルズ / 行軍中', text)
+        self.assertIn('余白出撃: キッシュ / アルマムーン→ジュメルズ / 交戦中', text)
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
         self.assertIn('余白交戦兵数:',text)

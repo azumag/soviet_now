@@ -952,7 +952,11 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
     rows = []
     for step in sorted(raw):
         sortie = raw[step]
-        if not isinstance(sortie, dict) or sortie.get("status") not in ("en_route", "launched_unconfirmed"):
+        # Owner 2026-11-04: a general intercepted by another enemy en route
+        # turns the sortie 'overdue'. Keep showing the planned route while the
+        # encounter battle is in progress (bounded by the same busy window).
+        if (not isinstance(sortie, dict)
+                or sortie.get("status") not in ("en_route", "launched_unconfirmed", "overdue")):
             continue
         seen = sortie.get("tick")
         if type(seen) is not int or not 0 <= tick - seen < SORTIE_BUSY_TICKS:
