@@ -2735,11 +2735,13 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertNotIn("archive_restart_russia_not_reproduced", regression)
         self.assertIn("source_best_max_type", regression)
         self.assertIn("archive_restart_objective_floor", regression)
-        self.assertIn("mode=archive_objective_floor", regression)
+        self.assertNotIn("mode=archive_objective_floor", regression)
         self.assertIn("archive_restart_complete", eloop)
         archive_block = eloop.split('IMPROVE_REASON:-normal}" = "archive_restart"', 1)[1].split("# バッチサマリー生成", 1)[0]
-        self.assertIn("git add strategy.py game_count.txt score_history.txt eval_score_history.txt", archive_block)
-        self.assertNotIn('git add strategy.py game_count.txt score_history.txt eval_score_history.txt "$WILDCARD_ORIGIN_FILE"', archive_block)
+        # ローカル git add は 78809294d (#340) で persist_strategy_improve へ置換済み。
+        self.assertIn('persist_strategy_improve "eloop Improve [archive_restart]', archive_block)
+        self.assertIn("strategy.py game_count.txt score_history.txt eval_score_history.txt", archive_block)
+        self.assertNotIn('eval_score_history.txt "$WILDCARD_ORIGIN_FILE"', archive_block)
 
     def test_ai_output_files_are_not_precreated_before_opencode_write(self):
         """opencode write 制約に合わせ、analysis/review 出力は空ファイル作成しない。"""
@@ -13488,8 +13490,8 @@ PY
         self.assertIn("delta > rollback_trend_grace_min_delta", regression)
         self.assertIn("OK:{trend_grace_reason()}", regression)
         self.assertIn("reasons=objective_regression+", regression)
-        self.assertIn("reasons=early_objective_regression+", regression)
-        self.assertIn("mode=archive_objective_floor", regression)
+        self.assertNotIn("reasons=early_objective_regression+", regression)
+        self.assertNotIn("mode=archive_objective_floor", regression)
         self.assertIn("trend_grace は score-only rollback dampener。目的退行は免除しない。", regression)
         self.assertIn("def objective_triggered(reason_text):", regression)
         self.assertIn("objective_was_trigger = objective_triggered(reg.get(\"reasons\", \"\"))", regression)
