@@ -480,6 +480,10 @@ BATCH_COMMENTARY_TIMEOUT_SEC="${BATCH_COMMENTARY_TIMEOUT_SEC:-120}"
 BATCH_COMMENTARY_MAX_CHARS="${BATCH_COMMENTARY_MAX_CHARS:-420}"
 BATCH_COMMENTARY_CONTEXT_MAX_CHARS="${BATCH_COMMENTARY_CONTEXT_MAX_CHARS:-2400}"
 GAME_RESULT_CHAT_ENABLED="${GAME_RESULT_CHAT_ENABLED:-0}"
+# 改善フロー (archive_restart / WILDCARD / escape_ai / 早期脱出など) の内部ステップ通知は
+# OBS overlay とログにだけ残し、視聴者向けチャットへは投稿しない。視聴者に意味のある
+# 節目だけチャットへ戻したい場合に限り IMPROVE_FLOW_CHAT_ENABLED=1 を .env へ置く。
+IMPROVE_FLOW_CHAT_ENABLED="${IMPROVE_FLOW_CHAT_ENABLED:-0}"
 # 探索モード (EXPLORE_MODE=1) では探索専用の改善サイクルに上書きする。
 # 環境変数 EXPLORE_MODE は .env 再読込やホットリロードで失われる可能性があるため、
 # explore.sh が作成する tmp/state/explore_mode マーカの存在を基準にする。

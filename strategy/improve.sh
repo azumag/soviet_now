@@ -275,7 +275,7 @@ _improve_flow_notify() {
 	if [ -x ./overlay_notify.sh ]; then
 		./overlay_notify.sh worker "$full_title" "$body" "$level" >/dev/null 2>&1 || true
 	fi
-	if [ -n "$chat" ]; then
+	if [ -n "$chat" ] && [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ]; then
 		enqueue_chat_message "$chat" "improve_flow" 4 || true
 	fi
 }
