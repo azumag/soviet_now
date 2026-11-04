@@ -47,8 +47,8 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 | 兵力・停滞秒数 | policy `soldiers_seen` / run `unchanged_seconds` |
 | 将軍数 | policy `recruit_roster` / 完了済み `roster_survey.receipt` / `roster_last_complete` の完全名簿の人数（当月、なければ前月） |
 | 占領記録・失った城・本拠 | policy `captured` / `lost` / `home_lost` |
-| 半熟レベル・半熟値 | policy `hanjuku_level` / `hanjuku_value`（当月の国ステータス読取のみ） |
-| 現在収入 | policy `country_income`（国ステータス1頁の `しゅうにゅう`、当月スコープのみ） |
+| 半熟レベル・半熟値 | policy `hanjuku_level` / `hanjuku_value`（最後に読めた国ステータス2頁目。次の読取まで保持） |
+| 現在収入 | policy `country_income` の `income`（国ステータス1頁の `しゅうにゅう`。次の読取まで保持） |
 | 戦闘結果（勝/敗/未分類）・戦闘開始終了・切り札確定 | policy `stats` / run `battles_*` |
 | 交戦HP | policy `battle` の `enemy_hp` / `ally_hp` と将軍名 |
 | 卵 | policy `egg_uses`（出撃は左の出撃チャートで示す） |
@@ -68,6 +68,9 @@ switch 中・identity 不一致・30秒超過・終了確定時は `fresh` を�
 - 募集で加入した将軍は `roster_pending_joins` として加算し、「名簿18人＋加入2名」の
   ように表示する。全一覧を読み直して不在が確認できた将軍は減算する。HP0だけでは
   死亡と断定せず、数は変えない。
+- 半熟レベル・半熟値・現在収入は最後に読めた値を保持する。月替わりや読めない頁で
+  「不明」へ戻さず、新しい頁を読めたときだけ書き替える（owner 2026-11-04）。
+  一度も読めていない場合だけ「不明」とする。
 - 行軍中は policy 自身の判定（`en_route` / `launched_unconfirmed`、busy 400観測以内）
   と同じ条件で行う。行き先未確定は「未確定」と出す。解決済み・tick 不正は出さない。
 - 城名・将軍名・卵・将軍名は画面から読めた名前だけを最大3件・各10文字で出す。

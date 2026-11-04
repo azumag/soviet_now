@@ -1123,18 +1123,15 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         egg_uses = policy.get("egg_uses") if isinstance(policy.get("egg_uses"), dict) else {}
         # Chapter and currency are last observations, not predictions or orders.
         generals, generals_month, generals_base, generals_joins = _hanjuku_generals(policy, identity)
-        # Country-status facts: 半熟レベル/半熟値 are current only when the
-        # month's level page was read in this chapter/month. 現在収入 is the
-        # country status page's しゅうにゅう (total), recorded during that visit.
-        level_seen = policy.get("hanjuku_level_seen")
-        level_scope_ok = (isinstance(level_seen, dict)
-                          and level_seen.get("scope") == [chapter, month])
-        hanjuku_level = number(policy.get("hanjuku_level")) if level_scope_ok else None
-        hanjuku_value = number(policy.get("hanjuku_value")) if level_scope_ok else None
+        # Country-status facts: 半熟レベル/半熟値/現在収入 are last observations.
+        # Owner 2026-11-04: keep the previous values on the card until a
+        # successful page read rewrites them; a month rollover or an unreadable
+        # page must not overwrite them with 不明. The stored scope still tells
+        # the bot when to read the page again, it no longer hides the value.
+        hanjuku_level = number(policy.get("hanjuku_level"))
+        hanjuku_value = number(policy.get("hanjuku_value"))
         income_row = policy.get("country_income")
-        income = (number(income_row.get("income"))
-                  if isinstance(income_row, dict) and income_row.get("scope") == [chapter, month]
-                  else None)
+        income = number(income_row.get("income")) if isinstance(income_row, dict) else None
         result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
