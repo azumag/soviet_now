@@ -2104,7 +2104,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (previous && value.plan !== previous.plan && value.plan)
       out.push([`▸ 計画 ${value.plan}`, 'plan']);
     if (previous && value.pending !== previous.pending && value.pending)
-      out.push([`▸ 保留 ${value.pending}`, 'plan']);
+      out.push([`▸ 処理中 ${value.pending}`, 'plan']);
     return out;
   }
   function gapBuildSkeleton(surface) {
@@ -2181,7 +2181,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
     const plan = document.createElement('span'); plan.className = 'hanjuku-gap-plan';
     plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
-                        value.pending ? `保留 ${value.pending}` : ''].filter(Boolean).join(' / ');
+                        value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
     flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
     if (!moves.length) {
       const empty = document.createElement('div'); empty.className = 'hanjuku-gap-empty';
