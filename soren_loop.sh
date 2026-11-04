@@ -432,7 +432,9 @@ json.dump(d,open(f,'w'))
 	if [ -x ./overlay_notify.sh ]; then
 		./overlay_notify.sh worker "早期脱出ロック queued (game ${GAME_NUM:-?})" "停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} で通常満了前に改善へ。最終モードは改善側で判定" "warn" >/dev/null 2>&1 || true
 	fi
-	enqueue_chat_message "改善フロー: early escape queued。停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} のため、通常満了を待たず改善ロックを作成します。最終モードは改善側で判定します。" "improve_flow" 4 || true
+	if [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ]; then
+		enqueue_chat_message "改善フロー: early escape queued。停滞 ${_stag_count}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${_rstreak_count}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} のため、通常満了を待たず改善ロックを作成します。最終モードは改善側で判定します。" "improve_flow" 4 || true
+	fi
 	_clear_accumulated_data
 	return 0
 }
@@ -487,7 +489,7 @@ _evolution_flow_notify() {
 		chat=""
 		;;
 	esac
-	if [ -n "$chat" ]; then
+	if [ -n "$chat" ] && [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ]; then
 		enqueue_chat_message "$chat" "improve_flow" 4 || true
 	fi
 }

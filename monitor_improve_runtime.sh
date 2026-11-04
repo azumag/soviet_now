@@ -460,8 +460,9 @@ PY
 		if [ -x ./overlay_notify.sh ]; then
 			./overlay_notify.sh worker "早期脱出ロック queued (monitor)" "停滞 ${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12}。monitor が取りこぼし補助で改善ロックを作成" "warn" >/dev/null 2>&1 || true
 		fi
-		command -v enqueue_chat_message >/dev/null 2>&1 &&
+		if [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ] && command -v enqueue_chat_message >/dev/null 2>&1; then
 			enqueue_chat_message "改善フロー: early escape queued。monitor が停滞 ${stag}/${WILDCARD_TRIGGER_STAGNATION:-3}・回帰 ${rstreak}/${WILDCARD_REGRESSION_STREAK:-2}・蓄積 ${acc_count}/${MIN_GAMES_BEFORE_IMPROVE:-12} を検出し、通常満了を待たず改善ロックを作成しました。" "improve_flow" 4 || true
+		fi
 		command -v _clear_accumulated_data >/dev/null 2>&1 && _clear_accumulated_data
 		_write_status idle 0 0 0 "early_escape_queued" "$note"
 		return 0

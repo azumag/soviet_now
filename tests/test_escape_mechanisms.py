@@ -12316,6 +12316,63 @@ _prune_expired_rejected_hashes
         self.assertIn("wildcard:*|archive_restart:*|*:wildcard_parallel:*|*:*:post_improve_param_parallel*)", loop)
         self.assertIn("手動改善待ちは実改善PIDがないため soren91 代打は起動しない", improve)
 
+    def test_improve_flow_chat_posts_are_opt_in(self):
+        """改善フローの内部ステップ通知は既定でチャットへ出さず、overlay とログだけに残す。"""
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
+        loop = (REPO_ROOT / "soren_loop.sh").read_text()
+        monitor = (REPO_ROOT / "monitor_improve_runtime.sh").read_text()
+        gate = '[ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ]'
+
+        self.assertIn('IMPROVE_FLOW_CHAT_ENABLED="${IMPROVE_FLOW_CHAT_ENABLED:-0}"', config)
+        self.assertIn(gate, improve)
+        self.assertIn(gate, eloop)
+        self.assertIn(gate, loop)
+        self.assertIn(gate, monitor)
+        self.assertIn('if [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ]; then', loop)
+        self.assertIn('if [ "${IMPROVE_FLOW_CHAT_ENABLED:-0}" = "1" ] && command -v enqueue_chat_message', monitor)
+        # overlay 通知はフラグに依存せず残す。
+        self.assertIn('./overlay_notify.sh worker "$full_title"', improve)
+        self.assertIn('./overlay_notify.sh worker "$full_title"', eloop)
+        self.assertIn('./overlay_notify.sh worker "$full_title"', loop)
+
+    def test_improve_flow_notify_keeps_overlay_but_skips_chat_by_default(self):
+        """既定では chat enqueue を呼ばず、IMPROVE_FLOW_CHAT_ENABLED=1 のときだけ投稿する。"""
+        script = textwrap.dedent(
+            r"""
+            set -eu
+            root="$1"
+            work="$2"
+            cd "$work"
+            cat > overlay_notify.sh <<'SH'
+            #!/bin/sh
+            printf '%s|%s\n' "$2" "$3" >> "$OVERLAY_LOG"
+            SH
+            chmod +x overlay_notify.sh
+            export OVERLAY_LOG="$work/overlay.log"
+            enqueue_chat_message() { printf '%s\n' "$1" >> "$work/chat.log"; }
+            # shellcheck disable=SC1091
+            source "$root/strategy/improve.sh"
+            _improve_flow_notify step "title" "body" "flow chat" info
+            IMPROVE_FLOW_CHAT_ENABLED=1
+            _improve_flow_notify step "title" "body" "flow chat" info
+            """
+        )
+        with tempfile.TemporaryDirectory() as td:
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(REPO_ROOT), td],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={**os.environ, "IMPROVE_FLOW_CHAT_ENABLED": ""},
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            overlay = Path(td, "overlay.log").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(overlay, ["改善フロー: title|body", "改善フロー: title|body"])
+            chat = Path(td, "chat.log").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(chat, ["flow chat"])
+
     def test_improve_and_system_progress_are_queued_for_audio_worker(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
         eloop_improve = (REPO_ROOT / "eloop_improve.sh").read_text()
