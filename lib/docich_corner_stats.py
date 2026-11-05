@@ -999,7 +999,82 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
     return rows
 
 
-def _hanjuku_gap(runtime, policy, now):
+
+def _hanjuku_progress_flows(policy, now, screen=None):
+    """Current procedure stages from persisted bot memory, never chart guesses.
+
+    Only recognised flow owners enter the broadcast feed.  In particular an
+    active chart step alone does not establish that a sortie has started.
+    """
+    if not isinstance(policy, Mapping):
+        return []
+    flows = []
+
+    def add(key, title, stage, detail=None):
+        stage = _hanjuku_text(stage, 32)
+        if stage:
+            flows.append({'key': key, 'title': title, 'stage': stage,
+                          'detail': _hanjuku_text(detail, 32) or ''})
+
+    sub = policy.get('month_sub')
+    if isinstance(sub, Mapping) and sub:
+        kind = sub.get('kind')
+        title = {'recruit': '将軍募集', 'chikujou': '築城',
+                 'egg': '卵の補充', 'soldiers': '兵士補充'}.get(kind, '月次コマンド')
+        add('month_sub', title, sub.get('stage') or 'processing', kind)
+
+    post = policy.get('post_month_status')
+    if isinstance(post, Mapping) and post:
+        add('post_month', '月越し後の確認', post.get('stage') or 'processing')
+
+    house = policy.get('house')
+    if isinstance(house, Mapping) and house:
+        add('house', '城・将軍の確認', house.get('phase'), house.get('general'))
+
+    session = policy.get('flow')
+    session = session if isinstance(session, Mapping) else {}
+    recall = session.get('recall')
+    if isinstance(recall, Mapping) and recall:
+        add('recall', '帰還', recall.get('stage'), recall.get('general'))
+
+    attempt = session.get('sortie_attempt')
+    if (isinstance(attempt, Mapping) and attempt and not attempt.get('interrupted')
+            and isinstance(attempt.get('step'), str)
+            and attempt['step'] == policy.get('active')):
+        stage = ('confirming' if type(attempt.get('confirmation_tick')) is int
+                 else 'target_seen' if attempt.get('target_seen') is True else 'preparing')
+        add('sortie', '出撃操作', stage, attempt['step'])
+
+    jump = policy.get('castle_jump')
+    if (isinstance(jump, Mapping) and jump and jump.get('step') == policy.get('active')):
+        add('castle_jump', '城への移動', jump.get('phase'), jump.get('source'))
+
+    yjump = policy.get('y_jump')
+    if isinstance(yjump, Mapping) and yjump:
+        add('y_jump', '地図の位置合わせ', 'repositioning', yjump.get('step'))
+
+    check = policy.get('army_count_check')
+    if (isinstance(check, Mapping) and check
+            and check.get('stage') not in ('measured', 'unverified')):
+        add('army_count', '兵士数の確認', check.get('stage'))
+
+    battle = policy.get('battle')
+    if isinstance(battle, Mapping) and battle:
+        observed = battle.get('hp_observed_at')
+        if (type(observed) in (int, float) and math.isfinite(observed)
+                and 0 <= now - observed <= 10):
+            card = battle.get('card_flow')
+            card = card if isinstance(card, Mapping) else {}
+            stage = card.get('stage') or 'tactics'
+            add('battle', '戦闘・切り札', stage, card.get('card') or battle.get('castle'))
+
+    if not flows and screen == 'month_menu':
+        # A visible month menu is direct observation, not a predicted plan.
+        add('month', '月次コマンド', 'menu')
+    return flows[:6]
+
+
+def _hanjuku_gap(runtime, policy, now, screen=None):
     """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
         state, _ = _bounded_state(runtime / 'presentation.json')
@@ -1075,6 +1150,7 @@ def _hanjuku_gap(runtime, policy, now):
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
             'moves': _hanjuku_moves(policy, policy.get('tick')),
             'active_order': _hanjuku_active_order(policy),
+            'flows': _hanjuku_progress_flows(policy, now, screen),
             'hp': hp, 'battle': battle_detail}
 
 
@@ -1158,7 +1234,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         income = number(income_row.get("income")) if isinstance(income_row, dict) else None
         wages_row = policy.get("country_wages")
         wages = number(wages_row.get("wages")) if isinstance(wages_row, dict) else None
-        result = {"gap": _hanjuku_gap(runtime, policy, now), "availability": "fresh", "age": int(now - observed),
+        result = {"gap": _hanjuku_gap(runtime, policy, now, bot.get('screen_kind')), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
                   "year": int(month_match[1]) if month_match else None,
