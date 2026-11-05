@@ -15,7 +15,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     '余白出撃: パプリカ / カルーン→ジュメルズ / 成立未確認 / 段階 A:001e11d9:Mdf4142',
     '余白出撃: どうし / アルマムーン→ナキューメラ / 行軍中 / 段階 A:002 / 理由 ナキューメラの敵を討つ',
   ];
-  const build=(clock, extraMoves=[], extraOwned=[], extraLines=[])=>[
+  const build=(clock, extraMoves=[], extraOwned=[], decision='敵の卵使用を避けるため、致死確認できる切り札を優先')=>[
     'SOREN/CORNER: RETRO / hanjuku-hero / 進行中',
     '半熟英雄 / 最終観測・記録',
     '第2話 / 所持金 123G',
@@ -35,9 +35,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     `余白交戦兵数: until=${clock+20} 敵 4 / 我 7`,
     `余白戦闘計画: until=${clock+20} 攻撃 ナキューメラ / 段階 J3 / 方針 retry_with_opening_cards`,
     `余白切り札: until=${clock+20} 予定 ゼンマイン・クースカン / 使用 ゼンマイン / 現在 クースカン(menu)`,
-    `余白戦闘判断: until=${clock+20} 敵の卵使用を避けるため、致死確認できる切り札を優先`,
+    `余白戦闘判断: until=${clock+20} ${decision}`,
     `余白卵対策: until=${clock+20} 奥の手選択済み`,
-    ...moves, ...extraMoves, ...extraLines,
+    ...moves, ...extraMoves,
   ].join('\n');
   let text=build(now);
   let feedAt=now;
@@ -84,7 +84,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
     text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],
-      [`余白戦闘判断: until=${clock+20} 防御を固めるため切り札を温存`]);
+      '防御を固めるため切り札を温存');
     await page.evaluate(stamp=>window.gapClock=stamp,clock);
     await page.evaluate(payload=>window.__sorenBroadcastState=payload,{...state(),feeds:{showStatusG:{text,updatedAt:clock,lineCount:30}}});
     await page.waitForTimeout(1200);
