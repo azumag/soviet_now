@@ -1082,6 +1082,8 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   border-top: 7px solid #e9b84d; border-left: 4px solid transparent; border-right: 4px solid transparent; }
 .hanjuku-gap-move-why { margin-top: 4px; color: #9fb4c4; font-size: 12px; line-height: 1.35;
   overflow-wrap: anywhere; }
+.hanjuku-gap-battle-line { color: #e8c56a; font-size: 12px; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hanjuku-gap-empty { border: 1px dashed #3a596d; border-radius: 8px; padding: 9px 10px;
   color: #9fb4c4; font-size: 15px; }
 html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
@@ -2095,6 +2097,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (Number.isFinite(value.battlesFinished) && Number.isFinite(previous?.battlesFinished)
         && value.battlesFinished > previous.battlesFinished)
       out.push(['● 戦闘終了', 'battle']);
+    // Live battle detail (plan/cards/decision/egg guard) rides the until-gated
+    // 余白 lines and is shown as one truncated line under the chart head;
+    // a persistent multi-row block overflows the fixed 239px gap.
     if (previous && value.chapter !== previous.chapter)
       out.push([`月 第${value.chapter ?? '—'}話`, 'month']);
     if (previous && (value.year !== previous.year || value.month !== previous.month))
@@ -2172,10 +2177,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     } else if (gapDom.idle) { gapDom.idle.remove(); gapDom.idle = null; }
     const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
     const moves = gap.moves || [];
+    // Freshest live-battle summary, truncated to a single line by CSS.
+    const battleLine = [['判断',gap.decision],['計画',gap.tactics],['切り札',gap.cards],['卵対策',gap.egg]]
+      .filter(([,text]) => text).map(([label,text]) => `${label}: ${text}`).join(' / ');
     // The chart is static between observations; re-rendering it every poll
     // also restarted its layout. Rebuild only when its inputs change.
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending});
+                                plan:value.plan, pending:value.pending, battleLine});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
@@ -2186,6 +2194,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
                         value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
     flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
+    if (battleLine) {
+      const war = document.createElement('div'); war.className = 'hanjuku-gap-battle-line';
+      war.textContent = `交戦中 ${battleLine}`;
+      flow.appendChild(war);
+    }
     if (!moves.length) {
       const empty = document.createElement('div'); empty.className = 'hanjuku-gap-empty';
       empty.textContent = '出撃中の将軍はいません'; flow.appendChild(empty);
