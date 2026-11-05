@@ -818,6 +818,9 @@ def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None
         "target": target or "",
         "purpose": purpose or "",
         "status": status or "",
+        # The order's own note says what the sortie is for (chart steps,
+        # interim and adjusted plans all carry one); bounded like deviation.
+        "note": _hanjuku_text(order.get("note"), 96) or "",
     }
 
 
@@ -971,7 +974,8 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
             continue
         rows.append({"general": general, "source": source or "", "target": target or "",
                      "status": sortie["status"], "step": _hanjuku_text(step, 24) or "",
-                     "purpose": _hanjuku_text(order.get("purpose"), 16) or ""})
+                     "purpose": _hanjuku_text(order.get("purpose"), 16) or "",
+                     "note": _hanjuku_text(order.get("note"), 96) or ""})
         if len(rows) >= limit:
             break
     return rows
