@@ -31,6 +31,12 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     '保留計画: sortie',
     `投影余白: side=left x=0 w=239 until=${clock+30}`,
     `余白占領記録: ${[...owned, ...extraOwned].join(' / ')}`,
+    `余白交戦HP: until=${clock+20} 敵シェーブル 55 / どうし 70`,
+    `余白交戦兵数: until=${clock+20} 敵 4 / 我 7`,
+    `余白戦闘計画: until=${clock+20} 攻撃 ナキューメラ / 段階 J3 / 方針 retry_with_opening_cards`,
+    `余白切り札: until=${clock+20} 予定 ゼンマイン・クースカン / 使用 ゼンマイン / 現在 クースカン(menu)`,
+    `余白戦闘判断: until=${clock+20} 敵の卵使用を避けるため、致死確認できる切り札を優先`,
+    `余白卵対策: until=${clock+20} 奥の手選択済み`,
     ...moves, ...extraMoves,
   ].join('\n');
   let text=build(now);
@@ -67,6 +73,10 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     for (const part of ['パプリカ','成立未確認','カルーン','ジュメルズ']) assert.ok(result.moves[0].includes(part), part);
     for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
+    // Live battle detail: plan, cards and the AI's stated reason show while fresh.
+    for (const part of ['交戦中','敵シェーブル 55','敵 4 / 我 7','攻撃 ナキューメラ',
+                        '予定 ゼンマイン・クースカン','敵の卵使用を避けるため','奥の手選択済み'])
+      assert.ok(result.text.includes(part), part);
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
       assert.ok(!result.text.includes(old),`left status card removed: ${old}`);
     }
