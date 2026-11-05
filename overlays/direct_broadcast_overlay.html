@@ -1058,6 +1058,14 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-toast.tone-plan { border-color: #75daec; font-size: 12px; line-height: 1.2; padding: 4px 6px; }
 .hanjuku-gap-toast.tone-plan .hanjuku-gap-toast-age { display: none; }
 .hanjuku-gap-toasts.has-plan { max-height: 112px; }
+.hanjuku-gap-toasts.with-progress { max-height: 104px; }
+.hanjuku-gap-toast.tone-flow { border-color: #a8bdf9; font-size: 12px; padding: 4px 6px; }
+.hanjuku-gap-progress { margin-bottom: 6px; border-left: 3px solid #a8bdf9; background: #0b2232;
+  padding: 4px 6px; border-radius: 4px; max-height: 72px; overflow: hidden; }
+.hanjuku-gap-progress:empty { display: none; }
+.hanjuku-gap-progress-head { color: #a8bdf9; font-size: 11px; font-weight: 700; }
+.hanjuku-gap-progress-item { color: #d8e5f5; font-size: 12px; line-height: 16px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes gapToastIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .hanjuku-gap-flow { display: flex; flex-direction: column; gap: 6px; }
 .hanjuku-gap-flow-head { display: flex; align-items: baseline; justify-content: space-between;
@@ -1092,7 +1100,10 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 /* A three-sortie chart plus live plan toasts must remain inside the fixed
    540px padding region: keep route arrows vertical, but tighten each row. */
 #hanjuku-gap.dense { padding: 8px; }
-#hanjuku-gap.dense .hanjuku-gap-toasts { gap: 3px; margin-bottom: 4px; }
+#hanjuku-gap.dense .hanjuku-gap-toasts { gap: 3px; margin-bottom: 4px; max-height: 82px; }
+#hanjuku-gap.dense .hanjuku-gap-toasts.with-progress { max-height: 58px; }
+#hanjuku-gap.dense .hanjuku-gap-progress { margin-bottom: 3px; max-height: 58px; }
+#hanjuku-gap.dense .hanjuku-gap-progress-item { font-size: 11px; line-height: 14px; }
 #hanjuku-gap.dense .hanjuku-gap-flow { gap: 3px; }
 #hanjuku-gap.dense .hanjuku-gap-flow-head { font-size: 13px; }
 #hanjuku-gap.dense .hanjuku-gap-move { padding: 3px 6px; }
@@ -1913,6 +1924,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       : gapLeft > 0 && gapWidth >= 180 && gapLeft + gapWidth === 960;
     const timedRows = prefix => lines.filter(s=>s.startsWith(prefix)).map(s=>s.slice(prefix.length).match(/^until=(\d+(?:\.\d+)?) (.{1,500})$/))
       .filter(m=>m && now <= Number(m[1]) && Number(m[1])-now <= 30).map(m=>m[2]);
+    const flowKinds = new Set(['month_sub', 'post_month', 'house', 'recall', 'sortie',
+      'castle_jump', 'y_jump', 'army_count', 'battle', 'month']);
+    const gapFlows = lines.filter(line => line.startsWith('余白進行: ')).map(line => {
+      const [key, title, stage, ...detail] = line.slice('余白進行: '.length).split(' / ');
+      if (!flowKinds.has(key) || !title || !stage) return null;
+      return {key, title:title.slice(0, 24), stage:stage.slice(0, 32),
+        detail:detail.join(' / ').slice(0, 32)};
+    }).filter(Boolean).slice(0, 6);
     const gapMoves = lines.filter(line => line.startsWith('余白出撃: ')).map(line => {
       const parts = line.slice('余白出撃: '.length).split(' / ');
       const route = String(parts[1] || '').split('→');
@@ -1927,7 +1946,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }).filter(m => m.general && (m.source || m.target)).slice(0, 8);
     const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
       ? {left:gapLeft, width:gapWidth, side:gapSide,
-         moves:gapMoves,
+         moves:gapMoves, flows:gapFlows,
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
@@ -2074,14 +2093,16 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     container.replaceChildren(card);
   }
   const gapLive = {last: null, toasts: [], seq: 0};
-  const gapDom = {toastBox:null, flow:null, toasts:new Map(), flowSig:null, idle:null};
+  const gapDom = {toastBox:null, progress:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
   function gapResetLive() {
     gapLive.last = null;
     gapLive.toasts = [];
     if (gapDom.toastBox) gapDom.toastBox.replaceChildren();
+    if (gapDom.progress) gapDom.progress.replaceChildren();
     if (gapDom.flow) gapDom.flow.replaceChildren();
     gapDom.toasts.clear();
     gapDom.flowSig = null;
+    gapDom.progressSig = null;
     gapDom.idle = null;
   }
   function gapNameSet(text) {
@@ -2131,6 +2152,24 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // The battle plan is rendered separately, not masquerading as a sortie.
     return {label:'計画確認中', detail:'行動内容未取得', known:false};
   }
+  function gapFlowText(row) {
+    const stageNames = {
+      processing:'処理中', menu:'メニュー操作中', scan:'一覧確認中',
+      open_roster:'将軍一覧を開く', income_next:'収支を確認',
+      castle_verify:'城を確認', month_open:'月初の画面を開く',
+      close:'終了操作中', await_map:'地図へ戻るのを待機',
+      process:'状態を確認', to_camp:'野営地へ移動',
+      hero_focus:'主人公を選択', await_dispatch:'帰還成立を確認',
+      dest:'行先を選択', opening:'画面を開く', requested:'要求済み',
+      quantity_requested:'数量入力中', closing:'画面を閉じる',
+      confirming:'出撃成立を確認', target_seen:'行先を確認済み',
+      preparing:'出撃準備中', repositioning:'位置合わせ中',
+      tactics:'交戦判断中', announce:'効果の表示を確認',
+      select:'項目を選択', recovering:'結果を確認中'
+    };
+    const stage = stageNames[row.stage] || row.stage;
+    return row.title + '：' + stage + (row.detail ? ' / ' + row.detail : '');
+  }
   function gapChanges(previous, value) {
     const out = [];
     const oldGap = previous?.gap || {};
@@ -2169,6 +2208,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const delta = value.generals - previous.generals;
       out.push([`★ 将軍 ${delta > 0 ? '+' : ''}${delta}人`, 'general']);
     }
+    const earlier = new Map((oldGap.flows || []).map(row => [row.key, row]));
+    for (const row of gap.flows || []) {
+      const old = earlier.get(row.key);
+      if (!old || row.stage !== old.stage || row.detail !== old.detail
+          || row.title !== old.title)
+        out.push(['▸ 進行 ' + gapFlowText(row), 'flow']);
+    }
     const plan = gapPlanInfo(value);
     const oldPlan = gapPlanInfo(previous);
     if (previous && (value.plan || plan.known)
@@ -2182,10 +2228,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   }
   function gapBuildSkeleton(surface) {
     surface.replaceChildren();
+    gapDom.progress = document.createElement('div'); gapDom.progress.className = 'hanjuku-gap-progress';
     gapDom.toastBox = document.createElement('div'); gapDom.toastBox.className = 'hanjuku-gap-toasts';
     gapDom.flow = document.createElement('div'); gapDom.flow.className = 'hanjuku-gap-flow';
-    surface.append(gapDom.toastBox, gapDom.flow);
-    gapDom.toasts.clear(); gapDom.flowSig = null; gapDom.idle = null;
+    surface.append(gapDom.progress, gapDom.toastBox, gapDom.flow);
+    gapDom.toasts.clear(); gapDom.flowSig = null; gapDom.progressSig = null; gapDom.idle = null;
   }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
@@ -2198,7 +2245,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       return;
     }
     const gap = value.gap;
-    surface.classList.toggle('dense', (gap.moves || []).length >= 3);
+    surface.classList.toggle('dense', (gap.moves || []).length >= 3
+      || ((gap.moves || []).length >= 2 && (gap.flows || []).length >= 2));
     if (frame) {
       // Crop the iframe itself; transparent space must not overlap game pixels.
       frame.style.left = `${gap.left}px`;
@@ -2213,6 +2261,28 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       for (const [text, tone] of gapChanges(gapLive.last, value)) gapPushToast(text, tone, now);
     }
     gapLive.last = value;
+    // Current procedure stages persist between polls; transitions also enter
+    // the速報 history, but a toast expiry must not hide the live stage.
+    const activeFlows = (gap.flows || []).slice(0, 3);
+    const progressSig = JSON.stringify(activeFlows);
+    if (gapDom.progressSig !== progressSig) {
+      gapDom.progressSig = progressSig;
+      gapDom.progress.replaceChildren();
+      if (activeFlows.length) {
+        const head = document.createElement('div');
+        head.className = 'hanjuku-gap-progress-head';
+        head.textContent = '進行フロー';
+        gapDom.progress.appendChild(head);
+        for (const entry of activeFlows) {
+          const item = document.createElement('div');
+          item.className = 'hanjuku-gap-progress-item';
+          item.textContent = gapFlowText(entry);
+          item.title = item.textContent;
+          gapDom.progress.appendChild(item);
+        }
+      }
+    }
+    gapDom.toastBox.classList.toggle('with-progress', activeFlows.length > 0);
     // Update only the toast elements that changed: re-creating them every poll
     // restarted the enter animation and made the strip flicker.
     const live = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-4);
