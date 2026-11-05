@@ -2179,6 +2179,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // Update only the toast elements that changed: re-creating them every poll
     // restarted the enter animation and made the strip flicker.
     const live = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-4);
+    // The newest plan toast already carries the full detail. Do not render a
+    // duplicate plan card underneath it: the 239px gap has a fixed 540px height.
+    const planToastVisible = live.some(t => t.tone === 'plan' && t.text.startsWith('▸ 計画 '));
     const ids = new Set(live.map(t => t.id));
     for (const [id, el] of gapDom.toasts) {
       if (!ids.has(id)) { el.remove(); gapDom.toasts.delete(id); }
@@ -2213,7 +2216,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // also restarted its layout. Rebuild only when its inputs change.
     const planDetail = gapPlanDetail(value);
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending, planDetail, battleLine});
+                                plan:value.plan, pending:value.pending, planDetail, battleLine, planToastVisible});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
@@ -2221,7 +2224,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
     flowHead.append(flowTitle); flow.appendChild(flowHead);
-    if (value.plan || value.pending || gap.intent || gap.tactics) {
+    if (!planToastVisible && (value.plan || value.pending || gap.intent || gap.tactics)) {
       const plan = document.createElement('div'); plan.className = 'hanjuku-gap-current-plan';
       const head = document.createElement('div'); head.className = 'hanjuku-gap-current-plan-head';
       head.textContent = [value.plan ? `計画 ${value.plan}` : '計画段階 未確認',
