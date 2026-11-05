@@ -3591,28 +3591,27 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             # threshold (>= 5 originally) is a TUNABLE constant the param-parallel perturbs
             # (observed live: perturbed to >= 9). Assert the gate uses reactive_pair_count,
             # not a specific number, so normal auto-tuning of strategy.py doesn't break this.
-            self.assertIn("reactive_pair_count >=", block)
-            # The safety property is "no proximity bonus while congested". The AI
-            # may express that either by explicitly zeroing the bonus
-            # (proximity_bonus = 0.0) or by GATING the whole guidance behind
-            # `if not rp_guidance_suppressed` (current form). Accept both so a valid
-            # refactor of an AI-owned file doesn't trip the guard, while still
-            # requiring the suppression to actually gate/zero the bonus.
-            self.assertTrue(
-                "proximity_bonus = 0.0" in block
-                or "if not rp_guidance_suppressed" in block,
-                "v369 congestion suppression must gate or zero proximity_bonus "
-                "when rp_guidance_suppressed",
-            )
+            self.assertIn("reactive_pair_count", block)
+            self.assertIn("rp_guidance_suppressed", block)
+            # Safety invariant: congested suppression zeros proximity bonus (current impl gates
+            # via rp_guidance_suppressed and sets proximity_bonus = 0.0). Assert the concrete
+            # safety effect, not an alternative gate spelling.
+            self.assertIn("proximity_bonus = 0.0", block)
             self.assertNotIn("reactive_pair_count < 3", block)
         self.assertIn("v369 congestion-aware proximity", readme)
-        self.assertRegex(
-            readme,
-            re.compile(r"reactive_pair_count\s*>=\s*5.*proximity_bonus = 0\.0"),
-        )
+        self.assertIn("proximity_bonus = 0.0", readme)
 
     def test_pre_russia_bridge_clustering_is_bounded_to_near_miss_inventory(self):
-        self.skipTest("stale strategy-internals inventory (#779): asserted markers removed/refactored in current strategy.py")
+        """pre-russia bridge/cluster guidance remains bounded and present in current strategy."""
+        strategy = (REPO_ROOT / "strategy.py").read_text()
+        # Current implementation anchors (ce2622f+ refactors kept core helpers/policy id).
+        self.assertIn("pre_russia_ukraine_pair_policy_id", strategy)
+        self.assertIn("_select_pre_russia_chain_cover_avoidance", strategy)
+        self.assertIn("pre_russia_ukraine_pair_lane_v1", strategy)
+        # Safety/intent: pre-russia guidance must not imply russia synthesis from type>=15;
+        # clustering/avoidance helpers exist without bypassing deadline/merge guards.
+        self.assertNotIn("russia = 1  # inferred from best_type", strategy)
+        self.assertIn("deadline", strategy.lower())
 
     def test_deadline_guard_clusters_safe_high_material_when_pre_russia_near_miss(self):
         import strategy
@@ -11729,37 +11728,24 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
 
     def test_regression_guard_blocks_objective_backslide(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
-        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
-        loop = (REPO_ROOT / "eloop.sh").read_text()
+        improve_sh = (REPO_ROOT / "strategy/improve.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
 
-        # Objective/regression guard implementation evolved significantly; assert core
-        # objective/backslide and rollback-safety signals remain present.
-        self.assertTrue(
-            "objective" in regression and "regression" in regression.lower(),
-            "expected objective regression handling in regression.sh",
-        )
+        # Core objective regression/backslide guards (current implementation, restored strength).
+        self.assertIn("objective_reasons = []", regression)
+        self.assertIn("lost_soviet_path", regression)
         self.assertNotIn('objective_reasons.append("lost_russia_path")', regression)
-        self.assertTrue(
-            "lost_soviet_path" in regression or "soviet" in regression.lower(),
-            "expected soviet-path objective handling",
-        )
-        self.assertTrue(
-            "rollback" in regression.lower() and "anchor" in regression.lower(),
-            "expected rollback/anchor handling in regression.sh",
-        )
-        self.assertTrue(
-            "EARLY_OBJECTIVE_REGRESSION" in config or "objective" in config.lower(),
-            "expected objective regression config signals",
-        )
-        self.assertTrue(
-            "fresh_objective" in improve or "objective" in improve,
-            "expected fresh-objective handling in improve flow",
-        )
-        self.assertTrue(
-            "MAIN_STRATEGY_RUNNER_ACTIVE" in loop or "strategy_runner" in loop,
-            "expected strategy runner coordination in eloop.sh",
-        )
+        self.assertNotIn('"lost_russia_path"', regression)  # direct-russia-loss is not a rollback gate
+        self.assertIn("stage_achievement_regression", regression)
+        self.assertIn("mode=objective_regression", regression)
+        self.assertIn("requested_rollback_hash", regression)
+        self.assertIn("DIRECT_ANCHOR_PROMOTION_OBJECTIVE_GUARD_ENABLED", regression)
+        self.assertIn("DIRECT_ANCHOR_PROMOTION_OBJECTIVE_GUARD_ENABLED", config)
+        self.assertIn("CURRENT_RUN_FRESH_OBJECTIVE_REGRESSION_MIN_GAMES", config)
+        self.assertIn("queue_fresh_objective_same_hash_lock_if_needed", improve_sh)
+        self.assertIn("fresh_objective_same_hash_lock", improve_sh)
+        self.assertIn("fresh_objective_trigger", improve_sh)
+        self.assertIn("archive_restart_candidate", improve_sh)
 
     def test_strategy_runner_merge_result_guard_is_pressure_gated(self):
         runner = (REPO_ROOT / "strategy_runner.py").read_text()
@@ -13582,22 +13568,18 @@ _pick_best_rollback_candidate currentHash
         loop = (REPO_ROOT / "eloop.sh").read_text()
         runner = (REPO_ROOT / "strategy_runner.py").read_text()
 
-        self.assertIn("BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED", config)
-        self.assertIn("BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT", config)
+        self.assertIn('BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED="${BRIDGE_DESYNC_STOP_STALE_SOREN91_ENABLED:-1}"', config)
+        self.assertIn('BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT="${BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT:-0}"', config)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", config)
-        self.assertIn("SOREN_BRIDGE_DESYNC_LIMIT", config)
-        # runner/loop bridge-desync handling evolved; verify core recovery signals remain.
-        self.assertIn("BRIDGE_DESYNC_LIMIT", runner)
-        self.assertTrue(
-            "PHANTOM" in loop or "bridge" in loop,
-            "expected bridge recovery handling in eloop.sh",
-        )
+        self.assertIn('SOREN_BRIDGE_DESYNC_LIMIT="${SOREN_BRIDGE_DESYNC_LIMIT:-3}"', config)
+        self.assertIn('BRIDGE_DESYNC_LIMIT = int(os.environ.get("SOREN_BRIDGE_DESYNC_LIMIT", "3") or "3")', runner)
+        self.assertIn("bridge_desync", runner)
+        self.assertIn("即bridge復旧", loop)
         self.assertIn("PHANTOM_GAME_AUTO_RECOVER_ENABLED", loop)
-        # stale soren91 stop path should remain gated outside improve/manual contexts where applicable.
-        self.assertTrue(
-            "soren91_stop" in loop or "soren91" in loop,
-            "expected soren91 stop handling in eloop.sh",
-        )
+        self.assertIn("[PHANTOM] bridge 再起動 成功", loop)
+        self.assertIn("! _is_improve_running", loop)
+        self.assertIn('SOREN91_STOP_TIMEOUT="${BRIDGE_DESYNC_SOREN91_STOP_TIMEOUT:-0}" soren91_stop', loop)
+        self.assertIn("manual_meriken_mode_is_enabled", loop)
 
     def test_soviet_watchdog_falls_back_to_cdp_endpoint_pid(self):
         watchdog = (REPO_ROOT / "soviet_watchdog.sh").read_text()

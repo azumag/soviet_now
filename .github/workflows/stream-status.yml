@@ -12,6 +12,7 @@ on:
       - 'status_dashboard.py'
       - 'strategy.py'
       - 'strategy/**'
+      - 'strategy_helpers/**'
       - 'lib/docich_corner_stats.py'
       - 'lib/ai_backoff_status.py'
       - 'tools/ab_report.py'
@@ -54,6 +55,7 @@ on:
       - 'status_dashboard.py'
       - 'strategy.py'
       - 'strategy/**'
+      - 'strategy_helpers/**'
       - 'lib/docich_corner_stats.py'
       - 'lib/ai_backoff_status.py'
       - 'tools/ab_report.py'
@@ -99,7 +101,7 @@ jobs:
       # 2 面が共有する表示の中核だが、これまでどの workflow の paths にも
       # 入っておらず CI で守られていなかった。
       # test_escape_mechanisms は strategy.py / status_dashboard / bridge-comment-deadline
-      # 系を広くカバーするため #779 で CI 対象化 (paths: test_escape_mechanisms.py + strategy/**)。
+      # 系を広くカバーするため #779 で CI 対象化 (paths: test_escape_mechanisms.py + strategy/** + strategy_helpers/**)。
       - run: >-
           python3 -m unittest
           tests.test_status_dashboard_ab tests.test_status_dashboard_founding_rate
