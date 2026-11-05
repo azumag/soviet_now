@@ -32,6 +32,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     `投影余白: side=left x=0 w=239 until=${clock+30}`,
     `余白占領記録: ${[...owned, ...extraOwned].join(' / ')}`,
     `余白出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 pending / 段階 ${step} / 理由 ナキューメラの敵を討つ`,
+    `余白進行: battle / 戦闘・切り札 / ${step==='J3' ? 'menu' : 'announce'} / クースカン`,
     `余白交戦HP: until=${clock+20} 敵シェーブル 55 / どうし 70`,
     `余白交戦兵数: until=${clock+20} 敵 4 / 我 7`,
     `余白戦闘計画: until=${clock+20} 攻撃 ナキューメラ / 段階 J3 / 方針 retry_with_opening_cards`,
@@ -74,6 +75,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     for (const part of ['パプリカ','成立未確認','カルーン','ジュメルズ']) assert.ok(result.moves[0].includes(part), part);
     for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
+    assert.ok(result.text.includes('進行フロー'),result.text.slice(0,400));
+    assert.ok(result.text.includes('戦闘・切り札：メニュー操作中 / クースカン'),result.text.slice(0,400));
     // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
     assert.ok(result.text.includes('交戦中 計画: 攻撃 ナキューメラ'),result.text.slice(0,400));
     assert.ok(result.text.includes('判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
@@ -100,6 +103,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
+    assert.ok(result.toasts.some(t=>t.includes('進行 戦闘・切り札：効果の表示を確認')),
+      'a recorded stage change must enter the 速報 timeline: '+result.toasts.join('|'));
+    assert.ok(result.text.includes('戦闘・切り札：効果の表示を確認 / クースカン'));
     assert.ok(result.toasts.some(t=>t.includes('出撃予定 J4') && t.includes('どうし')
       && t.includes('アルマムーン→ナキューメラ') && t.includes('理由 ナキューメラの敵を討つ')),
       'plan toast must contain the action, destination and reason: '+result.toasts.join('|'));
