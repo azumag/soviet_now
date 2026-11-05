@@ -3546,6 +3546,18 @@ def render_hanjuku_status(value):
             if note:
                 parts.append('理由 ' + note)
             lines.append("  余白出撃: " + " / ".join(parts))
+        for progress in (gap.get('flows') or [])[:6]:
+            if not isinstance(progress, dict):
+                continue
+            key = text(progress.get('key'), '', 24)
+            title = text(progress.get('title'), '', 24)
+            stage = text(progress.get('stage'), '', 32)
+            detail = text(progress.get('detail'), '', 32)
+            if key and title and stage:
+                parts = [key, title, stage]
+                if detail:
+                    parts.append(detail)
+                lines.append("  余白進行: " + " / ".join(parts))
         active_order = gap.get('active_order')
         if isinstance(active_order, dict):
             purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
