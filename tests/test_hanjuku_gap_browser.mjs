@@ -73,8 +73,10 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     for (const part of ['パプリカ','成立未確認','カルーン','ジュメルズ']) assert.ok(result.moves[0].includes(part), part);
     for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
-    // Battle detail lines are parsed but stay out of the fixed-height flow;
-    // they surface as toasts only when they change (checked after the next poll).
+    // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
+    assert.ok(result.text.includes('交戦中 判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
+    assert.ok(result.text.includes('計画: 攻撃 ナキューメラ'),'plan in battle line');
+    assert.ok(result.text.includes('卵対策: 奥の手選択済み'),'egg in battle line');
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
       assert.ok(!result.text.includes(old),`left status card removed: ${old}`);
     }
@@ -93,8 +95,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
-    // A changed battle decision reason becomes a battle toast.
-    assert.ok(result.toasts.some(t=>t.includes('判断:')&&t.includes('防御を固めるため切り札を温存')),result.toasts.join('|'));
+    // A changed battle decision reason updates the battle line.
+    assert.ok(result.text.includes('判断: 防御を固めるため切り札を温存'),result.text.slice(0,400));
     // No redundant 速報 heading on the card.
     assert.ok(!result.text.includes('速報'));
     // A poll without changes must not recreate the toast DOM (flicker guard).
