@@ -881,7 +881,7 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual(result['active_order']['status'], 'pending')
         self.assertEqual(result['active_order']['target'], 'ナキューメラ')
         self.assertIn('状態 pending / 段階 J3 / 理由 敵城攻略',
-                      '\\n'.join(sd.render_hanjuku_status(result)))
+                      '\n'.join(sd.render_hanjuku_status(result)))
         # A stage ID alone cannot imply a planned sortie.
         self._policy(chart_plan={'orders': []}, orders={})
         self.assertIsNone(self.snapshot()['hanjuku']['active_order'])

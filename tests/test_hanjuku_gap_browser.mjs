@@ -118,8 +118,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
       feedAt=stamp;
       text=build(stamp, [], [], '敵の卵を避ける', step);
       if(phase==='missing'){
-        text=text.split('\\n').filter(line=>!line.startsWith('余白出撃意図: ')
-          && !line.startsWith('余白戦闘計画: ')).join('\\n');
+        text=text.split('\n').filter(line=>!line.startsWith('余白出撃意図: ')
+          && !line.startsWith('余白戦闘計画: ')).join('\n');
       }else if(phase==='mismatch'){
         text=text.replace(`段階 ${step} / 理由 ナキューメラの敵を討つ`,
                           '段階 J70 / 理由 ナキューメラの敵を討つ');
