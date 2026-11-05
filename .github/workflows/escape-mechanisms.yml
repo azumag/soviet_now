@@ -1,0 +1,24 @@
+name: Escape mechanisms
+on:
+  pull_request:
+    paths:
+      - 'tests/test_escape_mechanisms.py'
+      - 'strategy/**'
+      - '.github/workflows/escape-mechanisms.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/test_escape_mechanisms.py'
+      - 'strategy/**'
+      - '.github/workflows/escape-mechanisms.yml'
+permissions:
+  contents: read
+jobs:
+  escape-mechanisms:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_escape_mechanisms

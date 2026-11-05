@@ -46,6 +46,9 @@ AI_GATE_GIVEUP_RC=91
 # 補助的な短時間処理だけが明示的に上限を指定できる。
 AI_QUEUE_GIVEUP_RC=92
 
+# コメント生成用ローカル LLM タイムアウト（core/config.sh の COMMENT_OLLAMA_TIMEOUT を参照）。
+local_llm_timeout="${COMMENT_OLLAMA_TIMEOUT:-20}"
+
 _ai_rate_limit_text_detected() {
 	printf '%s' "${1:-}" | grep -Eiq \
 		'(^|[^[:alnum:]])429([^[:alnum:]]|$)|too[[:space:]_-]*many[[:space:]_-]*requests|rate[[:space:]_-]*limit([[:space:]_-]*(ed|exceeded))?|quota[[:space:]_-]*(exceeded|exhausted|limit)|resource[[:space:]_-]*exhausted|usage[[:space:]_-]*limit'
