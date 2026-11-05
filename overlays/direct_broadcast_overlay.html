@@ -1043,7 +1043,7 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   border-left: 3px solid #4b6b80; border-radius: 4px; background: #081b26;
   color: #e6f2f8; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere;
   animation: gapToastIn .22s ease-out; }
-.hanjuku-gap-toast-text { min-width: 0; }
+.hanjuku-gap-toast-text { min-width: 0; white-space: pre-wrap; }
 .hanjuku-gap-toast-age { margin-left: auto; flex: 0 0 auto; color: #8fa8bb; font-size: 11px;
   font-variant-numeric: tabular-nums; }
 .hanjuku-gap-toast.tone-idle { border-color: #36566b; color: #9fb4c4; }
@@ -1060,7 +1060,10 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-flow { display: flex; flex-direction: column; gap: 6px; }
 .hanjuku-gap-flow-head { display: flex; align-items: baseline; justify-content: space-between;
   gap: 8px; color: #bdcdd9; font-size: 15px; font-weight: 700; }
-.hanjuku-gap-plan { color: #8fa8bb; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.hanjuku-gap-current-plan { padding: 6px 8px; border-left: 3px solid #75daec; border-radius: 4px; background: #0b2835; }
+.hanjuku-gap-current-plan-head { color: #75daec; font-size: 12px; font-weight: 700; }
+.hanjuku-gap-current-plan-detail { margin-top: 3px; color: #e6f2f8; font-size: 12px;
+  line-height: 1.3; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hanjuku-gap-move { border: 1px solid #28404f; border-radius: 8px; background: #0b1c28;
   padding: 6px 9px; }
 .hanjuku-gap-move-head { display: flex; align-items: baseline; justify-content: space-between;
@@ -2071,6 +2074,29 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     gapLive.toasts.push({id:++gapLive.seq, text, tone, at:now});
     gapLive.toasts = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-5);
   }
+  // Stage IDs (J3, F1, ...) identify chart steps, not the plan itself.
+  // Prefer current, fenced, already-persisted orders and until-gated battle
+  // tactics; never infer a target or rationale from a stage ID.
+  function gapPlanDetail(value) {
+    const gap = value?.gap || {};
+    const step = String(value?.plan || '');
+    const detail = [];
+    const intent = String(gap.intent || '').trim();
+    if (intent && (!step || intent.includes(`段階 ${step}`))) {
+      detail.push(intent);
+    } else {
+      const move = (gap.moves || []).find(m => step && m.step === step);
+      if (move) {
+        const route = (move.source || move.target)
+          ? `${move.source || '未確認'}→${move.target || '未確認'}` : '';
+        detail.push([move.general, route, move.status, move.reason ? `理由 ${move.reason}` : '']
+          .filter(Boolean).join(' / '));
+      }
+    }
+    if (gap.tactics) detail.push(`戦闘 ${gap.tactics}`);
+    if (detail.length) return detail.join('\n');
+    return value?.pending ? `${value.pending}（具体的な操作は未確認）` : '具体的な操作は未確認';
+  }
   function gapChanges(previous, value) {
     const out = [];
     const oldGap = previous?.gap || {};
@@ -2109,8 +2135,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const delta = value.generals - previous.generals;
       out.push([`★ 将軍 ${delta > 0 ? '+' : ''}${delta}人`, 'general']);
     }
-    if (previous && value.plan !== previous.plan && value.plan)
-      out.push([`▸ 計画 ${value.plan}`, 'plan']);
+    const planDetail = gapPlanDetail(value);
+    const previousDetail = gapPlanDetail(previous);
+    if (previous && value.plan && (value.plan !== previous.plan
+        || (planDetail !== previousDetail && planDetail !== '具体的な操作は未確認')))
+      out.push([`▸ 計画 ${value.plan}\n${planDetail}`, 'plan']);
     if (previous && value.pending !== previous.pending && value.pending)
       out.push([`▸ 処理中 ${value.pending}`, 'plan']);
     return out;
@@ -2178,22 +2207,30 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
     const moves = gap.moves || [];
     // Freshest live-battle summary, truncated to a single line by CSS.
-    const battleLine = [['判断',gap.decision],['計画',gap.tactics],['切り札',gap.cards],['卵対策',gap.egg]]
+    const battleLine = [['計画',gap.tactics],['判断',gap.decision],['切り札',gap.cards],['卵対策',gap.egg]]
       .filter(([,text]) => text).map(([label,text]) => `${label}: ${text}`).join(' / ');
     // The chart is static between observations; re-rendering it every poll
     // also restarted its layout. Rebuild only when its inputs change.
+    const planDetail = gapPlanDetail(value);
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending, battleLine});
+                                plan:value.plan, pending:value.pending, planDetail, battleLine});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
     flow.replaceChildren();
     const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
-    const plan = document.createElement('span'); plan.className = 'hanjuku-gap-plan';
-    plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
-                        value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
-    flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
+    flowHead.append(flowTitle); flow.appendChild(flowHead);
+    if (value.plan || value.pending || gap.intent || gap.tactics) {
+      const plan = document.createElement('div'); plan.className = 'hanjuku-gap-current-plan';
+      const head = document.createElement('div'); head.className = 'hanjuku-gap-current-plan-head';
+      head.textContent = [value.plan ? `計画 ${value.plan}` : '計画段階 未確認',
+                          value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
+      const body = document.createElement('div'); body.className = 'hanjuku-gap-current-plan-detail';
+      body.textContent = planDetail;
+      plan.append(head, body);
+      flow.appendChild(plan);
+    }
     if (battleLine) {
       const war = document.createElement('div'); war.className = 'hanjuku-gap-battle-line';
       war.textContent = `交戦中 ${battleLine}`;
