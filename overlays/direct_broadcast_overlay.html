@@ -2091,30 +2091,45 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     gapLive.toasts.push({id:++gapLive.seq, text, tone, at:now});
     gapLive.toasts = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-5);
   }
-  // Stage IDs (J3, F1, ...) identify chart steps, not the plan itself.
-  // Prefer current, fenced, already-persisted orders and until-gated battle
-  // tactics; never infer a target or rationale from a stage ID.
-  function gapPlanDetail(value) {
+  // A stage ID and the inferred "sortie" pending category are not proof of
+  // a sortie. Only an order with matching step, actor and recorded route
+  // may be labelled planned/issued. Status comes from the persisted policy.
+  function gapPlanInfo(value) {
     const gap = value?.gap || {};
     const step = String(value?.plan || '');
-    const detail = [];
     const intent = String(gap.intent || '').trim();
-    if (intent && (!step || intent.includes(`段階 ${step}`))) {
-      // Stage and status are already visible in the heading/chart. Remove
-      // their duplicate tokens so the destination and reason fit the gap.
-      detail.push(intent.split(' / ').filter(part => !/^(?:状態|段階) /.test(part)).join(' / '));
-    } else {
-      const move = (gap.moves || []).find(m => step && m.step === step);
-      if (move) {
-        const route = (move.source || move.target)
-          ? `${move.source || '未確認'}→${move.target || '未確認'}` : '';
-        detail.push([move.general, route, move.status, move.reason ? `理由 ${move.reason}` : '']
-          .filter(Boolean).join(' / '));
+    if (intent) {
+      const parts = intent.split(' / ');
+      const read = prefix => parts.find(part => part.startsWith(prefix))?.slice(prefix.length).trim() || '';
+      const intentStep = read('段階 ');
+      const status = read('状態 ');
+      const general = (parts[0] || '').trim();
+      const route = (parts[1] || '').trim();
+      const purpose = (parts[2] || '').trim();
+      const reasonAt = parts.findIndex(p => p.startsWith('理由 '));
+      const reason = reasonAt >= 0 ? parts.slice(reasonAt).join(' / ').slice(3).trim() : '';
+      const labels = {pending:'出撃予定', launched:'出撃命令済み',
+        launched_unconfirmed:'出撃命令済み（成立未確認）'};
+      // An exact stage match prevents J3's action from leaking into J30.
+      if ((!step || intentStep === step) && general && route.includes('→') && labels[status]) {
+        const details = [general, route, purpose, reason ? `理由 ${reason}` : ''].filter(Boolean);
+        return {label:labels[status], detail:details.join(' / '), known:true};
       }
     }
-    if (!detail.length && gap.tactics) detail.push(`戦闘 ${gap.tactics}`);
-    if (detail.length) return detail.join('\n');
-    return value?.pending ? `${value.pending}（具体的な操作は未確認）` : '具体的な操作は未確認';
+    // A sortie chart row is a persisted, recent issued order, not the next
+    // action to perform. It is only usable as evidence for its exact step.
+    const move = (gap.moves || []).find(m => step && m.step === step && m.general
+      && (m.source || m.target) && ['行軍中','成立未確認','交戦中'].includes(m.status));
+    if (move) {
+      const label = {'行軍中':'出撃命令済み（行軍中）',
+        '成立未確認':'出撃命令済み（成立未確認）',
+        '交戦中':'出撃経過確認中'}[move.status];
+      const route = `${move.source || '未確認'}→${move.target || '未確認'}`;
+      return {label, detail:[move.general, route, move.reason ? `理由 ${move.reason}` : '']
+        .filter(Boolean).join(' / '), known:true};
+    }
+    // The battle plan is rendered separately, not masquerading as a sortie.
+    return {label:'計画確認中', detail:'行動内容未取得', known:false};
   }
   function gapChanges(previous, value) {
     const out = [];
@@ -2154,12 +2169,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       const delta = value.generals - previous.generals;
       out.push([`★ 将軍 ${delta > 0 ? '+' : ''}${delta}人`, 'general']);
     }
-    const planDetail = gapPlanDetail(value);
-    const previousDetail = gapPlanDetail(previous);
-    if (previous && value.plan && (value.plan !== previous.plan
-        || (planDetail !== previousDetail && planDetail !== '具体的な操作は未確認')))
-      out.push([`▸ 計画 ${value.plan}\n${planDetail}`, 'plan']);
-    if (previous && value.pending !== previous.pending && value.pending)
+    const plan = gapPlanInfo(value);
+    const oldPlan = gapPlanInfo(previous);
+    if (previous && (value.plan || plan.known)
+        && (value.plan !== previous.plan || plan.label !== oldPlan.label
+            || plan.detail !== oldPlan.detail))
+      out.push([`▸ ${plan.label} ${value.plan || '段階未取得'}\n${plan.detail}`, 'plan']);
+    // "sortie" is only an inferred pending category, not a confirmed order.
+    if (previous && value.pending !== previous.pending && value.pending && value.pending !== '出撃')
       out.push([`▸ 処理中 ${value.pending}`, 'plan']);
     return out;
   }
@@ -2199,9 +2216,11 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // Update only the toast elements that changed: re-creating them every poll
     // restarted the enter animation and made the strip flicker.
     const live = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-4);
-    // The newest plan toast already carries the full detail. Do not render a
-    // duplicate plan card underneath it: the 239px gap has a fixed 540px height.
-    const planToastVisible = live.some(t => t.tone === 'plan' && t.text.startsWith('▸ 計画 '));
+    const planInfo = gapPlanInfo(value);
+    const currentToast = `▸ ${planInfo.label} ${value.plan || '段階未取得'}\n${planInfo.detail}`;
+    // A historical toast is not the current plan; display the current card
+    // unless the exact same up-to-date details are visible in the toast.
+    const planToastVisible = live.some(t => t.tone === 'plan' && t.text === currentToast);
     gapDom.toastBox.classList.toggle('has-plan', planToastVisible);
     const ids = new Set(live.map(t => t.id));
     for (const [id, el] of gapDom.toasts) {
@@ -2235,9 +2254,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       .filter(([,text]) => text).map(([label,text]) => `${label}: ${text}`).join(' / ');
     // The chart is static between observations; re-rendering it every poll
     // also restarted its layout. Rebuild only when its inputs change.
-    const planDetail = gapPlanDetail(value);
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending, planDetail, battleLine, planToastVisible});
+                                plan:value.plan, pending:value.pending, planInfo, battleLine, planToastVisible});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
@@ -2245,13 +2263,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
     flowHead.append(flowTitle); flow.appendChild(flowHead);
-    if (!planToastVisible && (value.plan || value.pending || gap.intent || gap.tactics)) {
+    if (!planToastVisible && (value.plan || value.pending || gap.intent)) {
       const plan = document.createElement('div'); plan.className = 'hanjuku-gap-current-plan';
       const head = document.createElement('div'); head.className = 'hanjuku-gap-current-plan-head';
-      head.textContent = [value.plan ? `計画 ${value.plan}` : '計画段階 未確認',
-                          value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
+      head.textContent = [`${planInfo.label}：${value.plan || '段階未取得'}`,
+                          value.pending && value.pending !== '出撃' ? `処理中 ${value.pending}` : '']
+        .filter(Boolean).join(' / ');
       const body = document.createElement('div'); body.className = 'hanjuku-gap-current-plan-detail';
-      body.textContent = planDetail;
+      body.textContent = planInfo.detail;
       plan.append(head, body);
       flow.appendChild(plan);
     }
