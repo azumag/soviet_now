@@ -166,6 +166,7 @@ def fit_dashboard_lines(lines, width=W):
     prefixes = (
         '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
+        '  余白進行:',
         '  出撃意図:', '  敵将軍:', '  味方将軍:', '  卵落:', '  切り札:', '  切り札在庫:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
@@ -3546,6 +3547,18 @@ def render_hanjuku_status(value):
             if note:
                 parts.append('理由 ' + note)
             lines.append("  余白出撃: " + " / ".join(parts))
+        for progress in (gap.get('flows') or [])[:6]:
+            if not isinstance(progress, dict):
+                continue
+            key = text(progress.get('key'), '', 24)
+            title = text(progress.get('title'), '', 24)
+            stage = text(progress.get('stage'), '', 32)
+            detail = text(progress.get('detail'), '', 32)
+            if key and title and stage:
+                parts = [key, title, stage]
+                if detail:
+                    parts.append(detail)
+                lines.append("  余白進行: " + " / ".join(parts))
         active_order = gap.get('active_order')
         if isinstance(active_order, dict):
             purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}

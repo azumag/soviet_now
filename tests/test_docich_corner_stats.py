@@ -499,6 +499,46 @@ class HanjukuStatusTest(unittest.TestCase):
             _write_json(self.runtime / 'presentation.json',changed)
             self.assertIsNone(self.snapshot()['hanjuku']['gap'])
 
+    def test_live_procedure_stages_use_actual_policy_sessions(self):
+        import time
+        now = time.time()
+        projection = dict(align='right', viewport=[0, 90, 960, 540],
+                          content=[239, 0, 721, 540])
+        _write_json(self.runtime / 'presentation.json',
+                    dict(status='ready', projection=projection))
+        bot = json.loads((self.runtime / 'hanjuku_bot.json').read_text())
+        policy = bot['policy']
+        policy.update(
+            active='J3', month_sub={'kind': 'recruit', 'stage': 'recovering'},
+            post_month_status={'stage': 'await_map'},
+            house={'phase': 'open_roster', 'general': 'ゼウス'},
+            flow={'recall': {'stage': 'to_camp', 'general': 'どうし'}})
+        _write_json(self.runtime / 'hanjuku_bot.json', bot)
+        snapshot = self.snapshot()['hanjuku']
+        flows = snapshot['gap']['flows']
+        self.assertEqual([row['key'] for row in flows],
+                         ['month_sub', 'post_month', 'house', 'recall'])
+        text = '\n'.join(sd.render_hanjuku_status(snapshot))
+        self.assertIn('余白進行: month_sub / 将軍募集 / recovering / recruit', text)
+        self.assertIn('余白進行: recall / 帰還 / to_camp / どうし', text)
+
+        # A chart step alone never proves a departure.  A matching persisted
+        # attempt proves only a procedure, not a successful sortie.
+        policy.pop('month_sub')
+        policy.pop('post_month_status')
+        policy.pop('house')
+        policy['flow'] = {'sortie_attempt': {'step': 'J3', 'target_seen': True}}
+        policy['battle'] = {'hp_observed_at': now - 2, 'castle': 'ナキューメラ',
+                            'card_flow': {'stage': 'menu', 'card': 'ゼンマイン'}}
+        _write_json(self.runtime / 'hanjuku_bot.json', bot)
+        flows = self.snapshot()['hanjuku']['gap']['flows']
+        self.assertEqual({r['key']: r['stage'] for r in flows},
+                         {'sortie': 'target_seen', 'battle': 'menu'})
+        policy['flow']['sortie_attempt']['step'] = 'J30'
+        policy['battle']['hp_observed_at'] = now - 50
+        _write_json(self.runtime / 'hanjuku_bot.json', bot)
+        self.assertEqual(self.snapshot()['hanjuku']['gap']['flows'], [])
+
     def test_gap_hp_and_rosters_hide_missing_future_and_expired_observations(self):
         import time
         now=time.time()
