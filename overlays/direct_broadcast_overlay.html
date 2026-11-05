@@ -1055,7 +1055,9 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-toast.tone-battle { border-color: #f0b84d; }
 .hanjuku-gap-toast.tone-month { border-color: #8fa8bb; }
 .hanjuku-gap-toast.tone-general { border-color: #7ee0c4; }
-.hanjuku-gap-toast.tone-plan { border-color: #75daec; }
+.hanjuku-gap-toast.tone-plan { border-color: #75daec; font-size: 12px; line-height: 1.2; padding: 4px 6px; }
+.hanjuku-gap-toast.tone-plan .hanjuku-gap-toast-age { display: none; }
+.hanjuku-gap-toasts.has-plan { max-height: 112px; }
 @keyframes gapToastIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .hanjuku-gap-flow { display: flex; flex-direction: column; gap: 6px; }
 .hanjuku-gap-flow-head { display: flex; align-items: baseline; justify-content: space-between;
@@ -2083,7 +2085,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const detail = [];
     const intent = String(gap.intent || '').trim();
     if (intent && (!step || intent.includes(`段階 ${step}`))) {
-      detail.push(intent);
+      // Stage and status are already visible in the heading/chart. Remove
+      // their duplicate tokens so the destination and reason fit the gap.
+      detail.push(intent.split(' / ').filter(part => !/^(?:状態|段階) /.test(part)).join(' / '));
     } else {
       const move = (gap.moves || []).find(m => step && m.step === step);
       if (move) {
@@ -2093,7 +2097,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
           .filter(Boolean).join(' / '));
       }
     }
-    if (gap.tactics) detail.push(`戦闘 ${gap.tactics}`);
+    if (!detail.length && gap.tactics) detail.push(`戦闘 ${gap.tactics}`);
     if (detail.length) return detail.join('\n');
     return value?.pending ? `${value.pending}（具体的な操作は未確認）` : '具体的な操作は未確認';
   }
@@ -2182,6 +2186,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // The newest plan toast already carries the full detail. Do not render a
     // duplicate plan card underneath it: the 239px gap has a fixed 540px height.
     const planToastVisible = live.some(t => t.tone === 'plan' && t.text.startsWith('▸ 計画 '));
+    gapDom.toastBox.classList.toggle('has-plan', planToastVisible);
     const ids = new Set(live.map(t => t.id));
     for (const [id, el] of gapDom.toasts) {
       if (!ids.has(id)) { el.remove(); gapDom.toasts.delete(id); }
