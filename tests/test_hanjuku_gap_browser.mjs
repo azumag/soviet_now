@@ -15,7 +15,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     '余白出撃: パプリカ / カルーン→ジュメルズ / 成立未確認 / 段階 A:001e11d9:Mdf4142',
     '余白出撃: どうし / アルマムーン→ナキューメラ / 行軍中 / 段階 A:002 / 理由 ナキューメラの敵を討つ',
   ];
-  const build=(clock, extraMoves=[], extraOwned=[])=>[
+  const build=(clock, extraMoves=[], extraOwned=[], extraLines=[])=>[
     'SOREN/CORNER: RETRO / hanjuku-hero / 進行中',
     '半熟英雄 / 最終観測・記録',
     '第2話 / 所持金 123G',
@@ -37,7 +37,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     `余白切り札: until=${clock+20} 予定 ゼンマイン・クースカン / 使用 ゼンマイン / 現在 クースカン(menu)`,
     `余白戦闘判断: until=${clock+20} 敵の卵使用を避けるため、致死確認できる切り札を優先`,
     `余白卵対策: until=${clock+20} 奥の手選択済み`,
-    ...moves, ...extraMoves,
+    ...moves, ...extraMoves, ...extraLines,
   ].join('\n');
   let text=build(now);
   let feedAt=now;
@@ -73,10 +73,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     for (const part of ['パプリカ','成立未確認','カルーン','ジュメルズ']) assert.ok(result.moves[0].includes(part), part);
     for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
-    // Live battle detail: plan, cards and the AI's stated reason show while fresh.
-    for (const part of ['交戦中','敵シェーブル 55','敵 4 / 我 7','攻撃 ナキューメラ',
-                        '予定 ゼンマイン・クースカン','敵の卵使用を避けるため','奥の手選択済み'])
-      assert.ok(result.text.includes(part), part);
+    // Battle detail lines are parsed but stay out of the fixed-height flow;
+    // they surface as toasts only when they change (checked after the next poll).
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
       assert.ok(!result.text.includes(old),`left status card removed: ${old}`);
     }
@@ -85,7 +83,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.match(result.sidebar,/将軍数/);
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
-    text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ']);
+    text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],
+      [`余白戦闘判断: until=${clock+20} 防御を固めるため切り札を温存`]);
     await page.evaluate(stamp=>window.gapClock=stamp,clock);
     await page.evaluate(payload=>window.__sorenBroadcastState=payload,{...state(),feeds:{showStatusG:{text,updatedAt:clock,lineCount:30}}});
     await page.waitForTimeout(1200);
@@ -94,6 +93,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
+    // A changed battle decision reason becomes a battle toast.
+    assert.ok(result.toasts.some(t=>t.includes('判断:')&&t.includes('防御を固めるため切り札を温存')),result.toasts.join('|'));
     // No redundant 速報 heading on the card.
     assert.ok(!result.text.includes('速報'));
     // A poll without changes must not recreate the toast DOM (flicker guard).

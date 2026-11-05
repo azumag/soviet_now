@@ -1082,14 +1082,6 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   border-top: 7px solid #e9b84d; border-left: 4px solid transparent; border-right: 4px solid transparent; }
 .hanjuku-gap-move-why { margin-top: 4px; color: #9fb4c4; font-size: 12px; line-height: 1.35;
   overflow-wrap: anywhere; }
-.hanjuku-gap-battle { border: 1px solid #4a3a22; border-radius: 8px; background: #241c10;
-  padding: 4px 7px; max-height: 58px; overflow: hidden; }
-.hanjuku-gap-battle-title { color: #f0b84d; font-size: 12px; font-weight: 700; margin-bottom: 2px; }
-.hanjuku-gap-battle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 8px; }
-.hanjuku-gap-battle-cell { display: flex; gap: 4px; color: #d8c9a8; font-size: 11px;
-  line-height: 1.3; min-width: 0; }
-.hanjuku-gap-battle-label { flex: 0 0 auto; color: #9fb4c4; }
-.hanjuku-gap-battle-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hanjuku-gap-empty { border: 1px dashed #3a596d; border-radius: 8px; padding: 9px 10px;
   color: #9fb4c4; font-size: 15px; }
 html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
@@ -2103,6 +2095,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (Number.isFinite(value.battlesFinished) && Number.isFinite(previous?.battlesFinished)
         && value.battlesFinished > previous.battlesFinished)
       out.push(['● 戦闘終了', 'battle']);
+    // Live battle detail (plan/cards/decision/egg guard) rides the until-gated
+    // 余白 lines; surface each change as a battle toast instead of a persistent
+    // block so the fixed 239px gap cannot overflow.
+    if (previous) for (const [key, label] of [['tactics','計画'],['cards','切り札'],['decision','判断'],['egg','卵対策']]) {
+      const now = gap[key], was = oldGap[key];
+      if (now && now !== was) out.push([`⚔ ${label}: ${now}`, 'battle']);
+    }
     if (previous && value.chapter !== previous.chapter)
       out.push([`月 第${value.chapter ?? '—'}話`, 'month']);
     if (previous && (value.year !== previous.year || value.month !== previous.month))
@@ -2180,16 +2179,10 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     } else if (gapDom.idle) { gapDom.idle.remove(); gapDom.idle = null; }
     const owned = gapNameSet(gap.captured), lost = gapNameSet(value.lost);
     const moves = gap.moves || [];
-    // Live battle detail (HP, plan, cards, the AI's stated reason and egg
-    // guard) rides the same until-gated 余白 lines; show it while fresh.
-    const battleRows = [
-      ['HP', gap.hp], ['兵数', gap.soldiers], ['計画', gap.tactics],
-      ['切り札', gap.cards], ['判断', gap.decision], ['卵対策', gap.egg],
-    ].filter(([, text]) => text);
     // The chart is static between observations; re-rendering it every poll
     // also restarted its layout. Rebuild only when its inputs change.
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending, battleRows});
+                                plan:value.plan, pending:value.pending});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
@@ -2200,21 +2193,6 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     plan.textContent = [value.plan ? `計画 ${value.plan}` : '',
                         value.pending ? `処理中 ${value.pending}` : ''].filter(Boolean).join(' / ');
     flowHead.append(flowTitle, plan); flow.appendChild(flowHead);
-    if (battleRows.length) {
-      const war = document.createElement('div'); war.className = 'hanjuku-gap-battle';
-      const warTitle = document.createElement('div'); warTitle.className = 'hanjuku-gap-battle-title';
-      warTitle.textContent = '交戦中'; war.appendChild(warTitle);
-      const grid = document.createElement('div'); grid.className = 'hanjuku-gap-battle-grid';
-      for (const [label, text] of battleRows) {
-        const cell = document.createElement('div'); cell.className = 'hanjuku-gap-battle-cell';
-        const tag = document.createElement('span'); tag.className = 'hanjuku-gap-battle-label';
-        tag.textContent = label;
-        const body = document.createElement('span'); body.className = 'hanjuku-gap-battle-text';
-        body.textContent = text;
-        cell.append(tag, body); grid.appendChild(cell);
-      }
-      war.appendChild(grid); flow.appendChild(war);
-    }
     if (!moves.length) {
       const empty = document.createElement('div'); empty.className = 'hanjuku-gap-empty';
       empty.textContent = '出撃中の将軍はいません'; flow.appendChild(empty);
