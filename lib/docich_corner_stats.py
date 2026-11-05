@@ -789,37 +789,55 @@ def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
 
 
 def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None:
-    """Bounded current sortie intent from an already-recorded launched order.
+    """Expose an actual active order, not a guessed action from its stage ID.
 
-    This is not a prediction of the next move.  It only exposes the active
-    order after the policy has persisted that exact order in launched_orders.
+    A pending order comes from the adopted chart/interim plan; a sent order
+    must have a persisted launch snapshot. Never relabel an orphan active
+    step, failed order or stale completed order as a planned sortie.
     """
     step = policy.get("active")
-    launched = policy.get("launched_orders")
-    if not isinstance(step, str) or not step or not isinstance(launched, Mapping):
+    if not isinstance(step, str) or not step:
         return None
-    order = launched.get(step)
+    statuses = policy.get("orders")
+    status = statuses.get(step) if isinstance(statuses, Mapping) else None
+    if status not in (None, "pending", "launched", "launched_unconfirmed"):
+        return None
+    launched = policy.get("launched_orders")
+    launched = launched if isinstance(launched, Mapping) else {}
+    order = None
+    if status in ("launched", "launched_unconfirmed"):
+        # Only a bound launch snapshot proves an issued order.
+        order = launched.get(step)
+    else:
+        chart_plan = policy.get("chart_plan")
+        chart_orders = chart_plan.get("orders") if isinstance(chart_plan, Mapping) else None
+        if isinstance(chart_orders, list):
+            order = next((row for row in chart_orders
+                          if isinstance(row, Mapping) and row.get("step") == step), None)
+        if order is None:
+            chart_adjust = policy.get("chart_adjust")
+            interim = chart_adjust.get("interim_order") if isinstance(chart_adjust, Mapping) else None
+            if isinstance(interim, Mapping) and interim.get("step") == step:
+                order = interim
+        # A previously issued order can be reopened for a retry. Keep its
+        # stored route only when the active status is still pending.
+        if order is None and status == "pending":
+            order = launched.get(step)
     if not isinstance(order, Mapping):
         return None
     general = _hanjuku_name(order.get("general"), each=24)
     source = _hanjuku_name(order.get("source"), each=24)
     target = _hanjuku_name(order.get("target"), each=24)
     purpose = _hanjuku_text(order.get("purpose"), 16)
-    statuses = policy.get("orders")
-    status = _hanjuku_text(statuses.get(step), 20) if isinstance(statuses, Mapping) else None
-    if status not in {"pending", "launched", "launched_unconfirmed"}:
-        return None
-    if not any((general, source, target, purpose)):
+    if not general or not (source or target):
         return None
     return {
         "step": _hanjuku_text(step, 24) or "",
-        "general": general or "",
+        "general": general,
         "source": source or "",
         "target": target or "",
         "purpose": purpose or "",
-        "status": status or "",
-        # The order's own note says what the sortie is for (chart steps,
-        # interim and adjusted plans all carry one); bounded like deviation.
+        "status": status or "pending",
         "note": _hanjuku_text(order.get("note"), 96) or "",
     }
 

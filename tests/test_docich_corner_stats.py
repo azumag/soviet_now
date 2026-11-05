@@ -873,6 +873,29 @@ class HanjukuStatusTest(unittest.TestCase):
         text = '\n'.join(sd.render_hanjuku_status(self.snapshot()['hanjuku']))
         self.assertIn('行軍中: ヴィーナス→未確定', text)
 
+    def test_active_chart_order_is_a_plan_until_a_launch_is_recorded(self):
+        order = {'step': 'J3', 'general': 'どうし', 'source': 'アルマムーン',
+                 'target': 'ナキューメラ', 'purpose': 'attack', 'note': '敵城攻略'}
+        self._policy(active='J3', chart_plan={'orders': [order]}, orders={'J3': 'pending'})
+        result = self.snapshot()['hanjuku']
+        self.assertEqual(result['active_order']['status'], 'pending')
+        self.assertEqual(result['active_order']['target'], 'ナキューメラ')
+        self.assertIn('状態 pending / 段階 J3 / 理由 敵城攻略',
+                      '\n'.join(sd.render_hanjuku_status(result)))
+        # A stage ID alone cannot imply a planned sortie.
+        self._policy(chart_plan={'orders': []}, orders={})
+        self.assertIsNone(self.snapshot()['hanjuku']['active_order'])
+        # A failed order must not survive merely because it remains in the chart.
+        self._policy(chart_plan={'orders': [order]}, orders={'J3': 'failed'})
+        self.assertIsNone(self.snapshot()['hanjuku']['active_order'])
+        # A launched status without a persisted launch snapshot is not proof.
+        self._policy(orders={'J3': 'launched'})
+        self.assertIsNone(self.snapshot()['hanjuku']['active_order'])
+        self._policy(launched_orders={'J3': order})
+        self.assertEqual(self.snapshot()['hanjuku']['active_order']['status'], 'launched')
+        self._policy(orders={'J3': 'launched_unconfirmed'})
+        self.assertEqual(self.snapshot()['hanjuku']['active_order']['status'], 'launched_unconfirmed')
+
     def test_inactive_launched_order_is_not_shown_as_current_intent(self):
         self._policy(
             active='J3',

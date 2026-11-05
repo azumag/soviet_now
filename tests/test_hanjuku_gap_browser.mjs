@@ -77,8 +77,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
     assert.ok(result.text.includes('交戦中 計画: 攻撃 ナキューメラ'),result.text.slice(0,400));
     assert.ok(result.text.includes('判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
-    assert.ok(result.text.includes('計画 J3処理中 出撃どうし / アルマムーン→ナキューメラ')
-      || result.text.includes('計画 J3 / 処理中 出撃どうし / アルマムーン→ナキューメラ'),result.text.slice(0,600));
+    assert.ok(result.text.includes('出撃予定：J3どうし / アルマムーン→ナキューメラ'),
+      result.text.slice(0,600));
+    assert.ok(!result.text.includes('出撃（具体的な操作は未確認）'));
     assert.ok(result.text.includes('計画: 攻撃 ナキューメラ'),'plan in battle line');
     assert.ok(result.text.includes('卵対策: 奥の手選択済み'),'egg in battle line');
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
@@ -99,7 +100,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
-    assert.ok(result.toasts.some(t=>t.includes('計画 J4') && t.includes('どうし')
+    assert.ok(result.toasts.some(t=>t.includes('出撃予定 J4') && t.includes('どうし')
       && t.includes('アルマムーン→ナキューメラ') && t.includes('理由 ナキューメラの敵を討つ')),
       'plan toast must contain the action, destination and reason: '+result.toasts.join('|'));
     // A changed battle decision reason updates the battle line.
@@ -111,6 +112,38 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     await page.waitForTimeout(1200);
     assert.equal(await page.evaluate(()=>document.querySelector('#hanjuku-gap .hanjuku-gap-toast')?.dataset.probe||null),'kept');
     if(process.env.SOREN_OVERLAY_ARTIFACT_DIR){fs.mkdirSync(process.env.SOREN_OVERLAY_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SOREN_OVERLAY_ARTIFACT_DIR,'hanjuku-gap.png')});}
+    // A stage ID (or the inferred sortie pending category) alone never
+    // claims that an order was actually issued.
+    const setPlanState=async (stamp, phase, step='J7')=>{
+      feedAt=stamp;
+      text=build(stamp, [], [], '敵の卵を避ける', step);
+      if(phase==='missing'){
+        text=text.split('\n').filter(line=>!line.startsWith('余白出撃意図: ')
+          && !line.startsWith('余白戦闘計画: ')).join('\n');
+      }else if(phase==='mismatch'){
+        text=text.replace(`段階 ${step} / 理由 ナキューメラの敵を討つ`,
+                          '段階 J70 / 理由 ナキューメラの敵を討つ');
+      }else{
+        text=text.replace('状態 pending', `状態 ${phase}`);
+      }
+      await page.evaluate(s=>window.gapClock=s,stamp);
+      await page.evaluate(payload=>window.__sorenBroadcastState=payload,state());
+      await page.waitForTimeout(1200);
+      return read();
+    };
+    result=await setPlanState(now+100,'missing');
+    assert.ok(result.text.includes('計画確認中：J7'), result.text.slice(0,500));
+    assert.ok(result.text.includes('行動内容未取得'),result.text.slice(0,500));
+    assert.ok(!result.text.includes('具体的な操作は未確認'));
+    assert.ok(!result.text.includes('処理中 出撃'));
+    result=await setPlanState(now+102,'mismatch');
+    assert.ok(result.text.includes('計画確認中 J7') || result.text.includes('計画確認中：J7'),
+      'J70 must not be interpreted as J7');
+    result=await setPlanState(now+104,'launched');
+    assert.ok(result.text.includes('出撃命令済み J7') || result.text.includes('出撃命令済み：J7'));
+    result=await setPlanState(now+106,'launched_unconfirmed');
+    assert.ok(result.text.includes('出撃命令済み（成立未確認） J7')
+      || result.text.includes('出撃命令済み（成立未確認）：J7'));
     // Exact deadline, even if the status feed mtime does not change.
     await page.evaluate(()=>window.gapClock+=31);
     await page.waitForTimeout(1100);
