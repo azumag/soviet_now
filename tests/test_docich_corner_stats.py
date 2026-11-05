@@ -430,7 +430,9 @@ class HanjukuStatusTest(unittest.TestCase):
             active='J3',
             orders={'J3':'launched'},
             launched_orders={'J3': {'step':'J3','general':'どうし','source':'アルマムーン',
-                                     'target':'ナキューメラ','purpose':'attack'}},
+                                     'target':'ナキューメラ','purpose':'attack',
+                                     'note':'ナキューメラの敵を討つ'},
+                             'J4': {'note':'ジュメルズを厚くする'}},
             sorties={'J4': {'general':'パプリカ','source':'カルーン','target':'ジュメルズ',
                             'status':'en_route','tick':90},
                      'J5': {'general':'キッシュ','source':'アルマムーン','planned_target':'ジュメルズ',
@@ -463,7 +465,8 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual(battle['egg_guard_stage'],'selected')
         self.assertEqual(gap['active_order'], {
             'step':'J3','general':'どうし','source':'アルマムーン',
-            'target':'ナキューメラ','purpose':'attack','status':'launched'})
+            'target':'ナキューメラ','purpose':'attack','status':'launched',
+            'note':'ナキューメラの敵を討つ'})
         self.assertEqual(value['active_order'], gap['active_order'])
         self.assertEqual(gap['moves'][0]['general'], 'パプリカ')
         self.assertEqual((gap['moves'][0]['source'], gap['moves'][0]['target']),
@@ -484,8 +487,9 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIn('現在 クースカン(menu)',text)
         self.assertIn('敵の卵使用を避けるため、致死確認できる切り札を優先',text)
         self.assertIn('奥の手選択済み',text)
-        self.assertIn('余白出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3',text)
-        self.assertIn('出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3',text)
+        self.assertIn('余白出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3 / 理由 ナキューメラの敵を討つ',text)
+        self.assertIn('出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 launched / 段階 J3 / 理由 ナキューメラの敵を討つ',text)
+        self.assertIn('余白出撃: パプリカ / カルーン→ジュメルズ / 行軍中 / 段階 J4 / 理由 ジュメルズを厚くする', text)
         # Projection failure, mismatched geometry, narrow gap and old generations
         # must never reserve an area over a different or unmeasured game plane.
         for changed in [dict(status='presentation_failed',projection=projection),

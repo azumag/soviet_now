@@ -13,7 +13,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
   const owned=['アルマムーン','ナキューメラ','カストーラ','スペンソニア','ハドリバーグ','ロックフォール'];
   const moves=[
     '余白出撃: パプリカ / カルーン→ジュメルズ / 成立未確認 / 段階 A:001e11d9:Mdf4142',
-    '余白出撃: どうし / アルマムーン→ナキューメラ / 行軍中 / 段階 A:002',
+    '余白出撃: どうし / アルマムーン→ナキューメラ / 行軍中 / 段階 A:002 / 理由 ナキューメラの敵を討つ',
   ];
   const build=(clock, extraMoves=[], extraOwned=[])=>[
     'SOREN/CORNER: RETRO / hanjuku-hero / 進行中',
@@ -65,7 +65,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // The left is a sortie chart, not a copy of the right status card.
     assert.equal(result.moves.length,2);
     for (const part of ['パプリカ','成立未確認','カルーン','ジュメルズ']) assert.ok(result.moves[0].includes(part), part);
-    for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ']) assert.ok(result.moves[1].includes(part), part);
+    for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
       assert.ok(!result.text.includes(old),`left status card removed: ${old}`);

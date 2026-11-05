@@ -3542,6 +3542,9 @@ def render_hanjuku_status(value):
                 parts.append(status)
             if step:
                 parts.append('段階 ' + step)
+            note = text(move.get('note'), '', 96)
+            if note:
+                parts.append('理由 ' + note)
             lines.append("  余白出撃: " + " / ".join(parts))
         active_order = gap.get('active_order')
         if isinstance(active_order, dict):
@@ -3563,6 +3566,9 @@ def render_hanjuku_status(value):
                 parts.append('状態 ' + status)
             if step:
                 parts.append('段階 ' + step)
+            note = text(active_order.get('note'), '', 96)
+            if note:
+                parts.append('理由 ' + note)
             if parts:
                 lines.append("  余白出撃意図: " + " / ".join(parts))
         hp = gap.get('hp')
@@ -3704,6 +3710,9 @@ def render_hanjuku_status(value):
             intent.append('状態 ' + status)
         if step:
             intent.append('段階 ' + step)
+        note = text(active_order.get('note'), '', 96)
+        if note:
+            intent.append('理由 ' + note)
         if intent:
             lines.append("  出撃意図: " + " / ".join(intent))
     eggs = [e for e in row("eggs") if isinstance(e, dict) and type(e.get("uses")) is int]

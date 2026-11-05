@@ -1080,6 +1080,8 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   height: 8px; background: linear-gradient(180deg,#3f7f97,#e9b84d); }
 .hanjuku-gap-arrow::after { content: ''; position: absolute; left: 2px; bottom: 0;
   border-top: 7px solid #e9b84d; border-left: 4px solid transparent; border-right: 4px solid transparent; }
+.hanjuku-gap-move-why { margin-top: 4px; color: #9fb4c4; font-size: 12px; line-height: 1.35;
+  overflow-wrap: anywhere; }
 .hanjuku-gap-empty { border: 1px dashed #3a596d; border-radius: 8px; padding: 9px 10px;
   color: #9fb4c4; font-size: 15px; }
 html[data-soren-region="game-gap"], html[data-soren-region="game-gap"] body,
@@ -1892,9 +1894,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const gapMoves = lines.filter(line => line.startsWith('余白出撃: ')).map(line => {
       const parts = line.slice('余白出撃: '.length).split(' / ');
       const route = String(parts[1] || '').split('→');
+      // The order's reason rides as a trailing '理由 …' part; it may itself
+      // contain ' / ', so rejoin everything from its marker onward.
+      const reasonAt = parts.findIndex((p, i) => i >= 3 && p.startsWith('理由 '));
+      const reason = reasonAt >= 0 ? parts.slice(reasonAt).join(' / ').slice(3).trim() : '';
+      const stepPart = reasonAt === 3 ? '' : String(parts[3] || '');
       return {general:(parts[0] || '').trim(), source:(route[0] || '').trim(),
               target:(route[1] || '').trim(), status:(parts[2] || '').trim(),
-              step:String(parts[3] || '').replace(/^段階\s*/, '').trim()};
+              step:stepPart.replace(/^段階\s*/, '').trim(), reason};
     }).filter(m => m.general && (m.source || m.target)).slice(0, 8);
     const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
       ? {left:gapLeft, width:gapWidth, side:gapSide,
@@ -2201,7 +2208,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         target.className = `hanjuku-gap-node ${owner(move.target)}`;
         target.textContent = move.target || '未確認';
         route.append(source, arrow, target);
-        row.append(rowHead, route); flow.appendChild(row);
+        row.append(rowHead, route);
+        if (move.reason) {
+          const why = document.createElement('div'); why.className = 'hanjuku-gap-move-why';
+          why.textContent = `理由 ${move.reason}`;
+          row.appendChild(why);
+        }
+        flow.appendChild(row);
       }
     }
   }
