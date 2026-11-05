@@ -15,7 +15,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     '余白出撃: パプリカ / カルーン→ジュメルズ / 成立未確認 / 段階 A:001e11d9:Mdf4142',
     '余白出撃: どうし / アルマムーン→ナキューメラ / 行軍中 / 段階 A:002 / 理由 ナキューメラの敵を討つ',
   ];
-  const build=(clock, extraMoves=[], extraOwned=[], decision='敵の卵使用を避けるため、致死確認できる切り札を優先')=>[
+  const build=(clock, extraMoves=[], extraOwned=[], decision='敵の卵使用を避けるため、致死確認できる切り札を優先', step='J3')=>[
     'SOREN/CORNER: RETRO / hanjuku-hero / 進行中',
     '半熟英雄 / 最終観測・記録',
     '第2話 / 所持金 123G',
@@ -27,10 +27,11 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     '失った城: ジョンリギ',
     '出撃: 成立 3 / 失敗 1',
     '画面: battle_menu / battle',
-    '計画段階: J3（完了未確認）',
+    `計画段階: ${step}（完了未確認）`,
     '保留計画: sortie',
     `投影余白: side=left x=0 w=239 until=${clock+30}`,
     `余白占領記録: ${[...owned, ...extraOwned].join(' / ')}`,
+    `余白出撃意図: どうし / アルマムーン→ナキューメラ / 攻撃 / 状態 pending / 段階 ${step} / 理由 ナキューメラの敵を討つ`,
     `余白交戦HP: until=${clock+20} 敵シェーブル 55 / どうし 70`,
     `余白交戦兵数: until=${clock+20} 敵 4 / 我 7`,
     `余白戦闘計画: until=${clock+20} 攻撃 ナキューメラ / 段階 J3 / 方針 retry_with_opening_cards`,
@@ -74,7 +75,10 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     for (const part of ['どうし','行軍中','アルマムーン','ナキューメラ','理由 ナキューメラの敵を討つ']) assert.ok(result.moves[1].includes(part), part);
     assert.match(result.text,/出撃チャート/);
     // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
-    assert.ok(result.text.includes('交戦中 判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
+    assert.ok(result.text.includes('交戦中 計画: 攻撃 ナキューメラ'),result.text.slice(0,400));
+    assert.ok(result.text.includes('判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
+    assert.ok(result.text.includes('計画 J3処理中 出撃どうし / アルマムーン→ナキューメラ')
+      || result.text.includes('計画 J3 / 処理中 出撃どうし / アルマムーン→ナキューメラ'),result.text.slice(0,600));
     assert.ok(result.text.includes('計画: 攻撃 ナキューメラ'),'plan in battle line');
     assert.ok(result.text.includes('卵対策: 奥の手選択済み'),'egg in battle line');
     for(const old of ['現在状況','戦績・戦闘','入力・観測','AI戦闘計画']){
@@ -86,7 +90,7 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
     text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],
-      '防御を固めるため切り札を温存');
+      '防御を固めるため切り札を温存','J4');
     await page.evaluate(stamp=>window.gapClock=stamp,clock);
     await page.evaluate(payload=>window.__sorenBroadcastState=payload,{...state(),feeds:{showStatusG:{text,updatedAt:clock,lineCount:30}}});
     await page.waitForTimeout(1200);
@@ -95,6 +99,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(result.moves.length,3);
     assert.ok(result.toasts.some(t=>t.includes('出撃 キッシュ')),result.toasts.join('|'));
     assert.ok(result.toasts.some(t=>t.includes('城を奪取 ジュメルズ')),result.toasts.join('|'));
+    assert.ok(result.toasts.some(t=>t.includes('計画 J4') && t.includes('どうし')
+      && t.includes('アルマムーン→ナキューメラ') && t.includes('理由 ナキューメラの敵を討つ')),
+      'plan toast must contain the action, destination and reason: '+result.toasts.join('|'));
     // A changed battle decision reason updates the battle line.
     assert.ok(result.text.includes('判断: 防御を固めるため切り札を温存'),result.text.slice(0,400));
     // No redundant 速報 heading on the card.
