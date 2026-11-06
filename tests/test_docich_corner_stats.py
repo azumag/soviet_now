@@ -529,7 +529,7 @@ class HanjukuStatusTest(unittest.TestCase):
         _write_json(self.runtime / 'hanjuku_bot.json', bot)
         long_snapshot = self.snapshot()['hanjuku']
         self.assertEqual(long_snapshot['gap']['flows'][2]['detail'], long_detail)
-        long_feed = '\\n'.join(sd.render_hanjuku_status(long_snapshot))
+        long_feed = '\n'.join(sd.render_hanjuku_status(long_snapshot))
         self.assertIn('余白進行: house / 城・将軍の確認 / open_roster / ' + long_detail, long_feed)
         self.assertNotIn('…', next(line for line in long_feed.splitlines()
                                    if '余白進行: house' in line))
