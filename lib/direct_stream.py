@@ -322,7 +322,7 @@ def _strict_bool(env: Mapping[str, str], key: str, default: bool) -> bool:
     raise ConfigError(f"{key} must be a boolean")
 
 
-def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConfig:
+def _local_load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConfig:
     source = os.environ if env is None else env
     channel = str(
         source.get("SOREN_DIRECT_STREAM_TWITCH_CHANNEL")
@@ -350,7 +350,7 @@ def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConf
     )
 
 
-def load_audio_capture_watchdog_config(
+def _local_load_audio_capture_watchdog_config(
     env: Mapping[str, str] | None = None,
 ) -> AudioCaptureWatchdogConfig:
     """Load the capture watchdog policy from the reviewed runtime environment."""
@@ -372,6 +372,81 @@ def load_audio_capture_watchdog_config(
         ),
         pulse_server=pulse_server,
     )
+
+
+# #3553: docich owns the pure reconnect/audio-watchdog policy parsing and the
+# Pulse listing classification. The last-known-good local implementations run
+# FIRST (invalid input keeps raising the established ConfigError and docich is
+# never consulted for it); a docich result is adopted only when identical, so
+# a stale or permissive shared module can never relax a bound or turn an
+# uncertain listing into "missing" (which restarts the live encoder).
+def _load_docich_supervision_policy():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_supervision_policy.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_supervision_policy", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "STREAM_SUPERVISION_POLICY_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "load_reconnect_policy", None))
+            and callable(getattr(module, "load_audio_watchdog_policy", None))
+            and callable(getattr(module, "classify_source_output_listing", None))
+        ):
+            return module
+    except Exception:
+        pass
+    return None
+
+
+_docich_supervision_policy = _load_docich_supervision_policy()
+
+
+def load_reconnect_config(env: Mapping[str, str] | None = None) -> ReconnectConfig:
+    local = _local_load_reconnect_config(env)
+    if _docich_supervision_policy is not None:
+        try:
+            source = os.environ if env is None else env
+            shared = _docich_supervision_policy.load_reconnect_policy(dict(source))
+            if type(shared) is dict and shared == local.public_dict():
+                return ReconnectConfig(**shared)
+        except Exception:
+            pass
+    return local
+
+
+def load_audio_capture_watchdog_config(
+    env: Mapping[str, str] | None = None,
+) -> AudioCaptureWatchdogConfig:
+    local = _local_load_audio_capture_watchdog_config(env)
+    if _docich_supervision_policy is not None:
+        try:
+            source = os.environ if env is None else env
+            shared = _docich_supervision_policy.load_audio_watchdog_policy(
+                dict(source), uid=os.getuid()
+            )
+            if type(shared) is dict and shared == local.public_dict():
+                return AudioCaptureWatchdogConfig(**shared)
+        except Exception:
+            pass
+    return local
+
+
+def _classify_source_output_listing(listing: str, ffmpeg_pid: int) -> str:
+    local = _local_classify_source_output_listing(listing, ffmpeg_pid)
+    if _docich_supervision_policy is not None:
+        try:
+            shared = _docich_supervision_policy.classify_source_output_listing(listing, ffmpeg_pid)
+            if type(shared) is str and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
 
 
 def twitch_channel_is_live(channel: str, timeout: int = 10) -> bool | None:
@@ -1185,6 +1260,36 @@ def _start_reconnect_monitor(
     return thread
 
 
+def _local_classify_source_output_listing(listing: str, ffmpeg_pid: int) -> str:
+    if listing.strip() and not re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
+        return "unknown"
+
+    # Split on the headers, keeping the raw bodies. An empty body is NOT the
+    # same as no listing: a header proves the daemon described a stream, and a
+    # body that did not arrive means no stream can be attributed, so it must
+    # stay unattributable rather than collapse into "no capture exists"
+    # (review 2026-10-20).
+    blocks = re.split(r"^Source Output #\d+", listing, flags=re.MULTILINE)[1:]
+    if not blocks:
+        # The daemon answered and described no capture stream at all.
+        return "missing"
+
+    unattributable = False
+    for block in blocks:
+        match = re.search(
+            r'application\.process\.id = "([0-9]+)"', block
+        )
+        if match is None:
+            # Covers both a stream that hides the attribute and a header whose
+            # body is missing or incomplete.
+            unattributable = True
+            continue
+        if int(match.group(1)) == int(ffmpeg_pid):
+            return "ok"
+    # A stream we cannot attribute might be ours, so this is never "missing".
+    return "unknown" if unattributable else "missing"
+
+
 def probe_audio_capture_state(
     config: DirectStreamConfig,
     watchdog: AudioCaptureWatchdogConfig,
@@ -1219,33 +1324,7 @@ def probe_audio_capture_state(
         listing = run(["pactl", "list", "source-outputs"], env=env)
     except RuntimeCheckError:
         return "unknown"
-    if listing.strip() and not re.search(r"^Source Output #[0-9]+", listing, re.MULTILINE):
-        return "unknown"
-
-    # Split on the headers, keeping the raw bodies. An empty body is NOT the
-    # same as no listing: a header proves the daemon described a stream, and a
-    # body that did not arrive means no stream can be attributed, so it must
-    # stay unattributable rather than collapse into "no capture exists"
-    # (review 2026-10-20).
-    blocks = re.split(r"^Source Output #\d+", listing, flags=re.MULTILINE)[1:]
-    if not blocks:
-        # The daemon answered and described no capture stream at all.
-        return "missing"
-
-    unattributable = False
-    for block in blocks:
-        match = re.search(
-            r'application\.process\.id = "([0-9]+)"', block
-        )
-        if match is None:
-            # Covers both a stream that hides the attribute and a header whose
-            # body is missing or incomplete.
-            unattributable = True
-            continue
-        if int(match.group(1)) == int(ffmpeg_pid):
-            return "ok"
-    # A stream we cannot attribute might be ours, so this is never "missing".
-    return "unknown" if unattributable else "missing"
+    return _classify_source_output_listing(listing, ffmpeg_pid)
 
 
 def _start_audio_capture_monitor(
