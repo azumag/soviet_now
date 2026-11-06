@@ -214,9 +214,10 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.ok(result.toasts.some(t=>t.includes('進行 戦闘・切り札：効果の表示を確認')),
       'a recorded stage change must enter the 速報 timeline: '+result.toasts.join('|'));
     assert.ok(result.text.includes('戦闘・切り札：効果の表示を確認 / クースカン'));
-    assert.ok(result.toasts.some(t=>t.includes('出撃予定 J4') && t.includes('どうし')
-      && t.includes('アルマムーン→ナキューメラ') && t.includes('理由 ナキューメラの敵を討つ')),
-      'plan toast must contain the action, destination and reason: '+result.toasts.join('|'));
+    // Owner 2026-11-06: the intent is shown once in the 出撃意図 line; the
+    // chart no longer repeats it as a live block or as a plan toast.
+    assert.ok(!result.toasts.some(t=>t.includes('出撃予定')),
+      'the intent must not reappear as a chart toast: '+result.toasts.join('|'));
     // A changed battle decision reason updates the battle line.
     assert.ok(result.text.includes('判断: 防御を固めるため切り札を温存'),result.text.slice(0,400));
     // No redundant 速報 heading on the card.
