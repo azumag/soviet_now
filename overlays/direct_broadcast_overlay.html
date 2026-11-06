@@ -1041,6 +1041,11 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
   padding: 4px; border-left: 3px solid #f0b84d; background: #101f2d; border-radius: 4px; }
 .hanjuku-gap-decisions:empty { display: none; }
+/* Reserve a bounded chart viewport when the news journal is present: the
+   complete chart stays scrollable instead of making the 540px game gap overflow. */
+#hanjuku-gap:has(.hanjuku-gap-decision) .hanjuku-gap-flow {
+  max-height: 148px; min-height: 0; overflow-x: hidden; overflow-y: auto;
+}
 .hanjuku-gap-decision { flex: 0 0 auto; padding: 5px 6px; background: #091925;
   font-size: 11px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
   border-left: 2px solid #f0b84d; color: #e6f2f8; }
