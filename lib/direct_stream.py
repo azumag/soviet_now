@@ -15,6 +15,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import stat
 import re
 import shutil
 import signal
@@ -1429,6 +1430,88 @@ def _acquire_encoder_lock_with_local_guard(lock_stream) -> None:
 
 
 
+
+# Host-wide lease is an *opt-in* handover step. Enabling it without docich v1
+# and a private pre-provisioned canonical lock directory MUST fail before FFmpeg
+# can start. The path cannot be derived from state_dir or game-specific env.
+_CANONICAL_STREAM_ENCODER_LOCK_PATH = Path(
+    "/home/ubuntu/docich/run-soren-live/locks/direct_stream_encoder.lock"
+)
+
+
+def _canonical_stream_lock_enabled() -> bool:
+    raw = os.environ.get("DOCICH_STREAM_CANONICAL_LOCK_ENABLED", "0").strip()
+    if raw not in {"0", "1"}:
+        raise ConfigError("DOCICH_STREAM_CANONICAL_LOCK_ENABLED must be 0 or 1")
+    return raw == "1"
+
+
+def _load_docich_canonical_stream_lock():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_instance_lock.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_canonical_stream_instance_lock", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        candidate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(candidate)
+        if (
+            getattr(candidate, "CANONICAL_STREAM_ENCODER_LOCK_CONTRACT_VERSION", None) == 1
+            and getattr(candidate, "CANONICAL_STREAM_ENCODER_LOCK_PATH", None)
+                == str(_CANONICAL_STREAM_ENCODER_LOCK_PATH)
+            and callable(getattr(candidate, "open_canonical_stream_encoder_lock", None))
+        ):
+            return candidate.open_canonical_stream_encoder_lock
+    except Exception:
+        pass
+    return None
+
+
+_docich_canonical_stream_lock = _load_docich_canonical_stream_lock()
+
+
+def _open_required_canonical_stream_lock():
+    """Require one verified global lock FD; never silently fall back to local."""
+    opener = _docich_canonical_stream_lock
+    if opener is None:
+        raise RuntimeCheckError("canonical stream encoder lock is unavailable")
+    stream = None
+    try:
+        stream = opener()
+        fd = stream.fileno()
+        opened = os.fstat(fd)
+        path = _CANONICAL_STREAM_ENCODER_LOCK_PATH
+        parent = path.parent.lstat()
+        current = path.lstat()
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != os.geteuid()
+            or stat.S_IMODE(parent.st_mode) & 0o077
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) & 0o077
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+        ):
+            raise PermissionError("canonical stream encoder lock identity is invalid")
+        # The docich opener also acquires flock, but this *mandatory local*
+        # LOCK_NB establishes a hard fence even if the shared opener is a no-op.
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return stream
+    except BlockingIOError as exc:
+        if stream is not None:
+            stream.close()
+        raise AlreadyRunningError("direct stream is already running") from exc
+    except Exception as exc:
+        if stream is not None:
+            stream.close()
+        raise RuntimeCheckError("canonical stream encoder lock is unavailable") from exc
+
+
+
 def _run_ffmpeg(
     config: DirectStreamConfig,
     *,
@@ -1454,7 +1537,13 @@ def _run_ffmpeg(
         _ensure_private_directory(output_path.parent)
 
     lock_path = config.state_dir / "direct_stream.lock"
-    lock_stream = lock_path.open("a+", encoding="utf-8")
+    canonical_lock = _open_required_canonical_stream_lock() if _canonical_stream_lock_enabled() else None
+    try:
+        lock_stream = lock_path.open("a+", encoding="utf-8")
+    except BaseException:
+        if canonical_lock is not None:
+            canonical_lock.close()
+        raise
     try:
         try:
             _acquire_encoder_lock_with_local_guard(lock_stream)
@@ -1530,6 +1619,8 @@ def _run_ffmpeg(
             signal.signal(signal.SIGINT, previous_int)
     finally:
         lock_stream.close()
+        if canonical_lock is not None:
+            canonical_lock.close()
 
 
 def _stop(config: DirectStreamConfig) -> int:
