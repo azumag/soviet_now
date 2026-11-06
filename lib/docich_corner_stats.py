@@ -824,7 +824,9 @@ def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None
         if order is None and status == "pending":
             order = launched.get(step)
     if not isinstance(order, Mapping):
-        return None
+        # A house-repair trip is a real issued sortie but not a chart order:
+        # expose its destination and purpose instead of "未確認/未取得".
+        return _hanjuku_house_order(policy)
     general = _hanjuku_name(order.get("general"), each=24)
     source = _hanjuku_name(order.get("source"), each=24)
     target = _hanjuku_name(order.get("target"), each=24)
@@ -840,6 +842,47 @@ def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None
         "status": status or "pending",
         "note": _hanjuku_text(order.get("note"), 96) or "",
     }
+
+
+# The house is a fixed display destination, not a castle name: a repair
+# sortie records purpose='house' and no target, so the chart can name it
+# without inventing a route (g1139 2026-11-06 11:45 JST: カルーン→未確認).
+HOUSE_DESTINATION_LABEL = "あたしの家"
+
+
+def _hanjuku_house_order(policy: Mapping[str, object]) -> dict | None:
+    """A live house-repair sortie as the chart's intent, or None.
+
+    Only the policy's own busy window and a still-marching status qualify; a
+    settled or stale trip must not reappear as the current action.
+    """
+    raw = policy.get("sorties")
+    tick = policy.get("tick")
+    if not isinstance(raw, Mapping) or type(tick) is not int:
+        return None
+    for step in sorted(raw, reverse=True):
+        sortie = raw[step]
+        if not isinstance(sortie, Mapping) or sortie.get("purpose") != "house":
+            continue
+        if sortie.get("status") not in ("en_route", "launched_unconfirmed"):
+            continue
+        seen = sortie.get("tick")
+        if type(seen) is not int or not 0 <= tick - seen < SORTIE_BUSY_TICKS:
+            continue
+        general = _hanjuku_name(sortie.get("general"), each=24)
+        source = _hanjuku_name(sortie.get("source"), each=24)
+        if not general:
+            continue
+        return {
+            "step": _hanjuku_text(step, 24) or "",
+            "general": general,
+            "source": source or "",
+            "target": HOUSE_DESTINATION_LABEL,
+            "purpose": "卵修理",
+            "status": "launched_unconfirmed",
+            "note": "",
+        }
+    return None
 
 
 def _hanjuku_marching(policy: Mapping[str, object], tick, limit=3, each=10):
@@ -988,6 +1031,8 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
         source = _hanjuku_name(sortie.get("source") or order.get("source"), each=each)
         target = _hanjuku_name(sortie.get("target") or sortie.get("planned_target")
                                or order.get("target"), each=each)
+        if target is None and sortie.get("purpose") == "house":
+            target = HOUSE_DESTINATION_LABEL
         if general is None or (source is None and target is None):
             continue
         rows.append({"general": general, "source": source or "", "target": target or "",

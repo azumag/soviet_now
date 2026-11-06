@@ -1133,6 +1133,53 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual(moves[1]['source'], 'カ')
         self.assertEqual(moves[1]['target'], '')
 
+    def _ready_gap(self):
+        _write_json(self.runtime / 'presentation.json', dict(
+            status='ready', projection=dict(align='right', viewport=[0,90,960,540],
+                                            content=[239,0,721,540])))
+
+    def test_house_repair_sortie_names_the_house_and_its_purpose(self):
+        # g1139 2026-11-06 11:45 JST: purpose='house' with target=None showed
+        # "カルーン→未確認" and "行動内容未取得" on the left chart.
+        self._ready_gap()
+        self._policy(tick=5000, month='46-9',
+                     sorties={'HOUSE_OUT:1087': {'general': 'ヴィーナス', 'purpose': 'house',
+                                                 'source': 'カルーン', 'status': 'en_route',
+                                                 'target': None, 'tick': 4990}})
+        result = self.snapshot()['hanjuku']
+        moves = result['gap']['moves']
+        self.assertEqual([(m['general'], m['source'], m['target']) for m in moves],
+                         [('ヴィーナス', 'カルーン', 'あたしの家')])
+        self.assertEqual((result['active_order']['target'], result['active_order']['purpose'],
+                          result['active_order']['status']),
+                         ('あたしの家', '卵修理', 'launched_unconfirmed'))
+        text = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('カルーン→あたしの家', text)
+        self.assertIn('卵修理', text)
+
+    def test_settled_or_stale_house_sortie_is_not_a_current_action(self):
+        self._ready_gap()
+        self._policy(tick=5000, month='46-9',
+                     sorties={'HOUSE_OUT:1087': {'general': 'ヴィーナス', 'purpose': 'house',
+                                                 'source': 'カルーン', 'status': 'closed',
+                                                 'target': None, 'tick': 4990},
+                              'HOUSE_OUT:1000': {'general': '古い', 'purpose': 'house',
+                                                 'source': 'カルーン', 'status': 'en_route',
+                                                 'target': None, 'tick': 4000}})
+        result = self.snapshot()['hanjuku']
+        self.assertEqual(result['gap']['moves'], [])
+        self.assertIsNone(result['active_order'])
+
+    def test_non_house_sortie_without_a_target_stays_unconfirmed(self):
+        self._ready_gap()
+        self._policy(tick=5000, month='46-9',
+                     sorties={'A': {'general': '不明先', 'source': 'カ',
+                                    'status': 'en_route', 'tick': 4999}})
+        result = self.snapshot()['hanjuku']
+        self.assertEqual([(m['general'], m['target']) for m in result['gap']['moves']],
+                         [('不明先', '')])
+        self.assertIsNone(result['active_order'])
+
     def test_unread_values_stay_unknown_rather_than_zero(self):
         result = self.snapshot()['hanjuku']
         text = '\n'.join(sd.render_hanjuku_status(result))
