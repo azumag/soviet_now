@@ -39,6 +39,10 @@ class CanonicalStreamLockDelegateTest(unittest.TestCase):
         self.global_dir = self.root / "canonical"
         self.global_dir.mkdir(mode=0o700)
         self.path = self.global_dir / "encoder.lock"
+        # The production docich opener creates 0600; fixture open('a+')
+        # would otherwise create an insecure 0644 file and fail closed.
+        self.path.touch(mode=0o600)
+        self.path.chmod(0o600)
         self.docich = self.root / "docich"
         self.mod = self.docich / "src/docich/stream_instance_lock.py"
         self.mod.parent.mkdir(parents=True)
