@@ -499,6 +499,54 @@ class HanjukuStatusTest(unittest.TestCase):
             _write_json(self.runtime / 'presentation.json',changed)
             self.assertIsNone(self.snapshot()['hanjuku']['gap'])
 
+    def test_every_action_plan_and_reason_reaches_news_including_page_turns(self):
+        import time
+        now = time.time()
+        projection = dict(align='right', viewport=[0,90,960,540], content=[239,0,721,540])
+        _write_json(self.runtime / 'presentation.json', dict(status='ready', projection=projection))
+        prefix = self.identity['runtime_id'] + ':1:'
+        rows = []
+        def plan(n, screen, actions, identity=None):
+            rows.append(dict(self.identity if identity is None else identity,
+                             event='action_plan', at=now, decision_id=prefix+str(n),
+                             screen_kind=screen, planned_actions=[
+                                 dict(type='pad', buttons=[button], hold_ms=100)
+                                 for button in actions]))
+        def decision(n, kind, reason):
+            rows.append(dict(self.identity, event='decision', at=now,
+                             decision_id=prefix+str(n), decision=kind,
+                             reason=reason))
+        plan(1, 'month_menu', ['down', 'a'])
+        decision(1, 'month_plan', '今月は兵士が不足しているので補充を選んだ')
+        plan(2, 'general_list', ['r', 'down'])
+        decision(2, 'general_page', '次のページに未確認の将軍がいるため一覧を送る')
+        plan(3, 'battle_menu', ['a'])
+        decision(3, 'battle_card', '敵の卵使用前に切り札で攻める')
+        plan(4, 'general_list', ['down'])  # No separate decision emitted
+        plan(5, 'battle_menu', [])
+        decision(5, 'situation_held', '選択肢が不明なので入力を保留する')
+        wrong = dict(self.identity, lease_id='different')
+        plan(6, 'month_menu', ['a'], identity=wrong)
+        journal = self.runtime / 'hanjuku_decisions.jsonl'
+        journal.write_text('\n'.join(json.dumps(r, ensure_ascii=False) for r in rows)+'\n',
+                           encoding='utf-8')
+        snapshot = self.snapshot()['hanjuku']
+        decisions = snapshot['gap']['decisions']
+        self.assertEqual(len(decisions), 5)
+        self.assertEqual([row['actions'] for row in decisions],
+                         [['down', 'a'], ['r', 'down'], ['a'], ['down'], []])
+        self.assertIn('兵士が不足', decisions[0]['reasons'][0])
+        self.assertIn('次のページ', decisions[1]['reasons'][0])
+        self.assertIn('敵の卵使用前', decisions[2]['reasons'][0])
+        self.assertEqual(decisions[3]['reasons'], [])
+        self.assertIn('保留', decisions[4]['reasons'][0])
+        feed = '\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(snapshot), width=20))
+        displayed = [json.loads(line.split('余白判断: ',1)[1])
+                     for line in feed.splitlines() if '余白判断: ' in line]
+        self.assertEqual(len(displayed), 5)
+        self.assertEqual(displayed[1]['id'], prefix+'2')
+        self.assertNotIn('…', displayed[2]['reasons'][0])
+
     def test_live_procedure_stages_use_actual_policy_sessions(self):
         import time
         now = time.time()
