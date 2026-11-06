@@ -1230,7 +1230,7 @@ class HanjukuStatusTest(unittest.TestCase):
         result = self.snapshot()['hanjuku']
         self.assertEqual(result['gap']['recall_route'], {
             'origin': [440, 392], 'target': 'アルマムーン', 'stage': 'await_dispatch'})
-        text = '\\n'.join(sd.render_hanjuku_status(result))
+        text = '\n'.join(sd.render_hanjuku_status(result))
         self.assertIn('余白帰還: {"origin":[440,392],"target":"アルマムーン",', text)
         self._policy(flow={'recall': {'stage': 'await_dispatch', 'origin_source': 'guess',
                                        'origin': [440, 392], 'goal': 'アルマムーン'}})
