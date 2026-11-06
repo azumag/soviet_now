@@ -32,6 +32,7 @@ on:
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
       - 'tests/test_direct_overlay_visibility_delegate.mjs'
+      - 'tests/test_direct_game_stage_dom_delegate.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_twica_legacy_owner.mjs'
@@ -69,6 +70,7 @@ on:
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
       - 'tests/test_direct_overlay_visibility_delegate.mjs'
+      - 'tests/test_direct_game_stage_dom_delegate.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_twica_legacy_owner.mjs'
@@ -111,6 +113,7 @@ jobs:
           tests/test_direct_overlay_stage_delegate.mjs
           tests/test_direct_overlay_installer_delegate.mjs
           tests/test_direct_overlay_visibility_delegate.mjs
+          tests/test_direct_game_stage_dom_delegate.mjs
           tests/test_direct_broadcast_overlay.mjs
           tests/test_overlay_monitor_animation_throttle.mjs
           tests/test_twica_overlay_layout.mjs
