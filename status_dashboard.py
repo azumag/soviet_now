@@ -3520,6 +3520,12 @@ def render_hanjuku_status(value):
     gap = value.get('gap')
     if isinstance(gap, dict):
         lines.append(f"  投影余白: side={gap.get('side', 'right')} x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
+        march_count = gap.get('march_count')
+        if type(march_count) is int and 0 <= march_count < 128:
+            lines.append(f"  余白進軍数: {march_count}")
+        route = gap.get('recall_route')
+        if isinstance(route, dict):
+            lines.append("  余白帰還: " + json.dumps(route, ensure_ascii=False, separators=(',', ':')))
         names = gap.get('captured_names') or []
         if names:
             lines.append("  余白占領記録: " + " / ".join(names))
@@ -3544,6 +3550,9 @@ def render_hanjuku_status(value):
                 parts.append(status)
             if step:
                 parts.append('段階 ' + step)
+            purpose = text(move.get('purpose'), '', 16)
+            if purpose:
+                parts.append('種別 ' + purpose)
             note = text(move.get('note'), '', 96)
             if note:
                 parts.append('理由 ' + note)
