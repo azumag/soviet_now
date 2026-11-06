@@ -673,7 +673,7 @@ def _docich_event_renderer() -> Any:
         if not callable(renderer):
             raise ImportError("docich shared event renderer API is missing")
         _DOCICH_RENDERER_CACHE_FN = renderer
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         print(f"event_overlay: docich renderer load failed ({type(error).__name__}); falling back to legacy", file=sys.stderr)
     return _DOCICH_RENDERER_CACHE_FN
 
@@ -683,7 +683,7 @@ def render_event_overlay(*args: Any, **kwargs: Any) -> None:
     if renderer is not None:
         try:
             return renderer(*args, **kwargs)
-        except Exception as error:
+        except (Exception, SystemExit) as error:
             print(f"event_overlay: docich renderer failed ({type(error).__name__}); falling back to legacy", file=sys.stderr)
     return _render_event_overlay_legacy(*args, **kwargs)
 
