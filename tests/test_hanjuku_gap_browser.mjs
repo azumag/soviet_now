@@ -165,6 +165,40 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.equal(await page.locator('.hanjuku-gap-decision').count(),4,
       'polling the same feed must not duplicate decisions');
 
+    // Regression: 48 long decision entries previously scaled the entire
+    // 239x540 left surface below readable size, hiding toasts and sortie chart.
+    const backlog=Array.from({length:48},(_,i)=>({
+      id:`g1-abcdef12:1:${100+i}`,at:now,screen:'month_menu',
+      actions:['down','a'],reasons:['判断根拠と画面操作を記録する'.repeat(14)],
+    }));
+    text=build(now)+'\n'+[...decisions,...backlog]
+      .map(d=>'余白判断: '+JSON.stringify(d)).join('\n');
+    await page.evaluate(payload=>window.__sorenBroadcastState=payload,state());
+    await page.waitForTimeout(1150);
+    const crowded=await page.evaluate(()=>{
+      const surface=document.getElementById('hanjuku-gap');
+      const content=surface.querySelector('.hanjuku-gap-content');
+      const chunks=[...surface.querySelectorAll('.hanjuku-gap-decision-chunk')];
+      const fitted=content.getBoundingClientRect(), bounds=surface.getBoundingClientRect();
+      return {entries:surface.querySelectorAll('.hanjuku-gap-decision').length,
+        visibleChunks:chunks.filter(el=>el.getClientRects().length>0).length,
+        pages:surface.querySelector('.hanjuku-gap-page-info').textContent,
+        scale:new DOMMatrixReadOnly(getComputedStyle(content).transform).a,
+        clipped:fitted.bottom>bounds.bottom+1||fitted.right>bounds.right+1};
+    });
+    assert.equal(crowded.entries,decisions.length+backlog.length,
+      'all judgments must remain in the journal');
+    assert.ok(crowded.pages.includes('履歴 1/'),crowded.pages);
+    assert.ok(crowded.visibleChunks>0 && crowded.visibleChunks<=2,
+      'show a readable page instead of shrinking every entry simultaneously');
+    assert.ok(crowded.scale>=0.35,`left overlay is still invisible: ${crowded.scale}`);
+    assert.equal(crowded.clipped,false,'the readable page and chart must fit together');
+    await page.evaluate(()=>window.gapClock+=7);
+    await page.waitForTimeout(1100);
+    const nextPage=await page.locator('.hanjuku-gap-page-info').textContent();
+    assert.ok(nextPage.includes('履歴 2/'),nextPage);
+    await page.evaluate(stamp=>window.gapClock=stamp,now);
+
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
     text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],
