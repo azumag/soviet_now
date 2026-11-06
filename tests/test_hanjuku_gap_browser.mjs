@@ -83,8 +83,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
     assert.ok(result.text.includes('交戦中 計画: 攻撃 ナキューメラ'),result.text.slice(0,400));
     assert.ok(result.text.includes('判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
-    assert.ok(result.text.includes('出撃予定：J3どうし / アルマムーン→ナキューメラ'),
-      result.text.slice(0,600));
+    // Owner 2026-11-06: the chart carries the route rows only; the intent
+    // ('出撃予定：J3 ...') stays in the 出撃意図 line, not on the chart.
+    assert.ok(!result.text.includes('出撃予定：J3'), result.text.slice(0,600));
     assert.ok(!result.text.includes('出撃（具体的な操作は未確認）'));
     assert.ok(result.text.includes('計画: 攻撃 ナキューメラ'),'plan in battle line');
     assert.ok(result.text.includes('卵対策: 奥の手選択済み'),'egg in battle line');
