@@ -8,7 +8,7 @@ import { execFile, spawn } from 'child_process';
 import { ExternalGameAudio, loadExternalGameAudioConfig } from './external_game_audio.mjs';
 import { installAnimationFrameLimit } from './browser_frame_limiter.mjs';
 import { parseUnityCanvasSize, rewriteUnityCanvasSize } from './lib/unity_canvas_size.mjs';
-import { buildDirectBroadcastOverlayState } from './lib/direct_broadcast_overlay.mjs';
+import { loadBroadcastStateBuilder } from './lib/docich_broadcast_state_loader.mjs';
 import {
   GAME_LIFECYCLE_DIR,
   lifecycleAckMatches,
@@ -38,6 +38,9 @@ import { resolveDropPieceId } from './lib/jev_drop_piece.mjs';
 import { GameObservationWriter } from './lib/game_observation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Shared broadcast-state rendering is owned by docich. Loading the reviewed
+// docich module at boot leaves a bundled, standalone Soviet fallback.
+const buildDirectBroadcastOverlayState = await loadBroadcastStateBuilder();
 
 function loadDotEnv() {
   const envPath = path.join(__dirname, '.env');
