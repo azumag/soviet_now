@@ -1042,6 +1042,9 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-decisions { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
   padding: 4px; border-left: 3px solid #f0b84d; background: #101f2d; border-radius: 4px; }
 .hanjuku-gap-decisions:empty { display: none; }
+.hanjuku-gap-decision[hidden], .hanjuku-gap-decision-chunk[hidden] { display: none !important; }
+.hanjuku-gap-page-info { font-size: 11px; line-height: 15px; color: #a8bdf9; margin: 0 0 4px; }
+.hanjuku-gap-page-info:empty { display: none; }
 .hanjuku-gap-decision { flex: 0 0 auto; padding: 5px 6px; background: #091925;
   font-size: 11px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
   border-left: 2px solid #f0b84d; color: #e6f2f8; }
@@ -2106,12 +2109,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     container.replaceChildren(card);
   }
   const gapLive = {last: null, toasts: [], seq: 0, decisionIds: [], decisionSeen: new Set()};
-  const gapDom = {content:null, toastBox:null, progress:null, decisionBox:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
+  const gapDom = {content:null, toastBox:null, progress:null, decisionBox:null, pageInfo:null, flow:null,
+    toasts:new Map(), flowSig:null, progressSig:null, idle:null, pagingStartedAt:0};
   function gapResetLive() {
     gapLive.last = null;
     gapLive.toasts = [];
     gapLive.decisionIds = [];
     gapLive.decisionSeen.clear();
+    gapDom.pagingStartedAt = 0;
     if (gapDom.decisionBox) gapDom.decisionBox.replaceChildren();
     if (gapDom.toastBox) gapDom.toastBox.replaceChildren();
     if (gapDom.progress) gapDom.progress.replaceChildren();
@@ -2248,18 +2253,34 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     gapDom.content.className = 'hanjuku-gap-content';
     gapDom.progress = document.createElement('div'); gapDom.progress.className = 'hanjuku-gap-progress';
     gapDom.decisionBox = document.createElement('div'); gapDom.decisionBox.className = 'hanjuku-gap-decisions';
+    gapDom.pageInfo = document.createElement('div'); gapDom.pageInfo.className = 'hanjuku-gap-page-info';
     gapDom.toastBox = document.createElement('div'); gapDom.toastBox.className = 'hanjuku-gap-toasts';
     gapDom.flow = document.createElement('div'); gapDom.flow.className = 'hanjuku-gap-flow';
     gapDom.content.append(gapDom.progress, gapDom.decisionBox, gapDom.toastBox, gapDom.flow);
+    gapDom.decisionBox.before(gapDom.pageInfo);
     surface.appendChild(gapDom.content);
     gapDom.toasts.clear(); gapLive.decisionSeen.clear(); gapLive.decisionIds = [];
     gapDom.flowSig = null; gapDom.progressSig = null; gapDom.idle = null;
+    gapDom.pagingStartedAt = 0;
   }
   function fitHanjukuGap(surface) {
     const content = gapDom.content;
     if (!content || !surface.contains(content)) return;
+    // Keep the full journal in DOM, but display only two short pieces at a
+    // time. Scaling 48-300 long records together used to shrink the entire
+    // sidebar to subpixel text, hiding even the sortie chart. The pages rotate
+    // automatically; no text is ellipsized, discarded or put behind a scrollbar.
+    const pieces = [...(gapDom.decisionBox?.querySelectorAll('.hanjuku-gap-decision-chunk') || [])];
+    const pages = Math.max(1, Math.ceil(pieces.length / 2));
+    const elapsed = Math.max(0, Date.now() - (gapDom.pagingStartedAt || Date.now()));
+    const page = Math.floor(elapsed / 6500) % pages;
+    for (let i = 0; i < pieces.length; i++) pieces[i].hidden = Math.floor(i / 2) !== page;
+    for (const item of gapDom.decisionBox?.children || [])
+      item.hidden = ![...item.querySelectorAll('.hanjuku-gap-decision-chunk')].some(chunk => !chunk.hidden);
+    if (gapDom.pageInfo)
+      gapDom.pageInfo.textContent = pages > 1 ? `履歴 ${page + 1}/${pages}（6.5秒ごとに自動切替）` : '';
     // CSS transforms preserve intrinsic scrollHeight, so the next poll always
-    // measures the complete unscaled history rather than a previous fit.
+    // measures the active unscaled page rather than an earlier fit.
     const css = getComputedStyle(surface);
     const spaceY = Math.max(1, surface.clientHeight
       - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom) - 2);
@@ -2333,9 +2354,20 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         : '個別の判断理由は記録されていません';
       const item = document.createElement('div');
       item.className = 'hanjuku-gap-decision';
-      item.textContent = `[${row.screen}] ${actions ? '操作予定 '+actions : '操作保留'}\n${reasons}`;
-      item.title = item.textContent;
+      const fullText = `[${row.screen}] ${actions ? '操作予定 '+actions : '操作保留'}\n${reasons}`;
+      // Split by code points, not UTF-16 units: a single long judgment must
+      // never force the entire 239x540 surface to scale to invisible pixels.
+      // Hidden spans preserve the complete textContent for audit/debugging.
+      const chars = Array.from(fullText);
+      for (let i = 0; i < chars.length; i += 120) {
+        const chunk = document.createElement('span');
+        chunk.className = 'hanjuku-gap-decision-chunk';
+        chunk.textContent = chars.slice(i, i + 120).join('');
+        item.appendChild(chunk);
+      }
+      item.title = fullText;
       gapDom.decisionBox.prepend(item);
+      gapDom.pagingStartedAt = now;
       // Retain the latest 300 visible decisions without unbounded DOM growth.
       while (gapLive.decisionIds.length > 300) {
         const id = gapLive.decisionIds.shift();
