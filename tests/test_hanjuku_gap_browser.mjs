@@ -83,8 +83,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // Live battle detail shows as one truncated line: reason first, then plan/cards/egg.
     assert.ok(result.text.includes('交戦中 計画: 攻撃 ナキューメラ'),result.text.slice(0,400));
     assert.ok(result.text.includes('判断: 敵の卵使用を避けるため'),result.text.slice(0,400));
-    assert.ok(result.text.includes('出撃予定：J3どうし / アルマムーン→ナキューメラ'),
-      result.text.slice(0,600));
+    // Owner 2026-11-06: the chart carries the route rows only; the intent
+    // ('出撃予定：J3 ...') stays in the 出撃意図 line, not on the chart.
+    assert.ok(!result.text.includes('出撃予定：J3'), result.text.slice(0,600));
     assert.ok(!result.text.includes('出撃（具体的な操作は未確認）'));
     assert.ok(result.text.includes('計画: 攻撃 ナキューメラ'),'plan in battle line');
     assert.ok(result.text.includes('卵対策: 奥の手選択済み'),'egg in battle line');
@@ -214,9 +215,10 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.ok(result.toasts.some(t=>t.includes('進行 戦闘・切り札：効果の表示を確認')),
       'a recorded stage change must enter the 速報 timeline: '+result.toasts.join('|'));
     assert.ok(result.text.includes('戦闘・切り札：効果の表示を確認 / クースカン'));
-    assert.ok(result.toasts.some(t=>t.includes('出撃予定 J4') && t.includes('どうし')
-      && t.includes('アルマムーン→ナキューメラ') && t.includes('理由 ナキューメラの敵を討つ')),
-      'plan toast must contain the action, destination and reason: '+result.toasts.join('|'));
+    // Owner 2026-11-06: the intent is shown once in the 出撃意図 line; the
+    // chart no longer repeats it as a live block or as a plan toast.
+    assert.ok(!result.toasts.some(t=>t.includes('出撃予定')),
+      'the intent must not reappear as a chart toast: '+result.toasts.join('|'));
     // A changed battle decision reason updates the battle line.
     assert.ok(result.text.includes('判断: 防御を固めるため切り札を温存'),result.text.slice(0,400));
     // No redundant 速報 heading on the card.
@@ -245,19 +247,18 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
       await page.waitForTimeout(1200);
       return read();
     };
+    // Owner 2026-11-06: the sortie intent is shown once in the 出撃意図 line;
+    // the chart must not repeat it in any state (planned, mismatch, issued).
     result=await setPlanState(now+100,'missing');
-    assert.ok(result.text.includes('計画確認中：J7'), result.text.slice(0,500));
-    assert.ok(result.text.includes('行動内容未取得'),result.text.slice(0,500));
-    assert.ok(!result.text.includes('具体的な操作は未確認'));
+    assert.ok(!result.text.includes('計画確認中'), result.text.slice(0,500));
+    assert.ok(!result.text.includes('行動内容未取得'),result.text.slice(0,500));
     assert.ok(!result.text.includes('処理中 出撃'));
     result=await setPlanState(now+102,'mismatch');
-    assert.ok(result.text.includes('計画確認中 J7') || result.text.includes('計画確認中：J7'),
-      'J70 must not be interpreted as J7');
+    assert.ok(!result.text.includes('計画確認中'), 'the chart must not mirror the intent');
     result=await setPlanState(now+104,'launched');
-    assert.ok(result.text.includes('出撃命令済み J7') || result.text.includes('出撃命令済み：J7'));
+    assert.ok(!result.text.includes('出撃命令済み'), 'the intent stays in the 出撃意図 line');
     result=await setPlanState(now+106,'launched_unconfirmed');
-    assert.ok(result.text.includes('出撃命令済み（成立未確認） J7')
-      || result.text.includes('出撃命令済み（成立未確認）：J7'));
+    assert.ok(!result.text.includes('出撃命令済み'));
     // Exact deadline, even if the status feed mtime does not change.
     await page.evaluate(()=>window.gapClock+=31);
     await page.waitForTimeout(1100);
