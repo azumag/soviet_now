@@ -166,7 +166,7 @@ def fit_dashboard_lines(lines, width=W):
     prefixes = (
         '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
-        '  余白進行:',
+        '  余白進行:', '  余白判断:',
         '  出撃意図:', '  敵将軍:', '  味方将軍:', '  卵落:', '  切り札:', '  切り札在庫:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
@@ -3561,6 +3561,17 @@ def render_hanjuku_status(value):
                 if detail:
                     parts.append(detail)
                 lines.append("  余白進行: " + " / ".join(parts))
+        # Action plans and policy reasons share one observation id; expose all
+        # recent entries rather than treating page turns or monthly menus as
+        # invisible mechanical work. The browser consumes JSON, not a slash
+        # delimited or ellipsized terminal string.
+        for item in (gap.get('decisions') or [])[:48]:
+            if not isinstance(item, dict):
+                continue
+            if not isinstance(item.get('id'), str) or not isinstance(item.get('actions'), list):
+                continue
+            lines.append("  余白判断: " + json.dumps(item, ensure_ascii=False,
+                                               separators=(',', ':')))
         active_order = gap.get('active_order')
         if isinstance(active_order, dict):
             purpose_labels = {'attack': '攻撃', 'retake': '奪還', 'move': '移動'}
