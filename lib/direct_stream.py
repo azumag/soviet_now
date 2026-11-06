@@ -1384,6 +1384,51 @@ def _run_ffmpeg_once(
         )
 
 
+# #3553: shared encoder-lock semantics belong to docich. During code
+# migration, always reacquire the legacy exclusive nonblocking flock locally
+# after any optional common-module call. This is the critical security fence:
+# a broken, missing, permissive or old shared module cannot start a second
+# encoder or switch to a different lock path.
+def _load_docich_encoder_lock():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_instance_lock.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_instance_lock", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        candidate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(candidate)
+        if (
+            getattr(candidate, "SINGLE_ENCODER_LOCK_CONTRACT_VERSION", None) == 1
+            and callable(getattr(candidate, "acquire_nonblocking_encoder_lock", None))
+        ):
+            return candidate.acquire_nonblocking_encoder_lock
+    except Exception:
+        # Standalone Soren/partial deployment retains the original flock.
+        pass
+    return None
+
+
+_docich_encoder_lock = _load_docich_encoder_lock()
+
+
+def _acquire_encoder_lock_with_local_guard(lock_stream) -> None:
+    """Use shared flock when safe, but ALWAYS establish our legacy lock."""
+    if _docich_encoder_lock is not None:
+        try:
+            _docich_encoder_lock(lock_stream.fileno())
+        except Exception:
+            # The local LOCK_NB call below still determines contention,
+            # preserving the original AlreadyRunningError mapping.
+            pass
+    # Mandatory until a single canonical lock-path/owner is accepted on VM.
+    fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+
 def _run_ffmpeg(
     config: DirectStreamConfig,
     *,
@@ -1412,7 +1457,7 @@ def _run_ffmpeg(
     lock_stream = lock_path.open("a+", encoding="utf-8")
     try:
         try:
-            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _acquire_encoder_lock_with_local_guard(lock_stream)
         except BlockingIOError as exc:
             raise AlreadyRunningError("direct stream is already running") from exc
 
