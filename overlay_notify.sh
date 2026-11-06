@@ -81,15 +81,32 @@ with lock_path.open("a") as lock:
 
 PY
 
-EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
-EVENT_OVERLAY_COMMENT_GEN_STATE="$COMMENT_GEN_STATE_FILE" \
-EVENT_OVERLAY_RADIO_STATE="$RADIO_STATE_FILE" \
-python3 "$ELOOP_LIB_DIR/generate_event_overlay.py" \
-	"$EVENT_OVERLAY_EVENTS_FILE" \
-	"$EVENT_OVERLAY_HTML_FILE" \
-	"$EVENT_OVERLAY_KEEP_EVENTS" \
-	"$EVENT_OVERLAY_VISIBLE_SEC" \
-	"$CODEX_WORK_OVERLAY_STATE_FILE"
+# Event presentation belongs to docich. Keep the standalone Soviet renderer
+# as a fallback until the live VM and its read-only overlay sources are verified.
+# The queue append above runs exactly once; fallback retries only HTML rendering.
+legacy_renderer="$ELOOP_LIB_DIR/generate_event_overlay.py"
+docich_renderer="${DOCICH_ROOT:-/home/ubuntu/docich}/src/docich/broadcast_event_overlay.py"
+
+render_event_overlay() {
+	EVENT_OVERLAY_STATE_BASE="$ELOOP_LIB_DIR" \
+	EVENT_OVERLAY_COMMENT_GEN_STATE="$COMMENT_GEN_STATE_FILE" \
+	EVENT_OVERLAY_RADIO_STATE="$RADIO_STATE_FILE" \
+	python3 "$1" \
+		"$EVENT_OVERLAY_EVENTS_FILE" \
+		"$EVENT_OVERLAY_HTML_FILE" \
+		"$EVENT_OVERLAY_KEEP_EVENTS" \
+		"$EVENT_OVERLAY_VISIBLE_SEC" \
+		"$CODEX_WORK_OVERLAY_STATE_FILE"
+}
+
+if [ -f "$docich_renderer" ]; then
+	if ! render_event_overlay "$docich_renderer"; then
+		echo "overlay_notify: docich renderer failed; falling back to legacy" >&2
+		render_event_overlay "$legacy_renderer"
+	fi
+else
+	render_event_overlay "$legacy_renderer"
+fi
 
 ./obs_control.sh stack "${OBS_DASHBOARD_SCENE:-soren}" >/dev/null 2>&1 || true
 

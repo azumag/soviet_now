@@ -88,6 +88,47 @@ class TestNativeOverlayLock(unittest.TestCase):
             self.assertEqual(events.read_bytes(), previous)
             self.assertEqual(len((root / "obs_calls.txt").read_text().splitlines()), 3)
 
+    def test_prefers_docich_renderer_and_does_not_duplicate_notifications(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prepare_root(root)
+            docich = root / "docich"
+            renderer = docich / "src/docich/broadcast_event_overlay.py"
+            renderer.parent.mkdir(parents=True)
+            renderer.write_text(
+                "import sys\n"
+                "from pathlib import Path\n"
+                "Path(sys.argv[2]).write_text('DOCICH-RENDERED', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            env = dict(native_env(root), DOCICH_ROOT=str(docich))
+            result = subprocess.run(native_command(root, "owned"), env=env,
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual((root / "tmp/state/event_overlay.html").read_text(),
+                             "DOCICH-RENDERED")
+            events = (root / "tmp/state/overlay_events.jsonl").read_text().splitlines()
+            self.assertEqual(len(events), 1)
+            self.assertEqual(json.loads(events[0])["title"], "owned")
+
+    def test_broken_docich_renderer_falls_back_after_single_queue_append(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prepare_root(root)
+            docich = root / "docich"
+            renderer = docich / "src/docich/broadcast_event_overlay.py"
+            renderer.parent.mkdir(parents=True)
+            renderer.write_text("import sys; sys.exit(17)\n", encoding="utf-8")
+            env = dict(native_env(root), DOCICH_ROOT=str(docich))
+            result = subprocess.run(native_command(root, "fallback"), env=env,
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertIn(b"falling back to legacy", result.stderr)
+            html = (root / "tmp/state/event_overlay.html").read_text(encoding="utf-8")
+            self.assertIn("fallback", html)
+            events = (root / "tmp/state/overlay_events.jsonl").read_text().splitlines()
+            self.assertEqual(len(events), 1)
+
     def test_native_waits_for_shared_lock_even_when_mtime_is_old(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
