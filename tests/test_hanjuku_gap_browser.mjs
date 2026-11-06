@@ -233,6 +233,19 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     await page.waitForTimeout(1200);
     assert.equal(await page.evaluate(()=>document.querySelector('#hanjuku-gap .hanjuku-gap-toast')?.dataset.probe||null),'kept');
     if(process.env.SOREN_OVERLAY_ARTIFACT_DIR){fs.mkdirSync(process.env.SOREN_OVERLAY_ARTIFACT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SOREN_OVERLAY_ARTIFACT_DIR,'hanjuku-gap.png')});}
+    // A row may disappear because its tracking receipt was discarded, not
+    // because the game proved that the general arrived, died or returned.
+    feedAt=now+5;
+    text=build(feedAt, [], [], '到着を未確認', 'J4');
+    await page.evaluate(stamp=>window.gapClock=stamp,feedAt);
+    await page.evaluate(payload=>window.__sorenBroadcastState=payload,state());
+    await page.waitForTimeout(1200);
+    result=await read();
+    assert.ok(result.toasts.some(t=>t.includes('追跡記録が消失')),
+      'lost chart receipts must be reported as unconfirmed: '+result.toasts.join('|'));
+    assert.ok(!result.toasts.some(t=>t.includes('の行軍が終了')),
+      'disappearance alone must never announce an observed march end');
+
     // A stage ID (or the inferred sortie pending category) alone never
     // claims that an order was actually issued.
     const setPlanState=async (stamp, phase, step='J7')=>{

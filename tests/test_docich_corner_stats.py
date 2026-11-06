@@ -472,12 +472,12 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual((gap['moves'][0]['source'], gap['moves'][0]['target']),
                          ('カルーン', 'ジュメルズ'))
         self.assertEqual(gap['moves'][0]['status'], 'en_route')
-        self.assertEqual(gap['moves'][1]['status'], 'overdue')
+        self.assertEqual(gap['moves'][1]['status'], 'tracking_unknown')
         self.assertEqual((gap['moves'][1]['source'], gap['moves'][1]['target']),
                          ('アルマムーン', 'ジュメルズ'))
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
         self.assertIn('余白出撃: パプリカ / カルーン→ジュメルズ / 行軍中', text)
-        self.assertIn('余白出撃: キッシュ / アルマムーン→ジュメルズ / 交戦中', text)
+        self.assertIn('余白出撃: キッシュ / アルマムーン→ジュメルズ / 到着未確認（追跡期限超過）', text)
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
         self.assertIn('余白交戦兵数:',text)
@@ -1167,7 +1167,7 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIsNone(result['generals'])
         self.assertIn('将軍数: 不明', '\n'.join(sd.render_hanjuku_status(result)))
 
-    def test_gap_moves_use_the_planned_target_and_skip_stale_or_settled_sorties(self):
+    def test_gap_moves_keep_stale_as_unconfirmed_and_skip_settled_sorties(self):
         import time
         now = time.time()
         _write_json(self.runtime / 'presentation.json', dict(
@@ -1186,12 +1186,13 @@ class HanjukuStatusTest(unittest.TestCase):
                      launched_orders={'A': {'source': 'アルマムーン', 'target': 'ナキューメラ',
                                             'purpose': 'attack'}})
         moves = self.snapshot()['hanjuku']['gap']['moves']
-        self.assertEqual([m['general'] for m in moves], ['どうし', '不明先'])
+        self.assertEqual([m['general'] for m in moves], ['どうし', '古い', '不明先'])
+        self.assertEqual(moves[1]['status'], 'tracking_unknown')
         self.assertEqual((moves[0]['source'], moves[0]['target']), ('アルマムーン', 'ナキューメラ'))
         self.assertEqual((moves[0]['status'], moves[0]['purpose']), ('launched_unconfirmed', 'attack'))
         # No source/target at all is not a route the chart can draw.
-        self.assertEqual(moves[1]['source'], 'カ')
-        self.assertEqual(moves[1]['target'], '')
+        self.assertEqual(moves[2]['source'], 'カ')
+        self.assertEqual(moves[2]['target'], '')
 
     def _ready_gap(self):
         _write_json(self.runtime / 'presentation.json', dict(
@@ -1227,7 +1228,9 @@ class HanjukuStatusTest(unittest.TestCase):
                                                  'source': 'カルーン', 'status': 'en_route',
                                                  'target': None, 'tick': 4000}})
         result = self.snapshot()['hanjuku']
-        self.assertEqual(result['gap']['moves'], [])
+        self.assertEqual([(m['general'], m['target'], m['status'])
+                          for m in result['gap']['moves']],
+                         [('古い', 'あたしの家', 'tracking_unknown')])
         self.assertIsNone(result['active_order'])
 
     def test_non_house_sortie_without_a_target_stays_unconfirmed(self):
