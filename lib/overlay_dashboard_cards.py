@@ -412,3 +412,66 @@ def dashboard_css() -> str:
 .source-pre { display:none !important; }
 .fallback-pre { margin:0; white-space:pre-wrap; color:#dbeafe; font:13px/1.32 "SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
 """
+
+# Migration #3553: docich owns the shared renderer. Keep the local functions as
+# the last-known-good standalone Soviet-game fallback until live acceptance.
+# Public symbols (including _root_disk_metric) remain available to old callers.
+import importlib.util as _importlib_util
+
+_local_render_game_dashboard = render_game_dashboard
+_local_render_ops_dashboard = render_ops_dashboard
+_local_dashboard_css = dashboard_css
+
+
+def _load_docich_dashboard_cards():
+    root = Path(os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich")
+    candidate = root / "src" / "docich" / "broadcast_dashboard_cards.py"
+    if not candidate.is_file():
+        return None
+    try:
+        spec = _importlib_util.spec_from_file_location("_docich_dashboard_cards", candidate)
+        if spec is None or spec.loader is None:
+            return None
+        module = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "DASHBOARD_CARDS_CONTRACT_VERSION", None) == 1
+            and all(callable(getattr(module, fn, None)) for fn in (
+                "render_game_dashboard", "render_ops_dashboard", "dashboard_css"
+            ))
+        ):
+            return module
+    except (Exception, SystemExit):
+        # A missing/broken version must not stop the game or the stream.
+        return None
+    return None
+
+
+_docich_dashboard_cards = _load_docich_dashboard_cards()
+
+
+def _dashboard_call_or_fallback(name, fallback, *args):
+    if _docich_dashboard_cards is not None:
+        try:
+            result = getattr(_docich_dashboard_cards, name)(*args)
+            if isinstance(result, str):
+                return result
+        except (Exception, SystemExit):
+            pass
+    return fallback(*args)
+
+
+def render_game_dashboard(raw: str) -> str:
+    return _dashboard_call_or_fallback(
+        "render_game_dashboard", _local_render_game_dashboard, raw
+    )
+
+
+def render_ops_dashboard(raw: str) -> str:
+    return _dashboard_call_or_fallback(
+        "render_ops_dashboard", _local_render_ops_dashboard, raw
+    )
+
+
+def dashboard_css() -> str:
+    return _dashboard_call_or_fallback("dashboard_css", _local_dashboard_css)
