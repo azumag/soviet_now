@@ -19,6 +19,7 @@ on:
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_hanjuku_gap_full_visibility.py'
       - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
@@ -51,6 +52,7 @@ on:
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
       - 'tests/test_soren_monitor_browser.mjs'
       - 'tests/test_hanjuku_gap_browser.mjs'
+      - 'tests/test_hanjuku_gap_full_visibility.py'
       - 'tests/test_game_gap_webgl_browser.mjs'
       - 'lib/twica_overlay_proxy.mjs'
       - 'lib/twica_legacy_owner.mjs'
@@ -102,8 +104,10 @@ jobs:
           tests/test_twica_overlay_layout.mjs
           tests/test_twica_overlay_proxy.mjs
           tests/test_twica_legacy_owner.mjs
-      - name: Run direct stream status metrics regressions
-        run: python3 -m unittest tests.test_direct_stream
+      - name: Run direct stream and Hanjuku gap visibility regressions
+        run: |
+          python3 -m unittest tests.test_direct_stream
+          python3 -m unittest discover -s tests -p test_hanjuku_gap_full_visibility.py
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
       - name: Install isolated Chromium for overlay geometry regression

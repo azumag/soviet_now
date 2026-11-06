@@ -61,8 +61,11 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     await page.waitForFunction(()=>document.getElementById('hanjuku-gap').style.display==='block');
     const read=()=>page.evaluate(()=>{
       const gap=document.getElementById('hanjuku-gap'),r=gap.getBoundingClientRect();
+      const contents=gap.querySelector('.hanjuku-gap-content')?.getBoundingClientRect();
       return {box:[r.x,r.y,r.width,r.height],text:gap.textContent,
-        overflow:gap.scrollHeight>gap.clientHeight||gap.scrollWidth>gap.clientWidth,
+        // The whole column is transformed to fit, but layout scrollHeight
+        // stays unscaled; assert visible pixel bounds rather than scrollHeight.
+        overflow:!contents||contents.bottom>r.bottom+1||contents.right>r.right+1,
         moves:[...gap.querySelectorAll('.hanjuku-gap-move')].map(e=>e.textContent),
         toasts:[...gap.querySelectorAll('.hanjuku-gap-toast')].map(e=>e.textContent),
         sidebar:document.getElementById('feed-g').textContent};
@@ -91,30 +94,37 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // The right status card keeps the live status.
     assert.match(result.sidebar,/兵力/);
     assert.match(result.sidebar,/将軍数/);
-    // A long live 速報 entry is not ellipsized by the parser or the CSS.
-    // Its text wraps, and a height-constrained strip can scroll to its end.
-    const longDetail='長い進行状況もすべて表示する'.repeat(12);
+    // Full 速報・進行 text remains legible without an inner scrollbar or
+    // ellipsis; very long history is fitted to the fixed 540px surface.
+    const longDetail='長い進行状況もすべて表示する'.repeat(30);
     const longLine='余白進行: battle / 戦闘・切り札 / menu / '+longDetail;
     text=build(now).replace('余白進行: battle / 戦闘・切り札 / menu / クースカン',longLine);
     await page.evaluate(payload=>window.__sorenBroadcastState=payload,
       {...state(),feeds:{showStatusG:{text,updatedAt:feedAt,lineCount:30}}});
     await page.waitForTimeout(1100);
     const wrapped=await page.evaluate(()=>{
-      const item=document.querySelector('.hanjuku-gap-progress-item');
+      const gap=document.getElementById('hanjuku-gap');
+      const column=gap.querySelector('.hanjuku-gap-content');
+      const item=column.querySelector('.hanjuku-gap-progress-item');
       const progress=item.closest('.hanjuku-gap-progress');
       const style=getComputedStyle(item);
-      progress.scrollTop=progress.scrollHeight;
+      const bounds=gap.getBoundingClientRect();
+      const fitted=column.getBoundingClientRect();
       return {text:item.textContent, overflowStyle:getComputedStyle(progress).overflowY,
         whiteSpace:style.whiteSpace, textOverflow:style.textOverflow,
-        lineCount:item.getBoundingClientRect().height/parseFloat(style.lineHeight),
-        scrollTop:progress.scrollTop};
+        lineCount:item.scrollHeight/parseFloat(style.lineHeight),
+        scale:new DOMMatrixReadOnly(getComputedStyle(column).transform).a,
+        nestedScroll:progress.scrollHeight>progress.clientHeight,
+        clipped:fitted.bottom>bounds.bottom+1||fitted.right>bounds.right+1};
     });
     assert.ok(wrapped.text.includes(longDetail),'long flow detail must survive parsing');
     assert.notEqual(wrapped.textOverflow,'ellipsis','news entry must never show dots');
     assert.notEqual(wrapped.whiteSpace,'nowrap','long news entry must wrap');
     assert.ok(wrapped.lineCount>1,'long news entry must occupy multiple lines');
-    assert.equal(wrapped.overflowStyle,'auto','overflowing text must stay accessible');
-    assert.ok(wrapped.scrollTop>0,'the full entry must remain scrollable');
+    assert.notEqual(wrapped.overflowStyle,'auto','no inner scrollbar is allowed');
+    assert.equal(wrapped.nestedScroll,false,'the progress block must expand to its full height');
+    assert.ok(wrapped.scale<1,'long news content must be scaled to fit');
+    assert.equal(wrapped.clipped,false,'the scaled content must fit the measured gap');
     // Every observation id must enter the scrolling news history, including
     // the month decision, page-down inputs and battle rationale. Repeated polls
     // must not duplicate entries, and long explanations must never ellipsize.
@@ -140,6 +150,17 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.ok(audit.some(d=>d.text.includes(longReason)));
     assert.ok(audit.some(d=>d.text.includes('個別の判断理由は記録されていません')));
     assert.ok(audit.every(d=>d.whiteSpace!=='nowrap' && d.textOverflow!=='ellipsis'));
+    const decisionFit=await page.evaluate(()=>{
+      const gap=document.getElementById('hanjuku-gap');
+      const col=gap.querySelector('.hanjuku-gap-content');
+      const news=gap.querySelector('.hanjuku-gap-decisions');
+      const box=gap.getBoundingClientRect(), fitted=col.getBoundingClientRect();
+      return {scroll:getComputedStyle(news).overflowY, clipped:fitted.bottom>box.bottom+1
+        || fitted.right>box.right+1, retained:news.querySelectorAll('.hanjuku-gap-decision').length};
+    });
+    assert.notEqual(decisionFit.scroll,'auto','decision log cannot depend on scrolling');
+    assert.equal(decisionFit.clipped,false,'decision history and route chart fit together');
+    assert.equal(decisionFit.retained,decisions.length,'no visible decision is discarded');
     await page.waitForTimeout(1100);
     assert.equal(await page.locator('.hanjuku-gap-decision').count(),4,
       'polling the same feed must not duplicate decisions');

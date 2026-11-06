@@ -1036,21 +1036,16 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 #hanjuku-gap .hanjuku-group { font-size: 18px; line-height: 1.4; margin-bottom: 8px;
   overflow-wrap: anywhere; white-space: normal; }
 #hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
-/* Left gap: 速報 toasts + the current sortie chart (who goes where). */
-.hanjuku-gap-decisions { max-height: 156px; overflow-x: hidden; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
+/* Hanjuku gap: every retained decision, notification and stage is laid out
+   together, then the full column is fitted to the fixed broadcast viewport. */
+.hanjuku-gap-content { width: 100%; transform-origin: top left; }
+.hanjuku-gap-decisions { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
   padding: 4px; border-left: 3px solid #f0b84d; background: #101f2d; border-radius: 4px; }
 .hanjuku-gap-decisions:empty { display: none; }
-/* Reserve a bounded chart viewport when the news journal is present: the
-   complete chart stays scrollable instead of making the 540px game gap overflow. */
-#hanjuku-gap:has(.hanjuku-gap-decision) .hanjuku-gap-flow {
-  max-height: 148px; min-height: 0; overflow-x: hidden; overflow-y: auto;
-}
 .hanjuku-gap-decision { flex: 0 0 auto; padding: 5px 6px; background: #091925;
   font-size: 11px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
   border-left: 2px solid #f0b84d; color: #e6f2f8; }
-.hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 88px;
-  overflow-x: hidden; overflow-y: auto; margin-bottom: 8px; }
+.hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
 .hanjuku-gap-toast { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; padding: 6px 9px;
   border-left: 3px solid #4b6b80; border-radius: 4px; background: #081b26;
   color: #e6f2f8; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere;
@@ -1069,11 +1064,10 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-toast.tone-general { border-color: #7ee0c4; }
 .hanjuku-gap-toast.tone-plan { border-color: #75daec; font-size: 12px; line-height: 1.2; padding: 4px 6px; }
 .hanjuku-gap-toast.tone-plan .hanjuku-gap-toast-age { display: none; }
-.hanjuku-gap-toasts.has-plan { max-height: 76px; }
-.hanjuku-gap-toasts.with-progress { max-height: 72px; }
+.hanjuku-gap-toasts.has-plan, .hanjuku-gap-toasts.with-progress { min-height: 0; }
 .hanjuku-gap-toast.tone-flow { border-color: #a8bdf9; font-size: 12px; padding: 4px 6px; }
 .hanjuku-gap-progress { margin-bottom: 6px; border-left: 3px solid #a8bdf9; background: #0b2232;
-  padding: 4px 6px; border-radius: 4px; max-height: 72px; overflow-x: hidden; overflow-y: auto; }
+  padding: 4px 6px; border-radius: 4px; overflow-wrap: anywhere; }
 .hanjuku-gap-progress:empty { display: none; }
 .hanjuku-gap-progress-head { color: #a8bdf9; font-size: 11px; font-weight: 700; }
 .hanjuku-gap-progress-item { color: #d8e5f5; font-size: 12px; line-height: 16px;
@@ -1108,13 +1102,11 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-move-why { margin-top: 4px; color: #9fb4c4; font-size: 12px; line-height: 1.35;
   overflow-wrap: anywhere; }
 .hanjuku-gap-battle-line { color: #e8c56a; font-size: 12px; line-height: 1.3;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* A three-sortie chart plus live plan toasts must remain inside the fixed
-   540px padding region: keep route arrows vertical, but tighten each row. */
+  white-space: normal; overflow-wrap: anywhere; }
+/* Reduce whitespace in dense mode, without clipping individual blocks. */
 #hanjuku-gap.dense { padding: 8px; }
-#hanjuku-gap.dense .hanjuku-gap-toasts { gap: 3px; margin-bottom: 4px; max-height: 82px; }
-#hanjuku-gap.dense .hanjuku-gap-toasts.with-progress { max-height: 58px; }
-#hanjuku-gap.dense .hanjuku-gap-progress { margin-bottom: 3px; max-height: 58px; }
+#hanjuku-gap.dense .hanjuku-gap-toasts { gap: 3px; margin-bottom: 4px; }
+#hanjuku-gap.dense .hanjuku-gap-progress { margin-bottom: 3px; }
 #hanjuku-gap.dense .hanjuku-gap-progress-item { font-size: 11px; line-height: 14px; }
 #hanjuku-gap.dense .hanjuku-gap-flow { gap: 3px; }
 #hanjuku-gap.dense .hanjuku-gap-flow-head { font-size: 13px; }
@@ -2114,7 +2106,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     container.replaceChildren(card);
   }
   const gapLive = {last: null, toasts: [], seq: 0, decisionIds: [], decisionSeen: new Set()};
-  const gapDom = {toastBox:null, progress:null, decisionBox:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
+  const gapDom = {content:null, toastBox:null, progress:null, decisionBox:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
   function gapResetLive() {
     gapLive.last = null;
     gapLive.toasts = [];
@@ -2252,13 +2244,30 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   }
   function gapBuildSkeleton(surface) {
     surface.replaceChildren();
+    gapDom.content = document.createElement('div');
+    gapDom.content.className = 'hanjuku-gap-content';
     gapDom.progress = document.createElement('div'); gapDom.progress.className = 'hanjuku-gap-progress';
     gapDom.decisionBox = document.createElement('div'); gapDom.decisionBox.className = 'hanjuku-gap-decisions';
     gapDom.toastBox = document.createElement('div'); gapDom.toastBox.className = 'hanjuku-gap-toasts';
     gapDom.flow = document.createElement('div'); gapDom.flow.className = 'hanjuku-gap-flow';
-    surface.append(gapDom.progress, gapDom.decisionBox, gapDom.toastBox, gapDom.flow);
+    gapDom.content.append(gapDom.progress, gapDom.decisionBox, gapDom.toastBox, gapDom.flow);
+    surface.appendChild(gapDom.content);
     gapDom.toasts.clear(); gapLive.decisionSeen.clear(); gapLive.decisionIds = [];
     gapDom.flowSig = null; gapDom.progressSig = null; gapDom.idle = null;
+  }
+  function fitHanjukuGap(surface) {
+    const content = gapDom.content;
+    if (!content || !surface.contains(content)) return;
+    // CSS transforms preserve intrinsic scrollHeight, so the next poll always
+    // measures the complete unscaled history rather than a previous fit.
+    const css = getComputedStyle(surface);
+    const spaceY = Math.max(1, surface.clientHeight
+      - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom) - 2);
+    const spaceX = Math.max(1, surface.clientWidth
+      - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight) - 2);
+    const scale = Math.min(1, spaceY / Math.max(1, content.scrollHeight),
+      spaceX / Math.max(1, content.scrollWidth));
+    content.style.transform = scale < 1 ? `scale(${scale})` : '';
   }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
@@ -2378,7 +2387,9 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // also restarted its layout. Rebuild only when its inputs change.
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
                                 plan:value.plan, pending:value.pending, planInfo, battleLine, planToastVisible});
-    if (sig === gapDom.flowSig) return;
+    // Even when the chart is unchanged, new decisions, stages and toast expiry
+    // change the column height and must trigger a fresh whole-column fit.
+    if (sig === gapDom.flowSig) { fitHanjukuGap(surface); return; }
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
     flow.replaceChildren();
@@ -2432,6 +2443,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         flow.appendChild(row);
       }
     }
+    fitHanjukuGap(surface);
   }
   function setPanelState(element, label, tone) {
     if (!element) return;
