@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import importlib.util
 import json
 import os
 from dataclasses import asdict, dataclass
@@ -414,7 +415,7 @@ def _resolve_repo_path(raw: str, default: str) -> Path:
     return path if path.is_absolute() else REPO_ROOT / path
 
 
-def _validate_loopback_rtmp_url(raw: str) -> str:
+def _local_validate_loopback_rtmp_url(raw: str) -> str:
     try:
         parsed = urlsplit(raw)
     except ValueError as exc:
@@ -430,6 +431,51 @@ def _validate_loopback_rtmp_url(raw: str) -> str:
     if parsed.query or parsed.fragment:
         raise ConfigError("SOREN_DIRECT_STREAM_LOCAL_URL must not include query or fragment data")
     return raw
+
+
+
+# #3553: docich owns the common loopback-only RTMP output policy.
+# The last-known-good Soren validator is ALWAYS run first, including when
+# the shared module is deployed. This prevents a broken/partial handoff from
+# weakening the no-external-publish/no-stream-key-in-argv guarantee.
+def _load_docich_loopback_output_guard():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_output_guard.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_output_guard", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "LOOPBACK_RTMP_OUTPUT_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "validate_loopback_rtmp_url", None))
+        ):
+            return module.validate_loopback_rtmp_url
+    except Exception:
+        # Standalone or incomplete docich installations never block the game.
+        pass
+    return None
+
+
+_docich_loopback_output_guard = _load_docich_loopback_output_guard()
+
+
+def _validate_loopback_rtmp_url(raw: str) -> str:
+    # Do not delegate invalid input: preserve the established ConfigError and
+    # exact validation order even if docich is corrupt, stale or permissive.
+    local = _local_validate_loopback_rtmp_url(raw)
+    if _docich_loopback_output_guard is not None:
+        try:
+            shared = _docich_loopback_output_guard(raw)
+            if isinstance(shared, str) and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
 
 
 def _validate_caption_socket_path(raw: str) -> Path:
