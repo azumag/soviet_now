@@ -31,6 +31,7 @@ on:
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
+      - 'tests/test_direct_overlay_visibility_delegate.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_twica_legacy_owner.mjs'
@@ -67,6 +68,7 @@ on:
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
+      - 'tests/test_direct_overlay_visibility_delegate.mjs'
       - 'tests/test_twica_overlay_layout.mjs'
       - 'tests/test_twica_overlay_proxy.mjs'
       - 'tests/test_twica_legacy_owner.mjs'
@@ -108,6 +110,7 @@ jobs:
           tests/test_direct_overlay.mjs
           tests/test_direct_overlay_stage_delegate.mjs
           tests/test_direct_overlay_installer_delegate.mjs
+          tests/test_direct_overlay_visibility_delegate.mjs
           tests/test_direct_broadcast_overlay.mjs
           tests/test_overlay_monitor_animation_throttle.mjs
           tests/test_twica_overlay_layout.mjs
@@ -131,8 +134,14 @@ jobs:
           SOREN_OVERLAY_XVFB_TESTS: '1'
           SOREN_OVERLAY_ARTIFACT_DIR: ${{ runner.temp }}/overlay-v2-screens
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg openbox
+          # Hosted runners may route via a throttled Azure apt mirror. Prefer
+          # the canonical Ubuntu mirror for the large FFmpeg codec packages;
+          # preserve real X11/FFmpeg validation rather than skipping the test.
+          if test -f /etc/apt/apt-mirrors.txt; then
+            sudo sed -i 's#azure.archive.ubuntu.com#archive.ubuntu.com#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends xvfb ffmpeg openbox
           xvfb-run -a -s '-screen 0 1280x720x24' bash <<'SH'
           set -e
           openbox --sm-disable >/dev/null 2>&1 &
