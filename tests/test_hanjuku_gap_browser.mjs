@@ -245,19 +245,18 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
       await page.waitForTimeout(1200);
       return read();
     };
+    // Owner 2026-11-06: the sortie intent is shown once in the 出撃意図 line;
+    // the chart must not repeat it in any state (planned, mismatch, issued).
     result=await setPlanState(now+100,'missing');
-    assert.ok(result.text.includes('計画確認中：J7'), result.text.slice(0,500));
-    assert.ok(result.text.includes('行動内容未取得'),result.text.slice(0,500));
-    assert.ok(!result.text.includes('具体的な操作は未確認'));
+    assert.ok(!result.text.includes('計画確認中'), result.text.slice(0,500));
+    assert.ok(!result.text.includes('行動内容未取得'),result.text.slice(0,500));
     assert.ok(!result.text.includes('処理中 出撃'));
     result=await setPlanState(now+102,'mismatch');
-    assert.ok(result.text.includes('計画確認中 J7') || result.text.includes('計画確認中：J7'),
-      'J70 must not be interpreted as J7');
+    assert.ok(!result.text.includes('計画確認中'), 'the chart must not mirror the intent');
     result=await setPlanState(now+104,'launched');
-    assert.ok(result.text.includes('出撃命令済み J7') || result.text.includes('出撃命令済み：J7'));
+    assert.ok(!result.text.includes('出撃命令済み'), 'the intent stays in the 出撃意図 line');
     result=await setPlanState(now+106,'launched_unconfirmed');
-    assert.ok(result.text.includes('出撃命令済み（成立未確認） J7')
-      || result.text.includes('出撃命令済み（成立未確認）：J7'));
+    assert.ok(!result.text.includes('出撃命令済み'));
     // Exact deadline, even if the status feed mtime does not change.
     await page.evaluate(()=>window.gapClock+=31);
     await page.waitForTimeout(1100);
