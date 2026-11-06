@@ -145,8 +145,22 @@ obs)
 	WORKER_CMDS+=("./obs_capture_watchdog.sh")
 	;;
 ffmpeg)
-	WORKER_NAMES+=("direct_stream" "stream_noon_audit")
-	WORKER_CMDS+=("./direct_stream.sh run" "./workers/stream_noon_audit.sh")
+	# ADR 0007 (docich): exactly one side owns the encoder. The default keeps
+	# this supervisor as the owner; "docich" leaves it to docich-stream.service.
+	# The comparison is exact (no trimming) so both sides reject padded values.
+	case "${DOCICH_STREAM_OWNER:-soren}" in
+	soren)
+		WORKER_NAMES+=("direct_stream")
+		WORKER_CMDS+=("./direct_stream.sh run")
+		;;
+	docich) ;;
+	*)
+		echo "DOCICH_STREAM_OWNER must be soren or docich" >&2
+		exit 2
+		;;
+	esac
+	WORKER_NAMES+=("stream_noon_audit")
+	WORKER_CMDS+=("./workers/stream_noon_audit.sh")
 	case "${YOUTUBE_BROADCAST_GUARD_ENABLED:-0}" in
 	0) ;;
 	1)
