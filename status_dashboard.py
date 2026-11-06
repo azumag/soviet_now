@@ -3536,7 +3536,8 @@ def render_hanjuku_status(value):
             source = text(move.get('source'), '', 24)
             target = text(move.get('target'), '', 24)
             status = {'en_route': '行軍中', 'launched_unconfirmed': '成立未確認',
-                      'overdue': '交戦中'}.get(move.get('status'), '')
+                      'overdue': '到着未確認',
+                      'tracking_unknown': '到着未確認（追跡期限超過）'}.get(move.get('status'), '')
             step = text(move.get('step'), '', 24)
             parts = [general, (source or '未確認') + '→' + (target or '未確認')]
             if status:
