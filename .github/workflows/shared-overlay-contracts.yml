@@ -21,6 +21,7 @@ on:
       - 'tests/test_direct_stream_supervision_policy_delegate.py'
       - 'tests/test_direct_stream_state_files_delegate.py'
       - 'tests/test_direct_stream_monitor_policy_delegate.py'
+      - 'tests/test_direct_stream_config_delegate.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
@@ -68,6 +69,7 @@ on:
       - 'tests/test_direct_stream_supervision_policy_delegate.py'
       - 'tests/test_direct_stream_state_files_delegate.py'
       - 'tests/test_direct_stream_monitor_policy_delegate.py'
+      - 'tests/test_direct_stream_config_delegate.py'
       - 'tests/test_direct_broadcast_overlay.mjs'
       - 'tests/test_overlay_monitor_animation_throttle.mjs'
       - 'tests/test_direct_broadcast_overlay_browser.mjs'
@@ -149,6 +151,7 @@ jobs:
           python3 -m unittest tests.test_direct_stream_supervision_policy_delegate
           python3 -m unittest tests.test_direct_stream_state_files_delegate
           python3 -m unittest tests.test_direct_stream_monitor_policy_delegate
+          python3 -m unittest tests.test_direct_stream_config_delegate
           python3 -m unittest discover -s tests -p test_hanjuku_gap_full_visibility.py
       - name: Run shared overlay service lifecycle regression
         run: bash tests/test_shared_overlay_service.sh
