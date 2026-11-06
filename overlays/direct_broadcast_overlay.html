@@ -1037,7 +1037,14 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
   overflow-wrap: anywhere; white-space: normal; }
 #hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
 /* Left gap: 速報 toasts + the current sortie chart (who goes where). */
-.hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 168px;
+.hanjuku-gap-decisions { max-height: 156px; overflow-x: hidden; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;
+  padding: 4px; border-left: 3px solid #f0b84d; background: #101f2d; border-radius: 4px; }
+.hanjuku-gap-decisions:empty { display: none; }
+.hanjuku-gap-decision { flex: 0 0 auto; padding: 5px 6px; background: #091925;
+  font-size: 11px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
+  border-left: 2px solid #f0b84d; color: #e6f2f8; }
+.hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 88px;
   overflow-x: hidden; overflow-y: auto; margin-bottom: 8px; }
 .hanjuku-gap-toast { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; padding: 6px 9px;
   border-left: 3px solid #4b6b80; border-radius: 4px; background: #081b26;
@@ -1057,8 +1064,8 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-toast.tone-general { border-color: #7ee0c4; }
 .hanjuku-gap-toast.tone-plan { border-color: #75daec; font-size: 12px; line-height: 1.2; padding: 4px 6px; }
 .hanjuku-gap-toast.tone-plan .hanjuku-gap-toast-age { display: none; }
-.hanjuku-gap-toasts.has-plan { max-height: 112px; }
-.hanjuku-gap-toasts.with-progress { max-height: 104px; }
+.hanjuku-gap-toasts.has-plan { max-height: 76px; }
+.hanjuku-gap-toasts.with-progress { max-height: 72px; }
 .hanjuku-gap-toast.tone-flow { border-color: #a8bdf9; font-size: 12px; padding: 4px 6px; }
 .hanjuku-gap-progress { margin-bottom: 6px; border-left: 3px solid #a8bdf9; background: #0b2232;
   padding: 4px 6px; border-radius: 4px; max-height: 72px; overflow-x: hidden; overflow-y: auto; }
@@ -1932,6 +1939,15 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       return {key, title:title.slice(0, 24), stage:stage.slice(0, 512),
         detail:detail.join(' / ').slice(0, 512)};
     }).filter(Boolean).slice(0, 6);
+    const gapDecisions = lines.filter(line => line.startsWith('余白判断: ')).map(line => {
+      try {
+        const row = JSON.parse(line.slice('余白判断: '.length));
+        if (!row || typeof row.id !== 'string' || row.id.length > 128
+            || !Array.isArray(row.actions) || !Array.isArray(row.reasons)
+            || !Number.isFinite(row.at)) return null;
+        return row;
+      } catch { return null; }
+    }).filter(Boolean).slice(-48);
     const gapMoves = lines.filter(line => line.startsWith('余白出撃: ')).map(line => {
       const parts = line.slice('余白出撃: '.length).split(' / ');
       const route = String(parts[1] || '').split('→');
@@ -1946,7 +1962,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     }).filter(m => m.general && (m.source || m.target)).slice(0, 8);
     const gap = fresh && gapGeometryOk && now <= gapUntil && gapUntil-now <= 30
       ? {left:gapLeft, width:gapWidth, side:gapSide,
-         moves:gapMoves, flows:gapFlows,
+         moves:gapMoves, flows:gapFlows, decisions:gapDecisions,
          captured:pick(/^余白占領記録: (.{1,1200})$/)?.[1] || null,
          garrison:timedRows('余白駐留: '),
          marching:lines.filter(s=>s.startsWith('余白行軍: ')).map(s=>s.slice(6)),
@@ -2092,11 +2108,14 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     if (!value.fresh) card.appendChild(node('hanjuku-note', '観測が古いため数値は非表示'));
     container.replaceChildren(card);
   }
-  const gapLive = {last: null, toasts: [], seq: 0};
-  const gapDom = {toastBox:null, progress:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
+  const gapLive = {last: null, toasts: [], seq: 0, decisionIds: [], decisionSeen: new Set()};
+  const gapDom = {toastBox:null, progress:null, decisionBox:null, flow:null, toasts:new Map(), flowSig:null, progressSig:null, idle:null};
   function gapResetLive() {
     gapLive.last = null;
     gapLive.toasts = [];
+    gapLive.decisionIds = [];
+    gapLive.decisionSeen.clear();
+    if (gapDom.decisionBox) gapDom.decisionBox.replaceChildren();
     if (gapDom.toastBox) gapDom.toastBox.replaceChildren();
     if (gapDom.progress) gapDom.progress.replaceChildren();
     if (gapDom.flow) gapDom.flow.replaceChildren();
@@ -2229,10 +2248,12 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   function gapBuildSkeleton(surface) {
     surface.replaceChildren();
     gapDom.progress = document.createElement('div'); gapDom.progress.className = 'hanjuku-gap-progress';
+    gapDom.decisionBox = document.createElement('div'); gapDom.decisionBox.className = 'hanjuku-gap-decisions';
     gapDom.toastBox = document.createElement('div'); gapDom.toastBox.className = 'hanjuku-gap-toasts';
     gapDom.flow = document.createElement('div'); gapDom.flow.className = 'hanjuku-gap-flow';
-    surface.append(gapDom.progress, gapDom.toastBox, gapDom.flow);
-    gapDom.toasts.clear(); gapDom.flowSig = null; gapDom.progressSig = null; gapDom.idle = null;
+    surface.append(gapDom.progress, gapDom.decisionBox, gapDom.toastBox, gapDom.flow);
+    gapDom.toasts.clear(); gapLive.decisionSeen.clear(); gapLive.decisionIds = [];
+    gapDom.flowSig = null; gapDom.progressSig = null; gapDom.idle = null;
   }
   function renderHanjukuGap(value) {
     const surface = document.getElementById('hanjuku-gap');
@@ -2280,6 +2301,32 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
           item.title = item.textContent;
           gapDom.progress.appendChild(item);
         }
+      }
+    }
+    // The action journal is a chronological stream, not a diff of the latest
+    // phase. Keep every new observation id, including month commands, tactical
+    // decisions, no-input holds and page/scroll button presses. Old history is
+    // scrollable; do not ellipsize individual explanations.
+    for (const row of gap.decisions || []) {
+      if (gapLive.decisionSeen.has(row.id)) continue;
+      gapLive.decisionSeen.add(row.id);
+      gapLive.decisionIds.push(row.id);
+      const labels = {a:'A', b:'B', x:'X', y:'Y', up:'↑', down:'↓',
+        left:'←', right:'→', select:'SELECT', start:'START', l:'L', r:'R'};
+      const actions = row.actions.map(a => String(a).split('+')
+        .map(button => labels[button] || button).join('+')).join(' → ');
+      const reasons = row.reasons.length ? row.reasons.join('\n')
+        : '個別の判断理由は記録されていません';
+      const item = document.createElement('div');
+      item.className = 'hanjuku-gap-decision';
+      item.textContent = `[${row.screen}] ${actions ? '操作予定 '+actions : '操作保留'}\n${reasons}`;
+      item.title = item.textContent;
+      gapDom.decisionBox.prepend(item);
+      // Retain the latest 300 visible decisions without unbounded DOM growth.
+      while (gapLive.decisionIds.length > 300) {
+        const id = gapLive.decisionIds.shift();
+        gapLive.decisionSeen.delete(id);
+        gapDom.decisionBox.lastElementChild?.remove();
       }
     }
     gapDom.toastBox.classList.toggle('with-progress', activeFlows.length > 0);
