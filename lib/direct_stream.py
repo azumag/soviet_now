@@ -562,7 +562,7 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
     )
 
 
-def build_ffmpeg_command(
+def _local_build_ffmpeg_command(
     config: DirectStreamConfig,
     *,
     mode: str,
@@ -673,6 +673,87 @@ def build_ffmpeg_command(
     else:
         command.extend(["-y", "-f", "matroska", str(output_path)])
     return command
+
+
+# #3553: docich owns the pure FFmpeg argv/progress/exit logic. The last-known-
+# good local implementations above ALWAYS run first (including their
+# ConfigError validation); a deployed docich result is adopted only when it is
+# identical, so a stale/corrupt/permissive shared module can never change the
+# argv that reaches the live encoder (no external publish URL, no stream key).
+def _load_docich_encoder_command():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_encoder_command.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_encoder_command", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "STREAM_ENCODER_COMMAND_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "build_direct_stream_ffmpeg_command", None))
+            and callable(getattr(module, "parse_progress_lines", None))
+            and callable(getattr(module, "classify_ffmpeg_exit", None))
+        ):
+            return module
+    except Exception:
+        # Standalone or incomplete docich installations never block the game.
+        pass
+    return None
+
+
+_docich_encoder_command = _load_docich_encoder_command()
+
+
+def build_ffmpeg_command(
+    config: DirectStreamConfig,
+    *,
+    mode: str,
+    output_path: Path | None = None,
+    duration_sec: int | None = None,
+    captions_active: bool | None = None,
+) -> list[str]:
+    # Do not delegate invalid input: the local builder raises ConfigError first.
+    local = _local_build_ffmpeg_command(
+        config,
+        mode=mode,
+        output_path=output_path,
+        duration_sec=duration_sec,
+        captions_active=captions_active,
+    )
+    if _docich_encoder_command is not None:
+        try:
+            active = config.closed_captions_enabled if captions_active is None else captions_active
+            shared = _docich_encoder_command.build_direct_stream_ffmpeg_command(
+                ffmpeg_bin=config.ffmpeg_bin,
+                display=config.display,
+                size=config.size,
+                fps=config.fps,
+                video_kbps=config.video_kbps,
+                audio_kbps=config.audio_kbps,
+                audio_delay_ms=config.audio_delay_ms,
+                pulse_source=config.pulse_source,
+                pulse_sample_rate=config.pulse_sample_rate,
+                pulse_channels=config.pulse_channels,
+                local_rtmp_url=config.local_rtmp_url,
+                mode=mode,
+                closed_captions_active=bool(active),
+                closed_captions_socket=str(config.closed_captions_socket),
+                output_path=None if output_path is None else str(output_path),
+                duration_sec=duration_sec,
+            )
+            if (
+                type(shared) is list
+                and all(type(item) is str for item in shared)
+                and shared == local
+            ):
+                return shared
+        except Exception:
+            pass
+    return local
 
 
 def _checked(command: Sequence[str], *, env: Mapping[str, str] | None = None) -> str:
@@ -818,7 +899,7 @@ def validate_runtime(config: DirectStreamConfig, *, mode: str) -> bool:
     return caption_capabilities_available(config)
 
 
-def parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
+def _local_parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
     parsed: dict[str, object] = {}
     integer_keys = {"frame", "total_size", "out_time_us", "out_time_ms", "dup_frames", "drop_frames"}
     for raw in lines:
@@ -973,7 +1054,7 @@ def read_status(config: DirectStreamConfig) -> dict[str, object]:
     return data
 
 
-def classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]:
+def _local_classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]:
     """Map an operator-requested stop to a successful runner outcome.
 
     FFmpeg normally reports 255 after receiving SIGINT. That raw value remains
@@ -983,6 +1064,30 @@ def classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]
     if stopping:
         return 0, "stopped"
     return return_code, "completed" if return_code == 0 else "failed"
+
+
+def parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
+    local = _local_parse_progress_lines(lines)
+    if _docich_encoder_command is not None:
+        try:
+            shared = _docich_encoder_command.parse_progress_lines(lines)
+            if type(shared) is dict and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
+
+
+def classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]:
+    local = _local_classify_ffmpeg_exit(return_code, stopping=stopping)
+    if _docich_encoder_command is not None:
+        try:
+            shared = _docich_encoder_command.classify_ffmpeg_exit(return_code, stopping=stopping)
+            if type(shared) is tuple and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
 
 
 def _wait_poll(child: subprocess.Popen[bytes], timeout: float, step: float = 0.25) -> bool:
