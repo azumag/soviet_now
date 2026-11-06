@@ -115,6 +115,35 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.ok(wrapped.lineCount>1,'long news entry must occupy multiple lines');
     assert.equal(wrapped.overflowStyle,'auto','overflowing text must stay accessible');
     assert.ok(wrapped.scrollTop>0,'the full entry must remain scrollable');
+    // Every observation id must enter the scrolling news history, including
+    // the month decision, page-down inputs and battle rationale. Repeated polls
+    // must not duplicate entries, and long explanations must never ellipsize.
+    const longReason='敵の卵を避けつつ攻撃する根拠'.repeat(20);
+    const decisions=[
+      {id:'g1-abcdef12:1:10',at:now,screen:'month_menu',actions:['down','a'],
+        reasons:['month_plan / 理由 兵士が不足しているため補充を選ぶ']},
+      {id:'g1-abcdef12:1:11',at:now,screen:'general_list',actions:['r','down'],
+        reasons:['general_page / 理由 未確認の将軍がいるのでページを送る']},
+      {id:'g1-abcdef12:1:12',at:now,screen:'battle_menu',actions:['a'],
+        reasons:['battle_card / 理由 '+longReason]},
+      {id:'g1-abcdef12:1:13',at:now,screen:'world_map',actions:['select'],reasons:[]},
+    ];
+    text=build(now)+'\n'+decisions.map(r=>'余白判断: '+JSON.stringify(r)).join('\n');
+    await page.evaluate(payload=>window.__sorenBroadcastState=payload,state());
+    await page.waitForTimeout(1150);
+    let audit=await page.evaluate(()=>[...document.querySelectorAll('.hanjuku-gap-decision')]
+      .map(e=>({text:e.textContent,whiteSpace:getComputedStyle(e).whiteSpace,
+        textOverflow:getComputedStyle(e).textOverflow})));
+    assert.equal(audit.length,4,'every decision and page press must appear');
+    assert.ok(audit.some(d=>d.text.includes('月')||d.text.includes('month_plan')));
+    assert.ok(audit.some(d=>d.text.includes('R → ↓') && d.text.includes('ページを送る')));
+    assert.ok(audit.some(d=>d.text.includes(longReason)));
+    assert.ok(audit.some(d=>d.text.includes('個別の判断理由は記録されていません')));
+    assert.ok(audit.every(d=>d.whiteSpace!=='nowrap' && d.textOverflow!=='ellipsis'));
+    await page.waitForTimeout(1100);
+    assert.equal(await page.locator('.hanjuku-gap-decision').count(),4,
+      'polling the same feed must not duplicate decisions');
+
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
     text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],

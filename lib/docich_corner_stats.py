@@ -1120,7 +1120,104 @@ def _hanjuku_progress_flows(policy, now, screen=None):
     return flows[:6]
 
 
-def _hanjuku_gap(runtime, policy, now, screen=None):
+
+def _hanjuku_decision_history(runtime, identity, limit=48):
+    """Recent generation-fenced input plans and the decisions explaining them.
+
+    Inputs here are planned, not confirmed sent. Read a bounded tail of each
+    rotated journal, pairing policy judgments with their observation's plan.
+    """
+    entries, order = {}, []
+    prefix = f"{identity['runtime_id']}:{identity['generation']}:"
+    for name in ('hanjuku_decisions.previous.jsonl', 'hanjuku_decisions.jsonl'):
+        path = runtime / name
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            with path.open('rb') as stream:
+                stream.seek(0, 2)
+                offset = max(0, stream.tell() - 512 * 1024)
+                stream.seek(offset)
+                payload = stream.read(512 * 1024)
+            if offset:
+                payload = payload.partition(b'\n')[2]
+        except OSError:
+            continue
+        for raw in payload.splitlines():
+            try:
+                row = json.loads(raw)
+            except (ValueError, UnicodeError):
+                continue
+            if (not isinstance(row, dict)
+                    or any(row.get(key) != val for key, val in identity.items())):
+                continue
+            decision_id = row.get('decision_id')
+            if (not isinstance(decision_id, str) or len(decision_id) > 128
+                    or not decision_id.startswith(prefix)
+                    or not decision_id[len(prefix):].isdigit()):
+                continue
+            kind = row.get('event')
+            if kind == 'action_plan':
+                at = row.get('at')
+                if type(at) not in (int, float) or not math.isfinite(at):
+                    continue
+                actions = []
+                planned = row.get('planned_actions')
+                for action in (planned[:16] if isinstance(planned, list) else []):
+                    if not isinstance(action, dict) or action.get('type') != 'pad':
+                        continue
+                    buttons = action.get('buttons')
+                    if isinstance(buttons, list):
+                        cleaned = [_hanjuku_text(b, 20) for b in buttons[:8]]
+                        if cleaned and all(cleaned):
+                            actions.append('+'.join(cleaned))
+                if decision_id not in entries:
+                    order.append(decision_id)
+                entries[decision_id] = {
+                    'id': decision_id, 'at': at,
+                    'screen': _hanjuku_text(row.get('screen_kind'), 40) or 'unknown',
+                    'actions': actions, 'reasons': [],
+                    '_decision_names': [
+                        name for name in (row.get('reason_decisions') or [])[:24]
+                        if isinstance(name, str) and len(name) <= 100
+                    ] if isinstance(row.get('reason_decisions'), list) else [],
+                    '_deviation': _hanjuku_text(row.get('deviation_reason'), 2048),
+                }
+            elif kind == 'decision' and decision_id in entries:
+                item = entries[decision_id]
+                label = _hanjuku_text(row.get('decision'), 100)
+                if not label:
+                    continue
+                parts = [label]
+                choice = _hanjuku_text(row.get('choice'), 512)
+                if choice:
+                    parts.append('選択 ' + choice)
+                reason = (_hanjuku_text(row.get('reason'), 2048)
+                          or _hanjuku_text(row.get('deviation_reason'), 2048))
+                if reason:
+                    parts.append('理由 ' + reason)
+                metric = row.get('observed_metric')
+                if isinstance(metric, (dict, list)) and metric:
+                    evidence = _hanjuku_text(json.dumps(metric, ensure_ascii=False,
+                                                        separators=(',', ':')), 800)
+                    if evidence:
+                        parts.append('観測 ' + evidence)
+                item['reasons'].append(' / '.join(parts))
+    output = []
+    for key in order:
+        item = entries[key]
+        names = item.pop('_decision_names')
+        deviation = item.pop('_deviation')
+        if not item['reasons'] and (names or deviation):
+            summary = '判断記録 ' + ' / '.join(names) if names else '判断の補足'
+            item['reasons'] = [summary + (' / 理由 ' + deviation if deviation else '')]
+        if item['actions'] or item['reasons']:
+            output.append(item)
+    return output[-limit:]
+
+
+
+def _hanjuku_gap(runtime, policy, now, screen=None, identity=None):
     """Only a measured edge projection of this fenced runtime may expose cards."""
     try:
         state, _ = _bounded_state(runtime / 'presentation.json')
@@ -1197,6 +1294,7 @@ def _hanjuku_gap(runtime, policy, now, screen=None):
             'moves': _hanjuku_moves(policy, policy.get('tick')),
             'active_order': _hanjuku_active_order(policy),
             'flows': _hanjuku_progress_flows(policy, now, screen),
+            'decisions': _hanjuku_decision_history(runtime, identity) if identity else [],
             'hp': hp, 'battle': battle_detail}
 
 
@@ -1280,7 +1378,7 @@ def _hanjuku_snapshot(root: Path, state: Mapping[str, object]):
         income = number(income_row.get("income")) if isinstance(income_row, dict) else None
         wages_row = policy.get("country_wages")
         wages = number(wages_row.get("wages")) if isinstance(wages_row, dict) else None
-        result = {"gap": _hanjuku_gap(runtime, policy, now, bot.get('screen_kind')), "availability": "fresh", "age": int(now - observed),
+        result = {"gap": _hanjuku_gap(runtime, policy, now, bot.get('screen_kind'), identity), "availability": "fresh", "age": int(now - observed),
                   "chapter": chapter if chapter is not None and 1 <= chapter <= 12 else None,
                   "gold": number(policy.get("gold")),
                   "year": int(month_match[1]) if month_match else None,
