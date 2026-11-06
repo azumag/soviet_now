@@ -51,6 +51,39 @@ test('direct overlay is enabled only for explicit Linux FFmpeg backend', () => {
 });
 
 
+
+test('multigame broadcast HTML resolves from docich first with safe legacy fallback', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'docich-owned-broadcast-'));
+  const template = path.join(temp, 'overlays', 'direct_broadcast_overlay.html');
+  const surfaceFor = (env) => loadDirectOverlayConfig({
+    SOREN_STREAM_BACKEND: 'ffmpeg',
+    ...env,
+  }, 'linux').surfaces.find((surface) => surface.key === 'broadcastSidebar');
+  try {
+    fs.mkdirSync(path.dirname(template), { recursive: true });
+    fs.writeFileSync(template, '<!doctype html><title>docich-owned</title>');
+    const env = { DOCICH_ROOT: temp };
+    for (const region of ['broadcastSidebar', 'broadcastTop', 'broadcastGameGap', 'broadcastBottom']) {
+      const surface = loadDirectOverlayConfig({ SOREN_STREAM_BACKEND: 'ffmpeg', ...env }, 'linux')
+        .surfaces.find((item) => item.key === region);
+      assert.equal(surface.htmlFile, template, region);
+    }
+
+    const override = path.join(temp, 'override.html');
+    assert.equal(surfaceFor({
+      ...env,
+      SOREN_DIRECT_BROADCAST_OVERLAY_HTML_FILE: override,
+    }).htmlFile, override, 'the operator override must take precedence');
+
+    fs.unlinkSync(template);
+    assert.match(surfaceFor(env).htmlFile, /overlays\/direct_broadcast_overlay[.]html$/,
+      'standalone Soviet player must still work without docich checkout');
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+
 test('overlay installer persists across reload and installs current page', async () => {
   const calls = [];
   const page = {
