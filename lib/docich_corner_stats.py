@@ -1003,10 +1003,11 @@ def _hanjuku_generals(policy: Mapping[str, object], identity):
 def _hanjuku_moves(policy, tick, limit=8, each=24):
     """Current sorties as bounded source→target rows for the left gap chart.
 
-    "Current" is the same busy window as ``_hanjuku_marching``. A row carries
-    the planned target when arrival is unconfirmed and the launched order's
-    source when the sortie did not record one, so the chart never guesses a
-    route from names alone.
+    A launch does not stop being a march merely because 400 observations pass.
+    The policy may keep it active for much longer; keep the receipt visible
+    until the policy removes it, but show an unknown/overdue state instead of
+    claiming it is still moving. The planned target and launched source are
+    recorded facts, not guesses about arrival.
     """
     raw = policy.get("sorties")
     if not isinstance(raw, dict) or type(tick) is not int:
@@ -1016,15 +1017,15 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
     rows = []
     for step in sorted(raw):
         sortie = raw[step]
-        # Owner 2026-11-04: a general intercepted by another enemy en route
-        # turns the sortie 'overdue'. Keep showing the planned route while the
-        # encounter battle is in progress (bounded by the same busy window).
+        # Overdue means the entry was not proved, not that a battle is underway.
+        # Do not silently drop a still-recorded march at the display TTL.
         if (not isinstance(sortie, dict)
                 or sortie.get("status") not in ("en_route", "launched_unconfirmed", "overdue")):
             continue
         seen = sortie.get("tick")
-        if type(seen) is not int or not 0 <= tick - seen < SORTIE_BUSY_TICKS:
+        if type(seen) is not int or not 0 <= tick - seen:
             continue
+        unknown = sortie["status"] == "overdue" or tick - seen >= SORTIE_BUSY_TICKS
         order = launched.get(step)
         order = order if isinstance(order, dict) else {}
         general = _hanjuku_name(sortie.get("general"), each=each)
@@ -1036,7 +1037,8 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
         if general is None or (source is None and target is None):
             continue
         rows.append({"general": general, "source": source or "", "target": target or "",
-                     "status": sortie["status"], "step": _hanjuku_text(step, 24) or "",
+                     "status": "tracking_unknown" if unknown else sortie["status"],
+                     "step": _hanjuku_text(step, 24) or "",
                      "purpose": _hanjuku_text(order.get("purpose"), 16) or "",
                      "note": _hanjuku_text(order.get("note"), 96) or ""})
         if len(rows) >= limit:
