@@ -2643,26 +2643,106 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
 
-        # Archive-restart implementation evolved; verify core escape-path signals remain.
-        self.assertTrue(
-            "ARCHIVE_RESTART" in config or "archive_restart" in improve,
-            "expected archive restart config/flow signals",
-        )
+        self.assertIn("ARCHIVE_RESTART_ENABLED", config)
+        self.assertIn("ARCHIVE_RESTART_STREAK", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_RUSSIA_COUNT", config)
+        self.assertIn("ARCHIVE_RESTART_MIN_RUSSIA_RATE", config)
+        self.assertIn("ARCHIVE_RESTART_FRONTIER_MIN_BEST_TYPE", config)
+        self.assertIn("ARCHIVE_RESTART_OBJECTIVE_FAIL_PERMANENT", config)
+        self.assertIn("ARCHIVE_RESTART_INCLUDE_PERMANENT", config)
+        self.assertIn("ARCHIVE_RESTART_ALLOW_ORIGIN_RETRY", config)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_SEC", config)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", config)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", config)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_SEC", config)
+        self.assertIn("normal|post_regression|wildcard|escape_ai|archive_restart", improve)
         self.assertIn('improve_reason="archive_restart"', improve)
         self.assertIn("_archive_restart_should_run", improve)
         self.assertIn("_archive_restart_has_candidate", improve)
-        # Safety invariant: do not infer Russia from best_type >= 15 alone.
+        self.assertIn("preflight no candidate", improve)
+        self.assertIn("preflight_no_candidate", improve)
+        self.assertIn("no_candidate cooldown stale", improve)
+        self.assertIn("marker_candidate_override", improve)
+        self.assertIn("archive_is_runtime_stable", improve)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", improve)
+        self.assertIn("allow_origin_retry", improve)
+        self.assertIn("is_cooled_down", improve)
+        self.assertIn("find_archive_path", improve)
+        self.assertIn("anchor_russia", improve)
+        self.assertIn("anchor_soviet", improve)
+        self.assertIn("reliable_russia", improve)
+        self.assertIn("frontier_candidate", improve)
+        self.assertIn("not (reliable_russia or frontier_candidate or russia > 0)", improve)
         self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", improve)
-        self.assertTrue(
-            "archive_restart" in eloop or "archive" in eloop.lower(),
-            "expected archive restart handling in eloop_improve.sh",
-        )
+        self.assertIn("archive_restart を飛ばして次の脱出手段", improve)
+        self.assertIn("_improve_flow_notify", improve)
+        self.assertIn("archive_restart candidate? yes", improve)
+        self.assertIn("archive_restart candidate? no", improve)
+        self.assertIn("wildcard frontier recovery possible? yes", improve)
+        self.assertIn("fallback: no valid escape route", improve)
+        self.assertIn("no_candidate cooldown active", improve)
+        self.assertIn("archive_restart で過去版から大域脱出", improve)
+        self.assertIn('[ "$reason" = "wildcard" ] || [ "$reason" = "archive_restart" ]', improve)
+        self.assertIn("高速脱出(AI不使用・短時間)", improve)
+        self.assertIn('IMPROVE_REASON:-normal}" = "archive_restart"', eloop)
+        self.assertIn("既存評価済み", eloop)
+        self.assertIn('"origin_type": "archive_restart"', eloop)
+        self.assertIn("hash_normalized_by_validation", eloop)
+        self.assertIn("selected_hash", eloop)
+        self.assertIn("ARCHIVE_RESTART_MIN_COMP_RATIO", eloop)
+        self.assertIn("ARCHIVE_RESTART_MIN_BEST_TYPE", eloop)
+        self.assertIn("best_type < min_best_type", eloop)
+        self.assertIn("archive_is_runtime_stable", eloop)
+        self.assertIn("STRATEGY_HASH_PERMANENT_ARCHIVE_DIR", eloop)
+        self.assertIn("allow_origin_retry", eloop)
+        self.assertIn("is_cooled_down", eloop)
+        self.assertIn("origin_retry", eloop)
+        self.assertIn("find_archive_path", eloop)
+        self.assertIn("anchor_russia", eloop)
+        self.assertIn("anchor_soviet", eloop)
+        self.assertIn("reliable_russia", eloop)
+        self.assertIn("frontier_candidate", eloop)
+        self.assertIn("not (reliable_russia or frontier_candidate or russia > 0)", eloop)
+        self.assertIn("russia_rate", eloop)
+        self.assertIn("archive_restart_russia_not_reproduced", eloop)
         self.assertNotIn("if best_type >= 15 and russia <= 0:\n        russia = 1", eloop)
-        # regression/archive objective handling may be refactored; require some archive/objective signal.
-        self.assertTrue(
-            "archive_restart" in regression or "archive" in regression or "objective" in regression,
-            "expected archive/objective handling in regression.sh",
+        self.assertIn("_archive_restart_quarantine_candidate", eloop)
+        self.assertIn("archive_invalid_candidate_fallback", eloop)
+        self.assertIn("archive_no_effective_change_fallback", eloop)
+        self.assertIn("archive_restart_validate_fail", eloop)
+        self.assertIn("archive_restart_no_effective_hash_change", eloop)
+        self.assertIn("objective escape mechanism", eloop)
+        self.assertIn("ARCHIVE_RESTART_COOLDOWN_FILE", eloop)
+        self.assertIn("ARCHIVE_RESTART_NO_CANDIDATE_COOLDOWN_FILE", eloop)
+        self.assertIn("archive_no_candidate_fallback", eloop)
+        self.assertIn("archive_restart candidate? no", eloop)
+        self.assertIn("archive_restart complete", eloop)
+        self.assertIn("source_russia_count", eloop)
+        self.assertIn("source_hash = str(selected.get(\"selected_hash\")", eloop)
+        self.assertIn("archive_restart_source", eloop)
+        self.assertIn("source_russia_count", regression)
+        self.assertNotIn("source_reliable_russia", regression)
+        self.assertNotIn("archive_restart_russia_not_reproduced", regression)
+        self.assertIn("source_best_max_type", regression)
+        # archive objective floor は reason マーカとして存続（mode= 出力は撤去済み）。
+        self.assertIn("archive_restart_objective_floor", regression)
+        self.assertIn("archive_restart_complete", eloop)
+        archive_block = eloop.split('IMPROVE_REASON:-normal}" = "archive_restart"', 1)[1].split("# バッチサマリー生成", 1)[0]
+        # persist は strategy/persist.sh 経由。archive_restart の採用コミット対象は
+        # 戦略本体とスコア/ゲーム履歴のみ（WILDCARD_ORIGIN_FILE はコミット対象外）。
+        self.assertIn(
+            'persist_strategy_improve "eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" '
+            "strategy.py game_count.txt score_history.txt eval_score_history.txt",
+            archive_block,
         )
+        self.assertNotIn(
+            '"eloop Improve [archive_restart] branch from archive after game #${GAME_NUM_SNAPSHOT}" '
+            'strategy.py game_count.txt score_history.txt eval_score_history.txt "$WILDCARD_ORIGIN_FILE"',
+            archive_block,
+        )
+
     def test_ai_output_files_are_not_precreated_before_opencode_write(self):
         """opencode write 制約に合わせ、analysis/review 出力は空ファイル作成しない。"""
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
@@ -2671,25 +2751,20 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         # Core invariant: do not precreate output files before opencode writes them.
         self.assertNotIn(': >"$ANALYSIS_RESULT_FILE"', eloop)
         self.assertNotIn(': >"$REVIEW_RESULT_FILE"', eloop)
-        self.assertTrue(
-            'rm -f "$ANALYSIS_RESULT_FILE"' in eloop or "ANALYSIS_RESULT_FILE" in eloop,
-            "expected analysis result file handling in eloop_improve.sh",
-        )
-        self.assertTrue(
-            'rm -f "$REVIEW_RESULT_FILE"' in eloop or "REVIEW_RESULT_FILE" in eloop,
-            "expected review result file handling in eloop_improve.sh",
-        )
-        # Review prompt / strategy guidance evolved; keep lightweight behavioral checks.
-        self.assertTrue(
-            "review_result" in review_prompt.lower() or "verdict" in review_prompt.lower(),
-            "expected review result/verdict guidance in prompts/review_strategy.md",
-        )
-        # merge_grade/DLG guard logic evolved; keep core no-precreate invariant above and
-        # verify deadline-guard merge filtering remains present (soviet_now#779 rebaseline).
-        self.assertTrue(
-            '__dlg_' in strategy or 'DEADLINE_GUARD' in strategy,
-            "expected DLG/deadline-guard merge filtering in strategy.py",
-        )
+        # 新規作成を AI write へ委ねるため、実行前に前回出力を消す（precreate 禁止の対）。
+        self.assertIn('rm -f "$ANALYSIS_RESULT_FILE"', eloop)
+        self.assertIn('rm -f "$REVIEW_RESULT_FILE"', eloop)
+        self.assertIn('ANALYSIS_RESULT_FILE="tmp/analysis_result.md"', eloop)
+        self.assertIn('REVIEW_RESULT_FILE="tmp/review_result.md"', eloop)
+        # review prompt はファイル不在を正常初回として扱い Write で作る契約。
+        self.assertIn("`tmp/review_result.md` は存在しない場合があります", review_prompt)
+        self.assertIn("存在しない場合は `Write` で新規作成すること", review_prompt)
+        self.assertIn("必ず `## VERDICT: PASS` または `## VERDICT: FAIL`", review_prompt)
+        # deadline-guard merge フィルタ（merge_grade 欠損を真扱いしない DLG 前段フィルタ）。
+        self.assertIn("__dlg_cands", strategy)
+        self.assertIn('c.get("merge_grade") != "NO"', strategy)
+        self.assertIn("__dlg_merge_result_safe", strategy)
+        self.assertIn("__dlg_merge_available", strategy)
         self.assertIn('merge_grade', strategy)
         self.assertNotIn("`tmp/review_result.md` は既に存在", review_prompt)
         self.assertIn("_repair_review_verdict_file", eloop)
@@ -3611,7 +3686,39 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         # Safety/intent: pre-russia guidance must not imply russia synthesis from type>=15;
         # clustering/avoidance helpers exist without bypassing deadline/merge guards.
         self.assertNotIn("russia = 1  # inferred from best_type", strategy)
-        self.assertIn("deadline", strategy.lower())
+
+        # Near-miss inventory bound (#783 再 characterization)。旧
+        # DEADLINE_GUARD_PRE_RUSSIA_CLUSTER / SECOND_RUSSIA_T12_PAIR_LOCK 相当の
+        # 「測定済み near-miss 盤面でのみ発火する」制約は、現在は finalize_decision
+        # 経由の selector 内の在庫条件として実装されている。pre-russia selector は
+        # 「type14 ちょうど1個・type15/16 ゼロ・11/12/13 のいずれかがペア済み」、
+        # post-first-russia selector は「type14 が1個・13/15/16 ゼロ・12 が1個以上」、
+        # first-russia T11 保護は厳密な在庫 {11:1,12:1,13:0,14:1,15:0,16:0} に限定される。
+        self.assertIn("def finalize_decision(game_state: dict, analysis: dict, decision: dict) -> dict:", strategy)
+        self.assertIn("_select_post_first_russia_lane_cover_avoidance", strategy)
+        self.assertIn("_select_first_russia_t11_lane_avoidance", strategy)
+        self.assertIn("type_counts != {11: 1, 12: 1, 13: 0, 14: 1, 15: 0, 16: 0}", strategy)
+        # pre-russia selector の在庫条件（finalize_decision ブロック内のみに現れる形で pin）。
+        fin_block = strategy.split("def finalize_decision(", 1)[1].split("\ndef ", 1)[0]
+        pre_sel = strategy.split("def _select_pre_russia_chain_cover_avoidance(", 1)[1].split("\ndef ", 1)[0]
+        post_sel = strategy.split("def _select_post_first_russia_lane_cover_avoidance(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("type_counts.get(14, 0) != 1", pre_sel)
+        self.assertIn("type_counts.get(15, 0) != 0", pre_sel)
+        self.assertIn("type_counts.get(16, 0) != 0", pre_sel)
+        self.assertIn("for country_type in (11, 12, 13)", pre_sel)
+        self.assertIn("type_counts.get(country_type, 0) >= 2", pre_sel)
+        self.assertIn("1 <= next_type <= 10", pre_sel)
+        self.assertIn('"PRE_RUSSIA_CHAIN_COVER_AVOID"', fin_block + pre_sel)
+        self.assertIn("type_counts.get(14, 0) != 1", post_sel)
+        self.assertIn("type_counts.get(13, 0) != 0", post_sel)
+        self.assertIn("type_counts.get(12, 0) < 1", post_sel)
+        self.assertIn('"POST_FIRST_RUSSIA_LANE_COVER_AVOID"', fin_block + post_sel)
+        # selector は runtime safety 適用後の decision だけを見る finalize 層であり、
+        # runner 側は finalize_decision の返り値を範囲外 x で拒否できる。
+        runner = (REPO_ROOT / "strategy_runner.py").read_text()
+        self.assertIn('getattr(strategy_module, "finalize_decision", None)', runner)
+        self.assertIn("finalize_decision returned out-of-range x", runner)
+        self.assertIn("finalize_decision returned invalid result", runner)
 
     def test_deadline_guard_clusters_safe_high_material_when_pre_russia_near_miss(self):
         import strategy
@@ -11747,18 +11854,37 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertIn("fresh_objective_trigger", improve_sh)
         self.assertIn("archive_restart_candidate", improve_sh)
 
+        # rollback 候補の archive 実体検証（#783: 未 pin だったガード）。候補ファイルは
+        # validate_strategy 通過後に decide hash が期待 hash と一致することを要求する
+        # （validated_hash 不在時は original_hash での一致を許容）。
+        self.assertIn("_rollback_candidate_file_is_valid()", regression)
+        self.assertIn('if ! _rollback_candidate_file_is_valid "$h" "$candidate_file"; then', regression)
+        self.assertIn("rollback_candidate_validate_${expected_hash}_$$.py", regression)
+        self.assertIn('validate_strategy "$tmp_file"', regression)
+        self.assertIn('python3 extract_decide_hash.py "$candidate_file"', regression)
+        self.assertIn('[ "$expected_hash" = "$validated_hash" ] || [ "$expected_hash" = "$original_hash" ]', regression)
+        # REJECTED_HASHES_FILE: 一部の参照テスト (test_ab_prediction_defer.sh /
+        # test_stat_gate_shadow.py) は CI 未対象のため、rollback 退避側もここで pin する。
+        self.assertIn('echo "$strategy_hash" >>"$REJECTED_HASHES_FILE"', regression)
+        self.assertIn('echo "$rollback_hash" >>"$REJECTED_HASHES_FILE"', regression)
+        self.assertIn('grep -qxF "$h" "$REJECTED_HASHES_FILE"', regression)
+
     def test_strategy_runner_merge_result_guard_is_pressure_gated(self):
         runner = (REPO_ROOT / "strategy_runner.py").read_text()
 
-        # merge-result deadline guard refactored (risky_merge_result_deadline / pressure gating).
-        self.assertTrue(
-            "merge_result_deadline" in runner or "merge_result_crosses_deadline" in runner,
-            "expected merge-result deadline guard handling in strategy_runner.py",
-        )
-        self.assertTrue(
-            "risky_merge_result_deadline" in runner or "deadline" in runner,
-            "expected deadline risk gating in strategy_runner.py",
-        )
+        # merge-result deadline guard: DIRECT/NEAR 併合結果が deadline を跨ぐ候補だけを
+        # 「安全な deadline-clean 候補が存在するとき」 risky とみなして差し替える（pressure gated）。
+        self.assertIn("def risky_merge_result_deadline(r):", runner)
+        self.assertIn('r.get("merge_grade", "NO") in ("DIRECT", "NEAR")', runner)
+        self.assertIn('bool(r.get("merge_result_crosses_deadline", False))', runner)
+        self.assertIn("and has_deadline_clean_candidate", runner)
+        self.assertIn("deadline_clean_candidates = [", runner)
+        self.assertIn('and not r.get("merge_result_crosses_deadline", False)', runner)
+        self.assertIn("has_deadline_clean_candidate = bool(deadline_clean_candidates)", runner)
+        self.assertIn("elif risky_merge_result_deadline(chosen):", runner)
+        self.assertIn('replacement_source = "avoid_merge_result_deadline"', runner)
+        self.assertIn("elif urgent_direct_pressure:", runner)
+        self.assertIn('f"{replacement_source}_avoid_merge_result_deadline"', runner)
 
     def test_strategy_restores_same_type_proximity_drought_axis(self):
         strategy = (REPO_ROOT / "strategy.py").read_text()
@@ -13140,20 +13266,18 @@ PY
             monitor.index("fast escape running state references no visible parent pid"),
             monitor.index("running state has no visible eloop_improve pid but activity is fresh"),
         )
-        self.assertIn("_file_recent", status)
-        # stat form differs across platforms/implementations (quoted/unquoted %m).
-        self.assertTrue(
-            "stat -f '%m'" in status or "stat -f %m" in status or "stat -c %Y" in status,
-            "expected mtime stat usage in show_status.sh",
-        )
+        # _file_recent は BSD stat (-f %m) を優先し、GNU stat (-c %Y) へ fallback する。
+        self.assertIn("_file_recent()", status)
+        self.assertIn('mtime=$(stat -f %m "$file_path" 2>/dev/null)', status)
+        self.assertIn('mtime=$(stat -c %Y "$file_path" 2>/dev/null)', status)
         self.assertIn("SOREN_IMPROVE_MONITOR_INTERVAL_SEC", loop)
         self.assertIn("_run_improve_runtime_monitor", loop)
         self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1", loop)
-        # monitor skip/fail logging evolved; verify monitor invocation remains in loop.
-        self.assertTrue(
-            "monitor_improve_runtime" in loop or "monitor_improve_runtime" in eloop,
-            "expected improve runtime monitor invocation",
-        )
+        # モニターは実行ファイル存在時のみ interval 管理つきでバックグラウンド起動される。
+        self.assertIn("[ -x ./monitor_improve_runtime.sh ] || return 0", loop)
+        self.assertIn("_SOREN_IMPROVE_MONITOR_TS=$now", loop)
+        self.assertIn("./monitor_improve_runtime.sh >/dev/null 2>&1 &", loop)
+        self.assertIn("./monitor_improve_runtime.sh", eloop)
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         self.assertIn("_improve_state_claims_running_fresh()", improve)
         self.assertIn("IMPROVE_STATE_RUNNING_FRESH_SEC", improve)
@@ -13216,15 +13340,25 @@ PY
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
 
-        # trend grace / rollback dampening logic evolved; assert core signals remain.
-        self.assertTrue(
-            "ROLLBACK_TREND_GRACE" in config or "trend_grace" in regression or "rollback_trend" in regression,
-            "expected rollback trend grace config/logic",
-        )
-        self.assertTrue(
-            "objective_regression" in regression or "early_objective_regression" in regression,
-            "expected objective regression handling in regression.sh",
-        )
+        self.assertIn("ROLLBACK_TREND_GRACE_ENABLED", config)
+        self.assertIn("ROLLBACK_TREND_GRACE_WINDOW", config)
+        self.assertIn("ROLLBACK_TREND_GRACE_MIN_PRIOR", config)
+        self.assertIn("def rollback_trend_grace():", regression)
+        self.assertIn("eval_score_history_file", regression)
+        self.assertIn("recent_avg = sum(recent) / len(recent)", regression)
+        self.assertIn("prior_avg = sum(prior) / len(prior)", regression)
+        self.assertIn("delta > rollback_trend_grace_min_delta", regression)
+        self.assertIn("OK:{trend_grace_reason()}", regression)
+        self.assertIn("reasons=objective_regression+", regression)
+        # archive objective floor は mode= 出力ではなく objective trigger マーカとして存続。
+        self.assertIn("archive_restart_objective_floor", regression)
+        self.assertIn("trend_grace は score-only rollback dampener。目的退行は免除しない。", regression)
+        self.assertIn("def objective_triggered(reason_text):", regression)
+        self.assertIn("objective_was_trigger = objective_triggered(reg.get(\"reasons\", \"\"))", regression)
+        self.assertIn("今回は粛清理由ではない", regression)
+        self.assertIn("context_signal: current はロシア(type15)未到達だが、今回は粛清理由ではない。", regression)
+        self.assertNotIn('print(f"OK:{trend_grace_reason()}")\n        raise SystemExit\n    print(\n        "REGRESSION:"\n        f"mode=objective_regression', regression)
+
     def test_early_comp_top_gap_can_purge_bad_current_branch(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
         config = (REPO_ROOT / "core/config.sh").read_text()
@@ -13301,12 +13435,20 @@ PY
 
         self.assertIn("ROLLBACK_TARGET_COOLDOWN_FILE", config)
         self.assertIn("ROLLBACK_TARGET_COOLDOWN_SEC", config)
-        # cooldown implementation/message details evolved; verify core functions/signals.
-        self.assertIn("_is_rollback_target_on_cooldown", regression)
-        self.assertIn("_record_rollback_target_cooldown", regression)
-        self.assertTrue(
-            "cooldown" in regression,
-            "expected rollback target cooldown handling in regression.sh",
+        # cooldown 判定・記録・スキップ経路の pin（TTL 既定値は config.sh に一致）。
+        self.assertIn("_is_rollback_target_on_cooldown()", regression)
+        self.assertIn("_record_rollback_target_cooldown()", regression)
+        self.assertIn('local cooldown_file="${ROLLBACK_TARGET_COOLDOWN_FILE:-tmp/state/rollback_target_cooldown.json}"', regression)
+        self.assertIn('local ttl_sec="${ROLLBACK_TARGET_COOLDOWN_SEC:-3600}"', regression)
+        self.assertIn("anchor_top1候補スキップ: $rollback_hash はrollback先cooldown中", regression)
+        self.assertIn("hall-of-fame候補スキップ: $h はrollback先cooldown中", regression)
+        self.assertIn("rollback候補スキップ: $h はrollback先cooldown中", regression)
+        self.assertIn('_is_rollback_target_on_cooldown "$strategy_hash" "$rollback_hash"', regression)
+        self.assertIn('_record_rollback_target_cooldown "$strategy_hash" "$rolled_hash"', regression)
+        # cooldown スキップは候補選定ループ内で continue する（警告ではなく除外）。
+        self.assertLess(
+            regression.index('_is_rollback_target_on_cooldown "$current_hash" "$h"'),
+            regression.index('_rollback_candidate_file_is_valid "$h" "$candidate_file"'),
         )
 
     def test_regression_rollback_prefers_current_rolling_top_candidate(self):
