@@ -1162,7 +1162,8 @@ def _hanjuku_decision_history(runtime, identity, limit=48):
                 if type(at) not in (int, float) or not math.isfinite(at):
                     continue
                 actions = []
-                for action in (row.get('planned_actions') or [])[:16]:
+                planned = row.get('planned_actions')
+                for action in (planned[:16] if isinstance(planned, list) else []):
                     if not isinstance(action, dict) or action.get('type') != 'pad':
                         continue
                     buttons = action.get('buttons')
@@ -1176,6 +1177,11 @@ def _hanjuku_decision_history(runtime, identity, limit=48):
                     'id': decision_id, 'at': at,
                     'screen': _hanjuku_text(row.get('screen_kind'), 40) or 'unknown',
                     'actions': actions, 'reasons': [],
+                    '_decision_names': [
+                        name for name in (row.get('reason_decisions') or [])[:24]
+                        if isinstance(name, str) and len(name) <= 100
+                    ] if isinstance(row.get('reason_decisions'), list) else [],
+                    '_deviation': _hanjuku_text(row.get('deviation_reason'), 2048),
                 }
             elif kind == 'decision' and decision_id in entries:
                 item = entries[decision_id]
@@ -1197,8 +1203,17 @@ def _hanjuku_decision_history(runtime, identity, limit=48):
                     if evidence:
                         parts.append('観測 ' + evidence)
                 item['reasons'].append(' / '.join(parts))
-    return [entries[key] for key in order if entries[key]['actions']
-            or entries[key]['reasons']][-limit:]
+    output = []
+    for key in order:
+        item = entries[key]
+        names = item.pop('_decision_names')
+        deviation = item.pop('_deviation')
+        if not item['reasons'] and (names or deviation):
+            summary = '判断記録 ' + ' / '.join(names) if names else '判断の補足'
+            item['reasons'] = [summary + (' / 理由 ' + deviation if deviation else '')]
+        if item['actions'] or item['reasons']:
+            output.append(item)
+    return output[-limit:]
 
 
 
