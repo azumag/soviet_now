@@ -12,6 +12,9 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'lib/direct_stream.py'
+      - 'tests/test_stream_owner_flag.py'
+      - 'tests/test_start_all_stream_backend.py'
       - 'bgm_worker.sh'
       - 'tests/test_bgm_worker.py'
       - 'wait_soren_runtime_prereqs.sh'
@@ -28,6 +31,9 @@ on:
       - 'tests/test_soren_runtime_service.py'
       - 'install_soren_runtime_service.sh'
       - 'start_all.sh'
+      - 'lib/direct_stream.py'
+      - 'tests/test_stream_owner_flag.py'
+      - 'tests/test_start_all_stream_backend.py'
       - 'bgm_worker.sh'
       - 'tests/test_bgm_worker.py'
       - 'wait_soren_runtime_prereqs.sh'
@@ -45,5 +51,6 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_cleanup_overlay_pidfiles tests.test_soren_runtime_service
+      - run: python3 -m unittest tests.test_stream_owner_flag tests.test_start_all_stream_backend
       - run: python3 -m unittest tests.test_bgm_worker
       - run: python3 -m py_compile lib/cleanup_overlay_pidfiles.py

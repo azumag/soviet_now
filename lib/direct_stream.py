@@ -2123,6 +2123,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers.add_parser("stop", help="stop a runner started by this script")
 
     args = parser.parse_args(argv)
+    if args.action == "run":
+        # ADR 0007 (docich): when docich owns the encoder this runner must not
+        # start one. The host-wide lock is the second fence if the flag is wrong.
+        owner = os.environ.get("DOCICH_STREAM_OWNER") or "soren"
+        if owner not in {"soren", "docich"}:
+            raise ConfigError("DOCICH_STREAM_OWNER must be soren or docich")
+        if owner == "docich":
+            print(
+                "direct_stream: DOCICH_STREAM_OWNER=docich; not starting "
+                "(docich-stream.service owns the encoder)",
+                file=sys.stderr,
+            )
+            return 0
     config = load_config()
 
     if args.action == "config":
