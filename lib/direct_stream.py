@@ -997,7 +997,7 @@ def _local_parse_progress_lines(lines: Sequence[str]) -> dict[str, object]:
     return parsed
 
 
-def _ensure_private_directory(path: Path) -> None:
+def _local_ensure_private_directory(path: Path) -> None:
     """Create a directory tree that never carries group/other write bits.
 
     The diagnostics fixed-source traversal refuses directories whose mode has
@@ -1030,7 +1030,7 @@ def _ensure_private_directory(path: Path) -> None:
         os.chmod(current, metadata.st_mode & ~0o022)
 
 
-def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
+def _local_atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     _ensure_private_directory(path.parent)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -1098,7 +1098,7 @@ def _record_reconnect(
     )
 
 
-def _pid_alive(pid: object) -> bool:
+def _local_pid_alive(pid: object) -> bool:
     try:
         value = int(pid)
     except (TypeError, ValueError):
@@ -1114,7 +1114,7 @@ def _pid_alive(pid: object) -> bool:
         return True
 
 
-def read_status(config: DirectStreamConfig) -> dict[str, object]:
+def _local_read_status(config: DirectStreamConfig) -> dict[str, object]:
     state_file = config.state_dir / "status.json"
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
@@ -1127,6 +1127,133 @@ def read_status(config: DirectStreamConfig) -> dict[str, object]:
         _pid_alive(data.get("pid")) or _pid_alive(data.get("ffmpeg_pid"))
     )
     return data
+
+
+# #3553: docich owns the private state-file primitives. The last-known-good
+# local implementations stay as the mandatory fallback. Read-only helpers are
+# computed locally first and the shared result is adopted only when identical.
+# Writers run the shared version first and are adopted only after the result is
+# verified on disk (exact bytes / directory mode); any exception or mismatch
+# re-runs the idempotent local writer, so a stale or permissive shared module
+# can never leave a missing, relaxed or corrupt status file.
+def _load_docich_state_files():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_state_files.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_state_files", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "STREAM_STATE_FILES_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "pid_alive", None))
+            and callable(getattr(module, "ensure_private_directory", None))
+            and callable(getattr(module, "atomic_write_json", None))
+            and callable(getattr(module, "read_stream_status", None))
+        ):
+            return module
+    except Exception:
+        pass
+    return None
+
+
+_docich_state_files = _load_docich_state_files()
+
+
+def _pid_alive(pid: object) -> bool:
+    local = _local_pid_alive(pid)
+    if _docich_state_files is not None:
+        try:
+            shared = _docich_state_files.pid_alive(pid)
+            if type(shared) is bool and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
+
+
+def _ensure_private_directory(path: Path) -> None:
+    if _docich_state_files is not None:
+        created: list[Path] = []
+        previous_mode: int | None = None
+        current = Path(path)
+        try:
+            before = current.lstat()
+            if stat.S_ISDIR(before.st_mode) and before.st_uid == os.geteuid():
+                previous_mode = stat.S_IMODE(before.st_mode)
+        except OSError:
+            pass
+        try:
+            probe = current
+            while not probe.exists():
+                created.append(probe)
+                if probe.parent == probe:
+                    break
+                probe = probe.parent
+            _docich_state_files.ensure_private_directory(current)
+            verified = True
+            for level in created:
+                # Levels created by this call must be exactly what the local
+                # implementation would have created: a real directory, 0o700.
+                metadata = level.lstat()
+                if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700:
+                    verified = False
+            metadata = current.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or (
+                metadata.st_uid == os.geteuid() and metadata.st_mode & 0o022
+            ):
+                verified = False
+            if verified:
+                return
+        except Exception:
+            pass
+        # Undo whatever the failed shared call did, then let the local routine
+        # run exactly as if the shared one had never been consulted: restore a
+        # pre-existing leaf's mode and tighten ancestors the call created.
+        if previous_mode is not None:
+            try:
+                os.chmod(current, previous_mode)
+            except OSError:
+                pass
+        for level in created:
+            try:
+                metadata = level.lstat()
+                if stat.S_ISDIR(metadata.st_mode) and metadata.st_uid == os.geteuid():
+                    os.chmod(level, 0o700)
+            except OSError:
+                pass
+    _local_ensure_private_directory(path)
+
+
+def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
+    if _docich_state_files is not None:
+        try:
+            expected = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+            _docich_state_files.atomic_write_json(path, payload)
+            if path.read_text(encoding="utf-8") == expected:
+                return
+        except Exception:
+            pass
+    _local_atomic_json(path, payload)
+
+
+def read_status(config: DirectStreamConfig) -> dict[str, object]:
+    local = _local_read_status(config)
+    if _docich_state_files is not None:
+        try:
+            shared = _docich_state_files.read_stream_status(
+                config.state_dir / "status.json",
+                alive=lambda value: _pid_alive(value),
+            )
+            if type(shared) is dict and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
 
 
 def _local_classify_ffmpeg_exit(return_code: int, *, stopping: bool) -> tuple[int, str]:
