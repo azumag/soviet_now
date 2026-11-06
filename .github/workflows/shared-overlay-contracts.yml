@@ -28,6 +28,7 @@ on:
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
       - 'tests/test_shared_overlay_geometry_delegate.mjs'
+      - 'tests/test_shared_overlay_context_delegate.mjs'
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
@@ -67,6 +68,7 @@ on:
       - 'deploy/soren-shared-overlay/**'
       - 'tests/test_shared_overlay.mjs'
       - 'tests/test_shared_overlay_geometry_delegate.mjs'
+      - 'tests/test_shared_overlay_context_delegate.mjs'
       - 'tests/test_direct_overlay.mjs'
       - 'tests/test_direct_overlay_stage_delegate.mjs'
       - 'tests/test_direct_overlay_installer_delegate.mjs'
@@ -111,6 +113,7 @@ jobs:
           node --test
           tests/test_shared_overlay.mjs
           tests/test_shared_overlay_geometry_delegate.mjs
+          tests/test_shared_overlay_context_delegate.mjs
           tests/test_direct_overlay.mjs
           tests/test_direct_overlay_stage_delegate.mjs
           tests/test_direct_overlay_installer_delegate.mjs
