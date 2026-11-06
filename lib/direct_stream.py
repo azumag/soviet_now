@@ -1339,6 +1339,94 @@ def _graceful_stop_ffmpeg(
     threading.Thread(target=stop, name="direct-stream-graceful-stop", daemon=True).start()
 
 
+# #3553: docich owns the pure restart verdicts of the reconnect and audio
+# capture monitors. Threads, probes, sleeping and signalling stay here. The
+# last-known-good local verdicts run FIRST and a docich verdict is adopted only
+# when identical, so a stale or permissive shared module can never add a restart
+# of the live encoder (nor suppress one the local policy requires).
+def _local_step_twitch_offline_streak(
+    offline_streak: int, live: bool | None, offline_threshold: int
+) -> tuple[int, bool]:
+    if live is None:
+        return int(offline_streak), False
+    if live is True:
+        return 0, False
+    streak = int(offline_streak) + 1
+    return streak, streak >= offline_threshold
+
+
+def _local_step_audio_capture_loss(
+    state: str, consecutive: int, seen_capture: bool, loss_threshold: int
+) -> tuple[int, bool, bool]:
+    if state == "ok":
+        seen_capture = True
+        consecutive = 0
+    elif state == "missing" and seen_capture:
+        consecutive = int(consecutive) + 1
+    else:
+        consecutive = 0
+    restart = state == "missing" and seen_capture and consecutive >= loss_threshold
+    return consecutive, bool(seen_capture), restart
+
+
+def _load_docich_monitor_policy():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_monitor_policy.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_monitor_policy", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "STREAM_MONITOR_POLICY_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "step_twitch_offline_streak", None))
+            and callable(getattr(module, "step_audio_capture_loss", None))
+        ):
+            return module
+    except Exception:
+        pass
+    return None
+
+
+_docich_monitor_policy = _load_docich_monitor_policy()
+
+
+def _step_twitch_offline_streak(
+    offline_streak: int, live: bool | None, offline_threshold: int
+) -> tuple[int, bool]:
+    local = _local_step_twitch_offline_streak(offline_streak, live, offline_threshold)
+    if _docich_monitor_policy is not None:
+        try:
+            shared = _docich_monitor_policy.step_twitch_offline_streak(
+                offline_streak, live, offline_threshold
+            )
+            if type(shared) is tuple and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
+
+
+def _step_audio_capture_loss(
+    state: str, consecutive: int, seen_capture: bool, loss_threshold: int
+) -> tuple[int, bool, bool]:
+    local = _local_step_audio_capture_loss(state, consecutive, seen_capture, loss_threshold)
+    if _docich_monitor_policy is not None:
+        try:
+            shared = _docich_monitor_policy.step_audio_capture_loss(
+                state, consecutive, seen_capture, loss_threshold
+            )
+            if type(shared) is tuple and shared == local:
+                return shared
+        except Exception:
+            pass
+    return local
+
+
 def _start_reconnect_monitor(
     config: DirectStreamConfig,
     reconnect: ReconnectConfig,
@@ -1359,17 +1447,20 @@ def _start_reconnect_monitor(
                 # Transient probe failure: never count toward an offline streak.
                 continue
             monitor_state["last_live"] = live
-            if live is True:
-                monitor_state["offline_streak"] = 0
-                continue
-            streak = int(monitor_state.get("offline_streak", 0)) + 1
+            streak, restart = _step_twitch_offline_streak(
+                int(monitor_state.get("offline_streak", 0)),
+                live,
+                reconnect.offline_threshold,
+            )
             monitor_state["offline_streak"] = streak
+            if live is True:
+                continue
             print(
                 f"direct_stream: Twitch offline streak={streak}/"
                 f"{reconnect.offline_threshold}",
                 file=sys.stderr,
             )
-            if streak >= reconnect.offline_threshold:
+            if restart:
                 monitor_state["reconnect"] = True
                 monitor_state["reconnect_reason"] = "twitch_offline"
                 try:
@@ -1490,24 +1581,14 @@ def _start_audio_capture_monitor(
             if not alive_fn(child.pid):
                 return
             state = probe_fn(config, watchdog, child.pid)
-            if state == "ok":
-                # Only a capture stream that we actually saw on this FFmpeg run
-                # may be declared lost later. Without this transition guard an
-                # unexpected listing format would restart a healthy encoder.
-                seen_capture = True
-                consecutive = 0
-            elif state == "missing" and seen_capture:
-                consecutive += 1
-            else:
-                # Unreachable daemon, unknown listing, or no capture observed
-                # yet: keep publishing video and never restart on a guess.
-                consecutive = 0
+            # Only a capture stream that we actually saw on this FFmpeg run
+            # may be declared lost later; an unreachable daemon, an unknown
+            # listing, or no capture observed yet never restarts on a guess.
+            consecutive, seen_capture, lost = _step_audio_capture_loss(
+                state, consecutive, seen_capture, watchdog.loss_threshold
+            )
             publish(state, consecutive)
-            if (
-                state != "missing"
-                or not seen_capture
-                or consecutive < watchdog.loss_threshold
-            ):
+            if not lost:
                 continue
             print(
                 f"direct_stream: pulse capture lost "
