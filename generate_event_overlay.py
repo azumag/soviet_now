@@ -292,7 +292,7 @@ def read_gen_indicators(now: int) -> list[dict[str, Any]]:
     return indicators
 
 
-def render_event_overlay(
+def _render_event_overlay_legacy(
     events_path: Path | str,
     out_path: Path | str,
     keep: int = 180,
@@ -638,6 +638,54 @@ for (const ev of EVENTS.slice().reverse()) {{
         out_path.chmod(0o644)
     except OSError:
         pass
+
+
+# Transitional shared-presentation resolver. The canonical renderer lives in
+# docich, while this module preserves the established Soviet import/CLI contract.
+_DOCICH_RENDERER_CACHE_KEY: tuple[str, int, int] | None = None
+_DOCICH_RENDERER_CACHE_FN: Any = None
+
+
+def _docich_event_renderer() -> Any:
+    import importlib.util
+
+    global _DOCICH_RENDERER_CACHE_KEY, _DOCICH_RENDERER_CACHE_FN
+    root = Path(os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich")
+    candidate = root / "src" / "docich" / "broadcast_event_overlay.py"
+    try:
+        info = candidate.stat()
+        if not candidate.is_file():
+            return None
+    except OSError:
+        return None
+    key = (str(candidate), info.st_mtime_ns, info.st_size)
+    if key == _DOCICH_RENDERER_CACHE_KEY:
+        return _DOCICH_RENDERER_CACHE_FN
+    _DOCICH_RENDERER_CACHE_KEY = key
+    _DOCICH_RENDERER_CACHE_FN = None
+    try:
+        spec = importlib.util.spec_from_file_location("docich_shared_event_overlay", candidate)
+        if spec is None or spec.loader is None:
+            raise ImportError("docich shared event renderer is not importable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        renderer = getattr(module, "render_event_overlay", None)
+        if not callable(renderer):
+            raise ImportError("docich shared event renderer API is missing")
+        _DOCICH_RENDERER_CACHE_FN = renderer
+    except Exception as error:
+        print(f"event_overlay: docich renderer load failed ({type(error).__name__}); falling back to legacy", file=sys.stderr)
+    return _DOCICH_RENDERER_CACHE_FN
+
+
+def render_event_overlay(*args: Any, **kwargs: Any) -> None:
+    renderer = _docich_event_renderer()
+    if renderer is not None:
+        try:
+            return renderer(*args, **kwargs)
+        except Exception as error:
+            print(f"event_overlay: docich renderer failed ({type(error).__name__}); falling back to legacy", file=sys.stderr)
+    return _render_event_overlay_legacy(*args, **kwargs)
 
 
 def main() -> None:
