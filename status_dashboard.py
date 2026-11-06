@@ -3552,8 +3552,10 @@ def render_hanjuku_status(value):
                 continue
             key = text(progress.get('key'), '', 24)
             title = text(progress.get('title'), '', 24)
-            stage = text(progress.get('stage'), '', 32)
-            detail = text(progress.get('detail'), '', 32)
+            # These records are rendered in a wrapping overlay, not a terminal cell.
+            # Keep the 512-character sanitised upstream value without an ellipsis.
+            stage = text(progress.get('stage'), '', 512)
+            detail = text(progress.get('detail'), '', 512)
             if key and title and stage:
                 parts = [key, title, stage]
                 if detail:

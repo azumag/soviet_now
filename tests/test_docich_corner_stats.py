@@ -522,6 +522,18 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertIn('余白進行: month_sub / 将軍募集 / recovering / recruit', text)
         self.assertIn('余白進行: recall / 帰還 / to_camp / どうし', text)
 
+        # Long but bounded flow descriptions must survive snapshot -> status feed
+        # unchanged; the news panel wraps them instead of appending an ellipsis.
+        long_detail = '所在地を確認してから出撃準備を進める' * 12
+        policy['house']['general'] = long_detail
+        _write_json(self.runtime / 'hanjuku_bot.json', bot)
+        long_snapshot = self.snapshot()['hanjuku']
+        self.assertEqual(long_snapshot['gap']['flows'][2]['detail'], long_detail)
+        long_feed = '\n'.join(sd.render_hanjuku_status(long_snapshot))
+        self.assertIn('余白進行: house / 城・将軍の確認 / open_roster / ' + long_detail, long_feed)
+        self.assertNotIn('…', next(line for line in long_feed.splitlines()
+                                   if '余白進行: house' in line))
+
         # A chart step alone never proves a departure.  A matching persisted
         # attempt proves only a procedure, not a successful sortie.
         policy.pop('month_sub')

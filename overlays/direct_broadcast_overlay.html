@@ -1038,8 +1038,8 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 #hanjuku-gap .hanjuku-gap-pages { position: absolute; bottom: 8px; font-size: 14px; color: #bdcdd9; }
 /* Left gap: 速報 toasts + the current sortie chart (who goes where). */
 .hanjuku-gap-toasts { display: flex; flex-direction: column; gap: 5px; max-height: 168px;
-  overflow: hidden; margin-bottom: 8px; }
-.hanjuku-gap-toast { display: flex; align-items: baseline; gap: 8px; padding: 6px 9px;
+  overflow-x: hidden; overflow-y: auto; margin-bottom: 8px; }
+.hanjuku-gap-toast { display: flex; flex: 0 0 auto; align-items: baseline; gap: 8px; padding: 6px 9px;
   border-left: 3px solid #4b6b80; border-radius: 4px; background: #081b26;
   color: #e6f2f8; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere;
   animation: gapToastIn .22s ease-out; }
@@ -1061,11 +1061,11 @@ html[data-soren-monitor="1"]:not([data-improve-active="1"])[data-monitor-view="o
 .hanjuku-gap-toasts.with-progress { max-height: 104px; }
 .hanjuku-gap-toast.tone-flow { border-color: #a8bdf9; font-size: 12px; padding: 4px 6px; }
 .hanjuku-gap-progress { margin-bottom: 6px; border-left: 3px solid #a8bdf9; background: #0b2232;
-  padding: 4px 6px; border-radius: 4px; max-height: 72px; overflow: hidden; }
+  padding: 4px 6px; border-radius: 4px; max-height: 72px; overflow-x: hidden; overflow-y: auto; }
 .hanjuku-gap-progress:empty { display: none; }
 .hanjuku-gap-progress-head { color: #a8bdf9; font-size: 11px; font-weight: 700; }
 .hanjuku-gap-progress-item { color: #d8e5f5; font-size: 12px; line-height: 16px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  white-space: normal; overflow-wrap: anywhere; }
 @keyframes gapToastIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .hanjuku-gap-flow { display: flex; flex-direction: column; gap: 6px; }
 .hanjuku-gap-flow-head { display: flex; align-items: baseline; justify-content: space-between;
@@ -1929,8 +1929,8 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const gapFlows = lines.filter(line => line.startsWith('余白進行: ')).map(line => {
       const [key, title, stage, ...detail] = line.slice('余白進行: '.length).split(' / ');
       if (!flowKinds.has(key) || !title || !stage) return null;
-      return {key, title:title.slice(0, 24), stage:stage.slice(0, 32),
-        detail:detail.join(' / ').slice(0, 32)};
+      return {key, title:title.slice(0, 24), stage:stage.slice(0, 512),
+        detail:detail.join(' / ').slice(0, 512)};
     }).filter(Boolean).slice(0, 6);
     const gapMoves = lines.filter(line => line.startsWith('余白出撃: ')).map(line => {
       const parts = line.slice('余白出撃: '.length).split(' / ');

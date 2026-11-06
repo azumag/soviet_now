@@ -91,6 +91,30 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // The right status card keeps the live status.
     assert.match(result.sidebar,/兵力/);
     assert.match(result.sidebar,/将軍数/);
+    // A long live 速報 entry is not ellipsized by the parser or the CSS.
+    // Its text wraps, and a height-constrained strip can scroll to its end.
+    const longDetail='長い進行状況もすべて表示する'.repeat(12);
+    const longLine='余白進行: battle / 戦闘・切り札 / menu / '+longDetail;
+    text=build(now).replace('余白進行: battle / 戦闘・切り札 / menu / クースカン',longLine);
+    await page.evaluate(payload=>window.__sorenBroadcastState=payload,
+      {...state(),feeds:{showStatusG:{text,updatedAt:feedAt,lineCount:30}}});
+    await page.waitForTimeout(1100);
+    const wrapped=await page.evaluate(()=>{
+      const item=document.querySelector('.hanjuku-gap-progress-item');
+      const progress=item.closest('.hanjuku-gap-progress');
+      const style=getComputedStyle(item);
+      progress.scrollTop=progress.scrollHeight;
+      return {text:item.textContent, overflowStyle:getComputedStyle(progress).overflowY,
+        whiteSpace:style.whiteSpace, textOverflow:style.textOverflow,
+        lineCount:item.getBoundingClientRect().height/parseFloat(style.lineHeight),
+        scrollTop:progress.scrollTop};
+    });
+    assert.ok(wrapped.text.includes(longDetail),'long flow detail must survive parsing');
+    assert.notEqual(wrapped.textOverflow,'ellipsis','news entry must never show dots');
+    assert.notEqual(wrapped.whiteSpace,'nowrap','long news entry must wrap');
+    assert.ok(wrapped.lineCount>1,'long news entry must occupy multiple lines');
+    assert.equal(wrapped.overflowStyle,'auto','overflowing text must stay accessible');
+    assert.ok(wrapped.scrollTop>0,'the full entry must remain scrollable');
     // A new sortie and a captured castle become toasts on the next observation.
     const clock=now+2; feedAt=clock;
     text=build(clock,['余白出撃: キッシュ / バスカビル→プトレマイス / 行軍中 / 段階 B:003'],['ジュメルズ'],
