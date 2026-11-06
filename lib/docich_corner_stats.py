@@ -1056,10 +1056,11 @@ def _hanjuku_progress_flows(policy, now, screen=None):
     flows = []
 
     def add(key, title, stage, detail=None):
-        stage = _hanjuku_text(stage, 32)
+        # Preserve the full bounded procedure description for the live news strip.
+        stage = _hanjuku_text(stage, 512)
         if stage:
             flows.append({'key': key, 'title': title, 'stage': stage,
-                          'detail': _hanjuku_text(detail, 32) or ''})
+                          'detail': _hanjuku_text(detail, 512) or ''})
 
     sub = policy.get('month_sub')
     if isinstance(sub, Mapping) and sub:
