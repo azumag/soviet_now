@@ -82,5 +82,44 @@ class EventOverlayRendererTests(unittest.TestCase):
         )
 
 
+    def test_docich_renderer_is_used_by_legacy_module_callers(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            renderer = root / "src/docich/broadcast_event_overlay.py"
+            renderer.parent.mkdir(parents=True)
+            renderer.write_text(
+                "from pathlib import Path\n"
+                "def render_event_overlay(events_path, out_path, *args, **kwargs):\n"
+                "    Path(out_path).write_text('DOCICH-OWNER', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            out = root / "event.html"
+            with mock.patch.dict(os.environ, {"DOCICH_ROOT": str(root)}):
+                MODULE.render_event_overlay(root / "missing.jsonl", out, now=100)
+            self.assertEqual(out.read_text(), "DOCICH-OWNER")
+
+    def test_broken_docich_renderer_falls_back_to_legacy_output(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            renderer = root / "src/docich/broadcast_event_overlay.py"
+            renderer.parent.mkdir(parents=True)
+            renderer.write_text(
+                "def render_event_overlay(*args, **kwargs):\n"
+                "    raise RuntimeError('unavailable')\n",
+                encoding="utf-8",
+            )
+            event = root / "events.jsonl"
+            out = root / "event.html"
+            event.write_text('{"ts":99,"category":"system","title":"LEGACY-OK"}\n')
+            with mock.patch.dict(os.environ, {
+                "DOCICH_ROOT": str(root),
+                "EVENT_OVERLAY_COMMENT_GEN_STATE": "",
+                "EVENT_OVERLAY_RADIO_STATE": "",
+                "EVENT_OVERLAY_SAY_QUEUE_DIR": "",
+            }):
+                MODULE.render_event_overlay(event, out, now=100)
+            self.assertIn("LEGACY-OK", out.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
