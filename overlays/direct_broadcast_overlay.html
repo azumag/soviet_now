@@ -2215,15 +2215,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
           || row.title !== old.title)
         out.push(['▸ 進行 ' + gapFlowText(row), 'flow']);
     }
-    const plan = gapPlanInfo(value);
-    const oldPlan = gapPlanInfo(previous);
-    if (previous && (value.plan || plan.known)
-        && (value.plan !== previous.plan || plan.label !== oldPlan.label
-            || plan.detail !== oldPlan.detail))
-      out.push([`▸ ${plan.label} ${value.plan || '段階未取得'}\n${plan.detail}`, 'plan']);
-    // "sortie" is only an inferred pending category, not a confirmed order.
-    if (previous && value.pending !== previous.pending && value.pending && value.pending !== '出撃')
-      out.push([`▸ 処理中 ${value.pending}`, 'plan']);
+    // Plan/intent toasts removed: intent is shown only in the "出撃意図" row.
     return out;
   }
   function gapBuildSkeleton(surface) {
@@ -2286,12 +2278,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // Update only the toast elements that changed: re-creating them every poll
     // restarted the enter animation and made the strip flicker.
     const live = gapLive.toasts.filter(t => now - t.at <= 45000).slice(-4);
-    const planInfo = gapPlanInfo(value);
-    const currentToast = `▸ ${planInfo.label} ${value.plan || '段階未取得'}\n${planInfo.detail}`;
-    // A historical toast is not the current plan; display the current card
-    // unless the exact same up-to-date details are visible in the toast.
-    const planToastVisible = live.some(t => t.tone === 'plan' && t.text === currentToast);
-    gapDom.toastBox.classList.toggle('has-plan', planToastVisible);
+    gapDom.toastBox.classList.toggle('has-plan', false);
     const ids = new Set(live.map(t => t.id));
     for (const [id, el] of gapDom.toasts) {
       if (!ids.has(id)) { el.remove(); gapDom.toasts.delete(id); }
@@ -2325,7 +2312,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     // The chart is static between observations; re-rendering it every poll
     // also restarted its layout. Rebuild only when its inputs change.
     const sig = JSON.stringify({moves, owned:[...owned].sort(), lost:[...lost].sort(),
-                                plan:value.plan, pending:value.pending, planInfo, battleLine, planToastVisible});
+                                plan:value.plan, pending:value.pending, battleLine});
     if (sig === gapDom.flowSig) return;
     gapDom.flowSig = sig;
     const flow = gapDom.flow;
@@ -2333,17 +2320,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const flowHead = document.createElement('div'); flowHead.className = 'hanjuku-gap-flow-head';
     const flowTitle = document.createElement('span'); flowTitle.textContent = '出撃チャート';
     flowHead.append(flowTitle); flow.appendChild(flowHead);
-    if (!planToastVisible && (value.plan || value.pending || gap.intent)) {
-      const plan = document.createElement('div'); plan.className = 'hanjuku-gap-current-plan';
-      const head = document.createElement('div'); head.className = 'hanjuku-gap-current-plan-head';
-      head.textContent = [`${planInfo.label}：${value.plan || '段階未取得'}`,
-                          value.pending && value.pending !== '出撃' ? `処理中 ${value.pending}` : '']
-        .filter(Boolean).join(' / ');
-      const body = document.createElement('div'); body.className = 'hanjuku-gap-current-plan-detail';
-      body.textContent = planInfo.detail;
-      plan.append(head, body);
-      flow.appendChild(plan);
-    }
+
     if (battleLine) {
       const war = document.createElement('div'); war.className = 'hanjuku-gap-battle-line';
       war.textContent = `交戦中 ${battleLine}`;
