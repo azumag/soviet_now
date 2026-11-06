@@ -571,7 +571,7 @@ def _validate_caption_socket_path(raw: str) -> Path:
     return path
 
 
-def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
+def _local_load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
     source = os.environ if env is None else env
     backend = str(source.get("SOREN_STREAM_BACKEND", "obs")).strip().lower()
     if backend not in {"obs", "ffmpeg"}:
@@ -635,6 +635,64 @@ def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
         state_dir=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_STATE_DIR", "")), "tmp/state/direct_stream"),
         log_file=_resolve_repo_path(str(source.get("SOREN_DIRECT_STREAM_LOG_FILE", "")), "logs/direct_stream.log"),
     )
+
+
+# #3553: docich owns the pure encoder-configuration loader (ffmpeg backend
+# only; OBS is retired). The local loader runs FIRST, so every rejected value
+# keeps raising the established ConfigError and docich is never consulted for
+# it. A docich result is adopted only when every field is identical.
+def _load_docich_stream_config():
+    module_file = Path(
+        os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich"
+    ) / "src/docich/stream_config.py"
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "docich_shared_stream_config", module_file
+        )
+        if not spec or not spec.loader:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        if (
+            getattr(module, "STREAM_CONFIG_CONTRACT_VERSION", None) == 1
+            and callable(getattr(module, "load_stream_config", None))
+        ):
+            return module
+    except Exception:
+        pass
+    return None
+
+
+_docich_stream_config = _load_docich_stream_config()
+
+
+def _config_as_plain_dict(config: DirectStreamConfig) -> dict[str, object]:
+    plain = asdict(config)
+    for key in ("closed_captions_socket", "state_dir", "log_file"):
+        plain[key] = str(plain[key])
+    return plain
+
+
+def load_config(env: Mapping[str, str] | None = None) -> DirectStreamConfig:
+    local = _local_load_config(env)
+    if _docich_stream_config is not None:
+        try:
+            source = os.environ if env is None else env
+            shared = _docich_stream_config.load_stream_config(
+                dict(source), repo_root=REPO_ROOT, runtime_uid=os.geteuid()
+            )
+            if type(shared) is dict and shared == _config_as_plain_dict(local):
+                return DirectStreamConfig(
+                    **{
+                        **shared,
+                        "closed_captions_socket": Path(shared["closed_captions_socket"]),
+                        "state_dir": Path(shared["state_dir"]),
+                        "log_file": Path(shared["log_file"]),
+                    }
+                )
+        except Exception:
+            pass
+    return local
 
 
 def _local_build_ffmpeg_command(
