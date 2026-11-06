@@ -95,8 +95,8 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     // The right status card keeps the live status.
     assert.match(result.sidebar,/兵力/);
     assert.match(result.sidebar,/将軍数/);
-    // Full 速報・進行 text remains legible without an inner scrollbar or
-    // ellipsis; very long history is fitted to the fixed 540px surface.
+    // Full text stays in DOM, but the fixed-height news/progress areas may
+    // crop overflow without scrolling or shrinking the sortie chart.
     const longDetail='長い進行状況もすべて表示する'.repeat(30);
     const longLine='余白進行: battle / 戦闘・切り札 / menu / '+longDetail;
     text=build(now).replace('余白進行: battle / 戦闘・切り札 / menu / クースカン',longLine);
@@ -123,12 +123,11 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.notEqual(wrapped.whiteSpace,'nowrap','long news entry must wrap');
     assert.ok(wrapped.lineCount>1,'long news entry must occupy multiple lines');
     assert.notEqual(wrapped.overflowStyle,'auto','no inner scrollbar is allowed');
-    assert.equal(wrapped.nestedScroll,false,'the progress block must expand to its full height');
-    assert.ok(wrapped.scale<1,'long news content must be scaled to fit');
-    assert.equal(wrapped.clipped,false,'the scaled content must fit the measured gap');
-    // Every observation id must enter the scrolling news history, including
-    // the month decision, page-down inputs and battle rationale. Repeated polls
-    // must not duplicate entries, and long explanations must never ellipsize.
+    assert.equal(wrapped.nestedScroll,true,'excessively long progress may be clipped');
+    assert.equal(wrapped.scale,1,'long news must not shrink the chart');
+    assert.equal(wrapped.clipped,false,'the column must stay inside the measured gap');
+    // The news strip shows only the latest four distinct observations; no
+    // page rotation and no ellipsis. Repeated polls must not duplicate entries.
     const longReason='敵の卵を避けつつ攻撃する根拠'.repeat(20);
     const decisions=[
       {id:'g1-abcdef12:1:10',at:now,screen:'month_menu',actions:['down','a'],
@@ -154,20 +153,22 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     const decisionFit=await page.evaluate(()=>{
       const gap=document.getElementById('hanjuku-gap');
       const col=gap.querySelector('.hanjuku-gap-content');
-      const news=gap.querySelector('.hanjuku-gap-decisions');
+      const news=gap.querySelector('.hanjuku-gap-news');
       const box=gap.getBoundingClientRect(), fitted=col.getBoundingClientRect();
-      return {scroll:getComputedStyle(news).overflowY, clipped:fitted.bottom>box.bottom+1
-        || fitted.right>box.right+1, retained:news.querySelectorAll('.hanjuku-gap-decision').length};
+      return {scroll:getComputedStyle(news).overflowY, height:news.getBoundingClientRect().height,
+        clipped:fitted.bottom>box.bottom+1 || fitted.right>box.right+1,
+        retained:news.querySelectorAll('.hanjuku-gap-decision').length};
     });
-    assert.notEqual(decisionFit.scroll,'auto','decision log cannot depend on scrolling');
-    assert.equal(decisionFit.clipped,false,'decision history and route chart fit together');
-    assert.equal(decisionFit.retained,decisions.length,'no visible decision is discarded');
+    assert.equal(decisionFit.scroll,'hidden','news overflow must be clipped, not scrolled');
+    assert.equal(decisionFit.height,210,'the news strip height must be fixed');
+    assert.equal(decisionFit.clipped,false,'news and chart must stay in the overlay');
+    assert.equal(decisionFit.retained,4,'only the latest four decisions are retained');
     await page.waitForTimeout(1100);
     assert.equal(await page.locator('.hanjuku-gap-decision').count(),4,
       'polling the same feed must not duplicate decisions');
 
-    // Regression: 48 long decision entries previously scaled the entire
-    // 239x540 left surface below readable size, hiding toasts and sortie chart.
+    // Regression: a 48-entry backlog stays at normal scale and retains only
+    // the newest four DOM rows, with no automatic history rotation.
     const backlog=Array.from({length:48},(_,i)=>({
       id:`g1-abcdef12:1:${100+i}`,at:now,screen:'month_menu',
       actions:['down','a'],reasons:['判断根拠と画面操作を記録する'.repeat(14)],
@@ -179,25 +180,27 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     const crowded=await page.evaluate(()=>{
       const surface=document.getElementById('hanjuku-gap');
       const content=surface.querySelector('.hanjuku-gap-content');
-      const chunks=[...surface.querySelectorAll('.hanjuku-gap-decision-chunk')];
-      const fitted=content.getBoundingClientRect(), bounds=surface.getBoundingClientRect();
-      return {entries:surface.querySelectorAll('.hanjuku-gap-decision').length,
-        visibleChunks:chunks.filter(el=>el.getClientRects().length>0).length,
-        pages:surface.querySelector('.hanjuku-gap-page-info').textContent,
+      const news=surface.querySelector('.hanjuku-gap-news');
+      const chart=surface.querySelector('.hanjuku-gap-flow');
+      return {ids:[...surface.querySelectorAll('.hanjuku-gap-decision')].map(e=>e.dataset.decisionId),
         scale:new DOMMatrixReadOnly(getComputedStyle(content).transform).a,
-        clipped:fitted.bottom>bounds.bottom+1||fitted.right>bounds.right+1};
+        height:news.getBoundingClientRect().height,
+        overflow:getComputedStyle(news).overflowY,
+        chartVisible:chart.getBoundingClientRect().height>0,
+        hasPagination:Boolean(surface.querySelector('.hanjuku-gap-page-info'))};
     });
-    assert.equal(crowded.entries,decisions.length+backlog.length,
-      'all judgments must remain in the journal');
-    assert.ok(crowded.pages.includes('履歴 1/'),crowded.pages);
-    assert.ok(crowded.visibleChunks>0 && crowded.visibleChunks<=2,
-      'show a readable page instead of shrinking every entry simultaneously');
-    assert.ok(crowded.scale>=0.35,`left overlay is still invisible: ${crowded.scale}`);
-    assert.equal(crowded.clipped,false,'the readable page and chart must fit together');
+    assert.deepEqual(crowded.ids,backlog.slice(-4).reverse().map(e=>e.id),
+      'only newest decisions appear in descending order');
+    assert.equal(crowded.height,210,'news must keep its fixed height even with a backlog');
+    assert.equal(crowded.overflow,'hidden');
+    assert.equal(crowded.scale,1,'the whole overlay must not shrink');
+    assert.equal(crowded.chartVisible,true,'the sortie chart keeps its own region');
+    assert.equal(crowded.hasPagination,false,'history pagination was removed');
     await page.evaluate(()=>window.gapClock+=7);
     await page.waitForTimeout(1100);
-    const nextPage=await page.locator('.hanjuku-gap-page-info').textContent();
-    assert.ok(nextPage.includes('履歴 2/'),nextPage);
+    const afterWait=await page.evaluate(()=>[...document.querySelectorAll('.hanjuku-gap-decision')]
+      .map(e=>e.dataset.decisionId));
+    assert.deepEqual(afterWait,crowded.ids,'history must not rotate after 6.5 seconds');
     await page.evaluate(stamp=>window.gapClock=stamp,now);
 
     // A new sortie and a captured castle become toasts on the next observation.
