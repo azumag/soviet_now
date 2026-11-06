@@ -1039,7 +1039,7 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
         rows.append({"general": general, "source": source or "", "target": target or "",
                      "status": "tracking_unknown" if unknown else sortie["status"],
                      "step": _hanjuku_text(step, 24) or "",
-                     "purpose": _hanjuku_text(order.get("purpose"), 16) or "",
+                     "purpose": _hanjuku_text(sortie.get("purpose") or order.get("purpose"), 16) or "",
                      "note": _hanjuku_text(order.get("note"), 96) or ""})
         if len(rows) >= limit:
             break
@@ -1283,11 +1283,29 @@ def _hanjuku_gap(runtime, policy, now, screen=None, identity=None):
             'enemy_soldiers': counts[0] if soldiers_current else None,
             'ally_soldiers': counts[1] if soldiers_current else None,
         }
+    # Count independently from the eight detail rows. A capped count is unknown.
+    moves = _hanjuku_moves(policy, policy.get('tick'), limit=128)
+    march_count = len(moves) if len(moves) < 128 else None
+
+    # Only a roof-registered origin and a named destination justify a return.
+    session = policy.get('flow')
+    session = session if isinstance(session, Mapping) else {}
+    recall = session.get('recall')
+    recall = recall if isinstance(recall, Mapping) else {}
+    origin = recall.get('origin')
+    goal = _hanjuku_name(recall.get('goal'), each=24)
+    recall_route = None
+    if (recall.get('origin_source') == 'roofs' and goal
+            and isinstance(origin, (list, tuple)) and len(origin) == 2
+            and all(type(n) is int and -4096 <= n <= 4096 for n in origin)):
+        recall_route = {'origin': list(origin), 'target': goal,
+                        'stage': _hanjuku_text(recall.get('stage'), 24) or ''}
+
     gap_left = w if align == 'left' else 0
     return {'width': 960-w, 'left': gap_left, 'side': 'right' if align == 'left' else 'left',
             'captured_names': _hanjuku_names(policy.get('captured'), limit=24, each=24),
             'garrison': garrison, 'marching': _hanjuku_marching(policy, policy.get('tick'), limit=24, each=24),
-            'moves': _hanjuku_moves(policy, policy.get('tick')),
+            'moves': moves[:8], 'march_count': march_count, 'recall_route': recall_route,
             'active_order': _hanjuku_active_order(policy),
             'flows': _hanjuku_progress_flows(policy, now, screen),
             'decisions': _hanjuku_decision_history(runtime, identity) if identity else [],

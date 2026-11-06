@@ -472,11 +472,13 @@ class HanjukuStatusTest(unittest.TestCase):
         self.assertEqual((gap['moves'][0]['source'], gap['moves'][0]['target']),
                          ('カルーン', 'ジュメルズ'))
         self.assertEqual(gap['moves'][0]['status'], 'en_route')
+        self.assertEqual(gap['march_count'], 2)
         self.assertEqual(gap['moves'][1]['status'], 'tracking_unknown')
         self.assertEqual((gap['moves'][1]['source'], gap['moves'][1]['target']),
                          ('アルマムーン', 'ジュメルズ'))
         text='\n'.join(sd.fit_dashboard_lines(sd.render_hanjuku_status(value),width=20))
         self.assertIn('余白出撃: パプリカ / カルーン→ジュメルズ / 行軍中', text)
+        self.assertIn('余白進軍数: 2', text)
         self.assertIn('余白出撃: キッシュ / アルマムーン→ジュメルズ / 到着未確認（追跡期限超過）', text)
         self.assertIn(' / '.join(names),text)
         self.assertIn('長い将軍の名前です',text)
@@ -1211,12 +1213,31 @@ class HanjukuStatusTest(unittest.TestCase):
         moves = result['gap']['moves']
         self.assertEqual([(m['general'], m['source'], m['target']) for m in moves],
                          [('ヴィーナス', 'カルーン', 'あたしの家')])
+        self.assertEqual((moves[0]['purpose'], result['gap']['march_count']), ('house', 1))
         self.assertEqual((result['active_order']['target'], result['active_order']['purpose'],
                           result['active_order']['status']),
                          ('あたしの家', '卵修理', 'launched_unconfirmed'))
         text = '\n'.join(sd.render_hanjuku_status(result))
         self.assertIn('カルーン→あたしの家', text)
+        self.assertIn('種別 house', text)
         self.assertIn('卵修理', text)
+
+    def test_roof_grounded_recall_route_is_displayed_but_unverified_origin_is_not(self):
+        self._ready_gap()
+        self._policy(tick=5000, month='46-9',
+                     flow={'recall': {'stage': 'await_dispatch', 'origin_source': 'roofs',
+                                      'origin': [440, 392], 'goal': 'アルマムーン'}})
+        result = self.snapshot()['hanjuku']
+        self.assertEqual(result['gap']['recall_route'], {
+            'origin': [440, 392], 'target': 'アルマムーン', 'stage': 'await_dispatch'})
+        text = '\n'.join(sd.render_hanjuku_status(result))
+        self.assertIn('余白帰還: {"origin":[440,392],"target":"アルマムーン",', text)
+        self._policy(flow={'recall': {'stage': 'await_dispatch', 'origin_source': 'guess',
+                                       'origin': [440, 392], 'goal': 'アルマムーン'}})
+        self.assertIsNone(self.snapshot()['hanjuku']['gap']['recall_route'])
+        self._policy(flow={'recall': {'stage': 'await_dispatch', 'origin_source': 'roofs',
+                                       'origin': [440, 392], 'goal': None}})
+        self.assertIsNone(self.snapshot()['hanjuku']['gap']['recall_route'])
 
     def test_settled_or_stale_house_sortie_is_not_a_current_action(self):
         self._ready_gap()

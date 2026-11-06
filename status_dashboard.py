@@ -166,7 +166,7 @@ def fit_dashboard_lines(lines, width=W):
     prefixes = (
         '  投影余白:', '  余白占領記録:', '  余白駐留:', '  余白行軍:', '  余白出撃:', '  余白出撃意図:', '  余白交戦HP:',
         '  余白交戦兵数:', '  余白戦闘計画:', '  余白切り札:', '  余白戦闘判断:', '  余白卵対策:',
-        '  余白進行:', '  余白判断:',
+        '  余白進行:', '  余白判断:', '  余白進軍数:', '  余白帰還:',
         '  出撃意図:', '  敵将軍:', '  味方将軍:', '  卵落:', '  切り札:', '  切り札在庫:',
     )
     return [line if line.startswith(prefixes) else truncate_ansi_display(line, width) for line in lines]
@@ -3520,6 +3520,12 @@ def render_hanjuku_status(value):
     gap = value.get('gap')
     if isinstance(gap, dict):
         lines.append(f"  投影余白: side={gap.get('side', 'right')} x={gap['left']} w={gap['width']} until={gap['until']:.3f}")
+        march_count = gap.get('march_count')
+        if type(march_count) is int and 0 <= march_count < 128:
+            lines.append(f"  余白進軍数: {march_count}")
+        route = gap.get('recall_route')
+        if isinstance(route, dict):
+            lines.append("  余白帰還: " + json.dumps(route, ensure_ascii=False, separators=(',', ':')))
         names = gap.get('captured_names') or []
         if names:
             lines.append("  余白占領記録: " + " / ".join(names))
@@ -3544,6 +3550,9 @@ def render_hanjuku_status(value):
                 parts.append(status)
             if step:
                 parts.append('段階 ' + step)
+            purpose = text(move.get('purpose'), '', 16)
+            if purpose:
+                parts.append('種別 ' + purpose)
             note = text(move.get('note'), '', 96)
             if note:
                 parts.append('理由 ' + note)
