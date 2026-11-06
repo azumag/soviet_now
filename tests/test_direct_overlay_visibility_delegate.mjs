@@ -23,7 +23,7 @@ function probe(root){
     "for(const phase of phases){fs.writeFileSync(wildcard,JSON.stringify({phase}));values.push(inputs.map(directOverlaySurfaceVisible));}",
     "fs.writeFileSync(wildcard,'{invalid');values.push(inputs.map(directOverlaySurfaceVisible));",
     "process.stdout.write(JSON.stringify(values));",
-  ].join('\\n');
+  ].join('\n');
   const p=spawnSync(process.execPath,['--input-type=module','-e',script],{
     cwd:ROOT,env:{...process.env,DOCICH_ROOT:root},encoding:'utf8',timeout:12000,
   });
@@ -50,7 +50,7 @@ test('docich visibility delegation preserves local wildcard and improvement prio
       "  if(item.visibility==='wildcard')return true;",
       "  return false;",
       '}',
-    ].join('\\n');
+    ].join('\n');
     fs.writeFileSync(moduleFile,compatible);
     assert.deepEqual(probe(root),expected);
     assert.equal(fs.readFileSync(marker,'utf8'),'called');
