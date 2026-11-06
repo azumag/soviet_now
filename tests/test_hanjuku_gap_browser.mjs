@@ -148,7 +148,9 @@ test('the measured gap shows live toasts and the sortie chart, and clears on swi
     assert.ok(audit.some(d=>d.text.includes('月')||d.text.includes('month_plan')));
     assert.ok(audit.some(d=>d.text.includes('R → ↓') && d.text.includes('ページを送る')));
     assert.ok(audit.some(d=>d.text.includes(longReason)));
-    assert.ok(audit.some(d=>d.text.includes('個別の判断理由は記録されていません')));
+    // Owner 2026-11-06: a decision without a reason shows only the operation.
+    assert.ok(audit.every(d=>!d.text.includes('個別の判断理由は記録されていません')));
+    assert.ok(audit.every(d=>!d.text.includes('観測 {')));
     assert.ok(audit.every(d=>d.whiteSpace!=='nowrap' && d.textOverflow!=='ellipsis'));
     const decisionFit=await page.evaluate(()=>{
       const gap=document.getElementById('hanjuku-gap');
