@@ -1196,12 +1196,6 @@ def _hanjuku_decision_history(runtime, identity, limit=48):
                           or _hanjuku_text(row.get('deviation_reason'), 2048))
                 if reason:
                     parts.append('理由 ' + reason)
-                metric = row.get('observed_metric')
-                if isinstance(metric, (dict, list)) and metric:
-                    evidence = _hanjuku_text(json.dumps(metric, ensure_ascii=False,
-                                                        separators=(',', ':')), 800)
-                    if evidence:
-                        parts.append('観測 ' + evidence)
                 item['reasons'].append(' / '.join(parts))
     output = []
     for key in order:
