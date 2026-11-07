@@ -719,6 +719,61 @@ _program_corner_active() {
 	return 1
 }
 
+# 半熟コーナー(active)中に任意の prepass を skip すべきかの判定 (docich#3712
+# レバー (i)-A)。再生・TTS・capture 経路には触れず、判定材料は既存 canonical
+# game_switch.json の read-only 参照のみ。新規常駐監視・重い poll は作らない。
+# 既定 OFF (RADIO_PREPASS_CORNER_BYPASS_ENABLED!=1)・未読・破損・phase 非 ready・
+# active 非 hanjuku-hero・mtime/started_at の stale はすべて fail-open（= 1 を返し
+# prepass を通す）。鮮度上限は RADIO_PREPASS_CORNER_FRESH_SEC（既定 7200s）。
+# 0 を返す = prepass を skip（bypass）, 1 を返す = prepass を通常実行。
+_radio_prepass_should_bypass_for_corner() {
+	[ "${RADIO_PREPASS_CORNER_BYPASS_ENABLED:-0}" = "1" ] || return 1
+	local ctx="${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	local fresh="${RADIO_PREPASS_CORNER_FRESH_SEC:-7200}"
+	[ -r "$ctx" ] || return 1
+	case "$fresh" in '' | *[!0-9]*) fresh=7200 ;; esac
+	[ "$fresh" -ge 60 ] || fresh=60
+	local now mtime age
+	now=$(date +%s 2>/dev/null || echo 0)
+	case "$now" in '' | *[!0-9]*) return 1 ;; esac
+	mtime=$(stat -f %m "$ctx" 2>/dev/null) || mtime=$(stat -c %Y "$ctx" 2>/dev/null) || mtime=""
+	case "$mtime" in '' | *[!0-9]*) return 1 ;; esac
+	age=$((now - mtime))
+	[ "$age" -gt "$fresh" ] && return 1
+	FRESH="$fresh" python3 - "$ctx" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+fresh = int(os.environ.get("FRESH", "7200"))
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        data = json.load(stream)
+except Exception:
+    raise SystemExit(1)
+
+if data.get("phase") != "ready":
+    raise SystemExit(1)
+active = data.get("active") or {}
+if active.get("game") != "hanjuku-hero":
+    raise SystemExit(1)
+started = active.get("started_at")
+if not isinstance(started, str) or not started:
+    raise SystemExit(1)
+try:
+    started_at = datetime.fromisoformat(started.replace("Z", "+00:00"))
+except Exception:
+    raise SystemExit(1)
+if started_at.tzinfo is None:
+    started_at = started_at.replace(tzinfo=timezone.utc)
+age = (datetime.now(timezone.utc) - started_at).total_seconds()
+if age < -60 or age > fresh:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
 _play_deferred_radio_queue_once() {
 	_radio_cleanup_orphan_render_artifacts
 	# 番組枠コーナー中は deferred ラジオを再生しない。生成側（scheduler）の
