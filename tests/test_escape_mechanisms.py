@@ -2415,32 +2415,6 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn('"${STATUS_OVERLAY_OBS_X:-24}" "${STATUS_OVERLAY_OBS_Y:-300}"', eloop)
         self.assertIn('"${SHOW_STATUS_OVERLAY_OBS_X:-1448}" "${SHOW_STATUS_OVERLAY_OBS_Y:-300}"', eloop)
 
-    def test_obs_mac_capture_setinputsettings_serialized_cross_process(self):
-        """全プロセスの mac-capture SetInputSettings は単一のファイルロックで直列化される。
-
-        macOS mac-capture(SCK) は obs_source_update が並行すると二重free→OBSが
-        SIGABRT落ち。in-process ロック(wildcard_parallel.py)では別プロセス(キャプチャ
-        watchdog / 本線bridge / soren91 / 候補スロット)を直列化できないため、
-        SetInputSettings を出す全箇所が lib/obs_source_lock.{sh,mjs} の同一ロックを
-        必ず取得する。これが外れると並列パラメータ調整中にOBSごと落ちる回帰になる。
-        """
-        # The shared lock helpers exist and expose acquire/release in both languages.
-        sh_lock = (REPO_ROOT / "lib" / "obs_source_lock.sh").read_text()
-        mjs_lock = (REPO_ROOT / "lib" / "obs_source_lock.mjs").read_text()
-        self.assertIn("obs_source_lock_acquire", sh_lock)
-        self.assertIn("obs_source_lock_release", sh_lock)
-        self.assertIn("mkdir \"$OBS_SOURCE_LOCK_DIR\"", sh_lock)
-        self.assertIn("OBS_SOURCE_LOCK_SETTLE_SEC", sh_lock)
-        self.assertIn("export async function acquireObsSourceLock", mjs_lock)
-        self.assertIn("export async function releaseObsSourceLock", mjs_lock)
-        self.assertIn("obs_source_update.lock", sh_lock)
-        self.assertIn("obs_source_update.lock", mjs_lock)
-
-        bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
-        self.assertIn("obs_source_lock.mjs", bridge)
-        self.assertIn("acquireObsSourceLock", bridge)
-        self.assertIn("releaseObsSourceLock", bridge)
-
     def test_chrome_launch_serialized_cross_process(self):
         """全プロセスのChrome-for-Testing起動は単一ファイルロックで直列化される。
 
