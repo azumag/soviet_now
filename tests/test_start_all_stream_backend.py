@@ -50,8 +50,10 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         config = json.loads(result.stdout)
         self.assertEqual(config["backend"], "obs")
-        self.assertIn("obs_capture_watchdog", config["workers"])
+        # OBS 撤去後 (#3553 G2a): 削除済みのウォッチドッグは登録せず、encoder worker も無い。
+        self.assertNotIn("obs_capture_watchdog", config["workers"])
         self.assertNotIn("direct_stream", config["workers"])
+        self.assertIn("soren_loop", config["workers"])
 
     def test_ffmpeg_replaces_only_the_obs_watchdog_worker(self) -> None:
         result = print_worker_config("ffmpeg")

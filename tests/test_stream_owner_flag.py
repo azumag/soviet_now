@@ -57,7 +57,7 @@ class StartAllOwnerTest(unittest.TestCase):
             with self.subTest(owner=owner):
                 workers = self.workers(owner, backend="obs")
                 self.assertNotIn("direct_stream", workers)
-                self.assertIn("obs_capture_watchdog", workers)
+                self.assertNotIn("obs_capture_watchdog", workers)
 
 
 class DirectStreamRunOwnerTest(unittest.TestCase):
