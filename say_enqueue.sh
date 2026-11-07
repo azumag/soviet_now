@@ -153,14 +153,21 @@ PY
 				fi
 			fi
 		done
-	) &
+	) >/dev/null 2>&1 &
 	SPEAKING_POLL_PID=$!
 }
 _speaking_leave() {
 	# speaking は実再生中だけを表す。待機項目は再生開始時に自分で enter する。
 	local _grace="${SPEAKING_GRACE_SEC:-3}"
 	case "$_grace" in ''|*[!0-9]*) _grace=3 ;; esac
-	[ -n "${SPEAKING_POLL_PID:-}" ] && kill "$SPEAKING_POLL_PID" 2>/dev/null || true
+	if [ -n "${SPEAKING_POLL_PID:-}" ]; then
+		# 子シェルだけを kill すると、その sleep が孤児として最大 ${TWITCH_SNOOZE_POLL_SEC:-240}s 残り、
+		# 呼び出し側が出力をパイプで受けている場合は EOF まで待たされる。子を先に止める。
+		for _poll_child in $(pgrep -P "$SPEAKING_POLL_PID" 2>/dev/null); do
+			kill "$_poll_child" 2>/dev/null || true
+		done
+		kill "$SPEAKING_POLL_PID" 2>/dev/null || true
+	fi
 	wait "${SPEAKING_POLL_PID:-}" 2>/dev/null || true
 	SPEAKING_POLL_PID=""
 	[ "${SPEAKING_ENTERED:-0}" = 1 ] || return 0

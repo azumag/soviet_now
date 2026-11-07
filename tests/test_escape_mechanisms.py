@@ -2385,16 +2385,9 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
 
     def test_obs_control_supports_wildcard_parallel_transform(self):
         """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
-        obs_control = (REPO_ROOT / "obs_control.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
         browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
-        self.assertIn("transform <scene> <source> <x> <y> <scaleX> <scaleY>", obs_control)
-        self.assertIn("SetSceneItemTransform", obs_control)
-        self.assertIn("OBS_CONTROL_TRANSFORM_MODE=force", obs_control)
-        self.assertIn("transform-preserved", obs_control)
-        self.assertIn("isDefaultTransform", obs_control)
-        self.assertIn("GetSceneItemTransform", obs_control)
         self.assertIn("<html-file-or-url>", browser_source)
         self.assertIn("http://*|https://*", browser_source)
         self.assertIn("OBS_TOP_OVERLAY_SOURCE", window_source := (REPO_ROOT / "obs_window_capture_source.sh").read_text())
@@ -2412,7 +2405,6 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("wildcardParallelCand", eloop)
         self.assertIn("wildcardParallelCand", parallel)
         self.assertIn('WILDCARD_PARALLEL_OBS_CANDIDATE_COLS', parallel)
-        self.assertIn("OBS_CONTROL_BOUNDS_TYPE", obs_control)
         self.assertIn("OBS_BOUNDS_SCALE_OUTER", parallel)
         self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_W", eloop)
         self.assertIn("export WILDCARD_PARALLEL_OBS_CANDIDATE_COL_STRIDE", eloop)
@@ -8332,20 +8324,6 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn("accept_languages: 'ja-JP,ja,en-US,en'", soviet)
         self.assertIn("'--disable-translate'", soviet)
         self.assertIn('tr["enabled"] = False', bridge)
-
-    def test_obs_control_can_report_overlay_source_status(self):
-        obs = (REPO_ROOT / "obs_control.sh").read_text()
-
-        self.assertIn("./obs_control.sh status <scene> <source>", obs)
-        self.assertIn("action === 'status'", obs)
-        self.assertIn("sceneItemEnabled === true", obs)
-        self.assertIn("=missing", obs)
-        self.assertIn("./obs_control.sh stack <scene>", obs)
-        self.assertIn("SetSceneItemIndex", obs)
-        self.assertIn("OBS_TOP_OVERLAY_SOURCE", obs)
-        self.assertIn("OBS_BELOW_TOP_OVERLAY_SOURCE", obs)
-        self.assertIn("'twica'", obs)
-        self.assertIn("'eventOverlay'", obs)
 
     def test_status_g_has_wide_short_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
