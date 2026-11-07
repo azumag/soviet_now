@@ -35,6 +35,8 @@ cd "$SCRIPT_DIR"
 source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
 
 [ -f .env ] && set -a && . ./.env && set +a
+# shellcheck source=lib/stream_owner_commands.sh
+source ./lib/stream_owner_commands.sh
 
 WORKER_NAME="stream_noon_audit"
 PID_FILE="${STREAM_NOON_AUDIT_PID_FILE:-tmp/state/${WORKER_NAME}.pid}"
@@ -55,10 +57,14 @@ GQL_TIMEOUT_SEC="${STREAM_NOON_AUDIT_GQL_TIMEOUT_SEC:-10}"
 GQL_CMD="${STREAM_NOON_AUDIT_GQL_CMD:-}"
 
 NOW_CMD="${STREAM_NOON_AUDIT_NOW_CMD:-date +%s}"
+# The status file has the same shape for either encoder owner, so the status
+# command is owner-independent. Stop/run/pause marker depend on who owns the
+# encoder (docich ADR 0007) and are resolved by _apply_owner_defaults; explicit
+# STREAM_NOON_AUDIT_* variables always win.
 STATUS_CMD="${STREAM_NOON_AUDIT_STATUS_CMD:-python3 lib/direct_stream.py status}"
-STOP_CMD="${STREAM_NOON_AUDIT_STOP_CMD:-python3 lib/direct_stream.py stop}"
-RUN_CMD="${STREAM_NOON_AUDIT_RUN_CMD:-./direct_stream.sh run}"
-STREAM_PAUSE_MARKER="${STREAM_NOON_AUDIT_STREAM_PAUSE_MARKER:-tmp/state/direct_stream.paused}"
+STOP_CMD=""
+RUN_CMD=""
+STREAM_PAUSE_MARKER=""
 LOG_FILE="${STREAM_NOON_AUDIT_LOG_FILE:-logs/direct_stream.log}"
 
 JST_OFFSET_SEC=32400 # +09:00 (JST, DSTなし)
@@ -72,6 +78,37 @@ _WE_HOLD_PAUSE=0
 _log() {
 	# stderr へ出力: _restart_stream の stdout は new_started の受け渡しに使う
 	echo "[${WORKER_NAME} $(date '+%H:%M:%S')] $*" >&2
+}
+
+_apply_owner_defaults() {
+	local owner="${1:-soren}"
+	stream_owner_defaults "$owner" "$SCRIPT_DIR" "${DOCICH_ROOT:-/home/ubuntu/docich}" || return 1
+	STOP_CMD="${STREAM_NOON_AUDIT_STOP_CMD:-$STREAM_OWNER_STOP_CMD}"
+	RUN_CMD="${STREAM_NOON_AUDIT_RUN_CMD:-$STREAM_OWNER_RUN_CMD}"
+	STREAM_PAUSE_MARKER="${STREAM_NOON_AUDIT_STREAM_PAUSE_MARKER:-$STREAM_OWNER_PAUSE_MARKER}"
+}
+
+# The owner can change while this long-lived worker runs (a handover edits .env),
+# so it is re-read from .env right before the encoder is touched.
+_refresh_owner() {
+	local owner="${DOCICH_STREAM_OWNER:-soren}"
+	if [ -f .env ]; then
+		owner=$( set -a; . ./.env >/dev/null 2>&1; printf '%s' "${DOCICH_STREAM_OWNER:-soren}" )
+	fi
+	_apply_owner_defaults "$owner" || {
+		_log "ERROR: DOCICH_STREAM_OWNER は soren か docich である必要があります → 配信に触れません"
+		return 1
+	}
+}
+
+# An operator pause of either owner's encoder means "intentionally off".
+_stream_intentionally_paused() {
+	[ -f "$STREAM_PAUSE_MARKER" ] && return 0
+	if [ -z "${STREAM_NOON_AUDIT_STREAM_PAUSE_MARKER:-}" ]; then
+		[ -f tmp/state/direct_stream.paused ] && return 0
+		[ -f tmp/state/docich_stream.paused ] && return 0
+	fi
+	return 1
 }
 
 _pid_alive() {
@@ -131,6 +168,11 @@ trap '_request_reload USR1' USR1
 if [ -f "$PAUSE_FILE" ]; then
 	_log "paused by $PAUSE_FILE → exit"
 	exit 0
+fi
+
+if ! _apply_owner_defaults "${DOCICH_STREAM_OWNER:-soren}"; then
+	_log "ERROR: DOCICH_STREAM_OWNER は soren か docich である必要があります → 終了"
+	exit 2
 fi
 
 if [ -f "$PID_FILE" ]; then
@@ -336,6 +378,7 @@ _wait_offline_hold() {
 
 _restart_stream() {
 	local old_started="$1" old_stream_id="${2:-}" new_started="" stop_rc=0 rotated_id=""
+	_refresh_owner || return 1
 	_log "位相ずれ検出 → 配信を正午へ張り直します (old_started=${old_started} old_stream_id=${old_stream_id:-unknown})"
 	touch "$STREAM_PAUSE_MARKER"
 	_WE_HOLD_PAUSE=1
@@ -387,7 +430,7 @@ _audit_once() {
 
 	noon_epoch=$(( jst_day * DAY_SEC + NOON_SOD_SEC - JST_OFFSET_SEC ))
 
-	if [ -f "$STREAM_PAUSE_MARKER" ]; then
+	if _stream_intentionally_paused; then
 		decision="skipped_paused"
 		detail="stream pause marker 存在 (意図的停止のため触れない)"
 	elif [ "$(_status_flag running)" != "1" ]; then
