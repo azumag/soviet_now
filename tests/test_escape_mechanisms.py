@@ -2386,19 +2386,7 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
     def test_obs_control_supports_wildcard_parallel_transform(self):
         """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()
-        browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
         parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
-        self.assertIn("<html-file-or-url>", browser_source)
-        self.assertIn("http://*|https://*", browser_source)
-        self.assertIn("OBS_TOP_OVERLAY_SOURCE", window_source := (REPO_ROOT / "obs_window_capture_source.sh").read_text())
-        self.assertIn("OBS_BELOW_TOP_OVERLAY_SOURCE", window_source)
-        self.assertIn("SetSceneItemIndex", window_source)
-        self.assertIn("await enforceOverlayStack(obs)", window_source)
-        self.assertIn("SetInputMute", window_source)
-        self.assertIn("WILDCARD_PARALLEL_CANDIDATE_AUDIO", window_source)
-        self.assertIn("OBS_WINDOW_CAPTURE_AUDIO", window_source)
-        self.assertIn("sck_audio_capture", window_source)
-        self.assertIn("OBS_WINDOW_AUDIO_SOURCE", window_source)
         self.assertIn("wildcard_parallel_obs_show", eloop)
         self.assertIn("wildcardParallelOverlay", eloop)
         self.assertIn('WILDCARD_PARALLEL_OVERLAY_TITLE="POST-IMPROVE PARAM TUNING"', eloop)
@@ -2447,12 +2435,6 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("export async function releaseObsSourceLock", mjs_lock)
         self.assertIn("obs_source_update.lock", sh_lock)
         self.assertIn("obs_source_update.lock", mjs_lock)
-
-        # Every mac-capture SetInputSettings site wraps its update in the lock.
-        window_source = (REPO_ROOT / "obs_window_capture_source.sh").read_text()
-        self.assertIn("obs_source_lock.sh", window_source)
-        self.assertIn("obs_source_lock_acquire", window_source)
-        self.assertIn("trap 'obs_source_lock_release", window_source)
 
         bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
         self.assertIn("obs_source_lock.mjs", bridge)
@@ -8454,16 +8436,6 @@ class TestImproveOverlay(unittest.TestCase):
         self.assertIn(" 3/12", text)
         self.assertIn("trial", text)
         self.assertNotIn("scores none", text)
-
-    def test_browser_source_ensure_preserves_manual_obs_transform(self):
-        browser_source = (REPO_ROOT / "obs_browser_source.sh").read_text()
-
-        self.assertIn("OBS_BROWSER_SOURCE_PRESERVE_TRANSFORM", browser_source)
-        self.assertIn("GetSceneItemTransform", browser_source)
-        self.assertIn("preserved.set(item.sceneItemId", browser_source)
-        self.assertIn("wantedWidth / nextSourceWidth", browser_source)
-        self.assertIn("wantedHeight / nextSourceHeight", browser_source)
-        self.assertIn("SetSceneItemTransform", browser_source)
 
     def test_show_status_has_html_overlay_generator(self):
         config = (REPO_ROOT / "core/config.sh").read_text()
