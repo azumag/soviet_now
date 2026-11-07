@@ -152,51 +152,6 @@ class LinuxObsPortabilityTests(unittest.TestCase):
             calls = json.loads(trace_path.read_text()) if trace_path.exists() else []
             return result, calls, construct_path.exists()
 
-    def watchdog_check_config(self, platform: str, **overrides: str) -> dict:
-        env = os.environ.copy()
-        for key in (
-            "OBS_WINDOW_CAPTURE_INPUT_KIND",
-            "OBS_WINDOW_CAPTURE_FAMILY",
-            "OBS_WINDOW_CAPTURE_WINDOW_PROPERTY",
-            "OBS_XCOMPOSITE_SAME_VALUE_BOUNCE_ENABLED",
-            "OBS_WEBSOCKET_TIMEOUT_MS",
-        ):
-            env.pop(key, None)
-        env.update({"SOREN_OBS_PLATFORM": platform})
-        env.update(overrides)
-        result = subprocess.run(
-            [self.node, str(REPO_ROOT / "obs_capture_watchdog_check.mjs"), "--print-config"],
-            cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        return json.loads(result.stdout)
-
-    def watchdog_shell_config(self, platform: str, **overrides: str) -> dict[str, str]:
-        env = os.environ.copy()
-        for key in (
-            "OBS_PROCESS_NAME",
-            "OBS_LOG_DIR",
-            "OBS_SAFE_MODE_AUTOFIX",
-            "OBS_APP_PATH",
-            "OBS_LINUX_RESTART_MODE",
-            "OBS_DISPLAY",
-        ):
-            env.pop(key, None)
-        env.update({"SOREN_OBS_PLATFORM": platform})
-        env.update(overrides)
-        result = subprocess.run(
-            ["bash", str(REPO_ROOT / "obs_capture_watchdog.sh"), "--print-config"],
-            cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        return dict(line.split("=", 1) for line in result.stdout.splitlines())
-
     def evaluate_stat_fallback(
         self,
         relative_path: str,
@@ -594,110 +549,6 @@ esac
         )
         self.assertTrue(explicit_screen["appAudioSupported"])
 
-    def test_watchdog_check_uses_safe_linux_recovery_defaults(self) -> None:
-        config = self.watchdog_check_config("linux", OBS_WEBSOCKET_TIMEOUT_MS="4321")
-
-        self.assertEqual(config["inputKind"], "xcomposite_input")
-        self.assertEqual(config["captureFamily"], "xcomposite")
-        self.assertEqual(config["windowProperty"], "capture_window")
-        self.assertTrue(config["obsLogDir"].endswith("/.config/obs-studio/logs"))
-        self.assertEqual(config["requestTimeoutMs"], 4321)
-        self.assertFalse(config["xcompositeSameValueBounceEnabled"])
-        self.assertEqual(len(config["staleRecoveryPlan"]), 1)
-        stale = config["staleRecoveryPlan"][0]["requestData"]
-        self.assertEqual(stale["inputSettings"], {"capture_window": "test-window"})
-        self.assertTrue(stale["overlay"])
-        self.assertEqual(config["frozenRecoveryPlan"], [])
-
-    def test_watchdog_check_preserves_macos_bounce_and_log_path(self) -> None:
-        config = self.watchdog_check_config("darwin")
-
-        self.assertEqual(config["inputKind"], "screen_capture")
-        self.assertEqual(config["captureFamily"], "screen_capture")
-        self.assertEqual(config["windowProperty"], "window")
-        self.assertTrue(config["obsLogDir"].endswith("/Library/Application Support/obs-studio/logs"))
-        self.assertEqual(len(config["staleRecoveryPlan"]), 2)
-        first = config["staleRecoveryPlan"][0]["requestData"]
-        second = config["staleRecoveryPlan"][1]["requestData"]
-        self.assertFalse(first["overlay"])
-        self.assertFalse(second["overlay"])
-        self.assertEqual(first["inputSettings"]["type"], 2)
-        self.assertEqual(second["inputSettings"]["window"], "test-window")
-
-    def test_watchdog_check_xshm_config_is_screenshot_only_and_mutation_free(self) -> None:
-        config = self.watchdog_check_config(
-            "linux",
-            OBS_WINDOW_CAPTURE_INPUT_KIND="xshm_input",
-            OBS_WINDOW_CAPTURE_FAMILY="xshm",
-        )
-
-        self.assertEqual(config["captureFamily"], "xshm")
-        self.assertTrue(config["isXshm"])
-        self.assertFalse(config["bindingValidationEnabled"])
-        self.assertEqual(config["captureCheckAction"], "screenshot_only_no_mutation")
-        self.assertEqual(config["staleRecoveryPlan"], [])
-        self.assertEqual(config["frozenRecoveryPlan"], [])
-
-    def test_watchdog_honors_explicit_screen_capture_kind_on_linux(self) -> None:
-        config = self.watchdog_check_config(
-            "linux",
-            OBS_WINDOW_CAPTURE_INPUT_KIND="screen_capture",
-            OBS_WINDOW_CAPTURE_WINDOW_PROPERTY="linux_screen_window",
-        )
-
-        self.assertEqual(config["captureFamily"], "screen_capture")
-        self.assertTrue(config["bindingValidationEnabled"])
-        self.assertEqual(config["windowProperty"], "linux_screen_window")
-        self.assertEqual(len(config["staleRecoveryPlan"]), 2)
-        self.assertEqual(
-            config["staleRecoveryPlan"][1]["requestData"]["inputSettings"]["linux_screen_window"],
-            "test-window",
-        )
-
-    def test_watchdog_shell_linux_defaults_and_explicit_overrides(self) -> None:
-        defaults = self.watchdog_shell_config("linux", OBS_DISPLAY=":99")
-        self.assertEqual(defaults["process_name"], "obs")
-        self.assertEqual(defaults["safe_mode_autofix"], "0")
-        self.assertTrue(defaults["log_dir"].endswith("/.config/obs-studio/logs"))
-        self.assertEqual(defaults["restart_mode"], "systemd")
-        self.assertEqual(defaults["display"], ":99")
-
-        overridden = self.watchdog_shell_config(
-            "linux",
-            OBS_PROCESS_NAME="custom-obs",
-            OBS_LOG_DIR="/tmp/custom-obs-logs",
-            OBS_SAFE_MODE_AUTOFIX="1",
-            OBS_APP_PATH="/opt/obs/bin/obs",
-            OBS_LINUX_RESTART_MODE="systemd",
-            OBS_DISPLAY=":100",
-        )
-        self.assertEqual(overridden["process_name"], "custom-obs")
-        self.assertEqual(overridden["log_dir"], "/tmp/custom-obs-logs")
-        self.assertEqual(overridden["safe_mode_autofix"], "1")
-        self.assertEqual(overridden["app_path"], "/opt/obs/bin/obs")
-        self.assertEqual(overridden["restart_mode"], "systemd")
-        self.assertEqual(overridden["display"], ":100")
-
-        darwin = self.watchdog_shell_config("darwin")
-        self.assertEqual(darwin["process_name"], "OBS")
-        self.assertEqual(darwin["safe_mode_autofix"], "1")
-        self.assertEqual(darwin["app_path"], "/Applications/OBS.app")
-        self.assertTrue(darwin["log_dir"].endswith("/Library/Application Support/obs-studio/logs"))
-
-    def test_linux_relaunch_only_touches_active_named_systemd_unit(self) -> None:
-        watchdog = (REPO_ROOT / "obs_capture_watchdog.sh").read_text()
-
-        # systemd scope (user/system) を選択可能にし、スコープごとに unit を検証してから再起動
-        self.assertIn('OBS_SYSTEMD_SCOPE="${OBS_SYSTEMD_SCOPE:-user}"', watchdog)
-        self.assertIn('systemctl --"$OBS_SYSTEMD_SCOPE" restart "$OBS_SYSTEMD_UNIT"', watchdog)
-        self.assertIn('systemctl --"$OBS_SYSTEMD_SCOPE" is-active --quiet "$OBS_SYSTEMD_UNIT"', watchdog)
-        self.assertIn('case "$OBS_SYSTEMD_SCOPE" in', watchdog)
-        self.assertIn("user|system", watchdog)
-        self.assertNotIn('DISPLAY="$OBS_DISPLAY" nohup "$OBS_APP_PATH"', watchdog)
-        self.assertNotIn('pkill -x "$OBS_PROCESS_NAME"', watchdog)
-        self.assertNotIn("OBS_LINUX_RESTART_MODE:-auto", watchdog)
-        self.assertIn('if [ "$OBS_CAPTURE_PLATFORM" = "linux" ]', watchdog)
-
     def test_obs_source_lock_settle_defaults_are_platform_safe(self) -> None:
         lock_path = REPO_ROOT / "lib/obs_source_lock.sh"
 
@@ -740,7 +591,6 @@ esac
             "twitch_chat.sh": "lock_mtime",
             "youtube_chat.sh": "lock_mtime",
             "lib/obs_source_lock.sh": "mt",
-            "obs_capture_watchdog.sh": "mt",
             "monitor_improve_runtime.sh": "mtime",
             "monitor_webfetch_failure.sh": "mt",
         }
@@ -756,7 +606,6 @@ esac
             "twitch_chat.sh": ("lock_mtime", "777"),
             "youtube_chat.sh": ("lock_mtime", "777"),
             "lib/obs_source_lock.sh": ("mt", "777"),
-            "obs_capture_watchdog.sh": ("mt", "0"),
             "monitor_improve_runtime.sh": ("mtime", "0"),
             "monitor_webfetch_failure.sh": ("mt", "0"),
         }
