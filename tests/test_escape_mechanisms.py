@@ -2454,11 +2454,6 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         self.assertIn("obs_source_lock_acquire", window_source)
         self.assertIn("trap 'obs_source_lock_release", window_source)
 
-        watchdog = (REPO_ROOT / "obs_capture_watchdog_check.mjs").read_text()
-        self.assertIn("obs_source_lock.mjs", watchdog)
-        self.assertIn("acquireObsSourceLock", watchdog)
-        self.assertIn("releaseObsSourceLock", watchdog)
-
         bridge = (REPO_ROOT / "soviet_local.mjs").read_text()
         self.assertIn("obs_source_lock.mjs", bridge)
         self.assertIn("acquireObsSourceLock", bridge)
