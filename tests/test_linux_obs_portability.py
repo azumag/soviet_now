@@ -847,7 +847,8 @@ esac
         match = re.search(r"(?ms)^_file_mtime_epoch\(\) \{\n.*?^\}\n", source)
         self.assertIsNotNone(match)
         helper = match.group(0)
-        self.assertEqual(source.count('lock_hb=$(_file_mtime_epoch "'), 2)
+        # 3 箇所: LOCK_DIR 用・VOICEVOX_SYNTH_LOCK 用・非数値時の再取得フォールバック
+        self.assertEqual(source.count('lock_hb=$(_file_mtime_epoch "'), 3)
 
         scenarios = {
             "bsd-success": ("111", ["-f"]),
