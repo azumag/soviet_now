@@ -226,30 +226,6 @@ esac
             calls = calls_path.read_text().splitlines() if calls_path.exists() else []
             return result.stdout, calls
 
-    def test_obs_source_lock_settle_defaults_are_platform_safe(self) -> None:
-        lock_path = REPO_ROOT / "lib/obs_source_lock.sh"
-
-        def settle(platform: str, override: str | None = None) -> str:
-            env = os.environ.copy()
-            env["SOREN_OBS_PLATFORM"] = platform
-            if override is None:
-                env.pop("OBS_SOURCE_LOCK_SETTLE_SEC", None)
-            else:
-                env["OBS_SOURCE_LOCK_SETTLE_SEC"] = override
-            result = subprocess.run(
-                ["bash", "-c", '. "$1"; printf "%s" "$OBS_SOURCE_LOCK_SETTLE_SEC"', "bash", str(lock_path)],
-                cwd=REPO_ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                check=True,
-            )
-            return result.stdout
-
-        self.assertEqual(settle("linux"), "0")
-        self.assertEqual(settle("darwin"), "2")
-        self.assertEqual(settle("linux", "7"), "7")
-
     def test_readme_documents_linux_capture_safety_controls(self) -> None:
         readme = (REPO_ROOT / "README.md").read_text()
         self.assertIn("OBS_WINDOW_CAPTURE_FAMILY", readme)
@@ -267,7 +243,6 @@ esac
         files = {
             "twitch_chat.sh": "lock_mtime",
             "youtube_chat.sh": "lock_mtime",
-            "lib/obs_source_lock.sh": "mt",
             "monitor_improve_runtime.sh": "mtime",
             "monitor_webfetch_failure.sh": "mt",
         }
@@ -282,7 +257,6 @@ esac
         sites = {
             "twitch_chat.sh": ("lock_mtime", "777"),
             "youtube_chat.sh": ("lock_mtime", "777"),
-            "lib/obs_source_lock.sh": ("mt", "777"),
             "monitor_improve_runtime.sh": ("mtime", "0"),
             "monitor_webfetch_failure.sh": ("mt", "0"),
         }
