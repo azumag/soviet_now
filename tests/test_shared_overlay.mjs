@@ -1210,3 +1210,59 @@ test('corner stats mask another game, missing context, or conflicting headers', 
     assert.doesNotMatch(state.feeds.showStatusG.text, /999/);
   }
 });
+
+
+test('shared state carries the docich corner advance notice through the loader', async (t) => {
+  // The shared surface now builds its broadcast state with docich's module (the
+  // same transitional loader the game bridge uses), so docich's `nextCorner`
+  // projection reaches the sidebar. A standalone installation keeps Soviet's
+  // own builder and simply has no notice.
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-overlay-next-corner-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const docich = path.join(temp, 'docich');
+  fs.mkdirSync(path.join(docich, 'overlays'), { recursive: true });
+  const notice = {
+    schema: 1, corner: 'ninvaders', label: 'スペースインベーダー', when: '18:00',
+    due_at: 1794054000, source: 'auto', hold: null, decided_at: 1794050000,
+    updated_at: 1794050000,
+  };
+  const noticeFile = path.join(temp, 'next_corner.json');
+  fs.writeFileSync(noticeFile, JSON.stringify(notice));
+  fs.writeFileSync(path.join(docich, 'overlays', 'direct_broadcast_overlay_state.mjs'), `
+    import fs from 'node:fs';
+    export const DIRECT_BROADCAST_STATE_ROUTE = '/__soren_overlay/broadcast/state';
+    export const DIRECT_BROADCAST_VERSION = 1;
+    export function buildDirectBroadcastOverlayState(config, nowMs) {
+      return {
+        version: 1,
+        updatedAt: Math.floor(nowMs / 1000),
+        nextCorner: JSON.parse(fs.readFileSync(${JSON.stringify(noticeFile)}, 'utf8')),
+        feeds: {
+          showStatusG: { label: 'SHOW-STATUS-G', text: '', segments: [], available: false, updatedAt: 0, lineCount: 0 },
+          showStatus: { label: 'SHOW-STATUS', text: '', available: false, updatedAt: 0, lineCount: 0 },
+          improve: { active: false, status: '', lineCount: 0, logLines: [] },
+        },
+        notifications: { events: [], work: {}, generators: [], visibleSec: 18 },
+        topOverride: null,
+      };
+    }
+  `);
+  const fixture = fixtureConfig(temp, path.join(temp, 'game_switch.json'));
+  const script = `
+    const mod = await import(${JSON.stringify(path.join(REPO_ROOT, 'lib', 'shared_overlay.mjs'))});
+    const state = mod.buildSharedBroadcastOverlayState(JSON.parse(process.env.FIXTURE_CONFIG), Date.now());
+    process.stdout.write(JSON.stringify(state.nextCorner || null));
+  `;
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    env: {
+      ...process.env,
+      DOCICH_ROOT: docich,
+      FIXTURE_CONFIG: JSON.stringify(fixture),
+    },
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), notice);
+});
