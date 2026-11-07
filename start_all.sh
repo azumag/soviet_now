@@ -141,8 +141,9 @@ esac
 STREAM_BACKEND="${SOREN_STREAM_BACKEND:-obs}"
 case "$STREAM_BACKEND" in
 obs)
-	WORKER_NAMES+=("obs_capture_watchdog")
-	WORKER_CMDS+=("./obs_capture_watchdog.sh")
+	# OBS は撤去済み (docich #3553 G2a): obs_capture_watchdog.sh は存在しない。
+	# 旧モードとして値は受け付けるが、配信 encoder の worker は何も登録しない
+	# (配信は docich-stream.service か、SOREN_STREAM_BACKEND=ffmpeg の direct_stream が担う)。
 	;;
 ffmpeg)
 	# ADR 0007 (docich): exactly one side owns the encoder. The default keeps
