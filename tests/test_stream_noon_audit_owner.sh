@@ -166,16 +166,62 @@ check '[ ! -s "$D4/calls.log" ] && [ ! -d "$D4/tmp/state/stream_noon_audit" ]' '
 check 'grep -q "DOCICH_STREAM_OWNER は soren か docich" "$D4/worker.log"' 'invalid: 理由をログに残す'
 halt "$D4"
 
-# --- 6. どちらの所有者のpauseも「意図的な停止」として尊重する ---
-for marker in direct_stream docich_stream; do
-	DP="$TMP/paused_$marker"
-	make_tree "$DP" "DOCICH_STREAM_OWNER=docich"
-	printf '{"paused":true}\n' >"$DP/tmp/state/$marker.paused"
-	launch "$DP"
-	check 'wait_for "$DP/tmp/state/stream_noon_audit/$DAY.json" "skipped_paused"' "paused($marker): 監査は skipped_paused で触れない"
-	check '[ ! -s "$DP/calls.log" ]' "paused($marker): stop を呼ばない"
-	halt "$DP"
-done
+# --- 6. pause マーカーは「現在の所有者の」ものだけが意図的な停止を表す ---
+# docich 切替後も tmp/state/direct_stream.paused は旧 supervisor の再起動抑止として残る (ADR 0007 §5)。
+# それを運用者の一時停止と誤認して監査を永久にスキップしてはならない。
+# 結果マーカー(JSON)の decision が出るまで待ち、decision の値で判定する。
+decision_of() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('decision',''))" "$1" 2>/dev/null; }
+run_paused_case() {
+	# $1=名前 $2=.envの所有者行 $3=置くmarker $4=期待(skipped_paused|not_skipped)
+	local name="$1" envline="$2" marker="$3" want="$4" dir="$TMP/pz_$1"
+	make_tree "$dir" "$envline"
+	[ -n "$marker" ] && printf '{"paused":true}\n' >"$dir/tmp/state/$marker.paused"
+	launch "$dir"
+	local mk="$dir/tmp/state/stream_noon_audit/$DAY.json"
+	check 'wait_for "$mk" "\"decision\""' "$name: 監査が結果を記録する"
+	local got; got=$(decision_of "$mk")
+	if [ "$want" = skipped_paused ]; then
+		check '[ "$got" = skipped_paused ]' "$name: 現在の所有者のmarkerなので skipped_paused (decision=$got)"
+		check '[ ! -s "$dir/calls.log" ]' "$name: stop を呼ばない"
+	else
+		check '[ -n "$got" ] && [ "$got" != skipped_paused ]' "$name: 他方の所有者のmarkerは無視して監査する (decision=$got)"
+	fi
+	halt "$dir"
+}
+run_paused_case "docich+docichマーカー" "DOCICH_STREAM_OWNER=docich" docich_stream skipped_paused
+run_paused_case "docich+旧マーカーだけ"  "DOCICH_STREAM_OWNER=docich" direct_stream   not_skipped
+run_paused_case "soren+旧マーカー"       "DOCICH_STREAM_OWNER=soren"  direct_stream   skipped_paused
+run_paused_case "soren+docichマーカーだけ" "DOCICH_STREAM_OWNER=soren" docich_stream   not_skipped
+
+# 稼働中のワーカーが旧所有者(soren)で起動し、後から .env が docich に切り替わっても、
+# 監査の直前に所有者を読み直す: 旧マーカーが残っていても skipped_paused にならない。
+DX="$TMP/pz_switch_midrun"
+make_tree "$DX" "DOCICH_STREAM_OWNER=soren"
+printf '{"paused":true}\n' >"$DX/tmp/state/direct_stream.paused"
+printf '%s\n' "$((NOON - 3600))" >"$DX/now.txt"            # 正午前: 監査はまだ走らない
+launch "$DX"
+sleep 2
+printf 'DOCICH_STREAM_OWNER=docich\n' >"$DX/.env"          # 切替: .env を書き換える
+printf '%s\n' "$NOON" >"$DX/now.txt"
+MX="$DX/tmp/state/stream_noon_audit/$DAY.json"
+check 'wait_for "$MX" "\"decision\""' 'midrun: 監査が結果を記録する'
+gx=$(decision_of "$MX")
+check '[ -n "$gx" ] && [ "$gx" != skipped_paused ]' "midrun: 起動時soren・切替後docich・旧marker残存でもスキップしない (decision=$gx)"
+halt "$DX"
+
+# 不正な所有者へ変わったら監査は配信に触れない
+DB="$TMP/pz_bad_midrun"
+make_tree "$DB" "DOCICH_STREAM_OWNER=soren"
+printf '%s\n' "$((NOON - 3600))" >"$DB/now.txt"
+launch "$DB"
+sleep 2
+printf 'DOCICH_STREAM_OWNER=Docich\n' >"$DB/.env"
+printf '%s\n' "$NOON" >"$DB/now.txt"
+MB="$DB/tmp/state/stream_noon_audit/$DAY.json"
+check 'wait_for "$MB" "\"decision\""' 'bad-midrun: 監査が結果を記録する'
+check '[ "$(decision_of "$MB")" = skipped_bad_owner ]' 'bad-midrun: 不正な所有者は skipped_bad_owner'
+check '[ ! -s "$DB/calls.log" ]' 'bad-midrun: 配信に触れない'
+halt "$DB"
 
 printf '\n結果: ok=%d fail=%d\n' "$ok" "$fail"
 [ "$fail" -eq 0 ]

@@ -101,14 +101,12 @@ _refresh_owner() {
 	}
 }
 
-# An operator pause of either owner's encoder means "intentionally off".
+# An operator pause means "intentionally off" -- but only the CURRENT owner's marker counts.
+# tmp/state/direct_stream.paused is, after a handover to docich, the marker that keeps the OLD
+# supervisor from respawning the legacy worker (docs/adr/0007 §5: it stays until that supervisor
+# is restarted). Treating it as an operator pause would make the audit skip forever.
 _stream_intentionally_paused() {
-	[ -f "$STREAM_PAUSE_MARKER" ] && return 0
-	if [ -z "${STREAM_NOON_AUDIT_STREAM_PAUSE_MARKER:-}" ]; then
-		[ -f tmp/state/direct_stream.paused ] && return 0
-		[ -f tmp/state/docich_stream.paused ] && return 0
-	fi
-	return 1
+	[ -f "$STREAM_PAUSE_MARKER" ]
 }
 
 _pid_alive() {
@@ -430,7 +428,12 @@ _audit_once() {
 
 	noon_epoch=$(( jst_day * DAY_SEC + NOON_SOD_SEC - JST_OFFSET_SEC ))
 
-	if _stream_intentionally_paused; then
+	# The owner may have changed since this long-lived worker started (a handover edits
+	# .env), so resolve it before choosing which pause marker applies.
+	if ! _refresh_owner; then
+		decision="skipped_bad_owner"
+		detail="DOCICH_STREAM_OWNER が soren か docich でないため配信に触れない"
+	elif _stream_intentionally_paused; then
 		decision="skipped_paused"
 		detail="stream pause marker 存在 (意図的停止のため触れない)"
 	elif [ "$(_status_flag running)" != "1" ]; then
