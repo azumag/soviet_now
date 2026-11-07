@@ -513,7 +513,7 @@ macOS の BlackHole + `afplay`/`audiotoolbox`/`say` の代わりに、Linux で�
    SOREN_GAME_RENDER_FPS=30
    ```
 
-`SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh` は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選ぶ。FFmpeg dashboardでは内部576x324をCSS 960x540へ拡大し、出力1280x720の残りをデータ領域にする。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
+`SOREN_GAME_INTERNAL_SIZE` はUnityの内部描画バッファで、CSS表示サイズとは別。`configure_linux_stream_profile.sh`（撤去済み） は実2 OCPUのfree-safe形状では480x270、4 OCPU以上では576x324を選ぶ。FFmpeg dashboardでは内部576x324をCSS 960x540へ拡大し、出力1280x720の残りをデータ領域にする。4 OCPU以上の576x324は480x270比で44%高精細にしつつ、640x360試験で発生したOBS描画時間45ms・実FPS22までの低下を避ける中間値である。`--disable-frame-rate-limit` はXvfb上で1fps級へ落ちる経路を避けるため維持するが、`SOREN_GAME_RENDER_FPS=30` がUnityの重いWebGL描画だけをOBS出力と同じ30fpsへ整流する。リミッターは直前の実フレーム時刻ではなく累積deadlineを進める。Xvfbのnative RAFが約100Hzでも40msごと（約25fps）へ量子化せず、30/40msの利用可能なslotを組み合わせて長期平均30fpsを保つ。これにより60fps近くを無駄に描いてOBS encoderとPulseAudioを飢えさせない。実測値は `tmp/state/game_render_health.json` の `measuredFps` で確認する。0を指定すると上限を無効化する。
 
 FFmpeg本番経路で内部解像度の上限を探るときは、出力1280x720を固定し、`./set_game_internal_size.sh --apply 640x360 --confirm-live-restart` で内部描画だけを変更する。576x324をbaselineに、640x360から64x36ずつ1280x720まで10分単位で上げ、各候補で出力平均29.5fps以上、ゲーム平均29.5fps以上、speed p05 0.98以上、drop/dup各1%未満、音声・単一publisher・OBS排他を要求する。最初に失敗した候補ではそれ以上へ進まず、直前の合格サイズへ戻す。この操作はactive soak monitorがある間は拒否し、runtime readinessに失敗した場合も`.env` backupへ自動復帰する。
 
@@ -548,13 +548,11 @@ FFmpeg本番経路で内部解像度の上限を探るときは、出力1280x720
 
    旧 `SOREN_GAME_BGM_FILE` は通常BGM用の後方互換名としてのみ残す。新構成では曖昧さを避けるため `SOREN_GAME_BGM_INITIAL_FILE` を使う。`SOREN_GAME_AUDIO_PULSE_LATENCY_MS` はPulseAudio bufferで、既定100ms、許容範囲50〜2000ms。大きすぎると映像に対して音が遅れて聞こえるため、CPUが安定している場合は100ms前後（低遅延側）を推奨する。ffplay/paplay は `-fflags nobuffer` と `PULSE_LATENCY_MSEC` により再生遅延を抑える。
 
-   Linux配信機でコードと上記設定をまとめて反映する場合は、対象ブランチを `git pull --ff-only` した後に `./configure_linux_stream_profile.sh` を実行する。このスクリプトは既存 `.env` を時刻付きでバックアップし、配信関連キーだけを更新して、OBSの優先度とsoren supervisorを再起動する。APIキーや配信キーは表示・変更しない。
+> OBS 時代の移行・検証ツール（`configure_linux_stream_profile.sh` `cutover_direct_stream.sh` `benchmark_direct_stream.sh` `direct_stream_recovery_test.sh` `hide_obs_ui.sh`）は docich Issue #3553 で撤去した。配信 encoder は docich の `docich-stream.service` が所有する（`docs/adr/0007-direct-stream-single-owner-supervisor.md`）。
 
 #### Issue #96: FFmpeg直接配信PoC
 
 OBSを外した経路では、Xvfbの全画面とPulseAudioの `soren_null.monitor` をFFmpegへ直接入力する。配信先の認証情報をプロセス引数やstatusへ出さないため、runner自身はloopbackのRTMP URLだけを受け入れ、Twitch等への転送と配信キーは別のローカルrelayに持たせる。
-
-`configure_linux_stream_profile.sh` は次の安全な初期値を `.env` に追加するが、relay導入前に現行配信を切り替えないよう backend は `obs` のままにする。既存のゲーム設定やサービスを触らず、この準備だけを行う場合は `./configure_linux_stream_profile.sh --prepare-direct-stream-only` を使う（`.env` は時刻付きでバックアップされる）。
 
 ```bash
 SOREN_STREAM_BACKEND=obs
@@ -597,12 +595,6 @@ PoCの非配信録画と状態確認:
 VOICEVOX日本語音声と同期したTwitch Closed Captionsは、既定では無効です。
 カスタムFFmpegのビルド、固定英文PoC、実配信のCC切替確認、音声無回帰を順に通した場合だけ有効化します。設計、導入、rollback、受入条件は [`docs/twitch_closed_captions.md`](docs/twitch_closed_captions.md) を参照してください。
 
-現行OBSの実測基準と直接録画を同条件で比較する場合は、明示確認付きbenchmarkを使う。OBSは計測区間だけ停止し、終了時はStartStream要求の受付だけで成功扱いせず、外部RTMPの一時拒否も考慮して実際の`streaming=on`まで再試行する。
-
-```bash
-./benchmark_direct_stream.sh --confirm-live-interruption --duration 30
-```
-
 loopback relayを構成して到達確認した後だけ `SOREN_STREAM_BACKEND=ffmpeg` に変更する。この場合 `start_all.sh` は `obs_capture_watchdog` を起動せず、代わりに `direct_stream` を単一workerとして監視する。fullscreen互換ではevent/stats/ops/improvement/wildcardの既存HTMLを、ゲームChrome内の許可リスト式iframeとしてX11入力へ焼き込む。生成HTMLに含まれるmeta refreshは直接配信側で除去し、旧iframeを表示したまま更新後HTMLを非表示bufferへ読み込み、load完了時だけ交換する。これにより2秒更新時の透明化ちらつきを配信へ載せない。
 
 `SOREN_DIRECT_STAGE_LAYOUT=dashboard` では、Unity内部描画576x324とFFmpeg出力1280x720を変えず、ゲームのCSS表示だけを左中央960x540にする。右320pxと左側の上下90pxには `overlays/direct_broadcast_overlay.html` の配信専用面を1枚だけ重ねる。既存の `show-status` / `show-status-g` / `overlay_notify.sh` と各HTML generatorは変更せずread-only data sourceとして使うため、OBS表示やCUI表示は従来のまま残る。右320pxは上下分割せず、`show-status-g` と `show-status` の全行を12秒ごとに切り替える。58行を超えた出力は自動page分割し、縮小・切り捨てで項目を落とさない。上90pxはscore/strategy/live要約またはCodex作業状態、下90pxは最大3件ずつ循環する通知toastとコメント・ラジオ生成状態に割り当てる。配信専用面は1秒ごとにJSON stateをDOMへ差分反映し、meta refresh・iframe自己navigation・legacy HTMLの直接縮小を行わない。canvasには`image-rendering: pixelated`を使い、1280x720全面へ2.22倍拡大していた粗さと、データpanelのゲーム重なりを避ける。`fullscreen`を指定すれば従来の個別overlayとviewport全面表示へ戻る。improvement/wildcardは対応stateがactiveの間だけ全面表示し、backendがOBSまたはmacOSの場合はstage/iframeを作らず既存動作を維持する。
@@ -621,7 +613,7 @@ OBSには `stream_backend_condition.sh obs` を `ExecCondition` として追加�
 
 relayはUbuntuの `nginx` + `libnginx-mod-rtmp` を専用の非root `soren-relay` userで起動し、`127.0.0.1:1935` だけをlistenする。導入は明示確認付きで行う。
 
-Linuxのops overlayは既存の `show_status.sh` がZshスクリプトであるため、`zsh` も配信VMの必須パッケージとする。`configure_linux_stream_profile.sh` はpython3/node/FFmpeg/ffprobe/PulseAudio/X11/systemd/Zshを、`.env` のバックアップや変更より前に検証する。
+Linuxのops overlayは既存の `show_status.sh` がZshスクリプトであるため、`zsh` も配信VMの必須パッケージとする。`configure_linux_stream_profile.sh`（撤去済み） はpython3/node/FFmpeg/ffprobe/PulseAudio/X11/systemd/Zshを、`.env` のバックアップや変更より前に検証する。
 
 ```bash
 ./install_direct_stream_relay.sh --print-config
@@ -655,20 +647,7 @@ sudo nginx -t -c /etc/soren-rtmp/nginx.conf && sudo systemctl reload soren-rtmp-
 
 relayへの実配信スモーク試験では、OBSとFFmpegを同時に動かすと短時間でもdropが発生した。したがって本番切替では、relayとpush先を先に検証した後、OBS配信を停止してからFFmpeg workerを起動する。OBSと直接配信を同一VM上で並行稼働させる方式は、同時配信の手段にはしない。同時配信はrelayの複数 `push` で1回のエンコードを共有する。
 
-push先は運用者がVM上で `sudoedit /etc/soren-rtmp/push.conf` を使って非公開に設定する。チャットやissueへキーを貼らない。設定後は次の順で、資格情報を表示せずpreflightと切替を行う。`--preflight` はpush fileが通常ファイルかつ非symlink、`root:soren-relay`、0640であることを強制し、構文とdestination数を非破壊確認する。明示確認付き`--cutover`がOBSを止める前にrelayをreloadして検証済みpush先を有効化する。reload失敗時はOBSと`.env`へ触れず終了する。FFmpeg起動後は既定15秒をwarm-upとして別集計し、その後20秒の定常fps/speed/drop/dupを厳格検証する。warm-up中または定常区間中にpublisherが再起動した場合や品質検証に失敗した場合、スクリプトは `.env`、OBS配信、Soren supervisorを自動復帰する。
-
-```bash
-./cutover_direct_stream.sh --print-plan
-./cutover_direct_stream.sh --preflight
-./cutover_direct_stream.sh --cutover --confirm-live-cutover
-
-# FFmpeg稼働後に記録済みOBS設定へ戻し、60秒条件を計測
-./cutover_direct_stream.sh --rollback --confirm-live-rollback
-```
-
 切替後の短時間カナリアと24時間受入は、同じ監視器を時間だけ変えて実行する。内部解像度の閾値探索では各候補10分、最終候補の連続安定性は24時間で確認する。監視器は資格情報やrelayの送信先を保存せず、送出frame差分、fps、speed、drop/dup、direct publisher process数、relayへのRTMP入力接続数、relay/OBS相互排他、ゲーム描画FPS、load/memory、FFmpeg CPU時間に加え、`soren_null.monitor` を既定1秒だけ読み取った合成音声の平均/最大音量をJSONLへ記録する。音量検査は既定60秒間隔で、最大音量 -60 dB未満を無音とする。機械判定は出力平均とゲーム平均が各29.5fps以上、speedの5パーセンタイル0.98以上、区間drop率0.1%以上の増加が2区間以上連続しないこと、全体drop率とdup率が各1%未満であること、direct processとrelay入力接続がともに常時1つであること、音声probe成功率と非無音率が各99%以上であることを含む。CFRが30fpsを維持するための散発的な1frame補正はraw counterとして残すが、持続dropとは扱わない。BGM/SE/TTSそれぞれの同定、A/V同期、overlay見た目、Twitch側codec、OBS比CPU削減は別の実機検査であり、この監視だけでは合格扱いにしない。
-
-FFmpegカナリア中のローカルrelay断復旧は `./direct_stream_recovery_test.sh --run --confirm-live-recovery-test` で検査する。このテストはrelayだけを非同期再起動し、60秒以内に新しいFFmpeg run、30fps近傍、speed 0.97以上、direct process 1件、relay入力1件へ戻ることを要求する。nginx-rtmpのgraceful stopが配信中publisherを待ち続けないよう、relay unitの停止猶予は5秒に制限する。失敗時はcutover時に記録したOBS backupへ自動rollbackする。これは外部RTMP宛先の回線断試験とは別であり、外部再接続はrelayログと配信プラットフォーム側の連続性も合わせて確認する。
 
 A/V同期はFFmpegカナリア切替直後、soak monitorを開始する前に `./direct_av_sync_test.sh --run --confirm-live-av-sync-test` で測定する。通常時は透明な128px角のprobe iframeだけが存在し、生成HTMLが無いので画面へ何も描かない。検査時は6回の白フラッシュと17kHz/180ms toneを同一の絶対時刻で発生させ、loopback relayから実際のH.264/AAC出力をcopy録画する。このcopy録画中だけrelayのlocal client接続が1本増えるため、soakの「接続数は常時1」判定とは同時実行しない。録画の輝度eventとtone eventを照合し、各offsetの絶対値100ms以内かつ先頭から末尾のdrift 50ms以内を要求する。検査HTMLは終了時に必ず削除され、資格情報や外部RTMP URLは設定・結果・argvへ保存しない。
 

@@ -125,48 +125,6 @@ class StartAllStreamBackendTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("SOREN_STATUS_OVERLAY_WATCHERS_ENABLED must be 0 or 1", result.stderr)
 
-    def test_linux_profile_prepares_direct_stream_without_enabling_it(self) -> None:
-        profile = (REPO_ROOT / "configure_linux_stream_profile.sh").read_text(encoding="utf-8")
-        self.assertIn("set_env_value SOREN_STREAM_BACKEND obs", profile)
-        self.assertIn("--prepare-direct-stream-only", profile)
-        self.assertIn('if [ "$PREPARE_DIRECT_ONLY" -eq 1 ]; then', profile)
-        self.assertIn("set_env_value SOREN_DIRECT_STREAM_SIZE 1280x720", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_STREAM_FPS 30", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_STREAM_PULSE_SOURCE soren_null.monitor", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_STREAM_LOCAL_URL rtmp://127.0.0.1:1935/soren/live", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_CUTOVER_WARMUP_SEC 15", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_OVERLAY_ENABLED 1", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_STAGE_LAYOUT dashboard", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_GAME_DISPLAY_SIZE 960x540", profile)
-        self.assertIn("set_env_value SOREN_DIRECT_BROADCAST_OVERLAY_ENABLED 1", profile)
-        self.assertIn(
-            "set_env_value SOREN_DIRECT_BROADCAST_OVERLAY_HTML_FILE overlays/direct_broadcast_overlay.html",
-            profile,
-        )
-        self.assertIn("lib/direct_broadcast_overlay.mjs", profile)
-        self.assertIn("overlays/direct_broadcast_overlay.html", profile)
-        self.assertIn("install_soren_runtime_service.sh", profile)
-        self.assertIn("stream_backend_condition.sh", profile)
-        self.assertIn("wait_soren_runtime_prereqs.sh", profile)
-        self.assertIn("soren-runtime.service", profile)
-        self.assertIn("set_env_value SOREN_SOVIET_WATCHDOG_ENABLED 1", profile)
-        self.assertIn("set_env_value SOREN_STATUS_OVERLAY_WATCHERS_ENABLED 1", profile)
-        self.assertIn("required_commands=(python3 node ffmpeg ffprobe pactl paplay xdpyinfo systemctl ss zsh nproc)", profile)
-        self.assertLess(profile.index("required_commands=("), profile.index('backup="${ENV_FILE}'))
-        self.assertIn('if [ "$(nproc)" -le 2 ]; then', profile)
-        self.assertIn("game_internal_size=480,270", profile)
-        self.assertIn("game_internal_size=576,324", profile)
-        self.assertIn('profile_internal_size="${SOREN_PROFILE_GAME_INTERNAL_SIZE:-}"', profile)
-        self.assertIn(
-            "576,324|640,360|704,396|768,432|832,468|896,504|960,540|"
-            "1024,576|1088,612|1152,648|1216,684|1280,720",
-            profile,
-        )
-        self.assertLess(
-            profile.index('profile_internal_size="${SOREN_PROFILE_GAME_INTERNAL_SIZE:-}"'),
-            profile.index('backup="${ENV_FILE}'),
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
