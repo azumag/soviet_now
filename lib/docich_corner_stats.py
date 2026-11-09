@@ -774,7 +774,7 @@ def _hanjuku_duel(battle):
 
 def _hanjuku_garrison(policy: Mapping[str, object], limit=3, each=8):
     """castle -> generals actually read from a castle panel, bounded."""
-    raw = policy.get("garrison")
+    raw = _policy_region(policy, "garrison")
     if not isinstance(raw, dict):
         return []
     rows = []
@@ -802,7 +802,7 @@ def _hanjuku_active_order(policy: Mapping[str, object]) -> dict[str, str] | None
     status = statuses.get(step) if isinstance(statuses, Mapping) else None
     if status not in (None, "pending", "launched", "launched_unconfirmed"):
         return None
-    launched = policy.get("launched_orders")
+    launched = _policy_region(policy, "launched_orders") or {}
     launched = launched if isinstance(launched, Mapping) else {}
     order = None
     if status in ("launched", "launched_unconfirmed"):
@@ -1000,6 +1000,23 @@ def _hanjuku_generals(policy: Mapping[str, object], identity):
     return None, None, None, None
 
 
+def _policy_region(policy, key):
+    """A declared state region's dict, from the flat key or ``world``.
+
+    docich's policy moved its declared keys (``sorties``, ``garrison``,
+    ``launched_orders``, ``boss_victories``) into the ``world`` region, so a
+    reader that only looks at the flat key silently sees nothing: 2026-11-09
+    the gap card showed 余白進軍数: 0 and no sortie routes while the policy held
+    live marches.
+    """
+    value = policy.get(key)
+    if isinstance(value, dict):
+        return value
+    world = policy.get("world") if isinstance(policy.get("world"), dict) else {}
+    value = world.get(key)
+    return value if isinstance(value, dict) else None
+
+
 def _hanjuku_moves(policy, tick, limit=8, each=24):
     """Current sorties as bounded source→target rows for the left gap chart.
 
@@ -1009,11 +1026,10 @@ def _hanjuku_moves(policy, tick, limit=8, each=24):
     claiming it is still moving. The planned target and launched source are
     recorded facts, not guesses about arrival.
     """
-    raw = policy.get("sorties")
-    if not isinstance(raw, dict) or type(tick) is not int:
+    raw = _policy_region(policy, "sorties")
+    if not raw or type(tick) is not int:
         return []
-    launched = policy.get("launched_orders")
-    launched = launched if isinstance(launched, dict) else {}
+    launched = _policy_region(policy, "launched_orders") or {}
     rows = []
     for step in sorted(raw):
         sortie = raw[step]
