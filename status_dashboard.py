@@ -27,11 +27,14 @@ from lib.country_names import (
     last_drop_turn_country_label,
 )
 from lib.docich_corner_stats import load_active_corner
-from lib.docich_corner_text_loader import load_docich_corner_text
+try:
+    from lib.docich_corner_text_loader import load_docich_corner_text as _load_docich_corner_text
+except Exception:  # isolated fail-open copies may not ship the helper module
+    _load_docich_corner_text = None
 
 # ADR 0006 stage 2: prefer docich's corner text renderer.  The local functions
 # below stay as the fail-open path until the production cutover is verified.
-_docich_corner_text = load_docich_corner_text()
+_docich_corner_text = _load_docich_corner_text() if _load_docich_corner_text else None
 from lib.strategy_archive import (
     candidate_paths as _sa_candidates,
     find_path as _sa_find_path,
