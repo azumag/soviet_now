@@ -1721,12 +1721,13 @@ _radio_generate_and_play() {
 	_quality_fail_reason=""
 	local talk_body="" talk_summary=""
 
-	# docich#3712 (i)-A: 半熟コーナー(active)中は任意のprepassをskipし既存の
-	# 「prepass empty/failed -> direct main」経路へ直行させる。既定 OFF のため
-	# 通常はこの分岐を取らず、既存 prepass 実行へそのまま進む。再生・TTS・
-	# capture 経路には触れない（フォールバックは既存経路のみ）。
+	# docich#3712 (i)-A の汎用化: 外部ゲーム（エミュレータ/端末）コーナー(active)
+	# 中は任意の prepass を skip し、既存の「prepass empty/failed -> direct main」
+	# 経路へ直行させる。既定 ON。判定は docich の game_switch state のみで、
+	# ゲーム名は持たない。再生・TTS・capture 経路には触れない（フォールバックは
+	# 既存経路のみ）。
 	if [ -n "$radio_prepass_agent" ] && _radio_prepass_should_bypass_for_corner; then
-		log "[RADIO:${corner_name}] prepass corner bypass active (hanjuku corner) -> direct ${radio_primary_agent}"
+		log "[RADIO:${corner_name}] prepass bypass active (external game corner) -> direct ${radio_primary_agent}"
 	elif [ -n "$radio_prepass_agent" ]; then
 		local _prepass_prompt_file _prepass_output _prepass_enhanced_prompt _prepass_last_file _prepass_provider
 		_prepass_prompt_file=$(mktemp /tmp/eloop_radio_prepass_prompt_XXXXXXXX)
