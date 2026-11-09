@@ -27,6 +27,11 @@ from lib.country_names import (
     last_drop_turn_country_label,
 )
 from lib.docich_corner_stats import load_active_corner
+from lib.docich_corner_text_loader import load_docich_corner_text
+
+# ADR 0006 stage 2: prefer docich's corner text renderer.  The local functions
+# below stay as the fail-open path until the production cutover is verified.
+_docich_corner_text = load_docich_corner_text()
 from lib.strategy_archive import (
     candidate_paths as _sa_candidates,
     find_path as _sa_find_path,
@@ -4131,7 +4136,10 @@ def render_dashboard_text():
     if corner is not None:
         output = render_ai_backoff_header()
         output.append("")
-        output += render_docich_corner_stats(corner)
+        if _docich_corner_text is not None:
+            output += _docich_corner_text.render_docich_corner_stats(corner)
+        else:
+            output += render_docich_corner_stats(corner)
         return "\n".join(fit_dashboard_lines(output))
 
     scores = load_scores()
