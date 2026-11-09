@@ -728,16 +728,17 @@ _program_corner_active() {
 # 対象外なので、調べる価値のある prepass は従来どおり実行する。
 # 未読・破損・phase 非 ready・active なし・mtime/started_at の stale はすべて
 # fail-open（= 1 を返し prepass を通す）。鮮度上限は
-# RADIO_PREPASS_CORNER_FRESH_SEC（既定 7200s）。緊急停止は
-# RADIO_PREPASS_CORNER_BYPASS=0。
+# RADIO_PREPASS_CORNER_FRESH_SEC（既定 2592000s = 30 日）。半熟コーナーは
+# 数日単位で継続するため、短い上限では長期コーナーで bypass が効かない。
+# 緊急停止は RADIO_PREPASS_CORNER_BYPASS=0。
 # 0 を返す = prepass を skip（bypass）, 1 を返す = prepass を通常実行。
 _radio_prepass_should_bypass_for_corner() {
 	[ "${RADIO_PREPASS_CORNER_BYPASS:-1}" = "1" ] || return 1
 	local ctx="${SOREN_ACTIVE_GAME_CONTEXT_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
-	local fresh="${RADIO_PREPASS_CORNER_FRESH_SEC:-7200}"
+	local fresh="${RADIO_PREPASS_CORNER_FRESH_SEC:-2592000}"
 	local external="${RADIO_PREPASS_EXTERNAL_ADAPTERS:-retroarch cli}"
 	[ -r "$ctx" ] || return 1
-	case "$fresh" in '' | *[!0-9]*) fresh=7200 ;; esac
+	case "$fresh" in '' | *[!0-9]*) fresh=2592000 ;; esac
 	[ "$fresh" -ge 60 ] || fresh=60
 	local now mtime age
 	now=$(date +%s 2>/dev/null || echo 0)
