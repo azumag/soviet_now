@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -49,3 +50,12 @@ class RadioGameContextTests(unittest.TestCase):
         source = (ROOT / 'broadcast/radio_engine.sh').read_text()
         self.assertLess(source.index('lib/radio_game_context.py'), source.index('prompt_snapshot=$(cat'))
         self.assertLess(source.index('lib/radio_game_context.py'), source.index('local _prepass_prompt_file'))
+
+    def test_prepass_external_corner_bypass_shell_contract(self):
+        # The shell contract is wired here because the CI workflow file list
+        # cannot be edited with the current OAuth token (no workflow scope).
+        completed = subprocess.run(
+            ['bash', str(ROOT / 'tests/test_radio_prepass_corner_bypass.sh')],
+            cwd=ROOT, capture_output=True, text=True, timeout=180,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)

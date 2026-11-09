@@ -90,15 +90,16 @@ RADIO_AGENTS="${RADIO_AGENTS:-$AI_COMMON_AGENTS}"
 # RADIO_PREPASS_AGENTS: 事前調査 (prepass) のモデルフォールバックリスト。共通チェーンを
 # そのまま使う。ai_generate_list() が順に試行する。
 RADIO_PREPASS_AGENTS="${RADIO_PREPASS_AGENTS:-$AI_COMMON_AGENTS}"
-# RADIO_PREPASS_CORNER_BYPASS_ENABLED: 半熟コーナー(active)中に任意のprepass調査を
-# skipし、既存の「prepass empty/failed -> direct main」経路へ直行させるゲート。
-# 既定 OFF のまま本番反映する（Stage1承認範囲）。ON化は別途 owner への放送内容影響の
-# 開示 + owner承認 + DSH承認記録を得るまで行わない（docich#3712承認条件2）。
-# corner-active判定は既存 canonical game_switch.json の read-only 参照 + 鮮度確認
-# (RADIO_PREPASS_CORNER_FRESH_SEC) のみで、新規常駐監視・重いpollは作らない。
-# unreadable/stale は fail-open（bypass OFF = prepass通常実行）で、prepassを
-# 半永久的に止めない（docich#3712承認条件4）。
-RADIO_PREPASS_CORNER_BYPASS_ENABLED="${RADIO_PREPASS_CORNER_BYPASS_ENABLED:-0}"
+# RADIO_PREPASS_CORNER_BYPASS: 外部ゲーム（エミュレータ/端末で動くゲーム）の
+# コーナー中に任意の prepass 調査を skip し、既存の「prepass empty/failed ->
+# direct main」経路へ直行させる。既定 ON。判定材料は docich の canonical
+# game_switch.json の active.adapter だけで、個別ゲーム名は持たない。
+# 対象アダプタは RADIO_PREPASS_EXTERNAL_ADAPTERS（既定 "retroarch cli"）で、
+# Soren 本体や docich のプログラムコーナー（paper / weather 等）は対象外。
+# unreadable/corrupt/stale は fail-open（prepass 通常実行）で、prepass を
+# 半永久的に止めない。緊急停止は RADIO_PREPASS_CORNER_BYPASS=0。
+RADIO_PREPASS_CORNER_BYPASS="${RADIO_PREPASS_CORNER_BYPASS:-1}"
+RADIO_PREPASS_EXTERNAL_ADAPTERS="${RADIO_PREPASS_EXTERNAL_ADAPTERS:-retroarch cli}"
 # game_switch.json の鮮度上限（秒）。active runtime の started_at とファイルmtimeの
 # 両方がこの間隔内に収まる場合だけ corner-active と判定する。超過時は fail-open。
 RADIO_PREPASS_CORNER_FRESH_SEC="${RADIO_PREPASS_CORNER_FRESH_SEC:-7200}"
