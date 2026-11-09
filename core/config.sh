@@ -102,7 +102,9 @@ RADIO_PREPASS_CORNER_BYPASS="${RADIO_PREPASS_CORNER_BYPASS:-1}"
 RADIO_PREPASS_EXTERNAL_ADAPTERS="${RADIO_PREPASS_EXTERNAL_ADAPTERS:-retroarch cli}"
 # game_switch.json の鮮度上限（秒）。active runtime の started_at とファイルmtimeの
 # 両方がこの間隔内に収まる場合だけ corner-active と判定する。超過時は fail-open。
-RADIO_PREPASS_CORNER_FRESH_SEC="${RADIO_PREPASS_CORNER_FRESH_SEC:-7200}"
+# 半熟コーナーは数日単位で継続するため、既定は 30 日。2 時間などの短い上限では
+# 長期コーナーで bypass が効かなくなる（2026-11-09 実測: 21.4 時間経過で fail-open）。
+RADIO_PREPASS_CORNER_FRESH_SEC="${RADIO_PREPASS_CORNER_FRESH_SEC:-2592000}"
 # RADIO_QUALITY_REPAIR_AGENTS: mixed_language の局所修正専用チェーン。
 # 未指定時は実行中コーナーの生成チェーンを使う。MiniMax撤廃のサニタイズ対象にも含める。
 RADIO_QUALITY_REPAIR_AGENTS="${RADIO_QUALITY_REPAIR_AGENTS-}"

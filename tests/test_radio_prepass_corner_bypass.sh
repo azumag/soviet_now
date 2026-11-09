@@ -26,7 +26,7 @@ log() { :; }
 
 CTX="$TMP/game_switch.json"
 export SOREN_ACTIVE_GAME_CONTEXT_FILE="$CTX"
-export RADIO_PREPASS_CORNER_FRESH_SEC=7200
+export RADIO_PREPASS_CORNER_FRESH_SEC=2592000
 unset RADIO_PREPASS_CORNER_BYPASS RADIO_PREPASS_EXTERNAL_ADAPTERS 2>/dev/null || true
 
 _write_ctx() {
@@ -60,6 +60,14 @@ if _radio_prepass_should_bypass_for_corner; then
 	ok "cli corner bypasses prepass"
 else
 	not_ok "cli corner should bypass"
+fi
+
+# --- 長期コーナー（21 時間）でも bypass（2026-11-09 の本番実測） ---
+_write_ctx ready hanjuku-hero retroarch "$(_iso_ago '21 hours')"
+if _radio_prepass_should_bypass_for_corner; then
+	ok "long-running corner: bypass"
+else
+	not_ok "long-running corner should bypass"
 fi
 
 # --- Soren 本体は対象外 ---
@@ -127,8 +135,8 @@ else
 	ok "phase switching: allow"
 fi
 
-# --- stale started_at -> allow ---
-_write_ctx ready hanjuku-hero retroarch "$(_iso_ago '3 hours')"
+# --- stale started_at（30 日超） -> allow ---
+_write_ctx ready hanjuku-hero retroarch "$(_iso_ago '40 days')"
 if _radio_prepass_should_bypass_for_corner; then
 	not_ok "stale started_at should fail-open (allow)"
 else
@@ -137,7 +145,7 @@ fi
 
 # --- mtime stale -> allow ---
 _write_ctx ready hanjuku-hero retroarch "$(_now_iso)"
-python3 -c "import os,time; os.utime('$CTX', (time.time()-10800, time.time()-10800))"
+python3 -c "import os,time; os.utime('$CTX', (time.time()-40*86400, time.time()-40*86400))"
 if _radio_prepass_should_bypass_for_corner; then
 	not_ok "stale mtime should fail-open (allow)"
 else
@@ -154,6 +162,11 @@ if grep -q 'RADIO_PREPASS_EXTERNAL_ADAPTERS:-retroarch cli' "$CONFIG_SRC"; then
 	ok "external adapters default is retroarch cli"
 else
 	not_ok "external adapters default"
+fi
+if grep -q 'RADIO_PREPASS_CORNER_FRESH_SEC:-2592000' "$CONFIG_SRC"; then
+	ok "freshness default covers long corners"
+else
+	not_ok "freshness default"
 fi
 
 # --- 半熟というゲーム名が判定コードに残っていないこと ---
