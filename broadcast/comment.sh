@@ -1268,6 +1268,9 @@ _build_comment_ops_context() {
 	# Soren 側 lifecycle 状態が切替手続きの進行状況を持つ。コメント返しは
 	# メイン画面のゲームに合わせ、ソレンゲームの話は画面が変わってもソレン文脈で答える。
 	local docich_canonical_file="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	# 半熟英雄BOTの仕組み説明が「いまLLMの動的判断が有効か」を実設定から言うための読取り先。
+	# docich 本体の config/games/hanjuku-hero.toml（[hanjuku.chart_adjust]）。読めなければ状態の一文を省く。
+	local docich_hanjuku_config_file="${DOCICH_HANJUKU_CONFIG_FILE:-/home/ubuntu/docich/config/games/hanjuku-hero.toml}"
 	local soren_lifecycle_dir="${SOREN_GAME_LIFECYCLE_DIR:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/game_lifecycle}"
 	local soren_game_state_file="${SOREN_GAME_STATE_FILE:-$ELOOP_LIB_DIR/game_state.json}"
 	local soren_game_count_file="${SOREN_GAME_COUNT_FILE:-$ELOOP_LIB_DIR/game_count.txt}"
@@ -1295,7 +1298,8 @@ _build_comment_ops_context() {
 		"$soren_lifecycle_dir" \
 		"$soren_game_state_file" \
 		"$soren_game_count_file" \
-		"$soren_improve_paused_file" <<'PY'
+		"$soren_improve_paused_file" \
+		"$docich_hanjuku_config_file" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1318,6 +1322,7 @@ soren_lifecycle_dir = sys.argv[12] if len(sys.argv) > 12 else ""
 soren_game_state_file = sys.argv[13] if len(sys.argv) > 13 else ""
 soren_game_count_file = sys.argv[14] if len(sys.argv) > 14 else ""
 soren_improve_paused_file = sys.argv[15] if len(sys.argv) > 15 else ""
+docich_hanjuku_config_file = sys.argv[16] if len(sys.argv) > 16 else ""
 
 GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)", "external-video-view": "特別コーナー(配信者のPCで遊んでいるゲームの映像をOBSから受けて映している。内容はコメントUIメモの特別コーナー節を見る)"}
 ROUTING = (
@@ -1447,11 +1452,54 @@ except Exception:
 if brief and brief_items:
     lines.append("- 直近の裏側の改修(聞かれたときだけ噛み砕いて話す): " + " / ".join(brief))
 
+# --- 半熟英雄BOTの仕組み説明（メイン画面が半熟英雄のときだけ） ---
+# 「どう動いてるの」「AIが操作してるの」と聞かれたときに答える材料。ルールベースのBOTが基本で、
+# AIは試合ログを見た定期改善に使い、難所だけLLMが動的に判断するハイブリッド、という方針を伝える。
+# LLM動的判断の有効/無効は docich の [hanjuku.chart_adjust] を実測して言い、読めないときは断定しない。
+def hanjuku_llm_enabled(path):
+    if not path:
+        return None
+    try:
+        import tomllib
+        with open(path, "rb") as fh:
+            doc = tomllib.load(fh)
+        cfg = (doc.get("hanjuku") or {}).get("chart_adjust") or {}
+        enabled = cfg.get("enabled", False)
+        agents = cfg.get("agents", "")
+        if cfg.get("direct_enabled", False) is True:
+            agents = cfg.get("direct_agents", "")
+        if not isinstance(enabled, bool) or not isinstance(agents, str):
+            return None
+        return enabled and bool(agents.strip())
+    except Exception:
+        return None
+
+def hanjuku_block():
+    block = [
+        "- 【半熟英雄BOTの仕組み】視聴者が半熟のBOTの動き方・AIの使い方（どう動いてるの、AIが操作してるの等）を聞いたときだけ、"
+        "次の要点を噛み砕いて答える。このあとに並ぶソ連ゲームの戦略改善・メリケンAIの行は半熟BOTの話ではない",
+        "  ・基本は人が決めたルール(ヒューリスティック)で動くBOT。画面を読み取り、決まった手順でボタンを押す",
+        "  ・AIはBOTの動作ログを見て定期的に改善するために使う。いきなり大きく変えず、少しずつ直す保守的なやり方",
+        "  ・難しい場面ではLLMがその場で判断する仕組みも組み込んだハイブリッド構成。ただしLLMが必要な場面は少ない",
+        "  ・判断の理由は最終的にアルゴリズムへ置き換えられるので、この方針にしている",
+        "  ・LLMがリアルタイムに判断するとレイテンシ(待ち時間)が問題になるため、いまはこの方式がベター",
+    ]
+    llm = hanjuku_llm_enabled(docich_hanjuku_config_file)
+    if llm is True:
+        block.append("  ・いまの状態: LLMの動的判断は有効")
+    elif llm is False:
+        block.append("  ・いまの状態: LLMの動的判断は一時的に止めていて、ルールだけで動いている")
+    return block
+
 out = "\n".join(lines).strip()
 if not out:
     out = "(運用状況メモなし)"
 if len(out) > max_chars:
     out = out[:max_chars].rstrip() + "…"
+if host_mode != "soren91" and current_game == "hanjuku-hero":
+    # 文字数上限は既存の行にだけ掛け、説明は切らない（先頭のメイン画面行・ルーティング行の直後へ入れる）。
+    head = out.split("\n")
+    out = "\n".join(head[:2] + hanjuku_block() + head[2:])
 print(out)
 PY
 }

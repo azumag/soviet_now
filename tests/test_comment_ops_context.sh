@@ -177,5 +177,56 @@ printf '%s' '{"request_id":"u1","schema":1,"status":"stopped"}' >"$SOREN_LIFECYC
 out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=300 _build_comment_ops_context main)
 [ "${#out}" -le 320 ] && ok "別ゲーム表示中も文字数上限で切る" || not_ok "文字数上限が効いていない (${#out})"
 
+# --- 9. 半熟英雄BOTの仕組み説明（メイン画面が半熟のときだけ） ---
+# 「どう動いてるの」と聞かれたときに、ルールベースBOT + ログ起点の定期改善 + 難所だけLLM、
+# という構成と理由を答えられること。LLM動的判断の有効/無効は docich の設定を実測して言い、
+# 読めないときは断定しない。説明は文字数上限で切られない。
+HJ_CONFIG="$TMP/hanjuku-hero.toml"
+DOCICH_HANJUKU_CONFIG_FILE="$HJ_CONFIG"
+export DOCICH_HANJUKU_CONFIG_FILE
+rm -f "$SOREN_LIFECYCLE_DIR/request.json" "$SOREN_LIFECYCLE_DIR/ack.json"
+printf '%s' '{"active":{"game":"hanjuku-hero","generation":3},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+
+printf '[hanjuku.chart_adjust]\nenabled = true\nagents = "a:b"\ndirect_enabled = false\ndirect_agents = ""\n' >"$HJ_CONFIG"
+out=$(_build_comment_ops_context main)
+for needle in "半熟英雄BOTの仕組み" "ヒューリスティック" "動作ログを見て定期的に改善" "保守的" "ハイブリッド" "アルゴリズムへ置き換えられる" "レイテンシ" "このあとに並ぶソ連ゲームの戦略改善・メリケンAIの行は半熟BOTの話ではない"; do
+	case "$out" in *"$needle"*) ok "半熟: 「${needle}」が入る" ;; *) not_ok "半熟: 「${needle}」欠落: $out" ;; esac
+done
+case "$out" in *"LLMの動的判断は有効"*) ok "半熟: 設定が有効なら有効と言う" ;; *) not_ok "半熟: 有効の文言: $out" ;; esac
+case "$out" in *"止めていて"*) not_ok "半熟: 有効なのに停止と言った" ;; *) ok "半熟: 有効時に停止とは言わない" ;; esac
+second=$(printf '%s\n' "$out" | sed -n '2p')
+case "$second" in *"画面が違ってもソレンゲームの話として答える"*) ok "半熟: 説明はルーティング行の直後に入る" ;; *) not_ok "半熟: 2行目がルーティング行でない: $second" ;; esac
+case "$(printf '%s\n' "$out" | sed -n '3p')" in *"半熟英雄BOTの仕組み"*) ok "半熟: 説明が3行目から始まる" ;; *) not_ok "半熟: 3行目: $(printf '%s\n' "$out" | sed -n '3p')" ;; esac
+
+printf '[hanjuku.chart_adjust]\nenabled = false\nagents = "a:b"\n' >"$HJ_CONFIG"
+out=$(_build_comment_ops_context main)
+case "$out" in *"LLMの動的判断は一時的に止めていて、ルールだけで動いている"*) ok "半熟: enabled=false は停止と言う" ;; *) not_ok "半熟: 停止の文言: $out" ;; esac
+case "$out" in *"LLMの動的判断は有効"*) not_ok "半熟: 停止なのに有効と言った" ;; *) ok "半熟: 停止時に有効とは言わない" ;; esac
+
+printf '[hanjuku.chart_adjust]\nenabled = true\nagents = ""\n' >"$HJ_CONFIG"
+out=$(_build_comment_ops_context main)
+case "$out" in *"一時的に止めていて"*) ok "半熟: agents が空なら実質停止と言う" ;; *) not_ok "半熟: agents 空の文言: $out" ;; esac
+
+rm -f "$HJ_CONFIG"
+out=$(_build_comment_ops_context main)
+case "$out" in *"ハイブリッド"*) ok "半熟: 設定が読めなくても仕組み説明は出る" ;; *) not_ok "半熟: 設定欠落で説明が消えた: $out" ;; esac
+case "$out" in *"いまの状態: LLM"*) not_ok "半熟: 設定が読めないのに状態を断定した" ;; *) ok "半熟: 設定が読めなければ状態を断定しない" ;; esac
+printf 'enabled = [broken' >"$HJ_CONFIG"
+out=$(_build_comment_ops_context main)
+case "$out" in *"いまの状態: LLM"*) not_ok "半熟: 壊れた設定で状態を断定した" ;; *) ok "半熟: 壊れた設定でも状態を断定せず落ちない" ;; esac
+
+printf '[hanjuku.chart_adjust]\nenabled = true\nagents = "a:b"\n' >"$HJ_CONFIG"
+out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=200 _build_comment_ops_context main)
+case "$out" in *"レイテンシ"*"LLMの動的判断は有効"*) ok "半熟: 文字数上限が小さくても説明は切れない" ;; *) not_ok "半熟: 上限で説明が切れた: $out" ;; esac
+
+out=$(_build_comment_ops_context soren91)
+case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: soren91 モードに半熟説明が出た" ;; *) ok "半熟: soren91 モードには出ない" ;; esac
+printf '%s' '{"active":{"game":"robots","generation":16},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+out=$(_build_comment_ops_context main)
+case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: robots 画面に半熟説明が出た" ;; *) ok "半熟: 他のゲーム画面には出ない" ;; esac
+rm -f "$DOCICH_GAME_SWITCH_CANONICAL_FILE"
+out=$(_build_comment_ops_context main)
+case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: ソレン画面に半熟説明が出た" ;; *) ok "半熟: ソレン画面には出ない" ;; esac
+
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"
