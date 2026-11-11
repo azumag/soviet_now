@@ -1060,6 +1060,106 @@ _comment_soren91_game_state_note() {
 	printf '%s' "- いまのメイン画面はソ連ゲーム91(対戦版/メリケンAI)です。このゲームにはスコアの概念がなく、順位(何人抜きで何位だったか)で振り返ります。本編(ソレンゲーム)のスコア・建国統計は、いまの画面のゲームのものではないので、91のスコアとして読み上げないこと。"
 }
 
+# docich が正本として持つ「ゲーム別のコメント profile」(docich.comment.game_profile)。
+# 半熟英雄などがメイン画面のとき、ペルソナ文・ゲーム状態メモ・UIメモ・運用メモ行は
+# ソ連ゲーム前提のままだと誤るので、docich の launcher が返す差し替えを既存スロットに当てる。
+# launcher の不在・失敗・タイムアウト・空・異常出力は「profile なし」(= 従来どおり)。
+# 戻り値は検証・無害化済みの JSON 1行 (game/game_state/ui_memo/ops_lines/persona_replace)。
+_comment_game_profile() {
+	local ctx="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	local launcher="${DOCICH_COMMENT_PROFILE:-/home/ubuntu/docich/bin/docich-comment-profile}"
+	[ -f "$ctx" ] && [ -x "$launcher" ] || return 0
+	python3 - "$ctx" "$launcher" <<'PY' 2>/dev/null
+import json
+import re
+import subprocess
+import sys
+
+ctx, launcher = sys.argv[1:3]
+try:
+    with open(ctx, encoding="utf-8") as fh:
+        active = json.load(fh).get("active")
+    game = active.get("game") if isinstance(active, dict) else ""
+except Exception:
+    raise SystemExit(0)
+if not isinstance(game, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", game) or game in ("sorengame", "soren91"):
+    raise SystemExit(0)
+try:
+    done = subprocess.run([launcher, game], capture_output=True, timeout=5, check=False, stdin=subprocess.DEVNULL)
+    if done.returncode != 0 or not done.stdout or len(done.stdout) > 16384:
+        raise SystemExit(0)
+    data = json.loads(done.stdout.decode("utf-8"))
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict) or data.get("schema") != 1 or data.get("game") != game:
+    raise SystemExit(0)
+
+BAD = set("$`\\<>\x7f")
+
+
+def clean(text, limit):
+    if not isinstance(text, str):
+        return None
+    return "".join(ch for ch in text if ch == "\n" or (ch >= " " and ch not in BAD))[:limit]
+
+
+out = {"game": game}
+for key, limit in (("game_state", 1500), ("ui_memo", 1500)):
+    value = clean(data.get(key), limit)
+    if value is not None:
+        out[key] = value
+lines = data.get("ops_lines")
+if isinstance(lines, list):
+    cleaned = [clean(line, 600) for line in lines[:16]]
+    if cleaned and all(isinstance(line, str) for line in cleaned):
+        out["ops_lines"] = cleaned
+pairs = []
+for pair in (data.get("persona_replace") or [])[:4] if isinstance(data.get("persona_replace"), list) else []:
+    if isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair) and pair[0] \
+            and clean(pair[0], 400) == pair[0] and clean(pair[1], 400) == pair[1]:
+        pairs.append(pair)
+if pairs:
+    out["persona_replace"] = pairs
+sys.stdout.write(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+PY
+}
+
+# profile JSON の文字列フィールドを出力する。キーが無い・文字列でない・JSON が壊れていれば失敗(1)。
+# 空文字列は有効な値(= そのスロットを空にする)として 0 で返す。
+_comment_profile_field() {
+	[ -n "${1:-}" ] || return 1
+	python3 - "$1" "$2" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    value = json.loads(sys.argv[1]).get(sys.argv[2])
+except Exception:
+    raise SystemExit(1)
+if not isinstance(value, str):
+    raise SystemExit(1)
+sys.stdout.write(value)
+PY
+}
+
+# stdin のペルソナ文に profile の persona_replace (旧文→新文) を当てる。該当文が無ければそのまま。
+_comment_profile_apply_persona() {
+	python3 -c '
+import json
+import sys
+
+text = sys.stdin.read()
+try:
+    pairs = json.loads(sys.argv[1]).get("persona_replace") or []
+except Exception:
+    pairs = []
+for pair in pairs if isinstance(pairs, list) else []:
+    if isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair) and pair[0]:
+        text = text.replace(pair[0], pair[1])
+sys.stdout.write(text)
+' "${1:-}" 2>/dev/null
+}
+
 _build_comment_game_context() {
 	local gs_file="${1:-$GAME_STATE}"
 	python3 - "$gs_file" "score_history.txt" "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "${MIN_GAMES_BEFORE_IMPROVE:-12}" <<'PY'
@@ -1299,7 +1399,8 @@ _build_comment_ops_context() {
 		"$soren_game_state_file" \
 		"$soren_game_count_file" \
 		"$soren_improve_paused_file" \
-		"$docich_hanjuku_config_file" <<'PY'
+		"$docich_hanjuku_config_file" \
+		"${2:-}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1323,6 +1424,7 @@ soren_game_state_file = sys.argv[13] if len(sys.argv) > 13 else ""
 soren_game_count_file = sys.argv[14] if len(sys.argv) > 14 else ""
 soren_improve_paused_file = sys.argv[15] if len(sys.argv) > 15 else ""
 docich_hanjuku_config_file = sys.argv[16] if len(sys.argv) > 16 else ""
+profile_arg = sys.argv[17] if len(sys.argv) > 17 else ""
 
 GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)", "external-video-view": "特別コーナー(配信者のPCで遊んでいるゲームの映像をOBSから受けて映している。内容はコメントUIメモの特別コーナー節を見る)"}
 ROUTING = (
@@ -1474,7 +1576,22 @@ def hanjuku_llm_enabled(path):
     except Exception:
         return None
 
+def profile_ops_lines(game):
+    """docich の profile が運用メモ行を持つならそれを使う（正本は docich）。無ければ None。"""
+    try:
+        data = json.loads(profile_arg) if profile_arg else {}
+    except Exception:
+        return None
+    lines = data.get("ops_lines") if isinstance(data, dict) else None
+    if (isinstance(data, dict) and data.get("game") == game and isinstance(lines, list)
+            and lines and all(isinstance(line, str) for line in lines)):
+        return list(lines)
+    return None
+
 def hanjuku_block():
+    from_profile = profile_ops_lines("hanjuku-hero")
+    if from_profile is not None:
+        return from_profile
     block = [
         "- 【半熟英雄BOTの仕組み】視聴者が半熟のBOTの動き方・AIの使い方（どう動いてるの、AIが操作してるの等）を聞いたときだけ、"
         "次の要点を噛み砕いて答える。このあとに並ぶソ連ゲームの戦略改善・メリケンAIの行は半熟BOTの話ではない",
@@ -3392,9 +3509,17 @@ generate_comment_response() {
 	# 91のスコアとして誤って読み上げてしまう(2026-09-14 実機報告)。
 	local _spoken_ctx_mode=""
 	_spoken_ctx_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	# docich のゲーム別 profile (半熟英雄など)。soren91 中は使わない。失敗・不在は空 = 従来どおり。
+	local _game_profile_json=""
+	if [ "$_spoken_ctx_mode" != "soren91" ]; then
+		_game_profile_json=$(_comment_game_profile 2>/dev/null || true)
+	fi
 	local game_state_context=""
 	if [ "$_spoken_ctx_mode" = "soren91" ]; then
 		game_state_context=$(_comment_soren91_game_state_note)
+	elif game_state_context=$(_comment_profile_field "$_game_profile_json" game_state) && [ -n "$game_state_context" ]; then
+		# 画面のゲームが profile を持つ間は、ソ連ゲームのスコア統計・盤面補助をそのゲームの状態として出さない。
+		:
 	else
 		game_state_context=$(_build_comment_game_context "$GAME_STATE")
 	fi
@@ -3431,7 +3556,7 @@ generate_comment_response() {
 	local viewer_memory_context=""
 	viewer_memory_context=$(_build_comment_viewer_memory_context "$comment_prompt_batch_file" "$viewer_chat_source" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_ops_context=""
-	comment_ops_context=$(_build_comment_ops_context "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
+	comment_ops_context=$(_build_comment_ops_context "$_spoken_ctx_mode" "$_game_profile_json" | _sanitize_comment_prompt_context)
 	local comment_followup_hints=""
 	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file" "$_spoken_ctx_mode" | _sanitize_comment_prompt_context)
 	local comment_mode_for_advice=""
@@ -3629,6 +3754,16 @@ else:
 		fi
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
+		if [ "$_mode_suffix" = "main" ] && [ -n "$_game_profile_json" ]; then
+			# 画面のゲームが docich の profile を持つ間: ソ連ゲームのプレイヤー文とUIメモを差し替える(失敗は従来どおり)。
+			local _gp_persona="" _gp_ui=""
+			if _gp_persona=$(printf '%s' "$_comment_persona" | _comment_profile_apply_persona "$_game_profile_json") && [ -n "$_gp_persona" ]; then
+				_comment_persona="$_gp_persona"
+			fi
+			if _gp_ui=$(_comment_profile_field "$_game_profile_json" ui_memo); then
+				_comment_ui_memo="$_gp_ui"
+			fi
+		fi
 		if [ "$_mode_suffix" = "main" ]; then
 			local _special_corner_memo=""
 			_special_corner_memo=$(_comment_special_corner_memo)
