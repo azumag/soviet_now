@@ -1124,6 +1124,36 @@ sys.stdout.write(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 PY
 }
 
+# profile を適用したか・空だったかを1行ログに残す（本番で効いているかを後から確認できるように）。
+# 出すのはゲーム名と結果だけで、profile の本文は出さない。ソレン画面・soren91 では何も出さない。
+_comment_log_game_profile() {
+	local profile="${1:-}" game=""
+	if [ -n "$profile" ]; then
+		game=$(_comment_profile_field "$profile" game 2>/dev/null || true)
+		log "[COMMENT] ゲームprofile: 適用 game=${game:-?}"
+		return 0
+	fi
+	local ctx="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
+	[ -f "$ctx" ] || return 0
+	game=$(python3 - "$ctx" <<'PY' 2>/dev/null
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        active = json.load(fh).get("active")
+    game = active.get("game") if isinstance(active, dict) else ""
+except Exception:
+    game = ""
+if isinstance(game, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", game) and game not in ("sorengame", "soren91"):
+    sys.stdout.write(game)
+PY
+)
+	[ -n "$game" ] && log "[COMMENT] ゲームprofile: なし(従来のプロンプト) game=$game"
+	return 0
+}
+
 # profile JSON の文字列フィールドを出力する。キーが無い・文字列でない・JSON が壊れていれば失敗(1)。
 # 空文字列は有効な値(= そのスロットを空にする)として 0 で返す。
 _comment_profile_field() {
@@ -1368,9 +1398,6 @@ _build_comment_ops_context() {
 	# Soren 側 lifecycle 状態が切替手続きの進行状況を持つ。コメント返しは
 	# メイン画面のゲームに合わせ、ソレンゲームの話は画面が変わってもソレン文脈で答える。
 	local docich_canonical_file="${DOCICH_GAME_SWITCH_CANONICAL_FILE:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
-	# 半熟英雄BOTの仕組み説明が「いまLLMの動的判断が有効か」を実設定から言うための読取り先。
-	# docich 本体の config/games/hanjuku-hero.toml（[hanjuku.chart_adjust]）。読めなければ状態の一文を省く。
-	local docich_hanjuku_config_file="${DOCICH_HANJUKU_CONFIG_FILE:-/home/ubuntu/docich/config/games/hanjuku-hero.toml}"
 	local soren_lifecycle_dir="${SOREN_GAME_LIFECYCLE_DIR:-$ELOOP_LIB_DIR/$TMP_STATE_DIR/game_lifecycle}"
 	local soren_game_state_file="${SOREN_GAME_STATE_FILE:-$ELOOP_LIB_DIR/game_state.json}"
 	local soren_game_count_file="${SOREN_GAME_COUNT_FILE:-$ELOOP_LIB_DIR/game_count.txt}"
@@ -1399,7 +1426,6 @@ _build_comment_ops_context() {
 		"$soren_game_state_file" \
 		"$soren_game_count_file" \
 		"$soren_improve_paused_file" \
-		"$docich_hanjuku_config_file" \
 		"${2:-}" <<'PY'
 import json
 import sys
@@ -1423,8 +1449,7 @@ soren_lifecycle_dir = sys.argv[12] if len(sys.argv) > 12 else ""
 soren_game_state_file = sys.argv[13] if len(sys.argv) > 13 else ""
 soren_game_count_file = sys.argv[14] if len(sys.argv) > 14 else ""
 soren_improve_paused_file = sys.argv[15] if len(sys.argv) > 15 else ""
-docich_hanjuku_config_file = sys.argv[16] if len(sys.argv) > 16 else ""
-profile_arg = sys.argv[17] if len(sys.argv) > 17 else ""
+profile_arg = sys.argv[16] if len(sys.argv) > 16 else ""
 
 GAME_BLURBS = {"sorengame": "ソ連ゲーム(Unity WebGL)。AIが戦略を改善しながらプレイし、ロシア建国・ソ連建国を目指す", "robots": "Robots(bsdgames)。ロボットの追跡を避けるターン制パズル(いまは手動操作)", "nethack": "NetHack(CLIローグライク)", "hanjuku-hero": "半熟英雄(SFCエミュレータ)", "external-video-view": "特別コーナー(配信者のPCで遊んでいるゲームの映像をOBSから受けて映している。内容はコメントUIメモの特別コーナー節を見る)"}
 ROUTING = (
@@ -1554,69 +1579,30 @@ except Exception:
 if brief and brief_items:
     lines.append("- 直近の裏側の改修(聞かれたときだけ噛み砕いて話す): " + " / ".join(brief))
 
-# --- 半熟英雄BOTの仕組み説明（メイン画面が半熟英雄のときだけ） ---
-# 「どう動いてるの」「AIが操作してるの」と聞かれたときに答える材料。ルールベースのBOTが基本で、
-# AIは試合ログを見た定期改善に使い、難所だけLLMが動的に判断するハイブリッド、という方針を伝える。
-# LLM動的判断の有効/無効は docich の [hanjuku.chart_adjust] を実測して言い、読めないときは断定しない。
-def hanjuku_llm_enabled(path):
-    if not path:
-        return None
-    try:
-        import tomllib
-        with open(path, "rb") as fh:
-            doc = tomllib.load(fh)
-        cfg = (doc.get("hanjuku") or {}).get("chart_adjust") or {}
-        enabled = cfg.get("enabled", False)
-        agents = cfg.get("agents", "")
-        if cfg.get("direct_enabled", False) is True:
-            agents = cfg.get("direct_agents", "")
-        if not isinstance(enabled, bool) or not isinstance(agents, str):
-            return None
-        return enabled and bool(agents.strip())
-    except Exception:
-        return None
-
+# --- 画面のゲームが docich の profile を持つとき、その運用メモ行（半熟英雄のBOT説明など） ---
+# 文面の正本は docich (docich.comment.game_profile)。ここでは profile の game が画面のゲームと
+# 一致したときだけ使い、無い・壊れている・別ゲームなら何も足さない（従来どおり）。
 def profile_ops_lines(game):
-    """docich の profile が運用メモ行を持つならそれを使う（正本は docich）。無ければ None。"""
     try:
         data = json.loads(profile_arg) if profile_arg else {}
     except Exception:
-        return None
+        return []
     lines = data.get("ops_lines") if isinstance(data, dict) else None
-    if (isinstance(data, dict) and data.get("game") == game and isinstance(lines, list)
+    if (game and isinstance(data, dict) and data.get("game") == game and isinstance(lines, list)
             and lines and all(isinstance(line, str) for line in lines)):
         return list(lines)
-    return None
-
-def hanjuku_block():
-    from_profile = profile_ops_lines("hanjuku-hero")
-    if from_profile is not None:
-        return from_profile
-    block = [
-        "- 【半熟英雄BOTの仕組み】視聴者が半熟のBOTの動き方・AIの使い方（どう動いてるの、AIが操作してるの等）を聞いたときだけ、"
-        "次の要点を噛み砕いて答える。このあとに並ぶソ連ゲームの戦略改善・メリケンAIの行は半熟BOTの話ではない",
-        "  ・基本は人が決めたルール(ヒューリスティック)で動くBOT。画面を読み取り、決まった手順でボタンを押す",
-        "  ・AIはBOTの動作ログを見て定期的に改善するために使う。いきなり大きく変えず、少しずつ直す保守的なやり方",
-        "  ・難しい場面ではLLMがその場で判断する仕組みも組み込んだハイブリッド構成。ただしLLMが必要な場面は少ない",
-        "  ・判断の理由は最終的にアルゴリズムへ置き換えられるので、この方針にしている",
-        "  ・LLMがリアルタイムに判断するとレイテンシ(待ち時間)が問題になるため、いまはこの方式がベター",
-    ]
-    llm = hanjuku_llm_enabled(docich_hanjuku_config_file)
-    if llm is True:
-        block.append("  ・いまの状態: LLMの動的判断は有効")
-    elif llm is False:
-        block.append("  ・いまの状態: LLMの動的判断は一時的に止めていて、ルールだけで動いている")
-    return block
+    return []
 
 out = "\n".join(lines).strip()
 if not out:
     out = "(運用状況メモなし)"
 if len(out) > max_chars:
     out = out[:max_chars].rstrip() + "…"
-if host_mode != "soren91" and current_game == "hanjuku-hero":
-    # 文字数上限は既存の行にだけ掛け、説明は切らない（先頭のメイン画面行・ルーティング行の直後へ入れる）。
+profile_lines = profile_ops_lines(current_game) if host_mode != "soren91" else []
+if profile_lines:
+    # 文字数上限は既存の行にだけ掛け、説明は切らない（メイン画面行・ルーティング行の直後へ入れる）。
     head = out.split("\n")
-    out = "\n".join(head[:2] + hanjuku_block() + head[2:])
+    out = "\n".join(head[:2] + profile_lines + head[2:])
 print(out)
 PY
 }
@@ -3513,6 +3499,7 @@ generate_comment_response() {
 	local _game_profile_json=""
 	if [ "$_spoken_ctx_mode" != "soren91" ]; then
 		_game_profile_json=$(_comment_game_profile 2>/dev/null || true)
+		_comment_log_game_profile "$_game_profile_json" || true
 	fi
 	local game_state_context=""
 	if [ "$_spoken_ctx_mode" = "soren91" ]; then
