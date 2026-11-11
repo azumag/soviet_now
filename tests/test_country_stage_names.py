@@ -378,8 +378,16 @@ console.log(JSON.stringify({
 
     def test_user_facing_surfaces_do_not_fall_back_to_stage_numbers(self):
         dashboard = (REPO_ROOT / "generate_dashboard.sh").read_text(encoding="utf-8")
-        comment_prompt = (REPO_ROOT / "prompts/comment_template.md").read_text(
-            encoding="utf-8"
+        # The rules block lives in a slot file (default = the Soviet game's rules); the shipped
+        # prompt is the template with that default filled in.
+        def with_default_rules(template_name, slot, rules_name):
+            template = (REPO_ROOT / "prompts" / template_name).read_text(encoding="utf-8")
+            rules = (REPO_ROOT / "prompts" / rules_name).read_text(encoding="utf-8").rstrip("\n")
+            self.assertEqual(template.count(slot), 1, template_name)
+            return template.replace(slot, rules)
+
+        comment_prompt = with_default_rules(
+            "comment_template.md", "${_comment_game_rules_ja}", "comment_game_rules_ja.md"
         )
         celebration = (REPO_ROOT / "broadcast/radio_celebration.sh").read_text(
             encoding="utf-8"
@@ -411,9 +419,9 @@ console.log(JSON.stringify({
         comment_response = (REPO_ROOT / "prompts/comment_response.md").read_text(
             encoding="utf-8"
         )
-        comment_response_game = (
-            REPO_ROOT / "prompts/comment_response_game.md"
-        ).read_text(encoding="utf-8")
+        comment_response_game = with_default_rules(
+            "comment_response_game.md", "${_comment_game_rules}", "comment_game_rules.md"
+        )
 
         self.assertIn("ロシア <b id=\"gateRussiaInline\"", dashboard)
         self.assertIn("カザフスタン <b id=\"gateKazakhstan\"", dashboard)
