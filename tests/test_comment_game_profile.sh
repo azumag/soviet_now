@@ -132,27 +132,40 @@ res=$(run_persona main ""); case "$res" in "$persona|SOVIET-UI-MEMO") ok "profil
 NOUI='{"game":"hanjuku-hero","game_state":"s"}'
 res=$(run_persona main "$NOUI"); case "$res" in *"|SOVIET-UI-MEMO") ok "ui_memo キーが無ければUIメモはそのまま" ;; *) not_ok "UIメモが変化: $res" ;; esac
 
-# --- 7. 運用メモ行: profile の行を使い、無ければ内蔵(#832)にフォールバック ---
+# --- 7. 運用メモ行: profile の行だけを使う（内蔵の文面は無い） ---
 set_game hanjuku-hero
-DOCICH_HANJUKU_CONFIG_FILE="$TMP/none.toml"; export DOCICH_HANJUKU_CONFIG_FILE
 prof=$(DOCICH_COMMENT_PROFILE=$(make_launcher good8.sh "printf '%s' '$GOOD'") _comment_game_profile)
 out=$(_build_comment_ops_context main "$prof")
 case "$out" in *PROFILE-OPS-HEADER*PROFILE-OPS-BODY*) ok "運用メモに profile の行が入る" ;; *) not_ok "profile 行なし: $out" ;; esac
-case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "profile があるのに内蔵ブロックも出た" ;; *) ok "profile があれば内蔵ブロックは出さない" ;; esac
 [ "$(printf '%s\n' "$out" | sed -n '3p')" = "- PROFILE-OPS-HEADER" ] && ok "profile 行はルーティング行の直後" || not_ok "位置: $(printf '%s\n' "$out" | sed -n '1,4p')"
 out=$(_build_comment_ops_context main "")
-case "$out" in *"半熟英雄BOTの仕組み"*) ok "profile なしなら内蔵ブロックにフォールバック" ;; *) not_ok "フォールバックしない: $out" ;; esac
+case "$out" in *PROFILE-OPS*|*"半熟英雄BOTの仕組み"*) not_ok "profile なしで半熟の行が出た" ;; *) ok "profile なしなら半熟の行は出ない(fail-open)" ;; esac
 out=$(_build_comment_ops_context main '{"game":"robots","ops_lines":["- OTHER-GAME-LINE"]}')
 case "$out" in *OTHER-GAME-LINE*) not_ok "別ゲームの profile を使った" ;; *) ok "別ゲームの profile は使わない" ;; esac
-out=$(_build_comment_ops_context main '{broken'); case "$out" in *"半熟英雄BOTの仕組み"*) ok "壊れた profile でも落ちず内蔵へ" ;; *) not_ok "壊れた profile: $out" ;; esac
+out=$(_build_comment_ops_context main '{broken'); case "$out" in *PROFILE*) not_ok "壊れた profile で行が出た" ;; *) ok "壊れた profile でも落ちず何も足さない" ;; esac
 out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=200 _build_comment_ops_context main "$prof")
 case "$out" in *PROFILE-OPS-BODY*) ok "文字数上限が小さくても profile の行は切れない" ;; *) not_ok "上限で切れた: $out" ;; esac
 set_game robots; out=$(_build_comment_ops_context main "$prof"); case "$out" in *PROFILE-OPS*) not_ok "半熟以外の画面に出た" ;; *) ok "半熟以外の画面には出ない" ;; esac
 set_game hanjuku-hero; out=$(_build_comment_ops_context soren91 "$prof"); case "$out" in *PROFILE-OPS*) not_ok "soren91 に出た" ;; *) ok "soren91 モードには出ない" ;; esac
 
+# --- 7b. 適用ログ: ゲーム名と結果だけ。本文は出さない。ソレン/soren91 では出さない ---
+sed -n "/^_comment_log_game_profile()/,/^}/p" "$SRC" >"$TMP/fn_log.sh"
+[ -s "$TMP/fn_log.sh" ] || { not_ok "extract _comment_log_game_profile"; exit 1; }
+# shellcheck source=/dev/null
+. "$TMP/fn_log.sh"
+LOGF="$TMP/applied.log"; log() { printf '%s\n' "$*" >>"$LOGF"; }
+: >"$LOGF"; set_game hanjuku-hero; _comment_log_game_profile "$prof"
+grep -q "ゲームprofile: 適用 game=hanjuku-hero" "$LOGF" && ok "適用時: ゲーム名つきで1行ログ" || not_ok "適用ログなし: $(cat "$LOGF")"
+case "$(cat "$LOGF")" in *PROFILE-STATE*|*PROFILE-OPS*) not_ok "ログに profile の本文が出た" ;; *) ok "ログに profile の本文は出さない" ;; esac
+: >"$LOGF"; _comment_log_game_profile ""
+grep -q "ゲームprofile: なし(従来のプロンプト) game=hanjuku-hero" "$LOGF" && ok "profile が空でも非ソ連ゲームなら理由つきでログ" || not_ok "空ログなし: $(cat "$LOGF")"
+for g in sorengame soren91; do : >"$LOGF"; set_game "$g"; _comment_log_game_profile ""; [ ! -s "$LOGF" ] && ok "$g 画面ではログを出さない" || not_ok "$g でログが出た"; done
+: >"$LOGF"; rm -f "$CANON"; _comment_log_game_profile ""; [ ! -s "$LOGF" ] && ok "canonical 不在ではログを出さない" || not_ok "canonical 不在でログ"
+
 # --- 8. 配線: 呼び出しは fail-open で、soren91 では取得しない ---
 grep -q '_game_profile_json=$(_comment_game_profile 2>/dev/null || true)' "$SRC" && ok "profile 取得は失敗しても継続する" || not_ok "取得の fail-open が無い"
 grep -q '_build_comment_ops_context "$_spoken_ctx_mode" "$_game_profile_json"' "$SRC" && ok "運用メモへ profile を渡している" || not_ok "運用メモへ渡していない"
+grep -q '_comment_log_game_profile "$_game_profile_json" || true' "$SRC" && ok "profile 取得の直後に適用ログを出す(失敗しても継続)" || not_ok "適用ログの呼び出しが無い"
 n=$(grep -c '"\$_spoken_ctx_mode" != "soren91"' "$SRC"); [ "$n" -ge 1 ] && ok "soren91 では profile を取得しない" || not_ok "soren91 ガードなし"
 
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"

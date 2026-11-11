@@ -177,56 +177,29 @@ printf '%s' '{"request_id":"u1","schema":1,"status":"stopped"}' >"$SOREN_LIFECYC
 out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=300 _build_comment_ops_context main)
 [ "${#out}" -le 320 ] && ok "別ゲーム表示中も文字数上限で切る" || not_ok "文字数上限が効いていない (${#out})"
 
-# --- 9. 半熟英雄BOTの仕組み説明（メイン画面が半熟のときだけ） ---
-# 「どう動いてるの」と聞かれたときに、ルールベースBOT + ログ起点の定期改善 + 難所だけLLM、
-# という構成と理由を答えられること。LLM動的判断の有効/無効は docich の設定を実測して言い、
-# 読めないときは断定しない。説明は文字数上限で切られない。
-HJ_CONFIG="$TMP/hanjuku-hero.toml"
-DOCICH_HANJUKU_CONFIG_FILE="$HJ_CONFIG"
-export DOCICH_HANJUKU_CONFIG_FILE
-rm -f "$SOREN_LIFECYCLE_DIR/request.json" "$SOREN_LIFECYCLE_DIR/ack.json"
+# --- 9. 半熟英雄BOTの仕組み説明は docich の profile から来る（この関数は半熟の文面を持たない） ---
+# 文面の正本は docich (docich.comment.game_profile)。ここでは「profile が無ければ何も足さない」
+# 「profile の game が画面のゲームと一致したときだけ足す」ことを見る。文面そのものと適用の
+# 失敗系は tests/test_comment_game_profile.sh。
 printf '%s' '{"active":{"game":"hanjuku-hero","generation":3},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
-
-printf '[hanjuku.chart_adjust]\nenabled = true\nagents = "a:b"\ndirect_enabled = false\ndirect_agents = ""\n' >"$HJ_CONFIG"
 out=$(_build_comment_ops_context main)
-for needle in "半熟英雄BOTの仕組み" "ヒューリスティック" "動作ログを見て定期的に改善" "保守的" "ハイブリッド" "アルゴリズムへ置き換えられる" "レイテンシ" "このあとに並ぶソ連ゲームの戦略改善・メリケンAIの行は半熟BOTの話ではない"; do
-	case "$out" in *"$needle"*) ok "半熟: 「${needle}」が入る" ;; *) not_ok "半熟: 「${needle}」欠落: $out" ;; esac
-done
-case "$out" in *"LLMの動的判断は有効"*) ok "半熟: 設定が有効なら有効と言う" ;; *) not_ok "半熟: 有効の文言: $out" ;; esac
-case "$out" in *"止めていて"*) not_ok "半熟: 有効なのに停止と言った" ;; *) ok "半熟: 有効時に停止とは言わない" ;; esac
-second=$(printf '%s\n' "$out" | sed -n '2p')
-case "$second" in *"画面が違ってもソレンゲームの話として答える"*) ok "半熟: 説明はルーティング行の直後に入る" ;; *) not_ok "半熟: 2行目がルーティング行でない: $second" ;; esac
-case "$(printf '%s\n' "$out" | sed -n '3p')" in *"半熟英雄BOTの仕組み"*) ok "半熟: 説明が3行目から始まる" ;; *) not_ok "半熟: 3行目: $(printf '%s\n' "$out" | sed -n '3p')" ;; esac
-
-printf '[hanjuku.chart_adjust]\nenabled = false\nagents = "a:b"\n' >"$HJ_CONFIG"
-out=$(_build_comment_ops_context main)
-case "$out" in *"LLMの動的判断は一時的に止めていて、ルールだけで動いている"*) ok "半熟: enabled=false は停止と言う" ;; *) not_ok "半熟: 停止の文言: $out" ;; esac
-case "$out" in *"LLMの動的判断は有効"*) not_ok "半熟: 停止なのに有効と言った" ;; *) ok "半熟: 停止時に有効とは言わない" ;; esac
-
-printf '[hanjuku.chart_adjust]\nenabled = true\nagents = ""\n' >"$HJ_CONFIG"
-out=$(_build_comment_ops_context main)
-case "$out" in *"一時的に止めていて"*) ok "半熟: agents が空なら実質停止と言う" ;; *) not_ok "半熟: agents 空の文言: $out" ;; esac
-
-rm -f "$HJ_CONFIG"
-out=$(_build_comment_ops_context main)
-case "$out" in *"ハイブリッド"*) ok "半熟: 設定が読めなくても仕組み説明は出る" ;; *) not_ok "半熟: 設定欠落で説明が消えた: $out" ;; esac
-case "$out" in *"いまの状態: LLM"*) not_ok "半熟: 設定が読めないのに状態を断定した" ;; *) ok "半熟: 設定が読めなければ状態を断定しない" ;; esac
-printf 'enabled = [broken' >"$HJ_CONFIG"
-out=$(_build_comment_ops_context main)
-case "$out" in *"いまの状態: LLM"*) not_ok "半熟: 壊れた設定で状態を断定した" ;; *) ok "半熟: 壊れた設定でも状態を断定せず落ちない" ;; esac
-
-printf '[hanjuku.chart_adjust]\nenabled = true\nagents = "a:b"\n' >"$HJ_CONFIG"
-out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=200 _build_comment_ops_context main)
-case "$out" in *"レイテンシ"*"LLMの動的判断は有効"*) ok "半熟: 文字数上限が小さくても説明は切れない" ;; *) not_ok "半熟: 上限で説明が切れた: $out" ;; esac
-
-out=$(_build_comment_ops_context soren91)
-case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: soren91 モードに半熟説明が出た" ;; *) ok "半熟: soren91 モードには出ない" ;; esac
+case "$out" in *"半熟英雄BOTの仕組み"*|*ヒューリスティック*) not_ok "profile 無しなのに半熟の説明が出た: $out" ;; *) ok "半熟: profile が無ければ説明を足さない(従来どおり)" ;; esac
+case "$out" in *"いまのメイン画面: hanjuku-hero"*) ok "半熟: 画面のゲーム行は従来どおり出る" ;; *) not_ok "半熟: 画面行: $out" ;; esac
+HJ_PROFILE='{"game":"hanjuku-hero","ops_lines":["- PROFILE-HEADER","  ・PROFILE-BODY"]}'
+out=$(_build_comment_ops_context main "$HJ_PROFILE")
+case "$out" in *PROFILE-HEADER*PROFILE-BODY*) ok "半熟: profile の運用メモ行が入る" ;; *) not_ok "半熟: profile 行なし: $out" ;; esac
+[ "$(printf '%s\n' "$out" | sed -n '3p')" = "- PROFILE-HEADER" ] && ok "半熟: profile 行はルーティング行の直後" || not_ok "半熟: 位置: $(printf '%s\n' "$out" | sed -n '1,4p')"
+out=$(COMMENT_OPS_CONTEXT_MAX_CHARS=200 _build_comment_ops_context main "$HJ_PROFILE")
+case "$out" in *PROFILE-BODY*) ok "半熟: 文字数上限が小さくても profile の行は切れない" ;; *) not_ok "半熟: 上限で切れた: $out" ;; esac
+out=$(_build_comment_ops_context soren91 "$HJ_PROFILE"); case "$out" in *PROFILE-HEADER*) not_ok "半熟: soren91 モードに出た" ;; *) ok "半熟: soren91 モードには出ない" ;; esac
+out=$(_build_comment_ops_context main '{"game":"robots","ops_lines":["- OTHER"]}'); case "$out" in *OTHER*) not_ok "半熟: 別ゲームの profile を使った" ;; *) ok "半熟: 画面と違うゲームの profile は使わない" ;; esac
+out=$(_build_comment_ops_context main '{broken'); case "$out" in *PROFILE*|*"仕組み"*) not_ok "半熟: 壊れた profile で何か出た" ;; *) ok "半熟: 壊れた profile でも落ちず何も足さない" ;; esac
 printf '%s' '{"active":{"game":"robots","generation":16},"phase":"ready"}' >"$DOCICH_GAME_SWITCH_CANONICAL_FILE"
-out=$(_build_comment_ops_context main)
-case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: robots 画面に半熟説明が出た" ;; *) ok "半熟: 他のゲーム画面には出ない" ;; esac
+out=$(_build_comment_ops_context main "$HJ_PROFILE"); case "$out" in *PROFILE-HEADER*) not_ok "半熟: 他のゲーム画面に出た" ;; *) ok "半熟: 他のゲーム画面には出ない" ;; esac
 rm -f "$DOCICH_GAME_SWITCH_CANONICAL_FILE"
-out=$(_build_comment_ops_context main)
-case "$out" in *"半熟英雄BOTの仕組み"*) not_ok "半熟: ソレン画面に半熟説明が出た" ;; *) ok "半熟: ソレン画面には出ない" ;; esac
+out=$(_build_comment_ops_context main "$HJ_PROFILE"); case "$out" in *PROFILE-HEADER*) not_ok "半熟: ソレン画面に出た" ;; *) ok "半熟: ソレン画面には出ない" ;; esac
+# 関数に半熟の文面・設定パスが残っていない（正本は docich）
+grep -q 'hanjuku_llm_enabled\|DOCICH_HANJUKU_CONFIG_FILE\|半熟英雄BOTの仕組み' "$SRC" && not_ok "comment.sh に半熟の文面/設定読取りが残っている" || ok "comment.sh は半熟の文面・設定読取りを持たない"
 
 [ "$FAIL" -eq 0 ] && echo "PASS" || echo "FAIL"
 exit "$FAIL"
