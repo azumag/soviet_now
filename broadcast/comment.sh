@@ -1104,7 +1104,7 @@ def clean(text, limit):
 
 
 out = {"game": game}
-for key, limit in (("game_state", 1500), ("ui_memo", 1500)):
+for key, limit in (("game_state", 1500), ("ui_memo", 1500), ("game_rules", 1500), ("game_rules_ja", 1500)):
     value = clean(data.get(key), limit)
     if value is not None:
         out[key] = value
@@ -2681,7 +2681,7 @@ _build_category_prompt() {
 	export CATEGORY_COMMENTS="$comments_block"
 	export COMMENT_CLASSIFICATIONS="$classifications"
 	export twitch_comments_for_prompt="$comments_block"
-	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context} ${gacha_completion_note}' <"$template_file" >"$out_file"
+	envsubst '${CATEGORY_COMMENTS} ${COMMENT_CLASSIFICATIONS} ${twitch_comments_for_prompt} ${_comment_persona} ${current_time} ${time_period} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_game_rules} ${_comment_game_rules_ja} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context} ${gacha_completion_note}' <"$template_file" >"$out_file"
 }
 
 _extract_sing_score() {
@@ -3730,7 +3730,7 @@ else:
 		# soren91 (メリケンAI) プレイ中はペルソナ・UI説明を切り替え
 		local _comment_mode_generated=""
 		_comment_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		local _comment_persona _comment_ui_memo _comment_channel_intro
+		local _comment_persona _comment_ui_memo _comment_channel_intro _comment_game_rules _comment_game_rules_ja
 		local _comment_length_policy="" _comment_retry_length_policy=""
 		local _mode_suffix="main"
 		[ "$_comment_mode_generated" = "soren91" ] && _mode_suffix="soren91"
@@ -3741,6 +3741,10 @@ else:
 		fi
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
+		# ゲームの基本ルール節(英語版=カテゴリ別テンプレ / 日本語版=comment_template)。既定はソ連ゲームのルール
+		# (従来テンプレに直書きだった文面そのまま)。画面のゲームが docich の profile を持つ間は profile が差し替える。
+		_comment_game_rules=$(cat "$ELOOP_LIB_DIR/prompts/comment_game_rules.md" 2>/dev/null)
+		_comment_game_rules_ja=$(cat "$ELOOP_LIB_DIR/prompts/comment_game_rules_ja.md" 2>/dev/null)
 		if [ "$_mode_suffix" = "main" ] && [ -n "$_game_profile_json" ]; then
 			# 画面のゲームが docich の profile を持つ間: ソ連ゲームのプレイヤー文とUIメモを差し替える(失敗は従来どおり)。
 			local _gp_persona="" _gp_ui=""
@@ -3749,6 +3753,13 @@ else:
 			fi
 			if _gp_ui=$(_comment_profile_field "$_game_profile_json" ui_memo); then
 				_comment_ui_memo="$_gp_ui"
+			fi
+			local _gp_rules=""
+			if _gp_rules=$(_comment_profile_field "$_game_profile_json" game_rules) && [ -n "$_gp_rules" ]; then
+				_comment_game_rules="$_gp_rules"
+			fi
+			if _gp_rules=$(_comment_profile_field "$_game_profile_json" game_rules_ja) && [ -n "$_gp_rules" ]; then
+				_comment_game_rules_ja="$_gp_rules"
 			fi
 		fi
 		if [ "$_mode_suffix" = "main" ]; then
@@ -3789,7 +3800,7 @@ else:
 			recent_spoken_comment_context viewer_memory_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
-			game_state_context comment_ops_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
+			game_state_context comment_ops_context _comment_ui_memo _comment_channel_intro _comment_game_rules _comment_game_rules_ja _comment_length_policy sing_reference \
 			self_chat_context \
 			_prediction_cycle_games
 
@@ -3843,7 +3854,7 @@ PY
 					rm -f "$comment_prompt_file"
 					return 1
 				fi
-				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context}' \
+				envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_game_rules} ${_comment_game_rules_ja} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context}' \
 					<"$_comment_template" >"$comment_prompt_file"
 			fi
 		else
@@ -3853,7 +3864,7 @@ PY
 				rm -f "$comment_prompt_file"
 				return 1
 			fi
-			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context}' \
+			envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${codex_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${viewer_memory_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${comment_ops_context} ${_comment_ui_memo} ${_comment_channel_intro} ${_comment_game_rules} ${_comment_game_rules_ja} ${_comment_length_policy} ${sing_reference} ${_prediction_cycle_games} ${self_chat_context}' \
 				<"$_comment_template" >"$comment_prompt_file"
 		fi
 

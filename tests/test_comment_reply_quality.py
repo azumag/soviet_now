@@ -53,6 +53,9 @@ class PromptHarness(unittest.TestCase):
         self.env.update({
             '_comment_persona': (ROOT / f'prompts/comment_persona_{mode}.md').read_text(),
             '_comment_ui_memo': 'UI_CURRENT_MARKER',
+            # The shell loads these with $(cat ...) (trailing newlines dropped); the default is the Soviet rules.
+            '_comment_game_rules': (ROOT / 'prompts/comment_game_rules.md').read_text().rstrip('\n'),
+            '_comment_game_rules_ja': (ROOT / 'prompts/comment_game_rules_ja.md').read_text().rstrip('\n'),
             'comment_thumbnail_ocr_context': ocr,
             'previous_comments_context': 'SHARED_HISTORY_MARKER',
             'recent_spoken_comment_context': 'SPOKEN_HISTORY_MARKER',
