@@ -630,6 +630,10 @@ _cancel_prediction_no_contest() {
 		# cancel 自体は成功のまま扱う。
 		_record_canceled_prediction_handoff "$cancel_response_file"
 		rm -f "$cancel_response_file"
+		# 不成立キャンセルを視聴者へ告知する。既存の結果告知と同じ
+		# 「予想結果：「…」」prefix で daemon の trusted-prediction 対象にする。
+		# chat worker が pause 中でも cancel 自体は成功のまま扱う。
+		enqueue_chat_message "予想結果：「不成立」賭けが成立しなかったため、予想をキャンセルしました。投票ポイントは全額返却されます。" "predictions" || true
 		rm -f "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_CHECK_FILE"
 		_prediction_retry_clear resolve
 		# no-contest cancel は全額返却で settle 済みの確定的終了なので、
