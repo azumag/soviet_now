@@ -412,6 +412,11 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         safe_no_merge = target_hits
     elif any("landing_hit_id" in candidate for candidate in safe_no_merge):
         return None
+    elif pre_russia_t13_setup or pre_russia_t12_setup:
+        # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
+        # 旧ペイロード互換フォールバックで発火させると、既存の
+        # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
+        return None
 
     selected = min(
         safe_no_merge,
