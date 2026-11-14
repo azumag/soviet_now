@@ -224,6 +224,13 @@ class ResolveBranchWiringTests(unittest.TestCase):
         self.assertEqual(self.no_contest.count('rm -f "$cancel_response_file"'), 2)
         self.assertIn('python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction',
                       self.no_contest)
+        self.assertIn('enqueue_chat_message "予想結果：「不成立」', self.no_contest)
+        # The participation evidence is recorded before the viewer announcement,
+        # and the announcement is best-effort (a paused chat worker cannot fail
+        # the cancel).
+        self.assertLess(self.no_contest.index("_record_canceled_prediction_handoff"),
+                        self.no_contest.index("enqueue_chat_message"))
+        self.assertIn('"predictions" || true', self.no_contest)
         self.assertIn('rm -f "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_CHECK_FILE"',
                       self.no_contest)
 

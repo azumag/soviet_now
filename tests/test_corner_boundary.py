@@ -61,6 +61,7 @@ class CancelPublishTests(unittest.TestCase):
 _patch_prediction_cancel() { :; }
 _record_canceled_prediction_handoff() { :; }
 _prediction_retry_clear() { :; }
+enqueue_chat_message() { :; }
 '''
         with tempfile.TemporaryDirectory() as d:
             state = Path(d) / 'current_prediction.json'

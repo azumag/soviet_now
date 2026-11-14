@@ -33,8 +33,8 @@ if grep -Fq 'enqueue_audio_text' "$SRC"; then
 else
 	ok "audio送出なし"
 fi
-if [ "$(grep -c 'enqueue_chat_message' "$SRC")" = "7" ]; then
-	ok "chat告知は7箇所 (開始1＋stale3＋resolve3)"
+if [ "$(grep -c 'enqueue_chat_message' "$SRC")" = "8" ]; then
+	ok "chat告知は8箇所 (開始1＋stale3＋resolve3＋不成立1)"
 else
 	not_ok "chat告知数が不正: $(grep -c 'enqueue_chat_message' "$SRC")"
 fi
@@ -63,6 +63,11 @@ if _is_prediction_announce_message '予想結果：「粛清」！試してい�
 	ok "粛清結果を素通し対象に"
 else
 	not_ok "粛清結果が素通し対象外"
+fi
+if _is_prediction_announce_message '予想結果：「不成立」賭けが成立しなかったため、予想をキャンセルしました。投票ポイントは全額返却されます。'; then
+	ok "不成立キャンセルを素通し対象に"
+else
+	not_ok "不成立キャンセルが素通し対象外"
 fi
 if _is_prediction_announce_message 'こんにちは'; then
 	not_ok "通常文を素通し"
