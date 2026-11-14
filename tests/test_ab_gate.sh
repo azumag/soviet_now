@@ -210,22 +210,24 @@ python3 -c "import json;rows=[json.loads(l) for l in open('tmp/history/ab_histor
 # 外部更新は A 棄却扱いで確定するので alt (B) は棄却側として記録される。
 grep -qx "$B" tmp/state/rejected_hashes.txt && ok || ng "drifted B hash recorded as rejected"
 
-# 6.6) semantic lint gate: 欠陥を持つ候補は採用中止（rc=1）→ A 棄却として確定。
+# 6.6) adopt-path semantic lint gate: emit 後に候補へ注入された欠陥は採用中止（rc=1）→ A 棄却として確定。
 # WORK 環境では lint を明示配置して実際の検出経路を通す（未配置時は警告のみで
-# 採用継続する fail-open 経路はここでは対象外）。
+# 採用継続する fail-open 経路はここでは対象外）。emit 時 lint も検出するので、
+# adopt 経路の検証には emit 後の候補ファイルへの後注入が必要 — ファイル末尾への
+# 追記は decide hash を変えないため alt hash 検証を通過したまま lint が検出する。
 cp "$ROOT/tools/strategy_semantic_lint.py" "$WORK/tools/"
-# decide() 内の行を --N 変異させる（decide hash 変化＋連続単項マイナス検出の両立）。
-# ファイル末尾追記だけだと decide hash が変わらず、棄却済み hash として候補が破棄される。
-sed 's/relief = 99.0/relief = --99.0/' alt.py > bad_alt.py
-BADV=$(python3 extract_decide_hash.py bad_alt.py)
-ROOTB=$(python3 extract_decide_hash.py strategy.py)  # drift テストで 0.0909 化した現行 root
-cp bad_alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$ROOTB" >/dev/null; _ab_gate_before_game
+# 候補は一意な clean hash が必要（drift で棄却済みの alt.py hash だと before_game が破棄）。
+# lint 非該当の decide() 内の値変更で hash を変える。
+sed 's/relief = 99.0/relief = 98.0/' alt.py > clean_cand.py
+cp clean_cand.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$(python3 extract_decide_hash.py strategy.py)" >/dev/null; _ab_gate_before_game
 [ -f tmp/state/ab_state.json ] && ok || ng "lint-case experiment start"
+BADV=$(python3 extract_decide_hash.py tmp/state/ab_alt_strategy.py)
+# decide() 外の module level へ注入 — decide hash を変えず alt hash 検証を通過しつつ lint が検出。
+python3 -c "s=open('tmp/state/ab_alt_strategy.py').read(); open('tmp/state/ab_alt_strategy.py','w').write(s.replace('def decide(', 'bad_defect = --1\n\ndef decide(', 1))"
 _ab_finish B "lint test" >/dev/null 2>&1 && ok || ng "lint-fail finish rc"
 python3 -c "import json;rows=[json.loads(l) for l in open('tmp/history/ab_history.jsonl')];assert rows[-1]['winner']=='A' and 'semantic_lint_fail' in rows[-1].get('reason',''),rows[-1]" && ok || ng "lint abort must record semantic_lint_fail"
 grep -q "best_x = 0.0909" strategy.py && ! grep -q "bad_defect" strategy.py && ok || ng "root preserved on lint fail"
 grep -qx "$BADV" tmp/state/rejected_hashes.txt && ok || ng "lint-fail B hash recorded as rejected"
-rm -f bad_alt.py
 
 # 7) gate off → before/after are no-ops
 sed -i.bak 's/^AB_GATE_ENABLED=.*/AB_GATE_ENABLED=0/' .env
