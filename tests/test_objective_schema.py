@@ -7,6 +7,7 @@ sys.path.insert(0, ROOT)
 
 from lib.objective import (
     OBJECTIVE_SCHEMA_VERSION,
+    SECOND_RUSSIA_PIPELINE_BONUS,
     SECOND_RUSSIA_READY_BONUS,
     SOVIET_CREATED_BONUS,
     TYPE_BONUS,
@@ -25,8 +26,8 @@ EXPECTED_TABLE = {
 
 
 class ObjectiveSchemaTests(unittest.TestCase):
-    def test_schema_bumped_for_double_russia_readiness(self):
-        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v5")
+    def test_schema_bumped_for_second_russia_pipeline(self):
+        self.assertEqual(OBJECTIVE_SCHEMA_VERSION, "soviet-terminal-v6")
 
     def test_type_table_is_unchanged(self):
         self.assertEqual(TYPE_BONUS, EXPECTED_TABLE)
@@ -34,19 +35,35 @@ class ObjectiveSchemaTests(unittest.TestCase):
     def test_soviet_bonus_reserves_a_separate_terminal_band(self):
         self.assertGreaterEqual(SOVIET_CREATED_BONUS, 1_000_000_000)
         self.assertGreater(SOVIET_CREATED_BONUS, SECOND_RUSSIA_READY_BONUS)
+        self.assertGreater(SECOND_RUSSIA_READY_BONUS, SECOND_RUSSIA_PIPELINE_BONUS)
 
-    def test_double_russia_gets_dedicated_preterminal_band(self):
-        one_russia = eval_score(0, [15, 14, 14, 13], False)
-        two_russia = eval_score(0, [15, 15], False)
+    def test_second_russia_pipeline_gets_staged_bonus(self):
+        before = eval_score(0, [15, 14, 13, 13], False)
+        pipeline = eval_score(0, [15, 14, 14], False)
+        ready = eval_score(0, [15, 15], False)
+        self.assertEqual(
+            pipeline,
+            TYPE_BONUS[15] + 2 * TYPE_BONUS[14] + SECOND_RUSSIA_PIPELINE_BONUS,
+        )
+        self.assertGreater(pipeline, before)
+        self.assertGreater(ready, pipeline)
+
+    def test_pipeline_bonus_requires_exactly_one_russia_and_two_kazakhstans(self):
+        no_russia = terminal_bonus([14, 14, 13], False)
+        one_kazakhstan = terminal_bonus([15, 14, 13], False)
+        self.assertEqual(no_russia, 2 * TYPE_BONUS[14] + TYPE_BONUS[13])
+        self.assertEqual(one_kazakhstan, TYPE_BONUS[15] + TYPE_BONUS[14] + TYPE_BONUS[13])
+
+    def test_double_russia_gets_dedicated_preterminal_band_without_pipeline_double_count(self):
+        two_russia = eval_score(0, [15, 15, 14, 14], False)
         self.assertEqual(
             two_russia,
-            2 * TYPE_BONUS[15] + SECOND_RUSSIA_READY_BONUS,
+            2 * TYPE_BONUS[15] + 2 * TYPE_BONUS[14] + SECOND_RUSSIA_READY_BONUS,
         )
-        self.assertGreater(two_russia, one_russia)
 
     def test_readiness_bonus_requires_two_actual_type15s(self):
-        one = terminal_bonus([15, 14, 14, 14], False)
-        expected = TYPE_BONUS[15] + 3 * TYPE_BONUS[14]
+        one = terminal_bonus([15, 14], False)
+        expected = TYPE_BONUS[15] + TYPE_BONUS[14]
         self.assertEqual(one, expected)
         self.assertEqual(terminal_bonus([99, 15], False), TYPE_BONUS[15])
 
@@ -74,7 +91,7 @@ class ObjectiveSchemaTests(unittest.TestCase):
         for tier in range(3, 16):
             self.assertGreater(TYPE_BONUS[tier + 1], TYPE_BONUS[tier])
 
-    def test_version_stamp_separates_v5_from_legacy(self):
+    def test_version_stamp_separates_v6_from_legacy(self):
         current = stamp({"score": 2})
         legacy = {"score": 1}
         self.assertTrue(is_current(current))
