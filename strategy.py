@@ -285,7 +285,12 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         1 for piece in pieces
         if isinstance(piece, dict) and piece.get("type") == 15
     )
-    if type15_count == 0 or next_type < 8:
+    # 実測ボトルネック: T14×2 が分離したまま T15 未達で終了（T14 pair も押し合い対象に）
+    type14_count = sum(
+        1 for piece in pieces
+        if isinstance(piece, dict) and piece.get("type") == 14
+    )
+    if (type15_count == 0 and type14_count < 2) or next_type < 8:
         return None
 
     # Never spend an immediate, safe merge opportunity on a setup impact.
