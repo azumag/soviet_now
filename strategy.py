@@ -1680,11 +1680,11 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         phase = "LOW"
         height_mult = 0.0672  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 2.027  # 20% merge bonus increase, actively target
-    elif max_y < 2.894:
+    elif max_y < 1.275:
         phase = "MEDIUM"
         height_mult = 0.342  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
         merge_mult = 0.699
-    elif max_y < 1.275:
+    elif max_y < 2.894:
         phase = "HIGH"
         height_mult = 0.1766  # HIGH phase height_mult from v42
         merge_mult = 1.633
