@@ -52,31 +52,31 @@ class CancelPublishTests(unittest.TestCase):
                               check=False, capture_output=True, text=True)
 
     def test_no_contest_cancel_publishes_boundary(self):
-        # resolve) 内の no-contest elif ブロックを抜き出し、PATCH 成功系だけ通す。
+        # 不成立キャンセルの共有 helper を抜き出し、PATCH 成功系だけ通す。
         source = (ROOT / 'twitch_predictions.sh').read_text()
-        start = source.index('elif [ "$contested" -le 1 ]; then')
-        end_marker = '_log "WARN: no-contest cancel failed; resolving as before"\n\tfi'
-        region = source[start:source.index(end_marker) + len(end_marker)]
+        start = source.index('_cancel_prediction_no_contest() {')
+        end = source.index('\n}\n', start) + len('\n}\n')
+        function = source[start:end]
         stubs = '''_log() { :; }
 _patch_prediction_cancel() { :; }
 _record_canceled_prediction_handoff() { :; }
 _prediction_retry_clear() { :; }
-_sync_prediction_state_with_remote() { return 1; }
-contested=1
-PREDICTION_ID=fixture
-if false; then :;
 '''
         with tempfile.TemporaryDirectory() as d:
             state = Path(d) / 'current_prediction.json'
             state.write_text('{"prediction_id":"fixture"}')
+            marker = Path(d) / 'prediction_window_checked.json'
+            marker.write_text('{}')
             env = {'TMP_STATE_DIR': d, 'PREDICTION_STATE_FILE': str(state),
-                   'PREDICTION_RETRY_DIR': d}
-            proc = self._run(stubs + region, env)
+                   'PREDICTION_RETRY_DIR': d,
+                   'PREDICTION_WINDOW_CHECK_FILE': str(marker)}
+            proc = self._run(stubs + function + '\n_cancel_prediction_no_contest fixture\n', env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             boundary = Path(d) / 'corner_boundary_prediction.json'
             self.assertTrue(boundary.exists())
             self.assertGreater(json.loads(boundary.read_text())['completed_at'], 0)
             self.assertFalse(state.exists())
+            self.assertFalse(marker.exists())
 
     def test_manual_cancel_publishes_boundary(self):
         source = (ROOT / 'twitch_predictions.sh').read_text()

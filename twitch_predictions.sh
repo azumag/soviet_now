@@ -181,6 +181,9 @@ AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
 PREDICTION_RETRY_DIR="${TMP_STATE_DIR}/prediction_retry"
 PREDICTION_CREATE_RETRY_FILE="$PREDICTION_RETRY_DIR/create.json"
 PREDICTION_RESOLVE_RETRY_FILE="$PREDICTION_RETRY_DIR/resolve.json"
+# 募集期間終了時に「賭けが入った選択肢が1つ以下」を一度だけ確認した印。
+# prediction_id が変われば再判定する。実コンテストならサイクル完了 resolve が担当。
+PREDICTION_WINDOW_CHECK_FILE="${TMP_STATE_DIR}/prediction_window_checked.json"
 mkdir -p "$PREDICTION_RETRY_DIR" 2>/dev/null || true
 
 _prediction_retry_file() {
@@ -614,6 +617,30 @@ PY
 	return 0
 }
 
+# 不成立 (賭けが入った選択肢が1つ以下) の予想を CANCEL し、全額返却と
+# 予想王への参加実績引き渡し・コーナー境界の公開まで行う。成功時 0、失敗時 1。
+# 呼び出し側は contested のログと出力を担当する。
+_cancel_prediction_no_contest() {
+	local prediction_id="$1"
+	[ -n "$prediction_id" ] || return 1
+	local cancel_response_file
+	cancel_response_file=$(mktemp "$PREDICTION_RETRY_DIR/cancel.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/cancel.$$")
+	if _patch_prediction_cancel "$prediction_id" "$cancel_response_file"; then
+		# 不成立キャンセルでも参加実績は残す (#933 追記)。記録に失敗しても
+		# cancel 自体は成功のまま扱う。
+		_record_canceled_prediction_handoff "$cancel_response_file"
+		rm -f "$cancel_response_file"
+		rm -f "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_CHECK_FILE"
+		_prediction_retry_clear resolve
+		# no-contest cancel は全額返却で settle 済みの確定的終了なので、
+		# resolve と同じくコーナー解放の境界を打つ (docich#3291)。
+		python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
+		return 0
+	fi
+	rm -f "$cancel_response_file"
+	return 1
+}
+
 _sync_prediction_state_with_remote() {
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
 	local state_json=""
@@ -888,7 +915,7 @@ PY
 
 	# レスポンスから prediction_id と outcome_ids を抽出
 	result=$(
-		python3 - "$response" "$GAME_NUM" "$PREDICTION_MAX_GAMES" <<'PY' 2>/dev/null
+		python3 - "$response" "$GAME_NUM" "$PREDICTION_MAX_GAMES" "$PREDICTION_WINDOW_SEC" <<'PY' 2>/dev/null
 import json, sys, time
 data = json.loads(sys.argv[1])
 pred = data.get("data", [{}])[0]
@@ -897,11 +924,21 @@ outcomes = pred.get("outcomes", [])
 outcome_ids = [o.get("id", "") for o in outcomes]
 if not pred_id or len(outcome_ids) < 4:
     sys.exit(1)
+now = int(time.time())
+requested_window = int(sys.argv[4])
+try:
+    window = int(pred.get("prediction_window") or requested_window or 0)
+except (TypeError, ValueError):
+    window = requested_window
+window = max(0, window)
 state = {
     "prediction_id": pred_id,
     "outcome_ids": outcome_ids,
     "game_num": int(sys.argv[2]),
-    "created_at": int(time.time()),
+    "created_at": now,
+    # 募集期間の終了時刻。受付終了時に「賭けが成立していない」なら CANCEL する。
+    "prediction_window": window,
+    "window_ends_at": now + window if window > 0 else 0,
     "russia_created": False,
     "round_version": 2,
     "max_games": int(sys.argv[3]),
@@ -985,22 +1022,11 @@ PY
 	if [ -z "$contested" ]; then
 		_log "WARN: prediction outcome counts unavailable; resolving as before"
 	elif [ "$contested" -le 1 ]; then
-		cancel_response_file=$(mktemp "$PREDICTION_RETRY_DIR/cancel.XXXXXX" 2>/dev/null || echo "$PREDICTION_RETRY_DIR/cancel.$$")
-		if _patch_prediction_cancel "$PREDICTION_ID" "$cancel_response_file"; then
-			# 不成立キャンセルでも参加実績は残す (#933 追記)。記録に失敗しても
-			# cancel 自体は成功のまま扱う。
-			_record_canceled_prediction_handoff "$cancel_response_file"
-			rm -f "$cancel_response_file"
+		if _cancel_prediction_no_contest "$PREDICTION_ID"; then
 			_log "prediction canceled: no contest (outcomes_with_bets=${contested})"
-			rm -f "$PREDICTION_STATE_FILE"
-			_prediction_retry_clear resolve
-			# no-contest cancel は全額返却で settle 済みの確定的終了なので、
-			# resolve と同じくコーナー解放の境界を打つ (docich#3291)。
-			python3 lib/corner_boundary.py "$TMP_STATE_DIR" prediction || true
 			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
 			exit 0
 		fi
-		rm -f "$cancel_response_file"
 		if _sync_prediction_state_with_remote; then
 			_log "WARN: no-contest cancel failed, but remote sync cleared local state"
 			_prediction_retry_clear resolve
@@ -1085,6 +1111,139 @@ PY
 	printf '{"ok":true,"status":"resolved","outcome_index":%s,"outcome_label":"%s"}\n' "$OUTCOME_INDEX" "$OUTCOME_LABEL"
 	;;
 
+settle-window)
+	# 募集期間が終わった時点で、賭けが入った選択肢が1つ以下なら不成立キャンセル。
+	# 2つ以上なら実コンテストとしてサイクル完了 resolve まで待つ。判定不能なら
+	# 何もせず、従来の resolve 経路へ任せる。
+	if [ ! -f "$PREDICTION_STATE_FILE" ]; then
+		printf '%s\n' '{"ok":true,"status":"no-prediction"}'
+		exit 0
+	fi
+
+	state_json=$(_load_prediction_state_json "$PREDICTION_STATE_FILE") || {
+		printf '%s\n' '{"ok":true,"status":"unknown","reason":"state-unreadable"}'
+		exit 0
+	}
+	PREDICTION_ID=$(echo "$state_json" | _prediction_id_from_state_json)
+	if [ -z "$PREDICTION_ID" ]; then
+		rm -f "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_CHECK_FILE"
+		printf '%s\n' '{"ok":true,"status":"cleared","reason":"invalid-state"}'
+		exit 0
+	fi
+
+	# 実コンテストとして確認済みなら、同じ prediction で API を再取得しない。
+	if [ -f "$PREDICTION_WINDOW_CHECK_FILE" ]; then
+		checked_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("prediction_id",""))' "$PREDICTION_WINDOW_CHECK_FILE" 2>/dev/null)
+		if [ "$checked_id" = "$PREDICTION_ID" ]; then
+			printf '%s\n' '{"ok":true,"status":"contested","reason":"already-checked"}'
+			exit 0
+		fi
+	fi
+
+	window_state=$(python3 - "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_SEC" <<'PY' 2>/dev/null
+import json, sys, time
+try:
+    state = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("unknown")
+    raise SystemExit(0)
+try:
+    ends = int(state.get("window_ends_at") or 0)
+except (TypeError, ValueError):
+    ends = 0
+if ends <= 0:
+    try:
+        created = int(state.get("created_at") or 0)
+    except (TypeError, ValueError):
+        created = 0
+    try:
+        window = int(state.get("prediction_window") or 0)
+    except (TypeError, ValueError):
+        window = 0
+    if window <= 0:
+        try:
+            max_games = int(state.get("max_games") or 0)
+        except (TypeError, ValueError):
+            max_games = 0
+        window = min(1800, max_games * 40) if max_games > 0 else int(sys.argv[2] or 0)
+    ends = created + window if created > 0 and window > 0 else 0
+print("due" if ends > 0 and time.time() >= ends else "wait")
+PY
+)
+	case "$window_state" in
+	due) ;;
+	wait)
+		printf '%s\n' '{"ok":true,"status":"waiting","reason":"window-not-ended"}'
+		exit 0
+		;;
+	*)
+		printf '%s\n' '{"ok":true,"status":"unknown","reason":"window-unknown"}'
+		exit 0
+		;;
+	esac
+
+	remote_json=$(_fetch_remote_prediction_json "$PREDICTION_ID") || {
+		printf '%s\n' '{"ok":true,"status":"unavailable","reason":"remote-fetch"}'
+		exit 0
+	}
+	remote_status=$(echo "$remote_json" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("status",""))' 2>/dev/null)
+	case "$remote_status" in
+	RESOLVED | CANCELED)
+		_log "SYNC: clearing local prediction state (remote_status=${remote_status})"
+		rm -f "$PREDICTION_STATE_FILE" "$PREDICTION_WINDOW_CHECK_FILE"
+		printf '{"ok":true,"status":"remote-terminal","remote_status":"%s"}\n' "$remote_status"
+		exit 0
+		;;
+	ACTIVE)
+		printf '%s\n' '{"ok":true,"status":"active","reason":"remote-not-locked"}'
+		exit 0
+		;;
+	LOCKED) ;;
+	*)
+		printf '%s\n' '{"ok":true,"status":"unknown","reason":"remote-status"}'
+		exit 0
+		;;
+	esac
+
+	contested=""
+	if contested=$(_contested_outcome_count "$PREDICTION_ID"); then
+		case "$contested" in '' | *[!0-9]*) contested="" ;; esac
+	else
+		contested=""
+	fi
+	if [ -z "$contested" ]; then
+		printf '%s\n' '{"ok":true,"status":"unavailable","reason":"outcome-counts"}'
+		exit 0
+	fi
+	if [ "$contested" -le 1 ]; then
+		if _cancel_prediction_no_contest "$PREDICTION_ID"; then
+			_log "prediction canceled at window end: no contest (outcomes_with_bets=${contested})"
+			printf '{"ok":true,"status":"canceled","reason":"no-contest","outcomes_with_bets":%s}\n' "$contested"
+			exit 0
+		fi
+		printf '%s\n' '{"ok":true,"status":"cancel-failed"}'
+		exit 0
+	fi
+
+	python3 - "$PREDICTION_WINDOW_CHECK_FILE" "$PREDICTION_ID" <<'PY'
+import json, os, sys, tempfile, time
+path, prediction_id = sys.argv[1], sys.argv[2]
+payload = {"prediction_id": prediction_id, "checked_at": int(time.time())}
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".prediction-window-", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n")
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+	_log "prediction window ended with a real contest (outcomes_with_bets=${contested}); waiting for cycle resolve"
+	printf '{"ok":true,"status":"contested","outcomes_with_bets":%s}\n' "$contested"
+	;;
+
 cancel)
 	if [ ! -f "$PREDICTION_STATE_FILE" ]; then
 		_log "SKIP: no active prediction"
@@ -1154,7 +1313,7 @@ PY
 	;;
 
 *)
-	echo "Usage: $0 {create|resolve <outcome_index>|cancel|status|sync|autovote [state_file]|cleanup [game_num]}" >&2
+	echo "Usage: $0 {create|resolve <outcome_index>|settle-window|cancel|status|sync|autovote [state_file]|cleanup [game_num]}" >&2
 	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清" >&2
 	exit 1
 	;;
