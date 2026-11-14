@@ -292,8 +292,7 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     )
     # 実測ボトルネック (2026-11-15, 連続試合): T14=1 + 分離した T13 pair のまま
     # デッドライン終了。T13+T13 を寄せれば 2個目 T14 → T14×2 押し合い → T15 へ繋がる。
-    # その場合だけ pre-Russia でも T13 pair 押し合いを許可する (ソ連建国後
-    # (type16 存在) は従来どおり対象外)。
+    # (ソ連建国後 type16 存在は従来どおり対象外)。
     type13_count = sum(
         1 for piece in pieces
         if isinstance(piece, dict) and piece.get("type") == 13
@@ -310,9 +309,13 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         isinstance(piece, dict) and piece.get("type") == 16
         for piece in pieces
     )
+    # 実測ボトルネック (同じ80試合窓): T13 最高到達 48試合中 23試合が終了時に
+    # T13 pair を保持したまま（最大 dx=4.4 の広分離を含む）。pair を寄せれば
+    # 即 T14 生成で T14→T15 経路へ進める。T14 有無は問わない（T14>=2 は上の
+    # T14 pair arm が担当）。
     pre_russia_t13_setup = (
         type15_count == 0
-        and type14_count == 1
+        and type14_count <= 1
         and type13_count >= 2
         and pre_russia_no_t16
     )
