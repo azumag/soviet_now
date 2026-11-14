@@ -194,6 +194,22 @@ grep -q "^-.*best_x = 0.0905" "$CHANGE_LOG_FILE_HOST" && ok || ng "diff directio
 [ "$(wc -l <"$CHANGE_LOG_FILE_HOST")" -le 200 ] && ok || ng "change_log must stay within the 200-line cap ($(wc -l <"$CHANGE_LOG_FILE_HOST"))"
 ! grep -q "A/B ADOPTED" "$DEFAULT_CHANGE_LOG" && ok || ng "CHANGE_LOG_FILE_HOST must take precedence over the default path"
 
+# 6.5) live drift: 実験中に root が A から変わったら B 採用を中止する。
+# deploy / rollback 等の外部更新が旧ベース候補で巻き戻されないよう fail-closed。
+rm -f tmp/state/rejected_hashes.txt
+cp alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$C" >/dev/null; _ab_gate_before_game
+[ -f tmp/state/ab_state.json ] && ok || ng "drift-case experiment start"
+# ここで外部更新を模擬: live root (WORK 内の strategy.py) を A とは別内容へ差し替える（deploy 相当）。
+sed -i.bak 's/best_x = 0.0907/best_x = 0.0909/' strategy.py
+# 採用中止は alt_hash_mismatch と同じく「A 棄却として正常終了」なので rc=0。
+# 失敗すべきは B 採用の方で、root がドリフト後のまま保たれているかで検証する。
+_ab_finish B "drift test" >/dev/null 2>&1 && ok || ng "drift finish rc"
+python3 -c "import json;rows=[json.loads(l) for l in open('tmp/history/ab_history.jsonl')];assert rows[-1]['winner']=='A' and 'live_hash_drifted' in rows[-1].get('reason',''),rows[-1]" && ok || ng "drift abort must record live_hash_drifted"
+! grep -q "best_x = 0.0907" strategy.py && grep -q "best_x = 0.0909" strategy.py && ok || ng "drifted root must be preserved"
+! grep -q "A/B ADOPTED" "$DEFAULT_CHANGE_LOG" 2>/dev/null && ok || ng "drift abort must not write ADOPTED"
+# 外部更新は A 棄却扱いで確定するので alt (B) は棄却側として記録される。
+grep -qx "$B" tmp/state/rejected_hashes.txt && ok || ng "drifted B hash recorded as rejected"
+
 # 7) gate off → before/after are no-ops
 sed -i.bak 's/^AB_GATE_ENABLED=.*/AB_GATE_ENABLED=0/' .env
 cp alt.py harvest/strategy.py.staging; _ab_gate_emit_candidate harvest "$C" >/dev/null; _ab_gate_before_game; [ -d tmp/state/ab_candidate ] && [ ! -f tmp/state/ab_state.json ] && ok || ng "gate off no-op"
