@@ -9,6 +9,13 @@
 # この層は _ab_active() の既存 fail-closed 判定を保ったまま、root(A) または alt(B) の
 # hash drift と、継続不能な state/candidate 欠損を検出した実験を「勝敗なしの stale」として
 # 退役させる。root は変更せず、B を rejected にも入れない。証跡は tmp/history へ保存する。
+#
+# root drift 時の扱いは .env の AB_ON_ROOT_DRIFT で選ぶ (soviet_now#865):
+#   retire (既定): 従来どおり stale 退役する。
+#   rebase       : stale 退役せず A を観測された新 root へ張り替え、B をそのまま
+#                  新 A との測定を最初からやり直す (confirmation 中なら selection へ戻す)。
+#                  収集済み標本は tmp/history/ab_<ts>_games_rootdrift.jsonl へ保全されるが、
+#                  旧 root との比較値なので判定標本には混ぜない。
 
 _ab_integrity_retire_stale() {
 	local kind="$1" observed="$2" expected="$3"
@@ -68,6 +75,74 @@ PY
 	mv "$AB_STATE_FILE" "$history/ab_${ts}_state_stale.json" || return 1
 
 	log "[AB] stale experiment retired: $reason (root unchanged; no winner/reject)"
+	command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "retire:$kind"
+	return 0
+}
+
+# AB_ON_ROOT_DRIFT=rebase: root(A) の drift を観測した時、実験を stale 退役せず
+# A を新 root へ張り替えて測定をやり直す。B (alt file/hash) はそのまま残し、
+# 旧 A との標本は判定へ混ぜず history へ保全する。confirmation 中でも
+# selection へ戻す (旧 root への selection ADOPT は新 root へは引き継げない)。
+_ab_integrity_rebase_root() {
+	local observed="$1" expected="$2"
+	[ -f "$AB_STATE_FILE" ] || return 1
+
+	local history="${AB_HISTORY_DIR:-tmp/history}" ts
+	ts=$(date +%Y%m%d_%H%M%S)
+	mkdir -p "$history" || return 1
+
+	# 旧 root との標本は保全するが live ledger からは外す (判定へ混ぜない)。
+	if [ -f "$AB_GAMES_FILE" ]; then
+		mv "$AB_GAMES_FILE" "$history/ab_${ts}_games_rootdrift.jsonl" || return 1
+	fi
+	: >"$AB_GAMES_FILE" || return 1
+
+	# 新 root の policy bundle を取り直す (bundle は着手一式の同一性)。
+	local bundle_a=""
+	bundle_a=$(python3 tools/policy_bundle.py --strategy "${STRATEGY_FILE:-strategy.py}" 2>/dev/null || echo "")
+	python3 - "$AB_STATE_FILE" "$observed" "$expected" "$bundle_a" "$history/ab_${ts}_games_rootdrift.jsonl" <<'PY' || return 1
+import json, os, sys, time
+p, observed, expected, bundle_a, drift_file = sys.argv[1:6]
+st = json.load(open(p, encoding="utf-8"))
+events = st.get("root_drift_events")
+if not isinstance(events, list):
+    events = []
+events.append({
+    "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    "from": expected,
+    "to": observed,
+    "games": int(st.get("games_recorded") or 0),
+    "phase": st.get("confirmation_phase") or "selection",
+    "selection_games_file": st.get("selection_games_file") or "",
+    "archived_games": os.path.basename(drift_file),
+})
+st["root_drift_events"] = events
+st["a_hash"] = observed
+if bundle_a:
+    st["a_policy_bundle"] = bundle_a
+st["games_recorded"] = 0
+st.pop("last_arm", None)
+st["rebased_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+st["rebase_reason"] = "root_drift"
+# 旧 root への selection 結果は新 root へ引き継げないため測定を最初からやり直す。
+for k in ("confirmation_phase", "selection_finished_at", "selection_reason",
+          "selection_games", "selection_games_file", "verified_improvement",
+          "confirmation_passed_at", "confirmation_reason"):
+    st.pop(k, None)
+if st.get("confirmation_required"):
+    st["confirmation_phase"] = "selection"
+    st["verified_improvement"] = False
+    st["selection_started_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+tmp = p + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(st, fh, ensure_ascii=False, indent=1)
+os.replace(tmp, p)
+PY
+
+	AB_ARM=""; AB_HASH=""; AB_SOURCE=""; AB_IDX=""; AB_HELPERS=""; AB_EXTRA_ENV=""
+	export AB_EXTRA_ENV
+	log "[AB] root drift: A を新 root へ張り替えて測定を再開 (${expected:0:12} → ${observed:0:12}, policy=rebase, 旧標本は history へ保全)"
+	command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "rebase_root"
 	return 0
 }
 
@@ -104,7 +179,16 @@ _ab_active() {
 
 	ha=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 	if [ -n "$ha" ] && [ "$ha" != "$a" ]; then
-		_ab_integrity_retire_stale "stale_base" "$ha" "$a" || true
+		case "$(_ab_env_value AB_ON_ROOT_DRIFT)" in
+		rebase)
+			# 新 root 上で B を測り直す。rebase に失敗した場合だけ stale 退役へ。
+			_ab_integrity_rebase_root "$ha" "$a" ||
+				_ab_integrity_retire_stale "stale_base" "$ha" "$a" || true
+			;;
+		*)
+			_ab_integrity_retire_stale "stale_base" "$ha" "$a" || true
+			;;
+		esac
 		return "$rc"
 	fi
 
