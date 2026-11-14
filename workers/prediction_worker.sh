@@ -214,6 +214,19 @@ PY
 }
 
 HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
+_PREDICTION_NOTICE_LOGGED=""
+
+_prediction_notice_mode() {
+	# docich publishes the next-corner promise next to its rotation ledger.
+	# A missing/broken helper is clear: no promise was shown, so keep the
+	# existing gate rather than stalling every cycle on a projection error.
+	local mode
+	mode=$(python3 lib/corner_notice_state.py mode 2>/dev/null) || mode=clear
+	case "$mode" in
+	clear | time | pending | prediction | blocked) printf '%s\n' "$mode" ;;
+	*) printf 'clear\n' ;;
+	esac
+}
 
 _prediction_cycle_start_allowed() {
 	# Predictions belong only to the fixed 48-game improvement batch. This
@@ -223,11 +236,33 @@ _prediction_cycle_start_allowed() {
 	48) ;;
 	*) return 1 ;;
 	esac
-	[ "${current_acc_count:-0}" -eq 0 ] 2>/dev/null || return 1
+	# While docich promises a clock, a new prediction must not start: its
+	# boundary would hold that corner back. ``prediction-pending`` is the one
+	# window where the rotation wants the prediction first, so it bypasses
+	# the accumulator/improvement checks below but never A/B or hot streak.
+	local _notice_mode
+	_notice_mode=$(_prediction_notice_mode)
+	if [ "$_notice_mode" != "$_PREDICTION_NOTICE_LOGGED" ]; then
+		case "$_notice_mode" in
+		clear | pending) ;;
+		*) _log "予想作成スキップ: 次コーナー掲示中 (${_notice_mode})" ;;
+		esac
+		_PREDICTION_NOTICE_LOGGED="$_notice_mode"
+	fi
+	case "$_notice_mode" in
+	time | prediction | blocked) return 1 ;;
+	esac
 	_prediction_ab_test_running && return 1
+	[ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] || return 1
+	if [ "$_notice_mode" = "pending" ]; then
+		# Dedicated prediction round (v2) counts its own 48 games, so an
+		# existing improvement batch or a running improvement does not make
+		# the public promise wrong.
+		return 0
+	fi
+	[ "${current_acc_count:-0}" -eq 0 ] 2>/dev/null || return 1
 	[ "${improve_status:-}" != "running" ] || return 1
 	[ ! -f "${IMPROVE_LOCK_FILE:-tmp/improve.lock}" ] || return 1
-	[ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] || return 1
 	return 0
 }
 

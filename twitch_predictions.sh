@@ -80,6 +80,17 @@ _cfg_min_games="${MIN_GAMES_BEFORE_IMPROVE:-${_cfg_min_games:-12}}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-48}"
 case "$PREDICTION_MAX_GAMES" in ''|*[!0-9]*|0) PREDICTION_MAX_GAMES=48 ;; esac
 
+_prediction_notice_mode() {
+	# docich's next-corner promise. A missing/broken helper is clear: no
+	# promise was shown, so keep the existing create contract.
+	local mode
+	mode=$(python3 lib/corner_notice_state.py mode 2>/dev/null) || mode=clear
+	case "$mode" in
+	clear | time | pending | prediction | blocked) printf '%s\n' "$mode" ;;
+	*) printf 'clear\n' ;;
+	esac
+}
+
 _prediction_create_context_allowed() {
 	[ "$_cfg_min_games" = "48" ] || {
 		_log "SKIP: prediction create requires the 48-game improvement cycle"
@@ -89,6 +100,46 @@ _prediction_create_context_allowed() {
 		_log "SKIP: prediction create requires a 48-game prediction window"
 		return 1
 	}
+	# A clock promised by the rotation must not be pushed out by a new
+	# prediction. ``prediction-pending`` is the post-corner window where the
+	# rotation wants the prediction first, so it bypasses only the
+	# accumulator/improvement checks (never A/B or hot streak).
+	local _notice_mode
+	_notice_mode=$(_prediction_notice_mode)
+	case "$_notice_mode" in
+	time | prediction | blocked)
+		_log "SKIP: prediction create blocked while the next corner is announced (${_notice_mode})"
+		return 1
+		;;
+	esac
+	local hot_streak_pending_file="${HOT_STREAK_PREDICTION_PENDING_FILE:-${TMP_STATE_DIR}/hot_streak_prediction_pending}"
+	[ ! -f "$hot_streak_pending_file" ] || {
+		_log "SKIP: prediction create blocked while hot-streak prediction is pending"
+		return 1
+	}
+	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
+	[ ! -f "$state_file" ] || {
+		_log "SKIP: prediction create blocked while A/B test state exists"
+		return 1
+	}
+	[ -z "${SOREN_AB_ALT_STRATEGY:-}" ] || {
+		_log "SKIP: prediction create blocked while A/B runtime toggle exists"
+		return 1
+	}
+	# soviet_now#641 (修正契約 3): A/B 候補が待機中なら新規予想を作らない。
+	# 既存ラウンドの確定後、次の試合境界を A/B へ渡す。
+	local ab_candidate_dir="${AB_CANDIDATE_DIR:-${TMP_STATE_DIR}/ab_candidate}"
+	[ ! -f "$ab_candidate_dir/meta.json" ] || [ ! -f "$ab_candidate_dir/strategy.py" ] || {
+		_log "SKIP: prediction create blocked while A/B candidate is pending"
+		return 1
+	}
+	if [ "$_notice_mode" = "pending" ]; then
+		# Dedicated v2 rounds count their own 48 games; an existing
+		# improvement batch or a running improvement does not make this
+		# public promise wrong. A/B and hot streak were checked above.
+		_log "prediction create allowed during the post-corner handoff"
+		return 0
+	fi
 	local improve_state_file="${IMPROVE_STATE_FILE:-${TMP_STATE_DIR}/improve_state.json}"
 	local improve_status=""
 	if [ -f "$improve_state_file" ]; then
@@ -116,27 +167,6 @@ PY
 	local improve_lock_file="${IMPROVE_LOCK_FILE:-tmp/improve.lock}"
 	[ ! -f "$improve_lock_file" ] || {
 		_log "SKIP: prediction create blocked while improvement lock exists"
-		return 1
-	}
-	local hot_streak_pending_file="${HOT_STREAK_PREDICTION_PENDING_FILE:-${TMP_STATE_DIR}/hot_streak_prediction_pending}"
-	[ ! -f "$hot_streak_pending_file" ] || {
-		_log "SKIP: prediction create blocked while hot-streak prediction is pending"
-		return 1
-	}
-	local state_file="${AB_STATE_FILE:-${TMP_STATE_DIR}/ab_state.json}"
-	[ ! -f "$state_file" ] || {
-		_log "SKIP: prediction create blocked while A/B test state exists"
-		return 1
-	}
-	[ -z "${SOREN_AB_ALT_STRATEGY:-}" ] || {
-		_log "SKIP: prediction create blocked while A/B runtime toggle exists"
-		return 1
-	}
-	# soviet_now#641 (修正契約 3): A/B 候補が待機中なら新規予想を作らない。
-	# 既存ラウンドの確定後、次の試合境界を A/B へ渡す。
-	local ab_candidate_dir="${AB_CANDIDATE_DIR:-${TMP_STATE_DIR}/ab_candidate}"
-	[ ! -f "$ab_candidate_dir/meta.json" ] || [ ! -f "$ab_candidate_dir/strategy.py" ] || {
-		_log "SKIP: prediction create blocked while A/B candidate is pending"
 		return 1
 	}
 	local acc_file="${ACCUMULATED_GAMES_FILE:-${TMP_STATE_DIR}/accumulated_games.json}"

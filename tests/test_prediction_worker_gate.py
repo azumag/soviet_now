@@ -4,6 +4,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -29,11 +30,13 @@ class PredictionWorkerGateTests(unittest.TestCase):
         cls.source = WORKER.read_text(encoding="utf-8")
         cls.functions = "\n\n".join(
             _extract_function(cls.source, name)
-            for name in ("_prediction_ab_test_running", "_prediction_cycle_start_allowed")
+            for name in ("_prediction_notice_mode", "_prediction_ab_test_running",
+                         "_prediction_cycle_start_allowed")
         )
         cls.prediction_source = PREDICTION_SCRIPT.read_text(encoding="utf-8")
-        cls.create_context_function = _extract_function(
-            cls.prediction_source, "_prediction_create_context_allowed"
+        cls.create_context_function = "\n\n".join(
+            _extract_function(cls.prediction_source, name)
+            for name in ("_prediction_notice_mode", "_prediction_create_context_allowed")
         )
 
     def run_gate(
@@ -46,9 +49,21 @@ class PredictionWorkerGateTests(unittest.TestCase):
         improve_status="idle",
         improve_lock=False,
         hot_streak=False,
+        notice=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
+            (state_dir / "lib").mkdir()
+            (state_dir / "lib" / "corner_notice_state.py").write_text(
+                (ROOT / "lib" / "corner_notice_state.py").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            docich_state = state_dir / "docich-state"
+            docich_state.mkdir()
+            if notice is not None:
+                (docich_state / "next_corner.json").write_text(
+                    json.dumps(notice), encoding="utf-8"
+                )
             if ab_state:
                 (state_dir / "ab_state.json").write_text("{}", encoding="utf-8")
             if improve_lock:
@@ -56,8 +71,11 @@ class PredictionWorkerGateTests(unittest.TestCase):
             if hot_streak:
                 (state_dir / "hot_streak_prediction_pending").touch()
             script = f"""
+_log() {{ :; }}
+_PREDICTION_NOTICE_LOGGED=""
 {self.functions}
 TMP_STATE_DIR={shlex.quote(str(state_dir))}
+export DOCICH_STATE_DIR={shlex.quote(str(docich_state))}
 AB_STATE_FILE="$TMP_STATE_DIR/ab_state.json"
 MIN_GAMES_BEFORE_IMPROVE={shlex.quote(str(threshold))}
 current_acc_count={shlex.quote(str(games))}
@@ -76,6 +94,7 @@ fi
                 check=True,
                 capture_output=True,
                 text=True,
+                cwd=directory,
             )
             return result.stdout.strip()
 
@@ -90,9 +109,21 @@ fi
         improve_status="idle",
         improve_lock=False,
         hot_streak=False,
+        notice=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
+            (state_dir / "lib").mkdir()
+            (state_dir / "lib" / "corner_notice_state.py").write_text(
+                (ROOT / "lib" / "corner_notice_state.py").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            docich_state = state_dir / "docich-state"
+            docich_state.mkdir()
+            if notice is not None:
+                (docich_state / "next_corner.json").write_text(
+                    json.dumps(notice), encoding="utf-8"
+                )
             if count is not None:
                 (state_dir / "accumulated_games.json").write_text(
                     f'{{"count": {count}}}', encoding="utf-8"
@@ -111,6 +142,7 @@ fi
 _log() {{ :; }}
 {self.create_context_function}
 TMP_STATE_DIR={shlex.quote(str(state_dir))}
+export DOCICH_STATE_DIR={shlex.quote(str(docich_state))}
 _cfg_min_games={shlex.quote(str(threshold))}
 PREDICTION_MAX_GAMES={shlex.quote(str(max_games))}
 IMPROVE_STATE_FILE="$TMP_STATE_DIR/improve_state.json"
@@ -129,6 +161,7 @@ fi
                 check=True,
                 capture_output=True,
                 text=True,
+                cwd=directory,
             )
             return result.stdout.strip()
 
@@ -196,6 +229,42 @@ fi
             self.assertEqual(result.returncode, 0)
             return curl_log.read_text(encoding="utf-8") if curl_log.exists() else ""
 
+    def notice(self, hold, **extra):
+        now = int(time.time())
+        payload = {
+            "schema": 1, "corner": "ninvaders", "label": "スペースインベーダー",
+            "when": "18:00", "due_at": now + 600, "source": "auto",
+            "hold": hold, "remaining_games": None,
+            "decided_at": now, "updated_at": now,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_clock_notice_blocks_a_new_prediction(self):
+        self.assertEqual(self.run_gate(notice=self.notice(None)), "blocked")
+
+    def test_pending_notice_allows_a_prediction_even_mid_batch(self):
+        pending = self.notice("prediction-pending")
+        self.assertEqual(
+            self.run_gate(games=10, improve_status="running", improve_lock=True,
+                          notice=pending),
+            "allowed",
+        )
+
+    def test_pending_never_bypasses_ab_or_hot_streak(self):
+        pending = self.notice("prediction-pending")
+        self.assertEqual(self.run_gate(ab_state=True, notice=pending), "blocked")
+        self.assertEqual(self.run_gate(hot_streak=True, notice=pending), "blocked")
+
+    def test_prediction_hold_blocks_a_new_prediction(self):
+        self.assertEqual(
+            self.run_gate(notice=self.notice("prediction", remaining_games=48)),
+            "blocked",
+        )
+
+    def test_unknown_hold_blocks_a_new_prediction(self):
+        self.assertEqual(self.run_gate(notice=self.notice("weather")), "blocked")
+
     def test_creation_is_allowed_only_for_clean_48_game_cycle(self):
         self.assertEqual(self.run_gate(), "allowed")
         self.assertEqual(self.run_gate(threshold="12"), "blocked")
@@ -209,6 +278,32 @@ fi
         self.assertEqual(self.run_gate(improve_status="running"), "blocked")
         self.assertEqual(self.run_gate(improve_lock=True), "blocked")
         self.assertEqual(self.run_gate(hot_streak=True), "blocked")
+
+    def test_create_context_honours_the_clock_notice(self):
+        now = int(time.time())
+        notice = {
+            "schema": 1, "corner": "ninvaders", "label": "スペースインベーダー",
+            "when": "18:00", "due_at": now + 600, "source": "auto",
+            "hold": None, "remaining_games": None,
+            "decided_at": now, "updated_at": now,
+        }
+        self.assertEqual(self.run_create_context(count=0, notice=notice), "blocked")
+
+    def test_create_context_pending_bypasses_acc_and_improvement_only(self):
+        now = int(time.time())
+        notice = {
+            "schema": 1, "corner": "ninvaders", "label": "スペースインベーダー",
+            "when": "18:00", "due_at": now + 600, "source": "auto",
+            "hold": "prediction-pending", "remaining_games": None,
+            "decided_at": now, "updated_at": now,
+        }
+        self.assertEqual(
+            self.run_create_context(count=10, improve_status="running",
+                                    improve_lock=True, notice=notice),
+            "allowed",
+        )
+        self.assertEqual(self.run_create_context(ab_state=True, notice=notice), "blocked")
+        self.assertEqual(self.run_create_context(hot_streak=True, notice=notice), "blocked")
 
     def test_wrapper_repeats_the_start_context_guard(self):
         self.assertEqual(self.run_create_context(count=0), "allowed")
