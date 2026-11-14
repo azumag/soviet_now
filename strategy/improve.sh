@@ -2798,6 +2798,22 @@ _rolling_keep_limit_for_hash() {
 }
 
 
+_corner_notice_blocks_improvement() {
+	# docich publishes the next-corner promise before a slot is due. Starting
+	# or advancing the improvement batch while that promise is out can reset
+	# the cycle and pause the game; keep playing matches instead. A
+	# missing/erroring projection is fail-open so it cannot stall the loop.
+	local blocked
+	blocked=$(python3 "$ELOOP_LIB_DIR/lib/corner_notice_state.py" blocked improvement 2>/dev/null) || return 1
+	[ "$blocked" = "1" ] || return 1
+	if command -v log_pause_throttled >/dev/null 2>&1; then
+		log_pause_throttled "corner_notice_improve_defer" "[CYCLE] 次コーナー掲示中のため改善開始を延期"
+	else
+		log "[CYCLE] 次コーナー掲示中のため改善開始を延期"
+	fi
+	return 0
+}
+
 record_completed_game_for_adaptive_improvement() {
 	local archive_file="$1" score="$2" soviet="$3" russia="${4:-false}"
 	local played_hash="" current_hash=""
@@ -2837,7 +2853,13 @@ record_completed_game_for_adaptive_improvement() {
 			INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
 				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
-		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
+		if _corner_notice_blocks_improvement; then
+			# The match result is already in score/history and rolling/current
+			# run; only the improvement batch pauses. The 48-game prediction
+			# (v2) has its own counter and starts after the corner, so the
+			# viewer-facing promise is unaffected.
+			log "[CYCLE] 次コーナー掲示中のため改善バッチへの加算を保留 (game=${GAME_NUM:-?})"
+		elif command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
 			# A/B 中: 改善用の蓄積は A 腕 (root) の試合だけ。同 hash ロックの更新も止める (腕が交互に変わるため)
 			# Freeze the reserved batch until the verdict. All subsequent AB
 			# games still reach rolling/current-run and the AB/history ledgers.

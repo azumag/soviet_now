@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOOP = REPO_ROOT / "soren_loop.sh"
+IMPROVE = REPO_ROOT / "strategy" / "improve.sh"
 
 
 def _extract_function(source: str, name: str) -> str:
@@ -22,12 +23,14 @@ def _extract_function(source: str, name: str) -> str:
 class CornerNoticeImprovementGateTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = LOOP.read_text(encoding="utf-8")
+        cls.loop_source = LOOP.read_text(encoding="utf-8")
+        cls.source = IMPROVE.read_text(encoding="utf-8")
         cls.function = _extract_function(cls.source, "_corner_notice_blocks_improvement")
 
     def run_gate(self, state_dir, *, helper=True):
         script = f"""
 _log() {{ :; }}
+log() {{ :; }}
 log_pause_throttled() {{ :; }}
 ELOOP_LIB_DIR={str(REPO_ROOT)!r}
 {self.function}
@@ -79,11 +82,23 @@ fi
         self.assertEqual(self.run_gate(None), "allowed")
 
     def test_three_improvement_paths_call_the_gate(self):
-        self.assertIn("_corner_notice_blocks_improvement && return 1", self.source)
+        self.assertIn("_corner_notice_blocks_improvement && return 1", self.loop_source)
         self.assertIn("! _is_improve_running &&\n\t\t\t\t! _corner_notice_blocks_improvement; then",
-                      self.source)
+                      self.loop_source)
         self.assertIn("[ \"${_cycle_acc_count:-0}\" -ge \"$MIN_GAMES_BEFORE_IMPROVE\" ] &&\n\t\t\t! _corner_notice_blocks_improvement; then",
-                      self.source)
+                      self.loop_source)
+
+    def test_per_game_batch_accumulation_is_gated_without_a_loop_restart(self):
+        # improve.sh is re-sourced by eloop_lib.sh every loop, so the per-game
+        # accumulation gate activates on the next match without restarting the
+        # long-lived soren_loop process.
+        start = self.source.index("record_completed_game_for_adaptive_improvement()")
+        block = self.source[start:]
+        gate = block.index("_corner_notice_blocks_improvement")
+        first_accumulate = block.index("accumulate_game_data")
+        self.assertLess(gate, first_accumulate)
+        self.assertIn("改善バッチへの加算を保留", block)
+        self.assertEqual(block.count("accumulate_game_data"), 2)
 
 
 if __name__ == "__main__":
