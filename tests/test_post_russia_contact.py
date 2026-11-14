@@ -194,6 +194,47 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(result["x"], 2.6)
         self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
 
+    def test_vertically_stacked_t13_pair_is_skipped(self):
+        # Observed live (2026-11-15): a T13 pair separated by dy~3.6 wasted
+        # a T9 projectile — horizontal pushing can never close that gap.
+        pieces = [
+            piece("t13-buried", 13, 0.9, -3.5, 1.0),
+            piece("t13-surface", 13, -1.4, 0.1, 1.0),
+        ]
+        results = [
+            candidate(-2.6, landing_hit_id="t13-surface"),
+            candidate(0.0),
+        ]
+
+        self.assertIsNone(
+            strategy._select_post_russia_contact_candidate(
+                pieces, results, 10, 0.5
+            )
+        )
+
+    def test_vertical_t13_pair_falls_through_to_horizontal_t12_pair(self):
+        pieces = [
+            piece("t13-buried", 13, 0.9, -3.5, 1.0),
+            piece("t13-surface", 13, -1.4, 0.1, 1.0),
+            piece("t12-left", 12, 0.0, -2.0, 0.9),
+            piece("t12-right", 12, 2.2, -1.5, 0.9),
+            piece("t14", 14, 1.5, -2.8, 1.6),
+        ]
+        results = [
+            candidate(-2.6, landing_hit_id="t13-surface"),
+            candidate(3.0, landing_hit_id="t12-right"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], 3.0)
+        self.assertEqual(reason, "PRE_RUSSIA_T12_CONTACT_SHOT")
+
     def test_pre_russia_t14_without_t13_pair_stays_closed(self):
         pieces = [
             piece("t14", 14, 1.5, -2.5, 1.6),
