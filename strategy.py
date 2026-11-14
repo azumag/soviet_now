@@ -3218,10 +3218,11 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         # これにより高配置になるほどペナルティが線形に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
         # 未活用情報：reactive_pairs>=3, merge_grade=="NO", landing_y (着地位置の高さ)
 
-        if reactive_pair_count >= -1 and merge_grade == "NO":
-
-            score -= 2622.2
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+        # axis 8.8 (REACTIVE_PAIRS_NO_MERGE_PENALTY, -2622.2) は
+        # `reactive_pair_count >= -1` が常真のため全 NO 候補に一律適用される
+        # 定数シフトだった。実測 (issue #132 軸感度、実戦 400 手) で
+        # 18,056 回発火・決定変化 0.00%、argmax を動かさず reason 欄を
+        # 汚染するだけと確認されたため、Phase 3 の dead axis 削除方針に従い除去。
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。

@@ -153,7 +153,7 @@ class StrategySemanticLintTests(unittest.TestCase):
     # 進行中の A/B (v757) 中は strategy.py の挙動を変えられないため、いま検出できる欠陥を
     # そのまま固定する。修正が入ったらこのテストが落ちるので、期待値を空へ更新すること。
     # 逆に「新しい欠陥が増えた」場合も落ちる。
-    KNOWN_UNARY_MINUS = [1706, 2093, 2094, 2236, 2349, 2369, 2440, 2839, 3075, 3130, 3249, 3265]
+    KNOWN_UNARY_MINUS = [1706, 2093, 2094, 2236, 2349, 2369, 2440, 2839, 3075, 3130, 3250, 3266]
     KNOWN_UNREACHABLE = [(1686, "max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
     # 負にならない量への負定数比較（常真/常偽の死んだ条件）。修正したら対応エントリを消す。
     KNOWN_COUNT_COMPARE = [
@@ -164,7 +164,6 @@ class StrategySemanticLintTests(unittest.TestCase):
         (2831, "reactive_pair_count", "Lt", -2),
         (3125, "reactive_pair_count", "GtE", -3),
         (3184, "reactive_pair_count", "GtE", -1),
-        (3221, "reactive_pair_count", "GtE", -1),
     ]
 
     def test_consecutive_unary_minus_is_frozen(self):
