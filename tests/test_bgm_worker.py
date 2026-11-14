@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import shlex
 import signal
 import sys
 import time
@@ -444,6 +445,99 @@ class BgmPolicyTest(unittest.TestCase):
             output = journal.read()
         self.assertEqual(output.count("state=restarting"), 1)
         self.assertNotIn("PRIVATE_PLAYER_ERROR", output)
+
+
+    # ---- idle cost and corner-switch resume (2026-11-14 CPU saturation) -----------------------
+
+    def install_python_counter(self):
+        """A python3 shim that logs the policy check (``python3 - <canonical> ...``) and runs the real one."""
+        directory = self.root / "bin"
+        directory.mkdir(exist_ok=True)
+        self.py_log = self.root / "python-calls.log"
+        shim = directory / "python3"
+        shim.write_text("#!/bin/bash\nprintf '%s\\n' \"${2:-}\" >>\"$PY_CALL_LOG\"\n"
+                        "exec " + shlex.quote(sys.executable) + " \"$@\"\n")
+        shim.chmod(0o700)
+        self.env.update({"PATH": str(directory) + os.pathsep + self.env["PATH"],
+                         "PY_CALL_LOG": str(self.py_log)})
+
+    def policy_evaluations(self):
+        if not self.py_log.exists():
+            return 0
+        return sum(1 for line in self.py_log.read_text().splitlines() if line == str(self.canonical))
+
+    def test_idle_excluded_game_does_not_start_a_policy_check_every_second(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.canonical_state(game="hanjuku-hero")
+        self.start_worker()
+        time.sleep(5.5)
+        self.assertEqual(self.player_events("start"), [])
+        # One evaluation at start. Before the fix this was one Python process per second (~5 here).
+        self.assertEqual(self.policy_evaluations(), 1)
+
+    def test_corner_switch_is_detected_at_once_and_unchanged_inputs_cost_nothing(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.canonical_state(game="hanjuku-hero")
+        self.start_worker()
+        self.wait_for(lambda: self.policy_evaluations() == 1)
+        time.sleep(2.2)  # a couple of idle polls: no extra evaluation
+        self.assertEqual(self.policy_evaluations(), 1)
+        # The default safety-net interval is 30s, so these resumes are change detection, not the net.
+        self.canonical_state(game="weather-view")
+        self.wait_for(lambda: len(self.player_events("start")) == 1)
+        self.assertEqual(self.policy_evaluations(), 2)
+        pid = self.player_events("start")[0]
+        self.canonical_state(game="hanjuku-hero")
+        self.wait_for(lambda: not self.process_alive(pid))
+        self.assertEqual(self.policy_evaluations(), 3)
+        time.sleep(1.2)
+        self.assertEqual(self.policy_evaluations(), 3)
+
+    def test_lifecycle_file_changes_are_detected_including_deletion(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.canonical_state(game="weather-view")
+        self.start_worker()
+        self.wait_for(lambda: len(self.player_events("start")) == 1)
+        pid = self.player_events("start")[0]
+        self.marker.unlink()  # deletion has no newer mtime to see: the content signature must catch it
+        self.wait_for(lambda: not self.process_alive(pid))
+        self.marker.write_text(f"lifecycle:{REQUEST_ID}\n")
+        self.wait_for(lambda: len(self.player_events("start")) == 2)
+
+    def test_safety_net_reevaluates_even_when_nothing_changed(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.env["SOREN_BGM_REVALIDATE_SECS"] = "1"
+        self.canonical_state(game="hanjuku-hero")
+        self.start_worker()
+        time.sleep(4.5)
+        self.assertGreaterEqual(self.policy_evaluations(), 3)
+
+    def test_invalid_safety_net_setting_falls_back_to_the_default(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.env["SOREN_BGM_REVALIDATE_SECS"] = "0"
+        self.canonical_state(game="hanjuku-hero")
+        self.start_worker()
+        time.sleep(3.2)
+        self.assertEqual(self.policy_evaluations(), 1)
+
+    def test_non_regular_or_missing_state_never_blocks_the_loop_and_fails_closed(self):
+        self.setup_player()
+        self.install_python_counter()
+        self.canonical_state(game="weather-view")
+        self.start_worker()
+        self.wait_for(lambda: len(self.player_events("start")) == 1)
+        self.canonical.unlink()
+        os.mkfifo(self.canonical)  # no writer: opening it for reading would block a naive reader
+        self.wait_for(lambda: len(self.player_events("term")) == 1)
+        self.canonical.unlink()
+        self.wait_for(lambda: self.policy_evaluations() >= 3)  # the missing file is re-evaluated, loop alive
+        self.canonical_state(game="weather-view")
+        self.wait_for(lambda: len(self.player_events("start")) == 2)
 
 
 if __name__ == "__main__":
