@@ -142,6 +142,47 @@ def _v763_post_open_types(open_by_type, drop_type, drop_x, drop_y):
         kept += 1
     return kept
 
+
+_SURFACE_GRID_X0 = -3.0
+_SURFACE_GRID_COUNT = 13
+_SURFACE_GRID_STEP = 0.5
+_SURFACE_FLOOR_Y = -4.48
+
+
+def _surface_median_top(pieces):
+    """盤面表面の中央値を返す（axis 4 表面平坦化項の基準レベル）。
+
+    x ∈ [-3, 3] を 0.5 刻みの 13 点で走査し、各点について「その点を水平方向に
+    覆う駒の上端 (y + seed_top_radius) の最大値」を表面高さとする。覆う駒が無い
+    点は床 -4.48。戻り値は 13 点の中央値。読める駒が 1 個も無い場合は None を返し
+    （fail-closed: 平坦化項を無効化する）。
+    """
+    tops = [_SURFACE_FLOOR_Y] * _SURFACE_GRID_COUNT
+    seen = False
+    for piece in pieces or ():
+        if not isinstance(piece, dict):
+            continue
+        try:
+            px = float(piece.get("x"))
+            py = float(piece.get("y"))
+            ptype = int(piece.get("type"))
+            ph = float(board_stats.seed_horiz_radius(ptype))
+            ptop = py + float(board_stats.seed_top_radius(ptype))
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(px) and math.isfinite(ptop)):
+            continue
+        seen = True
+        for i in range(_SURFACE_GRID_COUNT):
+            sx = _SURFACE_GRID_X0 + _SURFACE_GRID_STEP * i
+            if abs(px - sx) <= ph and ptop > tops[i]:
+                tops[i] = ptop
+    if not seen:
+        return None
+    ordered = sorted(tops)
+    return ordered[_SURFACE_GRID_COUNT // 2]
+
+
 # v747/v752: 終盤の DIRECT 併合は落下ピースの超過フラグでは差し戻さない（strategy_runner.enforce_deadline_safety が参照）
 DEADLINE_ALLOW_DIRECT_CROSS = True
 
@@ -2042,6 +2083,8 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # axis 4 表面平坦化項の基準: 候補ループの前に1回だけ計算する（盤面は候補間で不変）。
+    _flat_median_top = _surface_median_top(pieces)
     suppressed = 1
     for result in results:
         # 前候補での条件付き変更（height_mult *= 1.4621 等）を次候補へ持ち越さない。
@@ -2858,21 +2901,34 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 40.00
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v42: simple) -----
-        # bonus for correcting left-right piece count bias.
-        # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
+        # ----- evaluation axis 4: surface flatness（旧 left-right balance の意図を実装） -----
+        # 旧実装は2重に破損していた（issue #132 実測）: p["x"] < 4 は盤面 x∈[-3,3] で常真、
+        # sum(-2 ...) は駒数ではなく -2*個数 を返すため balance_bias≈4.86 の定数となり、
+        # 実体は「|x| に比例する中央寄せペナルティ」だった。実測では終了の 99.2% が
+        # 「どこか1列がデッドライン到達」で、終局盤面は中央列が死亡ラインに達し両端に
+        # 1.2〜1.5 の余白が残る。本来の意図である表面平坦化を、実測した列トップで実装する:
+        # 落下後の列トップが表面中央値を超える分だけ罰し、中央値を下回る窪みを埋める候補を
+        # 上限付きで評価する。ヒンジ型にする理由: (landing_y - median) の線形項は median が
+        # 候補間で不変のため argmax 上は純粋な高さペナルティと等価になり、盤面状態を
+        # 反映しない。強さは旧実効 |x|*5*strength（LOW/CRITICAL≈92、MEDIUM≈142/単位）を上限に保つ。
         balance_strength = 18.42
         if phase == "HIGH":
             balance_strength = 59.89
         elif phase == "MEDIUM":
             balance_strength = 28.33
 
-        left_count = sum(-2 for p in pieces if p["x"] < 4)
-        right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else -4)
-
-        balance_penalty = x * balance_bias * balance_strength
-        score -= abs(balance_penalty)
+        if (
+            _flat_median_top is not None
+            and isinstance(landing_y, (int, float))
+            and not isinstance(landing_y, bool)
+            and math.isfinite(landing_y)
+        ):
+            _flat_post_top = landing_y + board_stats.seed_top_radius(next_type)
+            _flat_excess = _flat_post_top - _flat_median_top
+            if _flat_excess > 0.0:
+                score -= _flat_excess * (5.0 * balance_strength)
+            else:
+                score += min(-_flat_excess, 1.5) * (2.5 * balance_strength)
 
         if _v763_w > 0.0 and _v763_open is not None and 1 <= int(next_type) <= 11:
             try:
