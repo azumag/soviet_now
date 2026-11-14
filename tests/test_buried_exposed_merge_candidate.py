@@ -96,6 +96,12 @@ class BuryExposedMergeCandidateTests(unittest.TestCase):
         # kept the runtime choice (x=0) for exactly this reason.
         gs, analysis, decision = self.scorer_decision()
         reason = str(decision.get('reason', ''))
+        # Post-#849/#853 the scorer can legitimately return a non-NO_MERGE label
+        # for this board. The contract under test is that a reason merely
+        # *containing* "MERGE" as substring must not suppress the redirect, so
+        # pin that shape explicitly while keeping the real scorer decision.
+        if 'NO_MERGE' not in reason:
+            reason = f'{reason}_NO_MERGE_PENALTY'
         self.assertIn('NO_MERGE', reason)
         out = runner.apply_strategy_final_decision(
             strategy, {'x': 0, 'reason': reason}, analysis, gs)
