@@ -123,5 +123,19 @@ run_active_capture >/dev/null 2>&1; rc=$?
 [ ! -f tmp/state/ab_state.json ] && ok || ng "failed rebase kept state"
 ls tmp/history/ab_*_state_stale.json >/dev/null 2>&1 && ok || ng "failed rebase did not retire stale"
 
+# 5) 観測された root が B と同じ場合 (B が直接マージされた場合)、rebase 方針でも
+#    退役する (rebase すると A=B の同一腕実験になり元 A との比較を失う)。
+prepare_confirmation
+cp alt.py strategy.py   # root を B と同じ内容へ (B の直接マージを模す)
+run_active_capture >/dev/null 2>&1; rc=$?
+[ ! -f tmp/state/ab_state.json ] && ok || ng "B-merged drift kept state"
+python3 - <<'PY' && ok || ng "stale_base_b_merged metadata missing"
+import glob,json
+p=glob.glob('tmp/history/ab_*_state_stale.json')[-1]
+st=json.load(open(p))
+assert st.get('retired_reason')=='stale_base_b_merged', st
+assert 'winner' not in st, st
+PY
+
 echo "test_ab_drift_rebase: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

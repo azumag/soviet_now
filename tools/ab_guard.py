@@ -32,6 +32,10 @@ def evaluate(status, max_age_sec):
     """status dict → verdict + 説明フィールド。"""
     if not isinstance(status, dict) or not status:
         return {"verdict": "unknown"}
+    # ab_status.sh が schema_version=1 で出す。取得失敗時の代替 JSON や未知 schema は
+    # 「実験なし」ではなく「確認不能」として扱う (fail-open で消えないように)。
+    if status.get("schema_version") != 1:
+        return {"verdict": "unknown"}
     obs = status.get("observed_epoch")
     age = _age_sec(obs)
     out = {
@@ -49,7 +53,10 @@ def evaluate(status, max_age_sec):
     if age is not None and max_age_sec and age > max_age_sec:
         out["verdict"] = "stale"
         return out
-    if not status.get("active"):
+    if not isinstance(status.get("active"), bool):
+        out["verdict"] = "unknown"
+        return out
+    if not status["active"]:
         if status.get("candidate_pending"):
             out["verdict"] = "candidate_pending"
         else:

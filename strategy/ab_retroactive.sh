@@ -74,11 +74,18 @@ for k in keys:
         print("  %s: %s" % (k, st[k]))
 PY
 	local alt="$history/ab_${ts}_alt_stale.py"
+	local reason
+	reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("retired_reason",""))' "$state" 2>/dev/null || true)
 	echo
 	echo "後追い比較:"
 	if [ -f "$alt" ]; then
 		echo "  # 退役実験の B 腕 vs 現 root:"
 		echo "  ./tools/ab_retroactive.sh start-stale $ts"
+	fi
+	if [ "$reason" = "stale_base_b_merged" ]; then
+		# B が直接 root へ入った退役: 比較したいのは元の A (state の a_hash) と現 root。
+		echo "  # B が直接 root へ入った実験。元の A (上の a_hash) vs 現 root:"
+		echo "  ./tools/ab_retroactive.sh start --b <a_hash 上の値>"
 	fi
 	echo "  # 直接 merge で置き換わった前の root vs 現 root:"
 	echo "  ./tools/ab_retroactive.sh prev-roots        # 旧 root hash を解決"
@@ -90,9 +97,11 @@ PY
 # --repo は管理 clone (既定 SOREN_PERSIST_REPO → /home/ubuntu/soren-persist)
 # で、そこでは origin/main を見る。見つからなければ cwd の HEAD を見る。
 _ab_retro_prev_roots() {
-	local n="${1:-5}" repo="" ref=""
-	case "$n" in '' | *[!0-9]*) n=5 ;; esac
-	shift || true
+	local n=5 repo="" ref=""
+	case "${1:-}" in
+	'' | *[!0-9]*) ;;
+	*) n="$1"; shift ;;
+	esac
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--repo) repo="${2:-}"; shift 2 ;;
@@ -101,11 +110,14 @@ _ab_retro_prev_roots() {
 	done
 	if [ -z "$repo" ] && [ -d "${SOREN_PERSIST_REPO:-/home/ubuntu/soren-persist}/.git" ]; then
 		repo="${SOREN_PERSIST_REPO:-/home/ubuntu/soren-persist}"
-		ref="origin/main"
 	fi
 	if [ -z "$repo" ]; then
 		repo="."
 		ref="HEAD"
+	else
+		# 管理 clone の worktree は persist/status push で別ブランチに居ることがある。
+		# 明示 --repo でも origin/main を見る (無ければ HEAD へフォールバック)。
+		ref="origin/main"
 	fi
 	git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || { echo "git repo がありません: $repo"; return 1; }
 	git -C "$repo" rev-parse --verify "$ref" >/dev/null 2>&1 || ref="HEAD"
@@ -139,7 +151,9 @@ for sha in shas:
         continue
     seen.add(h)
     subj = git("log", "-1", "--format=%cs %s", sha).strip()
-    out.append("%s  %s  %s" % (h[:12], sha[:12], subj))
+    # h は extract_decide_hash.py の 12 文字 decide hash = archive のファイル名
+    # (by_hash/<hash>.py) そのもの。そのまま `start --b` へ渡せる。
+    out.append("%s  %s  %s" % (h, sha[:12], subj))
 for line in out:
     print(line)
 PY

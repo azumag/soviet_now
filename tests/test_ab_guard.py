@@ -42,6 +42,21 @@ class TestEvaluate(unittest.TestCase):
         self.assertEqual(guard.evaluate({}, 3600)["verdict"], "unknown")
         self.assertEqual(guard.evaluate(None, 3600)["verdict"], "unknown")
 
+    def test_wrong_schema_is_unknown(self):
+        # workflow の代替 JSON (取得失敗時) や未知 schema は「実験なし」ではなく unknown。
+        self.assertEqual(guard.evaluate(
+            {"schema_version": 0, "note": "取得失敗"}, 3600)["verdict"], "unknown")
+        s = _status(active=False)
+        s["schema_version"] = 2
+        self.assertEqual(guard.evaluate(s, 3600)["verdict"], "unknown")
+
+    def test_missing_or_nonbool_active_is_unknown(self):
+        s = _status()
+        del s["active"]
+        self.assertEqual(guard.evaluate(s, 3600)["verdict"], "unknown")
+        s = _status(active="yes")
+        self.assertEqual(guard.evaluate(s, 3600)["verdict"], "unknown")
+
     def test_inactive(self):
         ev = guard.evaluate(_status(active=False), 3600)
         self.assertEqual(ev["verdict"], "inactive")

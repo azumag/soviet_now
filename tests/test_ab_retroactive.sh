@@ -92,5 +92,44 @@ fi
 _ab_retro_start_stale 29990101_000000 >/dev/null 2>&1 && ng "unknown ts unexpectedly started" || ok
 _ab_retro_show 29990101_000000 >/dev/null 2>&1 && ng "unknown ts show succeeded" || ok
 
+# 6) prev-roots: フル hash を出し、--repo は origin/main を見る。
+mkdir -p gitsrc && cd gitsrc
+git init -q && git config user.email t@e && git config user.name t
+cp "$ROOT/extract_decide_hash.py" .
+cp "$ROOT/strategy.py" strategy.py
+git add strategy.py && git commit -qm "v1"
+python3 - "$ROOT/strategy.py" strategy.py <<'PY'
+import sys
+s=open(sys.argv[1]).read(); open(sys.argv[2],'w').write(s.replace('best_x = 0.0905','best_x = 0.0908'))
+PY
+git add strategy.py && git commit -qm "v2"
+git branch -M main
+cd ..
+git init -q --bare gitsrc-remote.git
+git -C gitsrc remote add origin "$WORK/gitsrc-remote.git"
+git -C gitsrc push -q origin main
+# --repo の clone: worktree が別ブランチに居ても origin/main の履歴を見る。
+git clone -q gitsrc-remote.git mgmt 2>/dev/null
+git -C mgmt checkout -qb someother 2>/dev/null
+out=$(_ab_retro_prev_roots 5 --repo mgmt)
+# decide hash は 12 hex (extract_decide_hash.py の hexdigest[:12])。
+# archive のファイル名もこれなのでそのまま `start --b` へ渡せる。
+echo "$out" | grep -q "^[0-9a-f]\{12\}" && ok || ng "prev-roots hash not full length"
+N1=$(python3 - <<'PY'
+import subprocess
+h=subprocess.run(["python3","extract_decide_hash.py","mgmt/strategy.py"],capture_output=True,text=True).stdout.strip()
+print(h)
+PY
+)
+echo "$out" | grep -q "$N1" && ok || ng "prev-roots missed origin/main head hash"
+( cd gitsrc && _ab_retro_prev_roots 1 ) | head -1 | grep -q "^[0-9a-f]\{12\}" && ok || ng "prev-roots default path"
+
+# 7) stale_base_b_merged の show が元 A との比較コマンドを案内する。
+TS2=20261116_010000
+printf '{"a_hash":"%s","b_hash":"%s","retired_reason":"stale_base_b_merged","observed_hash":"%s"}\n' "$A" "$B" "$B" > "tmp/history/ab_${TS2}_state_stale.json"
+out=$(_ab_retro_show "$TS2")
+echo "$out" | grep -q "start --b" && ok || ng "b_merged show lacks old-A hint"
+echo "$out" | grep -q "a_hash" && ok || ng "b_merged show lacks a_hash"
+
 echo "test_ab_retroactive: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

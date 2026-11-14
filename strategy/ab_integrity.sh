@@ -16,6 +16,10 @@
 #                  新 A との測定を最初からやり直す (confirmation 中なら selection へ戻す)。
 #                  収集済み標本は tmp/history/ab_<ts>_games_rootdrift.jsonl へ保全されるが、
 #                  旧 root との比較値なので判定標本には混ぜない。
+# なお観測された root が B と同じ hash の場合 (B 候補が直接 root へ入った場合) は
+# 方針に関わらず stale_base_b_merged として退役する。rebase すると A=B の同一腕
+# 実験になり元の A との比較を失うため。元 A との比較は ab_retroactive.sh
+# start --b <旧 a_hash> で別 A/B として立てる。
 
 _ab_integrity_retire_stale() {
 	local kind="$1" observed="$2" expected="$3"
@@ -179,6 +183,14 @@ _ab_active() {
 
 	ha=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
 	if [ -n "$ha" ] && [ "$ha" != "$a" ]; then
+		if [ "$ha" = "$b" ]; then
+			# B 候補がそのまま root へマージ/反映された場合、rebase すると A=B の
+			# 同一腕実験になり元の A との比較を失う。方針に関わらず退役させる。
+			# 元 A との比較が必要なら ab_retroactive.sh start --b <旧 a_hash> で
+			# 別の後追い A/B を立てる。
+			_ab_integrity_retire_stale "stale_base_b_merged" "$ha" "$a" || true
+			return "$rc"
+		fi
 		case "$(_ab_env_value AB_ON_ROOT_DRIFT)" in
 		rebase)
 			# 新 root 上で B を測り直す。rebase に失敗した場合だけ stale 退役へ。

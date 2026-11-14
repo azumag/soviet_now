@@ -32,6 +32,10 @@
 
 - `retire` (既定): 従来どおり実験を勝敗なしの `stale_base` として退役する。
   収集済み標本・alt file は `tmp/history/ab_<ts>_*_stale*` へ保全される。
+  特例: 観測された新 root が B 候補と同じ hash の場合 (B が直接 root へ
+  入った場合) は方針に関わらず `stale_base_b_merged` として退役する —
+  rebase すると A=B の同一腕実験になり元の A との比較を失うため。
+  このときの後追い比較は `start --b <state の a_hash>` で「現 root vs 元 A」。
 - `rebase`: 退役せず、A を観測された新 root へ張り替えて測定を最初から
   やり直す。B (候補) はそのまま残る。confirmation 中でも selection へ戻る。
   旧 root との標本は `tmp/history/ab_<ts>_games_rootdrift.jsonl` へ保全されるが、
