@@ -178,6 +178,41 @@ PY
 	[ "$next" -gt "$now" ]
 }
 
+
+# 募集期間が終わったか。window_ends_at が無い旧 state は Helix の受付上限
+# (1800秒) を安全な既定として使う。実判定/キャンセルは settle-window が行う。
+_prediction_window_due() {
+	python3 - "$TMP_STATE_DIR/current_prediction.json" <<'PY'
+import json, sys, time
+try:
+    state = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("no")
+    raise SystemExit(0)
+try:
+    ends = int(state.get("window_ends_at") or 0)
+except (TypeError, ValueError):
+    ends = 0
+if ends <= 0:
+    try:
+        created = int(state.get("created_at") or 0)
+    except (TypeError, ValueError):
+        created = 0
+    try:
+        window = int(state.get("prediction_window") or 0)
+    except (TypeError, ValueError):
+        window = 0
+    if window <= 0:
+        try:
+            max_games = int(state.get("max_games") or 0)
+        except (TypeError, ValueError):
+            max_games = 0
+        window = min(1800, max_games * 40) if max_games > 0 else 1800
+    ends = created + window if created > 0 else 0
+print("yes" if ends > 0 and time.time() >= ends else "no")
+PY
+}
+
 HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
 
 _prediction_cycle_start_allowed() {
@@ -203,6 +238,7 @@ _LAST_ACC_COUNT=$(_get_acc_count)
 # === メインループ ===
 _log "起動 (PID=$$, interval=${POLL_INTERVAL}s, game=${_LAST_GAME_NUM})"
 
+_PREDICTION_WINDOW_CHECK_NEXT=0
 while true; do
 	_reload_runtime
 	# 停止チェック
@@ -226,6 +262,18 @@ while true; do
 	current_acc_count=$(_get_acc_count)
 	improve_status=$(_get_improve_status)
 	_resolved_this_tick=0
+
+	# 募集期間が終わった時点で、賭けが入った選択肢が1つ以下なら不成立キャンセル。
+	# 判定は1分に1回まで。実コンテストは settle-window 側のマーカーで再照会を止める。
+	if _has_prediction; then
+		_now_window_check=${EPOCHSECONDS:-$(date +%s)}
+		if [ "$_now_window_check" -ge "${_PREDICTION_WINDOW_CHECK_NEXT:-0}" ]; then
+			if [ "$(_prediction_window_due)" = "yes" ]; then
+				./twitch_predictions.sh settle-window >>tmp/prediction.log 2>&1 || true
+			fi
+			_PREDICTION_WINDOW_CHECK_NEXT=$((_now_window_check + 60))
+		fi
+	fi
 
 	# Independent rounds retain their own result accounting, but a new round
 	# may start only at the 48-game improvement-cycle boundary and outside A/B.
