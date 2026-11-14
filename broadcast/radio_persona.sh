@@ -107,6 +107,37 @@ def remove_generated_clock_claim(line: str) -> str:
     kept = [part for part in parts if part and not current_time_claim.search(part)]
     return "".join(kept).strip()
 
+
+# 生成モデルはオープニングと本文を1行で返すことがある。行全体を
+# 時報行で置き換えると本文まで消えて挨拶だけが残るため、先頭の
+# 挨拶・時報句だけを取り除き、同じ行に続く本文は残す。
+greeting_prefix = re.compile(
+    r"^\s*(?:おはようございます|おはよう|こんにちは|こんばんは)"
+    r"(?:[、,。！？!?\s\u3000]+|(?=現在時刻|時刻)|$)"
+)
+clock_topic_prefix = re.compile(r"^\s*(?:現在時刻|時刻)\s*(?:は|、|は、)?\s*")
+
+
+def consume_clock_claim(s: str) -> str:
+    m = clock_topic_prefix.match(s)
+    if m:
+        rest = s[m.end():]
+        claim = current_time_claim.match(rest)
+        # 「時刻は守ります」のような時計ではない文は削らない。
+        return rest[claim.end():] if claim else s
+    claim = current_time_claim.match(s)
+    return s[claim.end():] if claim else s
+
+
+def strip_leading_opening(line: str) -> str:
+    s = line.strip()
+    m = greeting_prefix.match(s)
+    if m:
+        s = s[m.end():]
+    s = consume_clock_claim(s)
+    return s.lstrip(" 、,。！？!?\t\u3000").strip()
+
+
 changed = False
 intro_idx = None
 for idx in (0, 1, 2):
@@ -116,7 +147,11 @@ for idx in (0, 1, 2):
     if not line:
         continue
     if intro_like.search(line):
-        lines[idx] = intro
+        remainder = strip_leading_opening(line)
+        if remainder:
+            lines[idx] = intro + "\n" + remainder
+        else:
+            lines[idx] = intro
         changed = True
         intro_idx = idx
         break
