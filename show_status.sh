@@ -1716,7 +1716,7 @@ def fmt_age(seconds):
     return f"{seconds // 3600}h"
 
 label = ""
-if phase in ("no_candidate", "infra_failed", "failed") and age <= 3600:
+if phase in ("no_candidate", "infra_failed", "infra_circuit_open", "failed") and age <= 3600:
     candidates = data.get("candidates", []) or []
     failed = [c for c in candidates if str(c.get("status", "") or "") in ("failed", "timeout")]
     zero_game = [c for c in candidates if int(c.get("games", 0) or 0) <= 0]
