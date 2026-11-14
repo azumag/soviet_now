@@ -212,7 +212,7 @@ class StrategySemanticLintTests(unittest.TestCase):
         'score -= max(--1, (1.1702 - margin)) * 6558',
         'stacking_bonus = best_chain_score + max(--1, 61.2 - horizontal_distance * 51.83)',
     ]
-    KNOWN_UNREACHABLE = [("max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
+    KNOWN_UNREACHABLE = []  # HIGH phase 到達不能は max_y 帯を昇順化して解消済み
     # 負にならない量への負定数比較（常真/常偽の死んだ条件）。2026-11 に全8件を除去済み
     # （常真連言の削除・常偽ブロックの除去のみで意味変化なし）。以後0件を維持する。
     KNOWN_COUNT_COMPARE = []
