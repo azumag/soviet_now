@@ -89,7 +89,9 @@ OBS_DASHBOARD_VISIBILITY_ENABLED=0 BATCH_COMMENTARY_ENABLED=0 ACCUMULATED_GAMES_
                 self.assertNotIn("archive_sha256", row)
                 self.assertEqual(m.retained_pair(row), (None, "producer_unavailable"))
                 self.assertEqual((row["idx"], row["game_num"], row["score"], row["turns"]), (0, "100", 1234, 3))
-                self.assertEqual(row["eval"], 26636)
+                # 1234 + TYPE_BONUS[16] (25402) + inferred Soviet bonus (1e9):
+                # type 16 alone is terminal evidence even when the runner flag is false (#757).
+                self.assertEqual(row["eval"], 1000026636)
                 self.assertEqual((row["soviet_created"], row["russia_created"]), (False, True))
                 self.assertEqual(state, {"games_recorded": 1, "last_arm": "A", "decision_rule": {"frozen": True}})
                 self.assertEqual(len(list(Path(directory, "history").glob("[0-9]*_score*.jsonl"))), 1)
@@ -98,10 +100,10 @@ OBS_DASHBOARD_VISIBILITY_ENABLED=0 BATCH_COMMENTARY_ENABLED=0 ACCUMULATED_GAMES_
                 self.assertEqual(evidence["counts"], {"producer_unavailable": 1})
                 root = Path(directory)
                 self.assertEqual(root.joinpath("score_history.txt").read_text().split("\t")[1], "1234\n")
-                self.assertEqual(root.joinpath("eval_score_history.txt").read_text().split("\t")[1], "26636\n")
+                self.assertEqual(root.joinpath("eval_score_history.txt").read_text().split("\t")[1], "1000026636\n")
                 self.assertEqual(root.joinpath("game_count.txt").read_text(), "100\n")
                 self.assertEqual(root.joinpath("accumulator_args.txt").read_text().splitlines()[1:],
-                                 ["26636", "false", "true"])
+                                 ["1000026636", "false", "true"])
                 expected = {"20000101_000000_score1234.jsonl"}
                 if mode != "missing":
                     expected.add("latest.jsonl")
