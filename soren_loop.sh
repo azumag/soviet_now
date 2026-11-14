@@ -184,18 +184,6 @@ notify_rank1_hot_streak_extension() {
 	printf '%s\n' "$marker_key" >"$marker_file" 2>/dev/null || true
 }
 
-_corner_notice_blocks_improvement() {
-	# docich publishes the next-corner promise before a slot is due. Starting
-	# an improvement while that promise is out would reset the batch and can
-	# pause the game; the owner asked to keep playing matches instead. A
-	# missing/erroring projection is fail-open so it cannot stall the loop.
-	local blocked
-	blocked=$(python3 "$ELOOP_LIB_DIR/lib/corner_notice_state.py" blocked improvement 2>/dev/null) || return 1
-	[ "$blocked" = "1" ] || return 1
-	log_pause_throttled "corner_notice_improve_defer" "[CYCLE] 次コーナー掲示中のため改善開始を延期"
-	return 0
-}
-
 queue_early_escape_lock_if_needed() {
 	# 停滞/回帰閾値到達済みのバッチは、通常の蓄積満了を待たず改善daemonへ渡す。
 	# post-game 経路と next-game-preflight の両方から呼び、取りこぼしを防ぐ。
