@@ -198,20 +198,10 @@ class StrategySemanticLintTests(unittest.TestCase):
     # --- 既知欠陥の凍結 (issue #132 P0-2) ---
     # 修正が入ったらこのテストが落ちるので、期待値を更新すること。増えた場合も落ちる。
     # 凍結は行番号ではなくソース行シグネチャで行う（行ずれで壊れない）。
-    KNOWN_UNARY_MINUS = [
-        '__pc = float(game_state.get("piece_count", --1) or -1)',
-        'drift_x = result.get("drift_x", --1)',
-        'if horiz_dist < 2.529 and proximity_bonus > --1:',
-        'if not death_spiral and danger_piece_count >= --1 and merge_grade == "NO" and max_y >= 4.200:',
-        'if reactive_pair_count == --1 and merge_grade in ["DIRECT", "NEAR"]:',
-        'if reactive_pair_count >= --1 and merge_grade == "NO" and same_type_stack_top is None and not death_spiral:',
-        'if reactive_pair_count >= --1:',
-        'landing_y = result.get("landing_y", ---1)',
-        'landing_y = result.get("landing_y", --1)',
-        'next_next_type = next_next_piece.get("type", ----1)',
-        'score -= max(--1, (1.1702 - margin)) * 6558',
-        'stacking_bonus = best_chain_score + max(--1, 61.2 - horizontal_distance * 51.83)',
-    ]
+    # 2026-11 に全12行を値等価リテラルへ正規化済み（--1→1、---1→-1、----1→1。
+    # 意味変化ゼロは構築上保証され、VM replay 2877ターンでも差分 0 を確認）。
+    # 以後0件を維持する（新しい連続単項マイナスが増えたら欠陥）。
+    KNOWN_UNARY_MINUS = []
     KNOWN_UNREACHABLE = []  # HIGH phase 到達不能は max_y 帯を昇順化して解消済み
     # 負にならない量への負定数比較（常真/常偽の死んだ条件）。2026-11 に全8件を除去済み
     # （常真連言の削除・常偽ブロックの除去のみで意味変化なし）。以後0件を維持する。
