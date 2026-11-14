@@ -4,19 +4,32 @@
 # SOREN91_ENABLED=1 (.env) でなければ全関数は即 return 0。
 
 # --- 定数 ---
-_soren91_env_get() {
-	local key="$1"
-	local env_file="$ELOOP_LIB_DIR/.env"
+# .env の最後の `KEY=値` を _SOREN91_ENV_VALUE に入れる(無ければ 1)。
+# docich#4144: このファイルは eloop_lib.sh 経由で常駐ワーカーや短命スクリプト
+# から繰り返し source される。以前は file scope の 7 回の読み出しがそれぞれ
+# `$(grep | tail | cut)` を fork していた(1 回の source で約 40 プロセス)ので、
+# builtin だけで読む。
+_soren91_env_read() {
+	local key="$1" env_file="$ELOOP_LIB_DIR/.env" line="" value=""
+	_SOREN91_ENV_VALUE=""
 	[ -f "$env_file" ] || return 1
-	local value=""
-	value=$(grep -E "^${key}=" "$env_file" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+		"$key="*) value="${line#"$key="}" ;;
+		esac
+	done <"$env_file"
 	[ -n "$value" ] || return 1
 	value="${value#\"}"
 	value="${value%\"}"
-	printf '%s' "$value"
+	_SOREN91_ENV_VALUE="$value"
 }
 
-SOREN91_ENABLED="$(_soren91_env_get SOREN91_ENABLED 2>/dev/null || printf '%s' "${SOREN91_ENABLED:-0}")"
+_soren91_env_get() {
+	_soren91_env_read "$1" || return 1
+	printf '%s' "$_SOREN91_ENV_VALUE"
+}
+
+if _soren91_env_read SOREN91_ENABLED; then SOREN91_ENABLED="$_SOREN91_ENV_VALUE"; else SOREN91_ENABLED="${SOREN91_ENABLED:-0}"; fi
 SOREN91_STOP_TIMEOUT="${SOREN91_STOP_TIMEOUT:-300}"
 SOREN91_DIR="$ELOOP_LIB_DIR/soren91"
 SOREN91_PID_FILE="$SOREN91_DIR/tmp/soren91.pid"
@@ -33,12 +46,12 @@ SOREN91_MUTE_FLAG="${SOREN91_MUTE_FLAG:-$ELOOP_LIB_DIR/tmp/mute_local_bgm}"
 SOREN91_MUTE_HELPER="${SOREN91_MUTE_HELPER:-$ELOOP_LIB_DIR/lib/mute_flag.py}"
 SOREN91_MUTE_TOKEN="${SOREN91_MUTE_TOKEN:-}"
 SOREN91_MUTE_BROWSER_ID="${SOREN91_MUTE_BROWSER_ID:-}"
-SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
+if _soren91_env_read SOREN91_VOICEVOX_SPEAKER; then SOREN91_VOICEVOX_SPEAKER="$_SOREN91_ENV_VALUE"; else SOREN91_VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}"; fi
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
-SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || _soren91_env_get SOREN91_OBS_SOURCE 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-${SOREN91_OBS_SOURCE:-}}")"
-SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
-SOREN91_TEXT_FALLBACKS="$(_soren91_env_get SOREN91_TEXT_FALLBACKS 2>/dev/null || printf '%s' "${SOREN91_TEXT_FALLBACKS:-claude}")"
-SOREN91_SHARED_BROWSER="$(_soren91_env_get SOREN91_SHARED_BROWSER 2>/dev/null || printf '%s' "${SOREN91_SHARED_BROWSER:-1}")"
+if _soren91_env_read SOREN91_OBS_INPUT_NAME || _soren91_env_read SOREN91_OBS_SOURCE; then SOREN91_OBS_INPUT_NAME="$_SOREN91_ENV_VALUE"; else SOREN91_OBS_INPUT_NAME="${SOREN91_OBS_INPUT_NAME:-${SOREN91_OBS_SOURCE:-}}"; fi
+if _soren91_env_read SOREN91_AUDIO_GAIN_MULTIPLIER; then SOREN91_AUDIO_GAIN_MULTIPLIER="$_SOREN91_ENV_VALUE"; else SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}"; fi
+if _soren91_env_read SOREN91_TEXT_FALLBACKS; then SOREN91_TEXT_FALLBACKS="$_SOREN91_ENV_VALUE"; else SOREN91_TEXT_FALLBACKS="${SOREN91_TEXT_FALLBACKS:-claude}"; fi
+if _soren91_env_read SOREN91_SHARED_BROWSER; then SOREN91_SHARED_BROWSER="$_SOREN91_ENV_VALUE"; else SOREN91_SHARED_BROWSER="${SOREN91_SHARED_BROWSER:-1}"; fi
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
 MERIKEN_TIME_START_HOUR="${MERIKEN_TIME_START_HOUR:-20}"

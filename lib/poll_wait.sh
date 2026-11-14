@@ -111,3 +111,72 @@ docich_poll_sleep() {
 	done
 	return 0
 }
+
+# --- change-gated runtime reload (docich#4144) -------------------------------
+#
+# Resident workers used to re-source ./eloop_lib.sh (and .env) on every poll
+# tick so config/code edits apply without a restart. One source of that shim
+# forks ~110 children (dirname/grep/sed/cut/tail pipelines at file scope). On
+# 2026-11-14 the production host made every TLB flush ~100x slower, each fork
+# of a ~20MB worker shell then cost tens of milliseconds of kernel time, and
+# six workers re-sourcing every 5-30s saturated all four vCPUs (measured:
+# ~6 CPU-seconds and ~24k write-protect faults per re-source).
+#
+# These helpers keep the "edits apply without a restart" contract but skip the
+# re-source while nothing it reads has changed. Both checks are forkless.
+#
+# Contract:
+#   - docich_reload_due <stamp>   0 = re-source now, 1 = nothing changed
+#   - docich_reload_mark <stamp>  record a reload; call it BEFORE sourcing so a
+#                                 file edited mid-source is newer than the stamp
+#   - docich_reload_retry         forget the last reload (call when source fails)
+#
+# A reload is due when: there is no usable stamp / no reload recorded in this
+# shell yet, the last reload is older than WORKER_RELOAD_MAX_AGE_SEC (default
+# 300; a safety net for edits whose mtime is not newer than the stamp, e.g. a
+# deploy that preserves source mtimes), or any input of eloop_lib.sh is newer
+# than the stamp. WORKER_RELOAD_MAX_AGE_SEC=0 restores the old behavior
+# (reload on every tick). Paths are relative to the runtime root, which is the
+# working directory of every resident worker.
+
+_DOCICH_RELOAD_LAST_TS=""
+
+docich_reload_due() {
+	local stamp="${1:-}" max_age="${WORKER_RELOAD_MAX_AGE_SEC:-300}" now="" f
+	[ -n "$stamp" ] || return 0
+	case "$max_age" in
+	'' | *[!0-9]*) max_age=300 ;;
+	esac
+	[ "$max_age" -gt 0 ] || return 0
+	[ -n "$_DOCICH_RELOAD_LAST_TS" ] || return 0
+	[ -f "$stamp" ] || return 0
+	# bash < 4.2 has no %(...)T: fail open to the old every-tick reload.
+	printf -v now '%(%s)T' -1 2>/dev/null || return 0
+	case "$now" in
+	'' | *[!0-9]*) return 0 ;;
+	esac
+	[ $((now - _DOCICH_RELOAD_LAST_TS)) -lt "$max_age" ] || return 0
+	for f in .env eloop_lib.sh soren91_control.sh core/*.sh lib/*.sh strategy/*.sh broadcast/*.sh infra/*.sh; do
+		[ -e "$f" ] || continue
+		[ "$f" -nt "$stamp" ] && return 0
+	done
+	return 1
+}
+
+docich_reload_mark() {
+	local stamp="${1:-}" now=""
+	_DOCICH_RELOAD_LAST_TS=""
+	[ -n "$stamp" ] || return 1
+	{ : >"$stamp"; } 2>/dev/null || return 1
+	printf -v now '%(%s)T' -1 2>/dev/null || return 1
+	case "$now" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	_DOCICH_RELOAD_LAST_TS="$now"
+	return 0
+}
+
+docich_reload_retry() {
+	_DOCICH_RELOAD_LAST_TS=""
+	return 0
+}
