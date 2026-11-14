@@ -56,6 +56,7 @@ Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
 import math
 
 from strategy_helpers import board_stats
+from strategy_helpers import reactive_pair
 
 
 # --- v763: 落下後に「露出したまま残る型の数」を評価する（v757 SURFACE_DIVERSITY の再設計） ---
@@ -2498,26 +2499,17 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 or (reactive_pair_count >= 5 and max_y >= 1.475)
             )
             if not board_congested and not death_spiral:
-                blocking_penalty = -0.0798
-                for rp in reactive_pairs:
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 6:
-                        rp_type = rp[2]
-                        if rp_type != next_type:
-                            pos1 = piece_pos_by_id.get(rp[1])
-                            pos2 = piece_pos_by_id.get(rp[1])
-                            if pos1 and pos2:
-                                x1, y1 = pos1
-                                x2, y2 = pos2
-                                # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.3211
-                                span_max = max(x1, x2) + 0.2526
-                                if span_min <= x <= span_max:
-                                    # Penalize if landing at or above the reactive pair level
-                                    pair_min_y = min(y1, y2)
-                                    if landing_y >= pair_min_y:
-                                        blocking_penalty += 88.8
-                if blocking_penalty > -1:
-                    score -= min(blocking_penalty, 810.9)
+                # axis 9.3 配線（PR #751 の残件）: 旧実装は rp の長さを 6 以上と
+                # 要求して analyzer の (id1, id2, type) 3要素タプルに常偽で不発、
+                # blocking_penalty=-0.0798 のまま `score -=` で +0.08 の微加点
+                # +reason 汚染になっていた。抽出済みヘルパーで本来の契約へ復元:
+                # 別typeの着地が反応ペアの横スパン内かつペア高さ以上なら
+                # 88.8/ペア（cap 810.9）を減点し、併合レーンの埋没を抑止する。
+                _rp_penalty = reactive_pair.blocking_penalty(
+                    reactive_pairs, piece_pos_by_id, next_type, x, landing_y
+                )
+                if _rp_penalty > 0.0:
+                    score -= _rp_penalty
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- v701: T12_CHAIN_LANE_GUIDANCE / T12_PAIR_COVER_AVOID (T13連鎖アセンブリ誘導) -----
