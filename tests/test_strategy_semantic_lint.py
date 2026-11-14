@@ -25,13 +25,33 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGETS = ["strategy.py"]
 
 
-def _consecutive_unary_minus(tree):
-    hits = []
+def _line_sig(source, node):
+    """凍結シグネチャ用に、その欠陥を含むソース行テキストを返す。
+
+    行番号は編集のたびにずれて freeze リストを壊すため（実際 #842 で main が
+    壊れた）、凍結は「ソース行そのもの」で行う。行が編集されない限り
+    シグネチャは安定し、欠陥の追加・修正・削除だけを検出できる。
+    """
+    lines = source.splitlines()
+    if 1 <= node.lineno <= len(lines):
+        return lines[node.lineno - 1].strip()
+    return "<line %d>" % node.lineno
+
+
+def _consecutive_unary_minus(tree, source):
+    # 同一行の入れ子（----2 は USub×3 で 2 ノード一致）は1欠陥として扱い、
+    # 別行の同一テキストは複数欠陥として多重集計する。
+    linenos = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) \
                 and isinstance(node.operand, ast.UnaryOp) and isinstance(node.operand.op, ast.USub):
-            hits.append(getattr(node, "lineno", -1))
-    return sorted(set(hits))
+            linenos.add(node.lineno)
+
+    class _N:  # _line_sig 互換の最小ノード
+        def __init__(self, lineno):
+            self.lineno = lineno
+
+    return sorted(_line_sig(source, _N(n)) for n in linenos)
 
 
 def _unreachable_lt_chain(tree):
@@ -60,7 +80,7 @@ def _unreachable_lt_chain(tree):
             if c:
                 v, bound = c
                 if v in seen and bound <= seen[v]:
-                    out.append((getattr(cur, "lineno", -1), v, bound, seen[v]))
+                    out.append((v, bound, seen[v]))
                 else:
                     seen[v] = bound if v not in seen else max(seen[v], bound)
             cur = cur.orelse[0] if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If) else None
@@ -111,7 +131,7 @@ def _out_of_domain_coordinate_compare(tree):
         else:
             dead = False
         if dead:
-            hits.append((node.lineno, left.slice.value, c))
+            hits.append((left.slice.value, type(op).__name__, c))
     return sorted(hits)
 
 
@@ -140,28 +160,41 @@ def _impossible_count_compare(tree):
         c = _fold_const(node.comparators[0])
         if c is None or c >= 0:
             continue
-        hits.append((node.lineno, name, type(node.ops[0]).__name__, c))
+        hits.append((name, type(node.ops[0]).__name__, c))
     return sorted(hits)
 
 
 class StrategySemanticLintTests(unittest.TestCase):
     def _tree(self, name):
         with open(os.path.join(ROOT, name), encoding="utf-8") as fh:
-            return ast.parse(fh.read())
+            self._src = fh.read()
+            return ast.parse(self._src)
 
     # --- 既知欠陥の凍結 (issue #132 P0-2) ---
-    # 進行中の A/B (v757) 中は strategy.py の挙動を変えられないため、いま検出できる欠陥を
-    # そのまま固定する。修正が入ったらこのテストが落ちるので、期待値を空へ更新すること。
-    # 逆に「新しい欠陥が増えた」場合も落ちる。
-    KNOWN_UNARY_MINUS = [1707, 2094, 2095, 2237, 2350, 2370, 2441, 2829, 3065, 3120, 3240, 3256]
-    KNOWN_UNREACHABLE = [(1687, "max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
+    # 修正が入ったらこのテストが落ちるので、期待値を更新すること。増えた場合も落ちる。
+    # 凍結は行番号ではなくソース行シグネチャで行う（行ずれで壊れない）。
+    KNOWN_UNARY_MINUS = [
+        '__pc = float(game_state.get("piece_count", --1) or -1)',
+        'drift_x = result.get("drift_x", --1)',
+        'if horiz_dist < 2.529 and proximity_bonus > --1:',
+        'if not death_spiral and danger_piece_count >= --1 and merge_grade == "NO" and max_y >= 4.200:',
+        'if reactive_pair_count == --1 and merge_grade in ["DIRECT", "NEAR"]:',
+        'if reactive_pair_count >= --1 and merge_grade == "NO" and same_type_stack_top is None and not death_spiral:',
+        'if reactive_pair_count >= --1:',
+        'landing_y = result.get("landing_y", ---1)',
+        'landing_y = result.get("landing_y", --1)',
+        'next_next_type = next_next_piece.get("type", ----1)',
+        'score -= max(--1, (1.1702 - margin)) * 6558',
+        'stacking_bonus = best_chain_score + max(--1, 61.2 - horizontal_distance * 51.83)',
+    ]
+    KNOWN_UNREACHABLE = [("max_y", 1.275, 2.894)]  # HIGH phase が MEDIUM の後ろで到達不能
     # 負にならない量への負定数比較（常真/常偽の死んだ条件）。2026-11 に全8件を除去済み
     # （常真連言の削除・常偽ブロックの除去のみで意味変化なし）。以後0件を維持する。
     KNOWN_COUNT_COMPARE = []
 
     def test_consecutive_unary_minus_is_frozen(self):
-        hits = _consecutive_unary_minus(self._tree("strategy.py"))
-        self.assertEqual(
+        hits = _consecutive_unary_minus(self._tree("strategy.py"), self._src)
+        self.assertCountEqual(
             hits, self.KNOWN_UNARY_MINUS,
             "連続単項マイナスの集合が変わった (--1 は 1、----1 も 1 になる)。"
             "修正したなら KNOWN_UNARY_MINUS を更新し、増えたなら新しい欠陥である。実際: %s" % hits)
@@ -174,12 +207,12 @@ class StrategySemanticLintTests(unittest.TestCase):
 
     def test_lint_detects_known_patterns(self):
         """lint 自体が既知パターンを拾えることを固定する (自己テスト)。"""
-        bad = ast.parse("x = --1\ny = ----2\n")
-        self.assertEqual(len(_consecutive_unary_minus(bad)), 2)
+        bad_src = "x = --1\ny = ----2\n"
+        self.assertEqual(len(_consecutive_unary_minus(ast.parse(bad_src), bad_src)), 2)
         chain = ast.parse("if v < 2.894:\n    a=1\nelif v < 1.275:\n    a=2\n")
         hits = _unreachable_lt_chain(chain)
         self.assertEqual(len(hits), 1)
-        self.assertEqual(hits[0][1], "v")
+        self.assertEqual(hits[0][0], "v")
         ok = ast.parse("if v < 1.0:\n    a=1\nelif v < 2.0:\n    a=2\n")
         self.assertEqual(_unreachable_lt_chain(ok), [])
 
