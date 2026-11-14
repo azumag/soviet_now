@@ -19,9 +19,14 @@ cd "$SCRIPT_DIR"
 
 source ./eloop_lib.sh
 source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+# docich#4144: change-gated reload helpers; without them reload every tick as before.
+declare -F docich_reload_due >/dev/null 2>&1 || docich_reload_due() { return 0; }
+declare -F docich_reload_mark >/dev/null 2>&1 || docich_reload_mark() { return 0; }
+declare -F docich_reload_retry >/dev/null 2>&1 || docich_reload_retry() { return 0; }
 
 WORKER_NAME="kick_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
+RELOAD_STAMP_FILE="tmp/state/${WORKER_NAME}.reload_stamp"
 CHANNEL="${1:-${KICK_CHANNEL:-dociai}}"
 POLL_INTERVAL="${KICK_CHAT_POLL_INTERVAL_SEC:-10}"
 KICK_CHAT_DIR_PATH="${KICK_CHAT_DIR:-tmp/.kick_chat}"
@@ -231,8 +236,14 @@ while true; do
 
 	_park_while_paused || break
 
-	if ! source ./eloop_lib.sh 2>/dev/null; then
-		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
+	# eloop_lib.sh を再読み込み (設定変更の反映)。docich#4144: 読み込む
+	# ファイルが変わった時か WORKER_RELOAD_MAX_AGE_SEC 経過時だけ行う。
+	if docich_reload_due "$RELOAD_STAMP_FILE"; then
+		docich_reload_mark "$RELOAD_STAMP_FILE" || true
+		if ! source ./eloop_lib.sh 2>/dev/null; then
+			docich_reload_retry
+			_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
+		fi
 	fi
 	if [ "${KICK_CHAT_ENABLED:-0}" != "1" ]; then
 		_log "disabled by env → 終了"

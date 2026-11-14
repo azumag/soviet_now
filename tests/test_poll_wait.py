@@ -15,6 +15,7 @@ runtime tree clean.
 
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -217,6 +218,212 @@ class PollWaitTest(unittest.TestCase):
         self.assertIn("\t\tdocich_poll_sleep 1\n\t\twaited=$((waited + 1))\n", body)
         self.assertNotIn("\t\t_touch_lock_heartbeat\n\t\tsleep 1\n", body)
         self.assertNotIn('\t\tsleep 1\n\t\tif [ "$max_wait_sec" -gt 0 ]; then', body)
+
+
+RELOAD_GATED_SCRIPTS = (
+    "workers/youtube_worker.sh",
+    "workers/chat_worker.sh",
+    "workers/kick_worker.sh",
+    "workers/audio_worker.sh",
+    "workers/prediction_worker.sh",
+    "improve_daemon.sh",
+)
+
+
+def _find_modern_bash():
+    """Return a bash >= 4.2 (needed for printf '%(%s)T'), or None."""
+    for candidate in ("/opt/homebrew/bin/bash", "/usr/local/bin/bash", "/bin/bash"):
+        if not os.path.exists(candidate):
+            continue
+        try:
+            out = subprocess.run(
+                [candidate, "-c", 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            ).stdout.strip()
+            major, minor = (int(part) for part in out.split("."))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+        if (major, minor) >= (4, 2):
+            return candidate
+    return None
+
+
+MODERN_BASH = _find_modern_bash()
+
+
+class ReloadGateTest(unittest.TestCase):
+    """docich#4144: docich_reload_due/mark/retry skip the per-tick re-source."""
+
+    def setUp(self):
+        if MODERN_BASH is None:
+            self.skipTest("bash >= 4.2 (printf %(%s)T) is not available")
+        self.temp = tempfile.TemporaryDirectory(prefix="reload-gate-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "core").mkdir()
+        (self.root / "tmp" / "state").mkdir(parents=True)
+        (self.root / "eloop_lib.sh").write_text("# eloop\n")
+        (self.root / ".env").write_text("# env\n")
+        (self.root / "core" / "a.sh").write_text("# a\n")
+        self.env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(self.root),
+            "LIB": str(LIB),
+            "TMPDIR": str(self.root),
+        }
+
+    def run_bash(self, script, env=None, timeout=60):
+        merged = dict(self.env)
+        if env:
+            merged.update(env)
+        return subprocess.run(
+            [MODERN_BASH, "-c", 'source "$LIB"\nstamp=tmp/state/w.reload_stamp\n' + script],
+            env=merged,
+            cwd=str(self.root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def due(self, script, env=None, quiet=True):
+        """Run script, then print 'due' or 'idle' for the final docich_reload_due."""
+        result = self.run_bash(
+            script + '\nif docich_reload_due "$stamp"; then echo due; else echo idle; fi\n',
+            env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        if quiet:
+            self.assertEqual(result.stderr, "")
+        return result.stdout.split()[-1]
+
+    def test_due_before_any_mark_even_if_stamp_exists(self):
+        self.assertEqual(self.due(': >"$stamp"'), "due")
+
+    def test_not_due_right_after_mark(self):
+        self.assertEqual(self.due('docich_reload_mark "$stamp"'), "idle")
+
+    def test_due_when_watched_file_is_newer_than_stamp(self):
+        for rel in (".env", "eloop_lib.sh", "core/a.sh"):
+            with self.subTest(watched=rel):
+                self.assertEqual(
+                    self.due(
+                        'docich_reload_mark "$stamp"\n'
+                        'touch -t 200101010000 "$stamp"\n'
+                        'touch "$WATCHED"\n',
+                        {"WATCHED": rel},
+                    ),
+                    "due",
+                )
+
+    def test_not_due_when_watched_files_are_older_than_stamp(self):
+        self.assertEqual(
+            self.due(
+                'touch -t 200101010000 .env eloop_lib.sh core/a.sh\n'
+                'docich_reload_mark "$stamp"'
+            ),
+            "idle",
+        )
+
+    def test_due_when_max_age_is_zero(self):
+        self.assertEqual(
+            self.due('docich_reload_mark "$stamp"', {"WORKER_RELOAD_MAX_AGE_SEC": "0"}),
+            "due",
+        )
+
+    def test_due_after_max_age_elapsed(self):
+        self.assertEqual(
+            self.due(
+                'docich_reload_mark "$stamp"\n'
+                'sleep 2',
+                {"WORKER_RELOAD_MAX_AGE_SEC": "1"},
+            ),
+            "due",
+        )
+
+    def test_retry_makes_it_due_again(self):
+        self.assertEqual(
+            self.due('docich_reload_mark "$stamp"\ndocich_reload_retry'),
+            "due",
+        )
+
+    def test_due_when_stamp_is_empty_or_removed(self):
+        self.assertEqual(self.due('docich_reload_mark ""'), "due")
+        self.assertEqual(
+            self.due('docich_reload_mark "$stamp"\nrm -f "$stamp"'),
+            "due",
+        )
+
+    def test_mark_failure_keeps_reloading(self):
+        # Stamp directory missing: mark fails, so the gate must stay open.
+        self.assertEqual(
+            self.due(
+                'stamp=tmp/missing/w.stamp\ndocich_reload_mark "$stamp" || true',
+                quiet=False,
+            ),
+            "due",
+        )
+
+    def test_gate_helpers_spawn_no_child_process(self):
+        # Prove "forkless" structurally: no command substitution, pipe or
+        # backtick in the helper bodies, and no external command resolved from
+        # PATH while they run (PATH is empty, so any fork+exec would fail the
+        # stamp check or print "command not found").
+        result = self.run_bash(
+            'declare -f docich_reload_due docich_reload_mark docich_reload_retry\n',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        body = result.stdout
+        self.assertIn("docich_reload_due", body)
+        # `$((` is arithmetic expansion and does not fork.
+        self.assertNotRegex(body, r"\$\((?!\()")
+        for token in ("`", "<(", ">("):
+            self.assertNotIn(token, body, token)
+        # `||` lists and the `'' | *[!0-9]*)` case alternation are not pipes.
+        no_pipe = re.sub(r"(?m)^\s*'' \| \*\[!0-9\]\*\)$", "", body).replace("||", "")
+        self.assertNotIn("|", no_pipe, "pipe in helper body")
+        result = self.run_bash(
+            'PATH=/nonexistent\n'
+            'docich_reload_mark "$stamp" || exit 3\n'
+            'docich_reload_due "$stamp"; rc=$?\n'
+            'echo "rc=$rc"\n',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "rc=1")
+        self.assertEqual(result.stderr, "")
+
+
+class ReloadGatedScriptsTest(unittest.TestCase):
+    def test_per_tick_sources_are_guarded_by_the_reload_gate(self):
+        for relative in RELOAD_GATED_SCRIPTS:
+            with self.subTest(script=relative):
+                body = (ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn('docich_reload_due "$RELOAD_STAMP_FILE"', body)
+                self.assertRegex(body, r'(?m)^RELOAD_STAMP_FILE="tmp/state/[^"\n]*\.reload_stamp"$')
+                for name in ("docich_reload_due", "docich_reload_mark", "docich_reload_retry"):
+                    self.assertIn(f"declare -F {name} >/dev/null 2>&1 || {name}() {{ return 0; }}", body)
+                lines = body.splitlines()
+                sources = [
+                    index
+                    for index, line in enumerate(lines)
+                    if re.match(r"^\s*(if ! )?source \./eloop_lib\.sh\b", line)
+                ]
+                guarded = [
+                    index
+                    for index in sources
+                    if any("docich_reload_due" in lines[j] for j in range(max(0, index - 10), index))
+                ]
+                self.assertEqual(len(guarded), 1, (sources, guarded))
+                gate_line = next(
+                    j
+                    for j in range(guarded[0] - 1, max(-1, guarded[0] - 11), -1)
+                    if "docich_reload_due" in lines[j]
+                )
+                self.assertIn("docich_reload_mark", "\n".join(lines[gate_line:guarded[0]]))
+                # Startup source stays unconditional, and it is the only other
+                # top-level one besides _reload_runtime's.
+                self.assertIn("source ./eloop_lib.sh", lines)
 
 
 if __name__ == "__main__":

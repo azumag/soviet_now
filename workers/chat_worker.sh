@@ -41,10 +41,15 @@ unset CHAT_WORKER_ENV_REEXEC
 # --- 共通ライブラリ ---
 source ./eloop_lib.sh
 source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+# docich#4144: change-gated reload helpers; without them reload every tick as before.
+declare -F docich_reload_due >/dev/null 2>&1 || docich_reload_due() { return 0; }
+declare -F docich_reload_mark >/dev/null 2>&1 || docich_reload_mark() { return 0; }
+declare -F docich_reload_retry >/dev/null 2>&1 || docich_reload_retry() { return 0; }
 
 CHANNEL="${1:-azumagbanjo}"
 WORKER_NAME="chat_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
+RELOAD_STAMP_FILE="tmp/state/${WORKER_NAME}.reload_stamp"
 TWITCH_DAEMON_PID_FILE="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}/daemon.pid"
 POLL_INTERVAL="${COMMENT_WATCHER_INTERVAL:-10}"
 OUTBOUND_CONSUME_MAX_PER_TICK=5
@@ -270,9 +275,14 @@ while true; do
 	# pause gate (durable operator stop): idle without doing work
 	_park_while_paused || break
 
-	# eloop_lib.sh を再読み込み (設定変更の反映)
-	if ! source ./eloop_lib.sh 2>/dev/null; then
-		_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
+	# eloop_lib.sh を再読み込み (設定変更の反映)。docich#4144: 読み込む
+	# ファイルが変わった時か WORKER_RELOAD_MAX_AGE_SEC 経過時だけ行う。
+	if docich_reload_due "$RELOAD_STAMP_FILE"; then
+		docich_reload_mark "$RELOAD_STAMP_FILE" || true
+		if ! source ./eloop_lib.sh 2>/dev/null; then
+			docich_reload_retry
+			_log "WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)"
+		fi
 	fi
 
 	# IRC daemon 死活監視

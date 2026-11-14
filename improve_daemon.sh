@@ -23,6 +23,10 @@ export IMPROVE_DAEMON_MODE=1
 
 source ./eloop_lib.sh
 source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+# docich#4144: change-gated reload helpers; without them reload every tick as before.
+declare -F docich_reload_due >/dev/null 2>&1 || docich_reload_due() { return 0; }
+declare -F docich_reload_mark >/dev/null 2>&1 || docich_reload_mark() { return 0; }
+declare -F docich_reload_retry >/dev/null 2>&1 || docich_reload_retry() { return 0; }
 
 # #2688: never let a configured 0/invalid interval become a busy loop. The
 # daemon body sources modules and reads state (python3) every tick, so a hot
@@ -32,6 +36,7 @@ DAEMON_TTY_FILE="$TMP_STATE_DIR/improve_daemon.tty"
 DAEMON_LOCK_DIR="$TMP_STATE_DIR/improve_daemon.lockdir"
 DAEMON_LOCK_PID_FILE="$DAEMON_LOCK_DIR/pid"
 _HEARTBEAT_PID=""
+RELOAD_STAMP_FILE="tmp/state/improve_daemon.reload_stamp"
 
 _pid_alive_local() {
 	local pid="${1:-}"
@@ -157,8 +162,12 @@ while true; do
 		break
 	fi
 
-	# モジュール再読み込み（改善中に書き換わる可能性がある）
-	source ./eloop_lib.sh 2>/dev/null || true
+	# モジュール再読み込み（改善中に書き換わる可能性がある）。docich#4144: 読み込む
+	# ファイルが変わった時か WORKER_RELOAD_MAX_AGE_SEC 経過時だけ行う。
+	if docich_reload_due "$RELOAD_STAMP_FILE"; then
+		docich_reload_mark "$RELOAD_STAMP_FILE" || true
+		source ./eloop_lib.sh 2>/dev/null || docich_reload_retry
+	fi
 	echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
 	# GAME_NUM / LAST_TURNS をファイルから読む

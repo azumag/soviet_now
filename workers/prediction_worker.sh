@@ -27,9 +27,14 @@ cd "$SCRIPT_DIR"
 # --- 共通ライブラリ ---
 source ./eloop_lib.sh
 source ./lib/poll_wait.sh 2>/dev/null || docich_poll_sleep() { sleep "${1:-1}" 2>/dev/null || true; }
+# docich#4144: change-gated reload helpers; without them reload every tick as before.
+declare -F docich_reload_due >/dev/null 2>&1 || docich_reload_due() { return 0; }
+declare -F docich_reload_mark >/dev/null 2>&1 || docich_reload_mark() { return 0; }
+declare -F docich_reload_retry >/dev/null 2>&1 || docich_reload_retry() { return 0; }
 
 WORKER_NAME="prediction_worker"
 PID_FILE="tmp/state/${WORKER_NAME}.pid"
+RELOAD_STAMP_FILE="tmp/state/${WORKER_NAME}.reload_stamp"
 PAUSE_FILE="tmp/state/${WORKER_NAME}.paused"
 POLL_INTERVAL="${PREDICTION_WORKER_INTERVAL:-5}"
 
@@ -210,8 +215,12 @@ while true; do
 		break
 	fi
 
-	# eloop_lib.sh を再読み込み
-	source ./eloop_lib.sh 2>/dev/null || true
+	# eloop_lib.sh を再読み込み (設定変更の反映)。docich#4144: 読み込む
+	# ファイルが変わった時か WORKER_RELOAD_MAX_AGE_SEC 経過時だけ行う。
+	if docich_reload_due "$RELOAD_STAMP_FILE"; then
+		docich_reload_mark "$RELOAD_STAMP_FILE" || true
+		source ./eloop_lib.sh 2>/dev/null || docich_reload_retry
+	fi
 
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	current_acc_count=$(_get_acc_count)
