@@ -42,7 +42,7 @@ _append_celebration_history() {
 }
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
-log() { echo "[$(date '+%H:%M:%S')] $*"; }
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 # bash 3.2 (macOS /bin/bash) には BASHPID がないため、サブシェルPID取得のポータブル関数
 _my_pid() { sh -c 'echo $PPID'; }
 clear_commands_file() { : >"$COMMANDS"; }

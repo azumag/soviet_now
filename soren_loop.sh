@@ -1112,7 +1112,7 @@ print('pause_detail=' + shlex.quote(str(data.get('detail') or '')))
 	play_rc=$?
 	_abort_if_interrupted "$play_rc" "play_one_game"
 	if [ "$play_rc" -eq "${PLAY_RECOVERED_RETRY_RC:-75}" ]; then
-		log "[RECOVERY] decide例外リカバリ済み: この試合の後処理をスキップして次へ"
+		log "[RECOVERY] play_one_game 後処理スキップ・次周回へ (reason=${PLAY_RECOVERED_REASON:-unknown})"
 		sleep 2
 		continue
 	fi
