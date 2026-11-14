@@ -104,23 +104,47 @@ _X_ABS_BOUND = 3.5
 _Y_LO_BOUND = -6.0
 _Y_HI_BOUND = 6.0
 
+# axis 4 型のドメイン外比較を添字形 `p["x"]` だけでなく素直な変数名にも拡げる。
+# 含めるのは「座標としてドメインが定義できる」名前のみ — `x`/`dist` のような
+# 汎用名は誤検出リスクがあるため対象外（距離系は別クラスで扱う）。
+_NAME_BOUNDS = {
+    "x": (-_X_ABS_BOUND, _X_ABS_BOUND),          # 候補 drop x（board x∈[-3,3]）
+    "drop_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
+    "piece_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
+    "landing_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
+    "target_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
+    "drift_x": (-6.5, 6.5),                      # x 方向ドリフト（盤面幅差分+余裕）
+    "landing_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+    "drop_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+    "max_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+    "min_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+    "target_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+    "piece_y": (_Y_LO_BOUND, _Y_HI_BOUND),
+}
+
 
 def _out_of_domain_coordinate_compare(tree):
-    """`obj["x"]` / `obj["y"]` と定数の比較で、盤面ドメイン上 常真/常偽 になるものを返す。"""
+    """`obj["x"]` / `obj["y"]` / ドメイン既知の変数名 と定数の比較で、
+    盤面ドメイン上 常真/常偽 になるものを返す。"""
     hits = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
             continue
         left = node.left
-        if not (isinstance(left, ast.Subscript)
-                and isinstance(left.slice, ast.Constant)
-                and left.slice.value in ("x", "y")):
+        bounds = None
+        if isinstance(left, ast.Subscript) \
+                and isinstance(left.slice, ast.Constant) \
+                and left.slice.value in ("x", "y"):
+            bounds = (-_X_ABS_BOUND, _X_ABS_BOUND) if left.slice.value == "x" \
+                else (_Y_LO_BOUND, _Y_HI_BOUND)
+        elif isinstance(left, ast.Name):
+            bounds = _NAME_BOUNDS.get(left.id)
+        if bounds is None:
             continue
+        lo, hi = bounds
         c = _fold_const(node.comparators[0])
         if c is None:
             continue
-        lo, hi = (-_X_ABS_BOUND, _X_ABS_BOUND) if left.slice.value == "x" \
-            else (_Y_LO_BOUND, _Y_HI_BOUND)
         op = node.ops[0]
         if isinstance(op, (ast.Lt, ast.LtE)):
             dead = c > hi or c <= lo
@@ -131,7 +155,8 @@ def _out_of_domain_coordinate_compare(tree):
         else:
             dead = False
         if dead:
-            hits.append((left.slice.value, type(op).__name__, c))
+            coord = left.slice.value if isinstance(left, ast.Subscript) else left.id
+            hits.append((coord, type(op).__name__, c))
     return sorted(hits)
 
 
@@ -236,6 +261,11 @@ class StrategySemanticLintTests(unittest.TestCase):
         self.assertEqual(len(_out_of_domain_coordinate_compare(bad)), 1)
         good = ast.parse('for p in pieces:\n    if p["x"] < 2.7:\n        a = 1\n')
         self.assertEqual(_out_of_domain_coordinate_compare(good), [])
+        # 変数名形: landing_y は床〜デッドライン+半径で [-6,6] を超えない
+        nb = ast.parse("if landing_y > 7:\n    a = 1\n")
+        self.assertEqual(len(_out_of_domain_coordinate_compare(nb)), 1)
+        ng = ast.parse("if landing_y > -2:\n    a = 1\n")
+        self.assertEqual(_out_of_domain_coordinate_compare(ng), [])
         cnt = ast.parse("if reactive_pair_count >= -1:\n    a = 1\n")
         self.assertEqual(len(_impossible_count_compare(cnt)), 1)
         sentinel = ast.parse("if danger_piece_count == -1:\n    a = 1\n")
