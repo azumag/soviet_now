@@ -154,16 +154,40 @@ _history_gameover_asset_path() {
 
 archive_gameover_screenshots() {
 	local history_file="$1"
-	local copied=0 kind src dst
+	local copied=0 kind src dst stem src_mtime now
 	[ -n "$history_file" ] || return 0
 	[ -f "$history_file" ] || return 0
 
+	# 旧 board.png/next_block.png コピー経路は 2026-05 以降更新されず、
+	# 全アーカイブが同一の stale 画像になっていた（改善AIの Supplemental
+	# Screenshots へもゴミが渡っていた）。実ゲームオーバー画面は稼働中
+	# bridge へ CDP 接続して撮る (screenshot_bridge.mjs)。
+	dst=$(_history_gameover_asset_path "$history_file" board 2>/dev/null || true)
+	if [ -n "$dst" ]; then
+		mkdir -p "$(dirname "$dst")" 2>/dev/null || true
+		if command -v node >/dev/null 2>&1 \
+			&& [ -f "$ELOOP_LIB_DIR/screenshot_bridge.mjs" ] \
+			&& timeout "${GAMEOVER_SHOT_TIMEOUT_SEC:-15}" node "$ELOOP_LIB_DIR/screenshot_bridge.mjs" "$dst" >/dev/null 2>&1 \
+			&& [ -s "$dst" ]; then
+			log "[ARCHIVE] $dst"
+			copied=$((copied + 1))
+		else
+			rm -f "$dst" 2>/dev/null || true
+		fi
+	fi
+
+	# 旧ソースは補助経路として残すが、撮影時から一定時間内に更新された
+	# 新鮮な画像だけを対象にする（stale な残骸を archive しない）。
 	for kind in board next; do
 		case "$kind" in
 		board) src="board.png" ;;
 		next) src="next_block.png" ;;
 		esac
+		[ "$kind" = "board" ] && [ "$copied" -gt 0 ] && continue
 		[ -s "$src" ] || continue
+		src_mtime=$(stat -c '%Y' "$src" 2>/dev/null || stat -f '%m' "$src" 2>/dev/null || echo 0)
+		now=$(date +%s)
+		[ "$(( now - ${src_mtime:-0} ))" -gt "${GAMEOVER_SHOT_STALE_SEC:-120}" ] && continue
 		dst=$(_history_gameover_asset_path "$history_file" "$kind" 2>/dev/null || true)
 		[ -n "$dst" ] || continue
 		mkdir -p "$(dirname "$dst")" 2>/dev/null || true
