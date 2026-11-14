@@ -174,6 +174,26 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(result["x"], 2.6)
         self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
 
+    def test_pre_russia_t13_pair_without_t14_also_triggers(self):
+        pieces = [
+            piece("t13-left", 13, -2.2, -2.0, 1.0),
+            piece("t13-right", 13, 1.1, -1.0, 1.0),
+        ]
+        results = [
+            candidate(-3.0),
+            candidate(2.6, landing_hit_id="t13-right"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], 2.6)
+        self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
+
     def test_pre_russia_t14_without_t13_pair_stays_closed(self):
         pieces = [
             piece("t14", 14, 1.5, -2.5, 1.6),
