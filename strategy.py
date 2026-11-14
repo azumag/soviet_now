@@ -188,7 +188,7 @@ def _surface_median_top(pieces):
 DEADLINE_ALLOW_DIRECT_CROSS = True
 
 FAST_DROP_DEADLINE_CONTACT = True
-SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
+# SCORE_TABLE: 未参照の死んだ定数として除去済み（外部 getattr 参照も無し）。
 
 # Change History
 # v727: manual-game feedback (docs/manual_challenge_20260825_insights.md).
@@ -1721,10 +1721,8 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
     # Extract which types have reactive pairs for type-aware stacking decisions
     near_pairs = reactor.get("near_pairs", [])
-    # --- v367: pipeline extraction (unutilized reactor info) ---
-    # pipeline is list of (type, type+1, min_distance) tuples — adjacent-type proximity
-    # Used by axis 9.7 for placement guidance when no same-type on board
-    pipeline = reactor.get("pipeline", [])
+    # v367 axis 9.7 は pieces を直接走査して next_type±1 を探す実装に収束したため、
+    # reactor["pipeline"] の抽出は死んだ代入として除去済み（意味変化なし）。
 
     # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
     # Used by axis 9.3 to check if landing position is between reactive pair pieces.
