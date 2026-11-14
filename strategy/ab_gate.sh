@@ -93,6 +93,19 @@ _ab_gate_emit_candidate() {
 		log "[AB-GATE] candidate hash が空か base と同一 (${cand:0:12}) → 出力しない"
 		return 1
 	fi
+	# emit 時点で semantic lint を走らせ、dead 条件・sentinel 反転・到達不能分岐を
+	# 持つ欠陥候補の A/B 実験自体を省く（採用時ゲートと同じ検出器。欠陥候補を
+	# 実験へ回すだけの試合コストを防ぐ）。rc=2（lint 未配置等）は警告のみで継続。
+	local _emit_lint_rc=0
+	python3 tools/strategy_semantic_lint.py "$hd/strategy.py.staging" >/dev/null 2>&1 || _emit_lint_rc=$?
+	if [ "$_emit_lint_rc" = "1" ]; then
+		log "[AB-GATE] candidate ${cand:0:12} が semantic lint 不合格 → emit 中止 (実験コスト節約)"
+		mkdir -p "$AB_HISTORY_DIR"
+		cp -p "$hd/strategy.py.staging" "$AB_HISTORY_DIR/lint_rejected_staging_${cand:0:12}.py" 2>/dev/null || true
+		return 1
+	elif [ "$_emit_lint_rc" != "0" ]; then
+		log "[AB-GATE] semantic lint 実行不可 (rc=$_emit_lint_rc) → 警告のみで emit 継続"
+	fi
 	tmpd="$AB_CANDIDATE_DIR.tmp"
 	rm -rf "$tmpd"
 	mkdir -p "$tmpd" || return 1
