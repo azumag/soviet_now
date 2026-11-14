@@ -350,6 +350,19 @@ _ab_finish() {
 			log "[AB] finish B: 代替ファイルの hash が state と違う → 採用中止 (A を維持)"
 			winner="A"
 			reason="${reason};alt_hash_mismatch"
+		else
+			# 数値変異が dead 条件・sentinel 反転・到達不能分岐を持ち込んだ候補を
+			# 本番適用前に止める（死んだ軸の再発経路を閉じる）。rc=1=欠陥検出のみ
+			# 中止し、rc=2（lint 未配置等の環境要因）は警告のみで採用を継続する。
+			local _lint_rc=0
+			python3 tools/strategy_semantic_lint.py "$AB_ALT_FILE" >/dev/null 2>&1 || _lint_rc=$?
+			if [ "$_lint_rc" = "1" ]; then
+				log "[AB] finish B: 代替ファイルが semantic lint 不合格 → 採用中止 (A を維持)"
+				winner="A"
+				reason="${reason};semantic_lint_fail"
+			elif [ "$_lint_rc" != "0" ]; then
+				log "[AB] finish B: semantic lint 実行不可 (rc=$_lint_rc) → 警告のみで採用継続"
+			fi
 		fi
 	fi
 	# A 棄却は root が A のままなので直ちに確定できる。B 採用は apply / hash 検証に

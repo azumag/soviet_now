@@ -19,174 +19,19 @@
 """
 import ast
 import os
+import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from strategy_semantic_lint import (  # noqa: E402
+    _consecutive_unary_minus,
+    _impossible_count_compare,
+    _out_of_domain_coordinate_compare,
+    _unreachable_lt_chain,
+)
+
 TARGETS = ["strategy.py"]
-
-
-def _line_sig(source, node):
-    """凍結シグネチャ用に、その欠陥を含むソース行テキストを返す。
-
-    行番号は編集のたびにずれて freeze リストを壊すため（実際 #842 で main が
-    壊れた）、凍結は「ソース行そのもの」で行う。行が編集されない限り
-    シグネチャは安定し、欠陥の追加・修正・削除だけを検出できる。
-    """
-    lines = source.splitlines()
-    if 1 <= node.lineno <= len(lines):
-        return lines[node.lineno - 1].strip()
-    return "<line %d>" % node.lineno
-
-
-def _consecutive_unary_minus(tree, source):
-    # 同一行の入れ子（----2 は USub×3 で 2 ノード一致）は1欠陥として扱い、
-    # 別行の同一テキストは複数欠陥として多重集計する。
-    linenos = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) \
-                and isinstance(node.operand, ast.UnaryOp) and isinstance(node.operand.op, ast.USub):
-            linenos.add(node.lineno)
-
-    class _N:  # _line_sig 互換の最小ノード
-        def __init__(self, lineno):
-            self.lineno = lineno
-
-    return sorted(_line_sig(source, _N(n)) for n in linenos)
-
-
-def _unreachable_lt_chain(tree):
-    """同一変数に対する `if v < A: ... elif v < B: ...` で B <= A のものを返す。"""
-    out = []
-
-    def const(n):
-        return n.value if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) else None
-
-    def var(n):
-        return n.id if isinstance(n, ast.Name) else None
-
-    def cond(n):
-        if not (isinstance(n, ast.Compare) and len(n.ops) == 1 and isinstance(n.ops[0], ast.Lt)):
-            return None
-        v, c = var(n.left), const(n.comparators[0])
-        return (v, c) if v is not None and c is not None else None
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        seen = {}
-        cur = node
-        while isinstance(cur, ast.If):
-            c = cond(cur.test)
-            if c:
-                v, bound = c
-                if v in seen and bound <= seen[v]:
-                    out.append((v, bound, seen[v]))
-                else:
-                    seen[v] = bound if v not in seen else max(seen[v], bound)
-            cur = cur.orelse[0] if len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If) else None
-    return out
-
-
-def _fold_const(node):
-    """数値定数と単項マイナスを畳み込む。`--1` は +1、`-1` は -1。それ以外は None。"""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
-            and not isinstance(node.value, bool):
-        return node.value
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
-        v = _fold_const(node.operand)
-        return -v if v is not None else None
-    return None
-
-
-# ピース中心 x ∈ [-3, 3]、y は床 -4.48 〜 デッドライン+半径程度。余裕を持たせた
-# 外側境界で、これを超える比較だけを「証明可能に定数」とみなす。
-_X_ABS_BOUND = 3.5
-_Y_LO_BOUND = -6.0
-_Y_HI_BOUND = 6.0
-
-# axis 4 型のドメイン外比較を添字形 `p["x"]` だけでなく素直な変数名にも拡げる。
-# 含めるのは「座標としてドメインが定義できる」名前のみ — `x`/`dist` のような
-# 汎用名は誤検出リスクがあるため対象外（距離系は別クラスで扱う）。
-_NAME_BOUNDS = {
-    "x": (-_X_ABS_BOUND, _X_ABS_BOUND),          # 候補 drop x（board x∈[-3,3]）
-    "drop_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
-    "piece_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
-    "landing_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
-    "target_x": (-_X_ABS_BOUND, _X_ABS_BOUND),
-    "drift_x": (-6.5, 6.5),                      # x 方向ドリフト（盤面幅差分+余裕）
-    "landing_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-    "drop_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-    "max_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-    "min_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-    "target_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-    "piece_y": (_Y_LO_BOUND, _Y_HI_BOUND),
-}
-
-
-def _out_of_domain_coordinate_compare(tree):
-    """`obj["x"]` / `obj["y"]` / ドメイン既知の変数名 と定数の比較で、
-    盤面ドメイン上 常真/常偽 になるものを返す。"""
-    hits = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            continue
-        left = node.left
-        bounds = None
-        if isinstance(left, ast.Subscript) \
-                and isinstance(left.slice, ast.Constant) \
-                and left.slice.value in ("x", "y"):
-            bounds = (-_X_ABS_BOUND, _X_ABS_BOUND) if left.slice.value == "x" \
-                else (_Y_LO_BOUND, _Y_HI_BOUND)
-        elif isinstance(left, ast.Name):
-            bounds = _NAME_BOUNDS.get(left.id)
-        if bounds is None:
-            continue
-        lo, hi = bounds
-        c = _fold_const(node.comparators[0])
-        if c is None:
-            continue
-        op = node.ops[0]
-        if isinstance(op, (ast.Lt, ast.LtE)):
-            dead = c > hi or c <= lo
-        elif isinstance(op, (ast.Gt, ast.GtE)):
-            dead = c < lo or c >= hi
-        elif isinstance(op, (ast.Eq, ast.NotEq)):
-            dead = c < lo or c > hi
-        else:
-            dead = False
-        if dead:
-            coord = left.slice.value if isinstance(left, ast.Subscript) else left.id
-            hits.append((coord, type(op).__name__, c))
-    return sorted(hits)
-
-
-# 負値を取りえないことがソースから証明できる識別子。
-# reactive_pair_count は `len(...) if isinstance(..., list) else 1`、
-# piece_count は board_stats の実駒カウント由来。analyzer 生値の
-# danger_piece_count は sentinel 負値を取りうるため対象外。
-_NONNEG_COUNT_NAMES = frozenset({"reactive_pair_count", "piece_count"})
-
-
-def _impossible_count_compare(tree):
-    """負にならない量（len()・証明済みカウント変数）と負定数の比較を返す。
-    `>= -k`/`> -k`/`!= -k` は常真、`< -k`/`<= -k`/`== -k` (k>0) は常偽。"""
-    hits = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare) or len(node.ops) != 1:
-            continue
-        left = node.left
-        if isinstance(left, ast.Name) and left.id in _NONNEG_COUNT_NAMES:
-            name = left.id
-        elif isinstance(left, ast.Call) and isinstance(left.func, ast.Name) \
-                and left.func.id == "len":
-            name = "len()"
-        else:
-            continue
-        c = _fold_const(node.comparators[0])
-        if c is None or c >= 0:
-            continue
-        hits.append((name, type(node.ops[0]).__name__, c))
-    return sorted(hits)
 
 
 class StrategySemanticLintTests(unittest.TestCase):
