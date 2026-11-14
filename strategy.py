@@ -28,16 +28,16 @@ Decision Logic:
     改善 AI がこのファイルだけを読んで過去の失敗方向を再実施しないよう、
     仮説を立てる前に上記アーカイブも確認すること。
 
-Phases (decide() 内の実値。コードが正 — 2026-08-18 実測):
+Phases (decide() 内の実値。コードが正 — 2026-11-15 #849 昇順化後の実測):
      LOW      (max_y < 0.2884) : height_mult=0.0672, merge_mult=2.027
-     MEDIUM   (0.2884 <= max_y < 2.894) : height_mult=0.342, merge_mult=0.699
-     HIGH     (到達不能): 分岐順序上 MEDIUM 条件(< 2.894)が先に成立するため
-                          HIGH 条件(< 1.275)には決して到達しない。連動して
-                          HIGH_TOWER 系の height_penalty 倍率・balance_strength も
-                          常に不使用。閾値の並べ替え・変更は、中盤の広い max_y 帯で
-                          merge_mult/height_mult/balance_strength が同時に切り替わる
-                          大きな挙動変更になるため、ログ根拠を揃えた単独サイクルで行うこと。
+     MEDIUM   (0.2884 <= max_y < 1.275) : height_mult=0.342, merge_mult=0.699
+     HIGH     (1.275 <= max_y < 2.894) : height_mult=0.1766, merge_mult=1.633
      CRITICAL (2.894 <= max_y) : height_mult=0.5766, merge_mult=0.1390
+
+     2026-11-15 までは HIGH が分岐順序上到達不能だった (旧 MEDIUM <2.894 が
+     先に成立)。#849 で max_y 帯を昇順化し、HIGH 固有パラメータ
+     (height_mult=0.1766, merge_mult=1.633) と phase=="HIGH" 依存分岐
+     全体が復活した (VM replay 2877ターンで決定変化 15件・意図帯のみ)。
 
   なお height_mult には床値 0.8983 があり（axis 2 直前）、上記 LOW/MEDIUM/CRITICAL の
   height_mult 差の大半はそこで打ち消される。phase の実効差は主に merge_mult と
