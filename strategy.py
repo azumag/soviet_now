@@ -363,6 +363,12 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
                 second_r = max(0.1, _as_float(second.get("r"), 1.0))
                 distance = ((first_x - second_x) ** 2 + (first_y - second_y) ** 2) ** 0.5
                 gap = distance - first_r - second_r
+                # 垂直分離が r1+r2 を超える pair は水平押し合いでは物理的に
+                # 接触不可能（押しても dy が残り合体しない）。実戦でも深さの
+                # 違うペアへ弾を無駄撃ちしていた (2026-11-15 観測)。わずかな
+                # 超過は斜面を上る余地として残す。
+                if abs(first_y - second_y) > first_r + second_r + 0.5:
+                    continue
                 pair_top = max(first_y, second_y)
                 pair_options.append(
                     (gap + max(0.0, pair_top - 1.15) * 0.35, pair_top, first, second)
