@@ -84,6 +84,39 @@ assert_eq 'おはようございます、現在時刻は5時です。' "$(sed -n
 assert_eq '本日のニュースです。' "$(sed -n '2p' "$qf_duplicate")" 'corner announcement is preserved'
 assert_eq '列車は午前3時に駅を出発しました。' "$(sed -n '3p' "$qf_duplicate")" 'stale generated clock claim is removed but factual event time is preserved'
 
+# 生成モデルが挨拶と本文を1行で返す場合、行全体を置換すると本文が消える。
+# 先頭の挨拶・時報句だけを差し替え、続く本文を残す。
+qf_singleline="$RADIO_DEFERRED_QUEUE_DIR/radio_3_4_news_5.txt"
+printf 'こんばんは、現在時刻は21時です。今日は冷え込みました。明日は晴れる見込みです。\n' >"$qf_singleline"
+_refresh_radio_intro_for_playback_file "$qf_singleline" news hour
+assert_eq 'おはようございます、現在時刻は5時です。' "$(sed -n '1p' "$qf_singleline")" 'single-line intro is refreshed'
+assert_eq '今日は冷え込みました。明日は晴れる見込みです。' "$(sed -n '2p' "$qf_singleline")" 'single-line body after the intro is preserved'
+
+qf_singleline_comma="$RADIO_DEFERRED_QUEUE_DIR/radio_3_5_theme_6.txt"
+printf 'おはようございます、今日は冷え込みました。明日は晴れる見込みです。\n' >"$qf_singleline_comma"
+_refresh_radio_intro_for_playback_file "$qf_singleline_comma" theme hour
+assert_eq 'おはようございます、現在時刻は5時です。' "$(sed -n '1p' "$qf_singleline_comma")" 'greeting without sentence delimiter is refreshed'
+assert_eq '今日は冷え込みました。明日は晴れる見込みです。' "$(sed -n '2p' "$qf_singleline_comma")" 'body after a comma-delimited greeting is preserved'
+
+qf_singleline_body_first="$RADIO_DEFERRED_QUEUE_DIR/radio_3_6_news_7.txt"
+printf '朝から雨が降っています。傘を持って出かけたほうがよさそうです。\n' >"$qf_singleline_body_first"
+_refresh_radio_intro_for_playback_file "$qf_singleline_body_first" news hour
+assert_eq 'おはようございます、現在時刻は5時です。' "$(sed -n '1p' "$qf_singleline_body_first")" 'body-only single line gets the canonical intro'
+assert_eq '朝から雨が降っています。傘を持って出かけたほうがよさそうです。' "$(sed -n '2p' "$qf_singleline_body_first")" 'body-only single line keeps its original text'
+
+qf_singleline_sync="$RADIO_DEFERRED_QUEUE_DIR/radio_3_7_news_8.txt"
+ready_singleline_sync="$(_radio_ready_wav_path "$qf_singleline_sync")"
+printf 'こんばんは、現在時刻は4時です。本文の続きです。明日の予定も確認します。\n' >"$qf_singleline_sync"
+printf 'RIFF-singleline\n' >"$ready_singleline_sync"
+_radio_write_render_meta "$qf_singleline_sync" "$(_radio_text_hash "$qf_singleline_sync")"
+_radio_sync_deferred_time_before_render "$qf_singleline_sync" news
+assert_eq '本文の続きです。明日の予定も確認します。' "$(sed -n '2p' "$qf_singleline_sync")" 'deferred sync keeps the single-line body'
+if [ ! -e "$ready_singleline_sync" ]; then
+	ok 'deferred sync invalidates stale audio after preserving the body'
+else
+	not_ok 'deferred sync invalidates stale audio after preserving the body'
+fi
+
 qf_duplicate_jiji="$RADIO_DEFERRED_QUEUE_DIR/radio_3_4_jiji_5.txt"
 cat >"$qf_duplicate_jiji" <<'EOF'
 こんばんは、現在時刻は1時です。
