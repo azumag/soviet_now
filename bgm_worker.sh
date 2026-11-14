@@ -5,6 +5,12 @@
 # DOCICH_CANONICAL / SOREN_BGM_FILE / SOREN_BGM_SINK / SOREN_BGM_VOLUME は従来通り。
 # SOREN_BGM_STATE_DIR は既存Soren tmp/stateを参照する（別のlifecycleは作らない）。
 # systemd soren-bgm.service用。コード配備後はこのworkerだけの再起動が必要。
+#
+# 待機中のコスト(2026-11-14 CPU飽和の調査): 判定は毎秒Pythonを起動していた。半熟など対象外のゲームでは
+# 音を出さないのに、worker常駐のまま毎秒forkし続けて約0.3コアを使っていた。判定の入力は4つの状態ファイルと
+# BGMファイルの有無だけなので、その内容をbashの組み込み(fork無し)で毎秒読み、変わった時だけ判定し直す。
+# 別コーナーへの切替(canonical等の更新)は次の周期(約1秒)で検知して即再判定する＝停止・手動再開は要らない。
+# 検知の取りこぼしに備えて、変化が無くても SOREN_BGM_REVALIDATE_SECS(既定30秒)ごとに判定し直す。
 
 BGM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CANONICAL="${DOCICH_CANONICAL:-/home/ubuntu/docich/run-soren-live/game_switch.json}"
@@ -23,6 +29,11 @@ LAST_REPORT=""
 LAST_REPORT_AT=-30
 PLAYER_EXITS=0
 LAST_EXIT=""
+case "${SOREN_BGM_REVALIDATE_SECS:-30}" in
+''|*[!0-9]*|0) REVALIDATE_SECS=30 ;;
+*) REVALIDATE_SECS="${SOREN_BGM_REVALIDATE_SECS:-30}" ;;
+esac
+INPUT_SIG=""
 
 cli_game_active() {
 	[ -f "$BGM_FILE" ] || { echo audio_missing; return 1; }
@@ -141,6 +152,28 @@ print("eligible")
 PY
 }
 
+# 判定の入力(cli_game_active が読む4ファイル + BGMファイルの有無)の内容を、forkせず INPUT_SIG へ入れる。
+# 内容そのものを比べるので、更新時刻の粒度による取りこぼしも、ファイルの削除・作成の見落としも無い。
+# 通常ファイルだけを読む(FIFO等でブロックしない)。上限は判定側と同じ65537文字。
+inputs_signature() {
+	local f data sig=""
+	for f in "$CANONICAL" "$STATE_DIR/game_lifecycle/request.json" "$STATE_DIR/game_lifecycle/ack.json" "$STATE_DIR/soren_loop.paused"; do
+		if [[ -L $f ]]; then
+			sig+="|L"
+		elif [[ -f $f ]]; then
+			data=""
+			IFS= read -r -N 65537 data <"$f" 2>/dev/null || true
+			sig+="|F${#data}:${data}"
+		elif [[ -e $f ]]; then
+			sig+="|O"
+		else
+			sig+="|-"
+		fi
+	done
+	if [[ -f $BGM_FILE ]]; then sig+="|B"; else sig+="|b"; fi
+	INPUT_SIG=$sig
+}
+
 report_state() {
 	local state="$1" reason="$2" signature="$1:$2:$LAST_EXIT"
 	# Transitions go to the journal; the small private snapshot has a bounded
@@ -201,7 +234,7 @@ stop_player() {
 }
 
 run_bgm_worker() {
-	local reason state
+	local reason state verdict_sig="" verdict_at=-1000000 verdict_rc=1
 	# Keep the same inode and let the owned player inherit the lock. Even an
 	# abrupt worker death must not permit a second player beside its survivor.
 	(umask 077; mkdir -p "$STATE_DIR") || return 1
@@ -210,7 +243,13 @@ run_bgm_worker() {
 	trap 'stop_player; report_state stopped worker_stopped' EXIT
 	trap 'exit 0' TERM INT
 	while :; do
-		if reason=$(cli_game_active); then
+		inputs_signature
+		if [ "$INPUT_SIG" != "$verdict_sig" ] || (( SECONDS - verdict_at >= REVALIDATE_SECS )); then
+			verdict_sig=$INPUT_SIG
+			verdict_at=$SECONDS
+			if reason=$(cli_game_active); then verdict_rc=0; else verdict_rc=1; fi
+		fi
+		if [ "$verdict_rc" -eq 0 ]; then
 			state=running
 			if ! player_running; then
 				state=starting
