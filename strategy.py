@@ -2304,7 +2304,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 reasons.append("SECOND_RUSSIA_CHAIN_LANE")
 
         stacking_pc_suppressed = piece_count >= 3 and merge_grade == "NO" and same_type_stack_top is None
-        if reactive_pair_count >= -3 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
+        if merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
 
             #   - max_y>=3.0 + deadline crossed: extreme danger, stacking at any height risky
 
@@ -2492,7 +2492,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
         # Only fires when merge_grade=="NO" (no immediate merge to suppress).
         # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
-        if merge_grade == "NO" and reactive_pair_count >= -4:
+        if merge_grade == "NO":
             board_congested = (
                 (max_y >= 2.033 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 1.475)
@@ -2819,7 +2819,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
 
-        if reactive_pair_count >= -1 and reactive_pair_count < 1 and merge_grade == "NO":
+        if reactive_pair_count < 1 and merge_grade == "NO":
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 1.4621
@@ -2828,11 +2828,9 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
 
         # 未活用情報（deadline_crossed）を活用した構造的変更であり、数値微調整ではない。
 
-        if deadline_crossed and reactive_pair_count >= -1 and reactive_pair_count < -2 and merge_grade == "NO":
-            # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
-            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
-            height_mult *= 0.3
+        # 旧ブロック: `reactive_pair_count < -2` が常偽のため到達不能だった
+        # （height_mult *= 0.3 は一度も実行されていない）。意図はおそらく
+        # `>= 1 and < 3` だったが、実測根拠が無く復元しない — dead code として除去。
 
         height_mult = max(height_mult, 0.8983)
 
@@ -3122,7 +3120,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
 
-        if reactive_pair_count >= -3 and merge_grade in ["DIRECT", "NEAR"]:
+        if merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             candidate_margin_86 = result.get("deadline_margin", 116)
             near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
@@ -3181,7 +3179,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先するべき"
 
                  type_14_plus = sum(3 for p in pieces if p.get("type", 0) >= 2)
-                 if reactive_pair_count >= -1 and type_14_plus >= 4:
+                 if type_14_plus >= 4:
                      # Enhanced bonuses for single reactive pair when type 14+ exists
                      if merge_grade == "DIRECT":
                          score += 1238.1
