@@ -336,7 +336,17 @@ _ab_finish() {
 	ts=$(date +%Y%m%d_%H%M%S)
 	mkdir -p "$AB_HISTORY_DIR"
 	if [ "$winner" = "B" ]; then
-		if [ "$(_ab_hash "$AB_ALT_FILE")" != "$b" ]; then
+		# in-flight A/B が deploy / rollback 等の外部更新を跨いだ場合、live は
+		# 実験開始時の A ではなくなっている。B を採用すると旧ベース+変異で
+		# 外部の新変更を巻き戻すため、live hash が a_hash からずれていたら
+		# 採用を中止する（実験の A 標本ももはや現 live を説明しない）。
+		local live_now
+		live_now=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")
+		if [ -n "$a" ] && [ "$live_now" != "$a" ]; then
+			log "[AB] finish B: live hash が実験 base から変化 (${live_now:-none} != ${a:0:12}) → 採用中止 (deploy/rollback 等の外部更新を保護)"
+			winner="A"
+			reason="${reason};live_hash_drifted"
+		elif [ "$(_ab_hash "$AB_ALT_FILE")" != "$b" ]; then
 			log "[AB] finish B: 代替ファイルの hash が state と違う → 採用中止 (A を維持)"
 			winner="A"
 			reason="${reason};alt_hash_mismatch"
@@ -389,7 +399,31 @@ _ab_finish() {
 		command -v _clear_active_branch >/dev/null 2>&1 && _clear_active_branch >/dev/null 2>&1 || true
 		win_hash="$b"
 		command -v append_phyrogenetic_event >/dev/null 2>&1 && append_phyrogenetic_event "improve" "$a" "$b" "$(cat "${GAME_COUNT_FILE:-game_count.txt}" 2>/dev/null || echo 0)" "" "ab-gate adopt: $reason" "" >/dev/null 2>&1 || true
-		git add strategy.py strategy_helpers/ >/dev/null 2>&1 && git commit -q -m "eloop Improve [ab-gate] adopt ${b} over ${a}: ${reason}" >/dev/null 2>&1 && git push -q >/dev/null 2>&1 || true
+		# adopt を repo へ同期する。従来は commit/push 失敗を `|| true` で
+		# 沈黙させていたため、main への PR マージで remote が ahead の間に
+		# 採用された改善は push できず「VM 上で採用済み・repo 未反映」が
+		# 誰にも気づかれず残り、次回 deploy で巻き戻されていた。
+		# 失敗時は marker を残して未同期状態を可視化し、次回 adopt 時に
+		# push を再試行する（rebase/merge は conflict リスクがあるため
+		# 自動化せず、marker とログでオペレータへ回す）。
+		local pending_sync="${TMP_STATE_DIR:-tmp/state}/ab_pending_repo_sync.json"
+		if [ -f "$pending_sync" ]; then
+			# 既存の未同期 marker があれば先に再試行（冪等）。
+			git push -q >/dev/null 2>&1 && rm -f "$pending_sync" || true
+		fi
+		if git add strategy.py strategy_helpers/ >/dev/null 2>&1 \
+			&& git commit -q -m "eloop Improve [ab-gate] adopt ${b} over ${a}: ${reason}" >/dev/null 2>&1 \
+			&& git push -q >/dev/null 2>&1; then
+			: # 同期成功（marker は上記 retry で処理済み）
+		else
+			log "[AB] finish B: adopt の repo 同期失敗 → 未同期 marker を残す (commit/push fail)"
+			python3 - "$pending_sync" "$a" "$b" "$reason" <<'PY' 2>/dev/null || true
+import json, sys, time
+json.dump({"a_hash": sys.argv[2], "b_hash": sys.argv[3], "reason": sys.argv[4],
+           "ts": int(time.time())},
+          open(sys.argv[1], "w"))
+PY
+		fi
 		log "[AB] finish: B 採用 root=${b:0:12} (revert=${a:0:12}) reason=$reason"
 	else
 		win_hash="$a"
