@@ -156,7 +156,8 @@ docich_reload_due() {
 	'' | *[!0-9]*) return 0 ;;
 	esac
 	[ $((now - _DOCICH_RELOAD_LAST_TS)) -lt "$max_age" ] || return 0
-	for f in .env eloop_lib.sh soren91_control.sh core/*.sh lib/*.sh strategy/*.sh broadcast/*.sh infra/*.sh; do
+	# tmp/state/explore_mode: core/config.sh がこのマーカの有無で EXPLORE_MODE を決める。
+	for f in .env eloop_lib.sh soren91_control.sh tmp/state/explore_mode core/*.sh lib/*.sh strategy/*.sh broadcast/*.sh infra/*.sh; do
 		[ -e "$f" ] || continue
 		[ "$f" -nt "$stamp" ] && return 0
 	done
