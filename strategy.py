@@ -290,7 +290,28 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         1 for piece in pieces
         if isinstance(piece, dict) and piece.get("type") == 14
     )
-    if (type15_count == 0 and type14_count < 2) or next_type < 8:
+    # 実測ボトルネック (2026-11-15, 連続試合): T14=1 + 分離した T13 pair のまま
+    # デッドライン終了。T13+T13 を寄せれば 2個目 T14 → T14×2 押し合い → T15 へ繋がる。
+    # その場合だけ pre-Russia でも T13 pair 押し合いを許可する (T12 pair 以下や
+    # ソ連建国後 (type16 存在) は従来どおり対象外)。
+    type13_count = sum(
+        1 for piece in pieces
+        if isinstance(piece, dict) and piece.get("type") == 13
+    )
+    pre_russia_t13_setup = (
+        type15_count == 0
+        and type14_count == 1
+        and type13_count >= 2
+        and not any(
+            isinstance(piece, dict) and piece.get("type") == 16
+            for piece in pieces
+        )
+    )
+    if (
+        type15_count == 0
+        and type14_count < 2
+        and not pre_russia_t13_setup
+    ) or next_type < 8:
         return None
 
     # Never spend an immediate, safe merge opportunity on a setup impact.
@@ -385,11 +406,12 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
         return None
 
-    reason = (
-        "SOVIET_T15_CONTACT_SHOT"
-        if selected_type == 15
-        else f"POST_RUSSIA_T{selected_type}_CONTACT_SHOT"
-    )
+    if selected_type == 15:
+        reason = "SOVIET_T15_CONTACT_SHOT"
+    elif pre_russia_t13_setup:
+        reason = "PRE_RUSSIA_T13_CONTACT_SHOT"
+    else:
+        reason = f"POST_RUSSIA_T{selected_type}_CONTACT_SHOT"
     return selected, reason
 
 

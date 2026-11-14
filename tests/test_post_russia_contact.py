@@ -153,6 +153,39 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             strategy._select_post_russia_contact_candidate(pieces, self.results, 10, 0.5)
         )
 
+    def test_pre_russia_t14_plus_t13_pair_triggers_contact_shot(self):
+        pieces = [
+            piece("t14", 14, 1.5, -2.5, 1.6),
+            piece("t13-left", 13, -2.2, -2.0, 1.0),
+            piece("t13-right", 13, 1.1, -1.0, 1.0),
+        ]
+        results = [
+            candidate(-3.0),
+            candidate(2.6, landing_hit_id="t13-right"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], 2.6)
+        self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
+
+    def test_pre_russia_t14_without_t13_pair_stays_closed(self):
+        pieces = [
+            piece("t14", 14, 1.5, -2.5, 1.6),
+            piece("t13", 13, -2.2, -2.0, 1.0),
+        ]
+
+        self.assertIsNone(
+            strategy._select_post_russia_contact_candidate(
+                pieces, self.results, 10, 0.5
+            )
+        )
+
     def test_keeps_safe_immediate_merge_priority(self):
         results = self.results + [candidate(1.5, grade="DIRECT")]
 
