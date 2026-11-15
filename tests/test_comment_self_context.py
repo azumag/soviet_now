@@ -147,6 +147,31 @@ class CommentSelfContextTests(unittest.TestCase):
         self.assertEqual(out["reply_meta"][0]["flags"], ["self", "trusted-card"])
         self.assertEqual(out["context"], "（なし）")
 
+    def test_announcement_self_line_remains_a_reply_target(self):
+        lines = ["dociai: レトロゲームコーナーを開始します。"]
+        entries = [_entry(0, lines[0], login="dociai", flags=["self", "announcement"])]
+        out = self._run(lines, entries)
+        # 配信者自身の告知も返信対象として AI に渡す。
+        self.assertEqual(out["reply"], lines)
+        self.assertEqual(out["self"], [])
+        self.assertEqual(out["reply_meta"][0]["flags"], ["self", "announcement"])
+        self.assertEqual(out["context"], "（なし）")
+
+    def test_plain_self_still_moves_while_announcement_stays(self):
+        lines = [
+            "dociai: 改善ループを開始しました。",
+            "dociai: 第15次遠征は終了しました。",
+        ]
+        entries = [
+            _entry(0, lines[0], login="dociai", flags=["self"]),
+            _entry(1, lines[1], login="dociai", flags=["self", "announcement"]),
+        ]
+        out = self._run(lines, entries)
+        self.assertEqual(out["reply"], ["dociai: 第15次遠征は終了しました。"])
+        self.assertEqual(out["self"], ["dociai: 改善ループを開始しました。"])
+        self.assertIn("改善ループを開始しました。", out["context"])
+        self.assertNotIn("第15次遠征", out["context"])
+
     def test_trusted_card_stays_reply_while_plain_self_moves(self):
         lines = [
             "dociai: レトロゲームコーナーを開始します。",

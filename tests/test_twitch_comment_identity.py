@@ -76,7 +76,9 @@ class TwitchCommentIdentityTests(unittest.TestCase):
                 "id=msg-self\tuser-id=uid-bot\tlogin=dociai\tdisplay=DoCiAI\tflags=\tdociai: レトロゲームコーナーです。\n"
                 "id=msg-spoof\tuser-id=uid-spoof\tlogin=mallory\tdisplay=DoCiAI\tflags=\tDoCiAI: 私はDoCiAIです\n"
                 "id=msg-body\tuser-id=uid-body\tlogin=bob\tdisplay=Bob\tflags=\tbob: dociai: こんにちは\n"
-                "id=msg-alice\tuser-id=uid-alice\tlogin=alice\tdisplay=Alice\tflags=\talice: こんにちは\n",
+                "id=msg-alice\tuser-id=uid-alice\tlogin=alice\tdisplay=Alice\tflags=\talice: こんにちは\n"
+                "id=msg-card\tuser-id=uid-bot\tlogin=dociai\tdisplay=DoCiAI\tflags=self,trusted-card\talice が [レア] カード を獲得しました\n"
+                "id=msg-pred\tuser-id=uid-bot\tlogin=dociai\tdisplay=DoCiAI\tflags=self,trusted-prediction\tチャネルポイント予想スタート！\n",
                 encoding="utf-8",
             )
             env = os.environ.copy()
@@ -99,17 +101,20 @@ class TwitchCommentIdentityTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             emitted = out.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(emitted), 4, emitted)
+            self.assertEqual(len(emitted), 6, emitted)
             # 自分の投稿も作者 prefix を保ったまま読む。
             self.assertIn("dociai: レトロゲームコーナーです。", emitted)
             metadata = [
                 json.loads(line)
                 for line in Path(f"{out}.viewer_meta.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(len(metadata), 4)
+            self.assertEqual(len(metadata), 6)
             by_id = {entry["message_id"]: entry for entry in metadata}
-            self.assertEqual(by_id["msg-self"]["flags"], ["self"])
+            # self 投稿は配信者自身のアナウンスとして announcement も付く。
+            self.assertEqual(by_id["msg-self"]["flags"], ["self", "announcement"])
             self.assertEqual(by_id["msg-self"]["login"], "dociai")
+            self.assertEqual(by_id["msg-card"]["flags"], ["self", "trusted-card", "announcement"])
+            self.assertEqual(by_id["msg-pred"]["flags"], ["self", "trusted-prediction", "announcement"])
             # 表示名が同じ third party、本文で自称する third party は self にしない。
             self.assertEqual(by_id["msg-spoof"]["flags"], [])
             self.assertEqual(by_id["msg-spoof"]["display_name"], "DoCiAI")
