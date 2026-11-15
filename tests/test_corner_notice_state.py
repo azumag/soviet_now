@@ -41,6 +41,16 @@ class CornerNoticeStateTest(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
+    def write_rotation(self, *, pending=None, manual=None, schema=1):
+        payload = {
+            "schema_version": schema,
+            "pending": pending,
+            "manual_pending": manual,
+        }
+        path = self.state / "corner_rotation.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
     def write_switch(self, **overrides):
         payload = {
             "schema_version": 2,
@@ -129,6 +139,33 @@ class CornerNoticeStateTest(unittest.TestCase):
         self.write_switch(active={"game": "paper-view", "adapter": "paper"})
         self.assertTrue(cns.corner_active(self.state))
         self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_confirmed_slot_blocks_prediction_before_the_switch(self):
+        slot = {"corner": "paper", "phase": "selected", "request_id": "r1"}
+        self.write_rotation(pending=slot)
+        self.assertFalse(cns.corner_active(self.state))
+        self.assertTrue(cns.corner_pending(self.state))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+        # Improvement accumulation is not changed by a slot reservation.
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+        self.write_rotation(pending=None, manual=slot)
+        self.assertTrue(cns.corner_pending(self.state))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_corner_slot_pending_does_not_override_a_clear_rotation(self):
+        self.write_rotation(pending={}, manual={})
+        self.write_switch()
+        self.assertFalse(cns.corner_pending(self.state))
+        self.assertFalse(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_missing_or_invalid_rotation_is_clear(self):
+        self.assertFalse(cns.corner_pending(self.state))
+        path = self.state / "corner_rotation.json"
+        for payload in ("{", "[]", json.dumps({"schema_version": 2, "pending": {"corner": "paper"}})):
+            path.write_text(payload, encoding="utf-8")
+            self.assertFalse(cns.corner_pending(self.state), payload)
+        path.write_text("x" * (cns.GAME_SWITCH_LIMIT + 1), encoding="utf-8")
+        self.assertFalse(cns.corner_pending(self.state))
 
     def test_corner_view_does_not_block_improvement_accumulation(self):
         # Improvement is gated by the notice only: a game completed at the
@@ -232,6 +269,12 @@ class CornerNoticeStateTest(unittest.TestCase):
             env=env, capture_output=True, text=True, check=True,
         )
         self.assertEqual(result.stdout.strip(), "0")
+        self.write_rotation(pending={"corner": "paper", "phase": "selected"})
+        result = subprocess.run(
+            [sys.executable, str(script), "corner"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "1")
 
 
 if __name__ == "__main__":
