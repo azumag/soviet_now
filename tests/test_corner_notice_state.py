@@ -41,12 +41,16 @@ class CornerNoticeStateTest(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
-    def write_rotation(self, *, pending=None, manual=None, schema=1):
+    def write_rotation(self, *, pending=None, manual=None, schema=1, **overrides):
         payload = {
             "schema_version": schema,
             "pending": pending,
             "manual_pending": manual,
+            "schedule_mode": "interval",
+            "status": "waiting",
+            "next_due_at": None,
         }
+        payload.update(overrides)
         path = self.state / "corner_rotation.json"
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
@@ -151,6 +155,24 @@ class CornerNoticeStateTest(unittest.TestCase):
         self.write_rotation(pending=None, manual=slot)
         self.assertTrue(cns.corner_pending(self.state))
         self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_imminent_interval_slot_blocks_prediction(self):
+        self.write_rotation(next_due_at=self.now + 60)
+        self.assertTrue(cns.corner_pending(self.state, now=self.now))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now + cns.LEAD_SECONDS + 60)
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now - 60)
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+
+    def test_imminent_slot_only_applies_to_interval_waiting(self):
+        self.write_rotation(next_due_at=self.now + 60, schedule_mode="queue")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now + 60, status="running")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at="soon")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
 
     def test_corner_slot_pending_does_not_override_a_clear_rotation(self):
         self.write_rotation(pending={}, manual={})
