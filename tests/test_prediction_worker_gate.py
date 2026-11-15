@@ -251,12 +251,16 @@ fi
             self.assertEqual(result.returncode, 0)
             return curl_log.read_text(encoding="utf-8") if curl_log.exists() else ""
 
-    def rotation(self, *, pending=False, manual=False):
+    def rotation(self, *, pending=False, manual=False, due_in=None, mode="interval",
+                 status="waiting"):
         slot = {"corner": "paper", "phase": "selected", "request_id": "r1"}
         return {
             "schema_version": 1,
             "pending": slot if pending else None,
             "manual_pending": slot if manual else None,
+            "schedule_mode": mode,
+            "status": status,
+            "next_due_at": (int(time.time()) + due_in) if due_in is not None else None,
         }
 
     def switch(self, game="sorengame", phase="ready"):
@@ -333,6 +337,28 @@ fi
         )
         self.assertEqual(
             self.run_gate(rotation=self.rotation(), game_switch=self.switch()),
+            "allowed",
+        )
+
+    def test_imminent_interval_slot_blocks_a_new_prediction(self):
+        self.assertEqual(
+            self.run_gate(rotation=self.rotation(due_in=60),
+                          game_switch=self.switch()),
+            "blocked",
+        )
+        self.assertEqual(
+            self.run_create_context(count=0, rotation=self.rotation(due_in=60),
+                                    game_switch=self.switch()),
+            "blocked",
+        )
+        self.assertEqual(
+            self.run_gate(rotation=self.rotation(due_in=600),
+                          game_switch=self.switch()),
+            "allowed",
+        )
+        self.assertEqual(
+            self.run_gate(rotation=self.rotation(due_in=60, mode="queue"),
+                          game_switch=self.switch()),
             "allowed",
         )
 

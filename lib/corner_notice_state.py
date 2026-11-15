@@ -20,6 +20,7 @@ stall the game.
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import stat
@@ -52,6 +53,10 @@ SOREN_GAME = "sorengame"
 # covers the gap between the two.
 ROTATION_FILE = "corner_rotation.json"
 ROTATION_SCHEMA = 1
+# A corner due within this lead is imminent even when the notice projection is
+# missing or late (the dispatcher starts it in the next tick). Starting a new
+# 48-game prediction there would leave it open when the corner begins.
+LEAD_SECONDS = 300.0
 # Phases from the GameSwitch contract. An unknown phase means the file is not
 # a state this module understands, so it is treated as absent (fail-open)
 # rather than as a corner that would block every new prediction.
@@ -208,14 +213,17 @@ def corner_active(state_dir=None) -> bool:
     return not (isinstance(game, str) and game == SOREN_GAME)
 
 
-def corner_pending(state_dir=None) -> bool:
-    """True while a corner slot is confirmed and about to start.
+def corner_pending(state_dir=None, *, now=None) -> bool:
+    """True while a corner slot is confirmed or imminently due.
 
     The dispatcher sets ``pending``/``manual_pending`` in
     ``corner_rotation.json`` and withdraws ``next_corner.json`` at the same
     time, then waits for the game boundary / audio before the game switch.
     A new prediction created in that gap would be open when the corner appears.
-    A missing/invalid ledger is not proof of a slot (fail-open).
+    An interval slot due within :data:`LEAD_SECONDS` is treated the same way:
+    the notice projection can be missing/late and the dispatcher would start
+    the corner in the next tick. A missing/invalid ledger is not proof of a
+    slot (fail-open); queue mode has no clock and relies on pending/active.
     """
     record = _read_state_file(state_dir, ROTATION_FILE, GAME_SWITCH_LIMIT)
     if record is None or record.get("schema_version") != ROTATION_SCHEMA:
@@ -224,7 +232,14 @@ def corner_pending(state_dir=None) -> bool:
         value = record.get(key)
         if isinstance(value, dict) and value:
             return True
-    return False
+    if record.get("schedule_mode") != "interval" or record.get("status") != "waiting":
+        return False
+    due_at = record.get("next_due_at")
+    if (type(due_at) not in (int, float) or isinstance(due_at, bool)
+            or not math.isfinite(float(due_at))):
+        return False
+    now = time.time() if now is None else float(now)
+    return 0 <= float(due_at) - now <= LEAD_SECONDS
 
 
 def prediction_blocked(state_dir=None, *, now=None) -> bool:
@@ -236,7 +251,7 @@ def prediction_blocked(state_dir=None, *, now=None) -> bool:
     running corner (``corner_active``) or a confirmed slot that has not started
     yet (``corner_pending``) always blocks, including during that notice hold.
     """
-    if corner_active(state_dir) or corner_pending(state_dir):
+    if corner_active(state_dir) or corner_pending(state_dir, now=now):
         return True
     return mode(state_dir, now=now) not in ("clear", "pending")
 

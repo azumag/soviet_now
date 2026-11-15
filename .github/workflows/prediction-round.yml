@@ -1,10 +1,10 @@
 name: Independent prediction rounds
 on:
   pull_request:
-    paths: ['.node-version', 'package*.json', 'show_status.sh', 'overlays/direct_broadcast_overlay.html', 'lib/direct_broadcast_overlay.mjs', 'tests/test_direct_broadcast_overlay.mjs', 'tests/test_ab_overlay_comparison.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'tools/prediction_resolved.py', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_resolved.py', 'tests/test_prediction_no_contest.py', 'tests/test_prediction_commentary.sh', 'twitch_chat.sh', 'twitch_chat_daemon.sh', 'tests/test_twitch_self_posts.sh', '.github/workflows/prediction-round.yml']
+    paths: ['.node-version', 'package*.json', 'show_status.sh', 'overlays/direct_broadcast_overlay.html', 'lib/direct_broadcast_overlay.mjs', 'tests/test_direct_broadcast_overlay.mjs', 'tests/test_ab_overlay_comparison.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'tools/prediction_resolved.py', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_resolved.py', 'tests/test_prediction_no_contest.py', 'tests/test_prediction_commentary.sh', 'twitch_chat.sh', 'twitch_chat_daemon.sh', 'tests/test_twitch_self_posts.sh', 'lib/corner_notice_state.py', 'tests/test_corner_notice_state.py', 'tests/test_prediction_worker_gate.py', '.github/workflows/prediction-round.yml']
   push:
     branches: [main]
-    paths: ['.node-version', 'package*.json', 'show_status.sh', 'overlays/direct_broadcast_overlay.html', 'lib/direct_broadcast_overlay.mjs', 'tests/test_direct_broadcast_overlay.mjs', 'tests/test_ab_overlay_comparison.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'tools/prediction_resolved.py', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_resolved.py', 'tests/test_prediction_no_contest.py', 'tests/test_prediction_commentary.sh', 'twitch_chat.sh', 'twitch_chat_daemon.sh', 'tests/test_twitch_self_posts.sh', '.github/workflows/prediction-round.yml']
+    paths: ['.node-version', 'package*.json', 'show_status.sh', 'overlays/direct_broadcast_overlay.html', 'lib/direct_broadcast_overlay.mjs', 'tests/test_direct_broadcast_overlay.mjs', 'tests/test_ab_overlay_comparison.mjs', 'lib/prediction_round.py', 'workers/prediction_worker.sh', 'twitch_predictions.sh', 'tools/prediction_resolved.py', 'eloop.sh', 'strategy/improve.sh', 'tests/test_prediction_round.py', 'tests/test_prediction_resolved.py', 'tests/test_prediction_no_contest.py', 'tests/test_prediction_commentary.sh', 'twitch_chat.sh', 'twitch_chat_daemon.sh', 'tests/test_twitch_self_posts.sh', 'lib/corner_notice_state.py', 'tests/test_corner_notice_state.py', 'tests/test_prediction_worker_gate.py', '.github/workflows/prediction-round.yml']
 permissions:
   contents: read
 jobs:
@@ -21,6 +21,8 @@ jobs:
       - run: python3 -m unittest tests.test_prediction_resolved
       - run: python3 -m unittest tests.test_prediction_no_contest
       - run: bash tests/test_prediction_commentary.sh
+      - run: python3 -m unittest tests.test_corner_notice_state
+      - run: python3 -m unittest tests.test_prediction_worker_gate
       - run: bash tests/test_twitch_self_posts.sh
       - run: for f in eloop.sh strategy/improve.sh workers/prediction_worker.sh twitch_predictions.sh; do bash -n "$f"; done
 
