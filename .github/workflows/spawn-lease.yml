@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'eloop_lib.sh'
+      - 'monitor_improve_runtime.sh'
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
@@ -12,8 +13,12 @@ on:
       - 'core/strategy_runtime.sh'
       - 'strategy/ab_integrity.sh'
       - 'strategy/ab_confirmation.sh'
+      - 'strategy/ab_status.sh'
+      - 'strategy/ab_retroactive.sh'
       - 'tools/ab_decide.py'
       - 'tools/ab_report.py'
+      - 'tools/ab_retroactive.sh'
+      - 'tools/ab_guard.py'
       - 'tests/test_ab_decide.py'
       - 'tests/test_ab_decide_calibration.py'
       - 'tests/test_ab_gate.sh'
@@ -21,6 +26,10 @@ on:
       - 'tests/test_ab_integrity.sh'
       - 'tests/test_ab_confirmation.sh'
       - 'tests/test_ab_improve_serialization.sh'
+      - 'tests/test_ab_status.sh'
+      - 'tests/test_ab_retroactive.sh'
+      - 'tests/test_ab_drift_rebase.sh'
+      - 'tests/test_ab_guard.py'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
       - 'core/config.sh'
@@ -31,6 +40,7 @@ on:
     branches: [main]
     paths:
       - 'eloop_lib.sh'
+      - 'monitor_improve_runtime.sh'
       - 'strategy/ai.sh'
       - 'tests/test_improve_retry_reliability.py'
       - 'strategy/improve.sh'
@@ -40,8 +50,12 @@ on:
       - 'core/strategy_runtime.sh'
       - 'strategy/ab_integrity.sh'
       - 'strategy/ab_confirmation.sh'
+      - 'strategy/ab_status.sh'
+      - 'strategy/ab_retroactive.sh'
       - 'tools/ab_decide.py'
       - 'tools/ab_report.py'
+      - 'tools/ab_retroactive.sh'
+      - 'tools/ab_guard.py'
       - 'tests/test_ab_decide.py'
       - 'tests/test_ab_decide_calibration.py'
       - 'tests/test_ab_gate.sh'
@@ -49,6 +63,10 @@ on:
       - 'tests/test_ab_integrity.sh'
       - 'tests/test_ab_confirmation.sh'
       - 'tests/test_ab_improve_serialization.sh'
+      - 'tests/test_ab_status.sh'
+      - 'tests/test_ab_retroactive.sh'
+      - 'tests/test_ab_drift_rebase.sh'
+      - 'tests/test_ab_guard.py'
       - 'strategy/spawn_guard.py'
       - 'tests/test_spawn_guard_lease.py'
       - 'core/config.sh'
@@ -68,9 +86,9 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest tests.test_spawn_guard_lease tests.test_improve_retry_reliability tests.test_shadow_validation_retry
-      - run: python3 -m unittest tests.test_ab_decide tests.test_ab_decide_calibration
-      - run: bash -n strategy/improve.sh strategy/ab_gate.sh strategy/ab_integrity.sh strategy/ab_confirmation.sh
-      - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_integrity.sh && bash tests/test_ab_confirmation.sh && bash tests/test_ab_improve_serialization.sh
+      - run: python3 -m unittest tests.test_ab_decide tests.test_ab_decide_calibration tests.test_ab_guard
+      - run: bash -n strategy/improve.sh strategy/ab_gate.sh strategy/ab_integrity.sh strategy/ab_confirmation.sh strategy/ab_status.sh strategy/ab_retroactive.sh tools/ab_retroactive.sh
+      - run: bash tests/test_ab_gate.sh && bash tests/test_ab_interleave.sh && bash tests/test_ab_integrity.sh && bash tests/test_ab_confirmation.sh && bash tests/test_ab_improve_serialization.sh && bash tests/test_ab_status.sh && bash tests/test_ab_retroactive.sh && bash tests/test_ab_drift_rebase.sh
       - run: bash tests/test_ab_deferred_batch.sh
       - run: bash tests/test_peak_hours_agent_order.sh
       - run: bash tests/test_radio_factcheck_timeout.sh

@@ -1,0 +1,100 @@
+name: A/B guard
+# soviet_now#865: strategy.py / strategy_helpers を変える PR に対して、本番で
+# A/B 実験が走っているかを機械的に確認し、実施中なら警告コメントを出す。
+# 状態は production runtime が runtime/ab-state ブランチへ publish した
+# ab_status.json を読む (strategy/ab_status.sh)。merge 自体はブロックしない
+# (警告のみ)。ブロック化は DSH 判断。
+on:
+  pull_request:
+    paths:
+      - 'strategy.py'
+      - 'strategy_helpers/**'
+      - 'strategy/ab_*.sh'
+      - 'tools/ab_*'
+      - 'tools/ab_guard.py'
+      - 'tests/test_ab_*.sh'
+      - 'tests/test_ab_*.py'
+      - 'tests/test_ab_guard.py'
+      - 'docs/ab_root_drift_runbook.md'
+      - '.github/workflows/ab-guard.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  ab_status:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Check whether PR diff touches strategy decision paths
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "touches_strategy=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh pr diff "$PR_NUMBER" --repo "${{ github.repository }}" --name-only 2>/dev/null || true)
+          if printf '%s\n' "$files" | grep -Eq '^(strategy\.py|strategy_helpers/)'; then
+            echo "touches_strategy=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "touches_strategy=0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fetch published A/B status (runtime/ab-state)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/contents/ab_status.json?ref=runtime/ab-state" \
+              --jq '.content' 2>/dev/null | base64 -d > /tmp/ab_status.json 2>/dev/null \
+              && [ -s /tmp/ab_status.json ]; then
+            echo "status fetched"
+          else
+            echo '{"schema_version":0,"note":"runtime/ab-state ab_status.json 取得失敗"}' > /tmp/ab_status.json
+          fi
+          python3 tools/ab_guard.py --file /tmp/ab_status.json --json --repo-url "${{ github.server_url }}/${{ github.repository }}" > /tmp/ab_guard.json
+          cat /tmp/ab_guard.json
+      - name: Warn on PR when an A/B experiment is active or unverifiable
+        if: steps.diff.outputs.touches_strategy == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+          verdict=$(python3 -c 'import json,sys; print(json.load(open("/tmp/ab_guard.json")).get("verdict","unknown"))')
+          python3 tools/ab_guard.py --file /tmp/ab_status.json --repo-url "${{ github.server_url }}/${{ github.repository }}" > /tmp/ab_guard_comment.md
+          cat /tmp/ab_guard_comment.md
+          case "$verdict" in
+            active|drifted|stale|unknown|candidate_pending)
+              echo "::warning::A/B guard: verdict=$verdict — merge 前に本番の実験状態を確認してください"
+              ;;
+          esac
+          {
+            echo "### A/B guard: $verdict"
+            echo
+            cat /tmp/ab_guard_comment.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          # sticky comment (<!-- soren-ab-guard -->) を upsert する。
+          existing=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.body | contains("<!-- soren-ab-guard -->")) | .id' 2>/dev/null | head -n1 || true)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$existing" \
+              -f body="$(cat /tmp/ab_guard_comment.md)" >/dev/null
+            echo "updated comment $existing"
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+              -f body="$(cat /tmp/ab_guard_comment.md)" >/dev/null
+            echo "posted comment"
+          fi
+      - name: Unit tests for the A/B guard tooling
+        run: |
+          bash -n strategy/ab_status.sh
+          bash -n strategy/ab_retroactive.sh
+          bash -n tools/ab_retroactive.sh
+          bash tests/test_ab_status.sh
+          bash tests/test_ab_retroactive.sh
+          bash tests/test_ab_drift_rebase.sh
+          python3 tests/test_ab_guard.py

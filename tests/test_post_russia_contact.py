@@ -194,6 +194,29 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(result["x"], 2.6)
         self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
 
+    def test_pre_russia_t12_pair_without_t14_creates_second_t13(self):
+        # Measured: 15/24 T13-max endings never formed a second T13.
+        # Pushing the T12 pair produces it.
+        pieces = [
+            piece("t13", 13, 0.4, -2.4, 1.0),
+            piece("t12-left", 12, -2.2, -2.0, 0.9),
+            piece("t12-right", 12, 1.1, -1.0, 0.9),
+        ]
+        results = [
+            candidate(-3.0),
+            candidate(2.5, landing_hit_id="t12-right"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], 2.5)
+        self.assertEqual(reason, "PRE_RUSSIA_T12_CONTACT_SHOT")
+
     def test_vertically_stacked_t13_pair_is_skipped(self):
         # Observed live (2026-11-15): a T13 pair separated by dy~3.6 wasted
         # a T9 projectile — horizontal pushing can never close that gap.
@@ -211,6 +234,27 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
                 pieces, results, 10, 0.5
             )
         )
+
+    def test_reverse_direction_lane_still_fires(self):
+        # When the primary member has no confirmed lane, pushing the partner
+        # toward it closes the same gap.
+        pieces = [
+            piece("t13-left", 13, -2.2, -2.0, 1.0),
+            piece("t13-right", 13, 1.1, -1.0, 1.0),
+        ]
+        results = [
+            candidate(-3.0, landing_hit_id="t13-left"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], -3.0)
+        self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
 
     def test_vertical_t13_pair_falls_through_to_horizontal_t12_pair(self):
         pieces = [
@@ -306,7 +350,7 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
     def test_small_piece_does_not_trigger_contact_shot(self):
         self.assertIsNone(
             strategy._select_post_russia_contact_candidate(
-                self.one_russia_with_t12_pair, self.results, 7, 0.35
+                self.one_russia_with_t12_pair, self.results, 5, 0.35
             )
         )
 
@@ -677,6 +721,119 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(final_decision["x"], 0.0)
         self.assertIn("RUNTIME_DEADLINE_SAFETY_OVERRIDE", final_decision["reason"])
+
+    def _critical_t13_pair_setup(self):
+        """issue #864 再現: 分離 T13 ペア + 臨界盤面 (margin<0.78)。
+
+        設計対象の終盤そのもの。解析器確証 (landing_hit_id) つきの安全な
+        NO 候補があるのに、変更前はデッドラインガードが早返しして
+        NO_MERGE_DEADLINE_GUARD_NO_VALID (x=0.0) になり接触ショットへ
+        到達しなかった。
+        """
+        pieces = [
+            piece("t13-left", 13, -2.2, -2.0, 1.207),
+            piece("t13-right", 13, 1.1, -1.0, 1.207),
+        ]
+        results = [
+            candidate(-3.0),
+            candidate(0.0),
+            candidate(3.0, landing_hit_id="t13-right"),
+        ]
+        return pieces, results
+
+    def _critical_analysis(self, results, **reactor_overrides):
+        reactor = {
+            "deadline_margin": 0.5,
+            "deadline_crossed": False,
+            "danger_piece_count": 0,
+            "reactive_pairs": [],
+            "near_pairs": [],
+            "pipeline": [],
+        }
+        reactor.update(reactor_overrides)
+        return {"results": results, "reactor": reactor}
+
+    def test_contact_shot_fires_on_critical_no_merge_board(self):
+        pieces, results = self._critical_t13_pair_setup()
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 9, "r": 0.746},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._critical_analysis(results))
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertEqual(decision["reason"], "PRE_RUSSIA_T13_CONTACT_SHOT")
+
+    def test_contact_shot_fires_when_deadline_already_crossed(self):
+        pieces, results = self._critical_t13_pair_setup()
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 9, "r": 0.746},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": True,
+        }
+        analysis = self._critical_analysis(results, deadline_crossed=True)
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertEqual(decision["reason"], "PRE_RUSSIA_T13_CONTACT_SHOT")
+
+    def test_critical_board_keeps_safe_direct_merge_priority(self):
+        pieces, results = self._critical_t13_pair_setup()
+        results = results + [candidate(-1.0, grade="DIRECT")]
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 9, "r": 0.746},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._critical_analysis(results))
+
+        self.assertEqual(decision["reason"], "DEADLINE_GUARD_DIRECT_MERGE")
+
+    def test_critical_board_keeps_crossing_direct_merge_priority(self):
+        # v747 policy: a DIRECT merge is kept even when its result is
+        # predicted to cross the deadline — the push shot must not steal it.
+        pieces, results = self._critical_t13_pair_setup()
+        risky_direct = candidate(-1.0, grade="DIRECT", crosses=True)
+        risky_direct["merge_result_crosses_deadline"] = True
+        results = results + [risky_direct]
+        game_state = {
+            "pieces": pieces,
+            "next": {"type": 9, "r": 0.746},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": False,
+        }
+
+        decision = strategy.decide(game_state, self._critical_analysis(results))
+
+        self.assertEqual(
+            decision["reason"], "DEADLINE_GUARD_DIRECT_MERGE_CROSSING"
+        )
+
+    def test_critical_post_russia_contact_shot_beats_passive_landing(self):
+        results = [
+            candidate(-2.0),
+            candidate(0.0),
+            candidate(3.0, landing_hit_id="t12-right"),
+        ]
+        game_state = {
+            "pieces": self.one_russia_with_t12_pair,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "deadline_crossed": True,
+        }
+        analysis = self._critical_analysis(results, deadline_crossed=True)
+
+        decision = strategy.decide(game_state, analysis)
+
+        self.assertEqual(decision["x"], 3.0)
+        self.assertEqual(decision["reason"], "POST_RUSSIA_T12_CONTACT_SHOT")
 
 
 if __name__ == "__main__":

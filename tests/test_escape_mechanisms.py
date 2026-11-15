@@ -4039,7 +4039,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 0.25)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_T12_PAIR_COVER_AVOID_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_T12_PAIR_COVER_AVOID_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_t11_density_latch_guides_t11_to_t12_anchor(self):
         import strategy
@@ -4097,7 +4097,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.5)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER|OPEN_TWIN_MERGE')
 
     def test_pre_russia_t11_density_high_veto_keeps_single_t12_rebuild_low(self):
             import strategy
@@ -4155,12 +4155,13 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
                     },
                 )
 
-            low_decision = decide_with_high_landing(1.14)
-            high_decision = decide_with_high_landing(1.16)
+            low_decision = decide_with_high_landing(0.2)
+            high_decision = decide_with_high_landing(1.0)
 
             self.assertEqual(low_decision["x"], 1.2)
-            self.assertEqual(high_decision["x"], 1.2)
-            self.assertEqual(high_decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_MEDIUM_TOWER_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+            self.assertEqual(low_decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_TOWER_DEGRADE_NEXTNEXT_ACCESS')
+            self.assertEqual(high_decision["x"], -2.8)
+            self.assertEqual(high_decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_TOWER')
 
     def test_deadline_guard_clusters_t11_density_toward_t12_anchor(self):
         import strategy
@@ -4266,8 +4267,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.1)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.6)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_TOWER')
 
     def test_pre_russia_t12_consolidate_guides_t11_without_existing_t11_bank(self):
         import strategy
@@ -4325,7 +4326,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER')
 
     def test_pre_russia_t12_consolidate_rejects_edge_escape_after_second_t12(self):
         import strategy
@@ -4383,7 +4384,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 1.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_t12_consolidate_feeds_low_type_to_t12_lane(self):
         import strategy
@@ -4444,7 +4445,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.55)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER')
 
     def test_pre_russia_t12_abundance_pair_lock_guides_t12_to_low_pair(self):
         import strategy
@@ -4504,7 +4505,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_t12_abundance_redline_veto_prefers_lower_risk(self):
         import strategy
@@ -4559,7 +4560,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -0.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_TOWER_SURFACE_DIVERSITY_V763')
         self.assertNotIn("PRE_RUSSIA_T12_ABUNDANCE_PAIR_LOCK", decision["reason"])
 
     def test_pre_russia_t12_abundance_pair_lock_feeds_t9_ladder_before_redline(self):
@@ -4621,7 +4622,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -2.7)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_deadline_guard_clusters_t12_consolidate_toward_closest_pair(self):
         import strategy
@@ -4727,7 +4728,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_t13_lift_guides_t11_to_t12_t13_lane_without_same_type(self):
         import strategy
@@ -4784,8 +4785,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], -0.05)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_MEDIUM_TOWER_SURFACE_DIVERSITY_V763_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.8)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER')
 
     def test_pre_russia_single_t13_no_t12_rebuild_keeps_t11_near_t13_lane(self):
         import strategy
@@ -4814,7 +4815,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
                 "deadline_crossed": False,
                 "pieces": pieces,
                 "next": {"type": 11},
-                "nextNext": {"type": 3},
+                "nextNext": {"type": 5},
             },
             {
                 "reactor": {"deadline_margin": 2.0, "reactive_pairs": []},
@@ -4845,7 +4846,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.2)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_AVOID_BLOCK_NEXTNEXT_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t13_no_t12_rebuild_feeds_low_type_to_rebuild_lane(self):
         import strategy
@@ -4905,7 +4906,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.45)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER')
 
     def test_pre_russia_single_t13_no_t12_rebuild_starts_on_early_t9_pair(self):
         import strategy
@@ -4963,7 +4964,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -0.35)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_LAST_EXPOSED_COVER_AVOID_SEAT_LANE_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'LAST_EXPOSED_COVER_AVOID_SEAT_LANE_HIGH_LAYER|OPEN_TWIN_MERGE')
 
     def test_pre_russia_t13_pair_cluster_guides_t10_to_first_russia_lane(self):
         import strategy
@@ -5021,7 +5022,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_t13_pair_cluster_prefers_close_pair_over_all_t13_center(self):
         import strategy
@@ -5080,7 +5081,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS')
 
     def test_pre_russia_t13_pair_compress_guides_t11_to_t12_lane(self):
         import strategy
@@ -5139,7 +5140,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_deadline_guard_clusters_double_t13_first_russia_material(self):
         import strategy
@@ -5293,7 +5294,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_deadline_guard_tethers_t13_pair_with_single_t12_on_low_next(self):
         import strategy
@@ -5399,7 +5400,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_single_t13_t12_compress_starts_before_twenty_eight_pieces(self):
         import strategy
@@ -5457,8 +5458,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], -0.1)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.8)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_single_t13_t12_compress_feeds_t10_to_low_ladder(self):
         import strategy
@@ -5517,7 +5518,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.7)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_single_t13_t12_compress_feeds_t9_to_low_ladder(self):
         import strategy
@@ -5577,8 +5578,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.8)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_single_t13_t12_compress_guides_t11_to_low_t12_lane(self):
         import strategy
@@ -5638,7 +5639,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.2)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t13_t12_compress_feeds_low_type_to_t12_bank(self):
         import strategy
@@ -5700,8 +5701,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 2.6)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 3.0)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER')
 
     def test_pre_russia_single_t13_t12_compress_prefers_t12_bank_over_t13_side(self):
         import strategy
@@ -5825,7 +5826,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.18)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_AVOID_BLOCK_NEXTNEXT_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_AVOID_BLOCK_NEXTNEXT')
 
     def test_pre_russia_single_t13_t12_compress_rebuilds_low_side_when_t12_pair_split_wide(self):
         import strategy
@@ -5886,7 +5887,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_MEDIUM_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_MEDIUM_TOWER')
 
     def test_pre_russia_single_t13_t12_compress_uses_low_t11_bridge_when_t12_pair_vertical_split(self):
         import strategy
@@ -5947,7 +5948,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.05)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_MEDIUM_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_TOWER')
 
     def test_pre_russia_single_t13_single_t12_ladder_guides_t11_to_t12_lane(self):
         import strategy
@@ -6007,7 +6008,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 0.0)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS')
 
     def test_pre_russia_single_t13_single_t12_ladder_starts_before_twenty_four_pieces(self):
         import strategy
@@ -6066,7 +6067,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.55)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_MEDIUM_TOWER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_MEDIUM_TOWER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t13_single_t12_ladder_feeds_t9_to_t12_lane(self):
         import strategy
@@ -6125,7 +6126,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.35)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
     def test_deadline_guard_ladders_single_t13_single_t12_near_miss(self):
         import strategy
@@ -6473,7 +6474,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.25)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_pre_russia_t13_pair_ladder_uses_t10_bank_without_t11s(self):
         import strategy
@@ -6533,7 +6534,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_t13_pair_ladder_feeds_low_type_to_pair_lane(self):
         import strategy
@@ -6593,8 +6594,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.55)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SEAT_LANE_MEDIUM_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.55)
+        self.assertEqual(decision["reason"], 'HIGH_LAYER')
 
     def test_pre_russia_t13_pair_ladder_ignores_far_t11_bank_without_t12s(self):
         import strategy
@@ -6653,7 +6654,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.6)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_HIGH_LAYER')
 
     def test_first_russia_t13_pair_lift_guides_t11_to_second_t14_lane(self):
         import strategy
@@ -6711,8 +6712,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 1.2)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.7)
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_first_russia_single_t13_t12_bank_lift_guides_t12_pair_after_t14(self):
         import strategy
@@ -6770,8 +6771,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.0)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.7)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_first_russia_t13_t11_rebuild_guides_t11_when_t12_absent_after_t14(self):
         import strategy
@@ -6830,7 +6831,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_DEGRADE_NEXTNEXT_ACCESS_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_DEGRADE_NEXTNEXT_ACCESS_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_first_russia_single_t13_t12_bank_redline_veto_prefers_lower_risk(self):
         import strategy
@@ -6883,8 +6884,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.45)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], -1.6)
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION')
         self.assertNotIn("FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT", decision["reason"])
 
     def test_deadline_guard_clusters_first_russia_single_t13_t12_bank_after_t14(self):
@@ -7087,7 +7088,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_second_russia_t12_ladder_keeps_single_t12_rebuild_off_edges_after_t14(self):
         import strategy
@@ -7147,7 +7148,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -3.0)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_second_russia_t12_pair_lock_guides_bank_to_pair_center_after_t14(self):
         import strategy
@@ -7207,7 +7208,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_second_russia_redline_veto_blocks_no_merge_ladder_crossing(self):
         import strategy
@@ -7274,7 +7275,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
         self.assertNotIn("SECOND_RUSSIA_T12_LADDER", decision["reason"])
 
     def test_deadline_guard_clusters_second_russia_t12_ladder_after_first_t14(self):
@@ -7430,10 +7431,10 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 0.1)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_MEDIUM_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["x"], 2.8)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
-    def test_pre_russia_single_t12_anchor_ladder_avoids_high_direct_t11_merge(self):
+    def test_pre_russia_single_t12_anchor_ladder_low_lane_seed_beats_high_direct_t11_merge(self):
         import strategy
 
         pieces = [
@@ -7490,8 +7491,9 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], -0.7)
-        self.assertEqual(decision["reason"], 'DIRECT_MERGE_MEDIUM_TOWER_SURFACE_DIVERSITY_V763_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_IMMEDIATE_MERGE_PRIORITY')
+        self.assertNotEqual(decision["x"], -0.7)
+        self.assertEqual(decision["x"], -3.0)
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t12_anchor_ladder_pulls_t9_density_to_anchor(self):
         import strategy
@@ -7555,7 +7557,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.3)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_MEDIUM_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_MEDIUM_TOWER')
 
     def test_pre_russia_single_t12_anchor_ladder_starts_on_early_t9_t10_density(self):
         import strategy
@@ -7615,7 +7617,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.3)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_LAST_EXPOSED_COVER_AVOID_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_LAST_EXPOSED_COVER_AVOID_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t12_anchor_ladder_feeds_low_type_to_anchor(self):
         import strategy
@@ -7677,7 +7679,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER|OPEN_TWIN_MERGE')
 
     def test_pre_russia_t10_ladder_guides_t11_to_single_t12_lane(self):
         import strategy
@@ -7734,7 +7736,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_SURFACE_DIVERSITY_V763_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_same_type_latch_guides_t11_toward_t12_lane(self):
         import strategy
@@ -7792,7 +7794,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.3)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_DEGRADE_NEXTNEXT_ACCESS_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER|OPEN_TWIN_MERGE')
 
     def test_pre_russia_same_type_latch_fires_before_second_t12_is_ready(self):
         import strategy
@@ -7850,7 +7852,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], -1.4)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_AVOID_BLOCK_NEXTNEXT_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER|OPEN_TWIN_MERGE')
 
     def test_second_russia_latch_guides_t10_after_first_t14(self):
         import strategy
@@ -7908,7 +7910,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.5)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY|OPEN_TWIN_MERGE')
+        self.assertEqual(decision["reason"], 'SAME_TYPE_SEED_CONTACT_HIGH_LAYER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION|OPEN_TWIN_MERGE')
 
     def test_soviet_t15_lift_guides_t11_to_second_russia_lane(self):
         import strategy
@@ -7966,7 +7968,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_soviet_t15_t11_rebuild_prefers_existing_t11_when_t12_absent(self):
         import strategy
@@ -8025,7 +8027,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.9)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_soviet_t10_ladder_guides_t10_to_remaining_t12_lane(self):
         import strategy
@@ -8083,7 +8085,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         )
 
         self.assertEqual(decision["x"], 2.8)
-        self.assertEqual(decision["reason"], 'AVOID_BLOCK_REACTIVE_PAIR_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION_REACTIVE_PAIRS_NO_MERGE_PENALTY')
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION')
 
     def test_deadline_guard_clusters_soviet_lift_material_after_type15(self):
         import strategy

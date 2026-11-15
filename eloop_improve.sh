@@ -110,6 +110,15 @@ _improve_cleanup_active_ai() {
 		rm -f "$runtime_script" 2>/dev/null || true
 		;;
 	esac
+	# soviet_now#869: 自分が作った host_integrity_before スナップショットも
+	# 全終了経路で消す（正常フロー末尾の削除だけではシグナル終了時に残る）。
+	# case guard で置き場を絞り、想定外のパスは絶対に消さない。
+	local integrity_before="${HOST_INTEGRITY_BEFORE_FILE:-}"
+	case "$integrity_before" in
+	"$HOST_ROOT/${TMP_STATE_DIR:-tmp/state}/host_integrity_before."*)
+		rm -f "$integrity_before" 2>/dev/null || true
+		;;
+	esac
 }
 
 _improve_handle_signal() {
