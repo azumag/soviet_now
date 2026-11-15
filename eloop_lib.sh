@@ -39,6 +39,9 @@ source "$ELOOP_LIB_DIR/core/version.sh"
 source "$ELOOP_LIB_DIR/core/phyrogenetic.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_interleave.sh"
 source "$ELOOP_LIB_DIR/strategy/ab_gate.sh"
+# soviet_now#865: A/B 状態を runtime/ab-state へ publish し merge 側から見えるようにする。
+# ab_interleave/ab_gate の状態変数に依存するためそれらの後で読み込む。
+[ -f "$ELOOP_LIB_DIR/strategy/ab_status.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_status.sh"
 [ -f "$ELOOP_LIB_DIR/strategy/ab_integrity.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_integrity.sh"
 [ -f "$ELOOP_LIB_DIR/strategy/ab_confirmation.sh" ] && source "$ELOOP_LIB_DIR/strategy/ab_confirmation.sh"
 source "$ELOOP_LIB_DIR/strategy/improve.sh"

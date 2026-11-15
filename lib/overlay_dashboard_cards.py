@@ -426,7 +426,12 @@ _local_dashboard_css = dashboard_css
 def _load_docich_dashboard_cards():
     root = Path(os.environ.get("DOCICH_ROOT") or "/home/ubuntu/docich")
     candidate = root / "src" / "docich" / "broadcast_dashboard_cards.py"
-    if not candidate.is_file():
+    try:
+        if not candidate.is_file():
+            return None
+    except OSError:
+        # Path.is_file() only swallows ENOENT/ENOTDIR; an untraversable
+        # DOCICH_ROOT (e.g. EACCES) must also fall back, not fail import.
         return None
     try:
         spec = _importlib_util.spec_from_file_location("_docich_dashboard_cards", candidate)

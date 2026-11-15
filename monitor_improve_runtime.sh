@@ -12,6 +12,10 @@ cd "$SCRIPT_DIR"
 [ -f .env ] && set -a && . ./.env && set +a
 source ./eloop_lib.sh
 
+# soviet_now#865: A/B status を runtime/ab-state へ heartbeat publish する。
+# 内容変更時と AB_STATUS_HEARTBEAT_SEC 経過時だけ push するのでここでは呼ぶだけ。
+command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "heartbeat" || true
+
 LOG_FILE="${IMPROVE_MONITOR_LOG_FILE:-logs/improve_monitor.log}"
 STATUS_FILE="${IMPROVE_MONITOR_STATUS_FILE:-tmp/state/improve_monitor_status.json}"
 IMPROVE_LAST_ACTIVATE_MODE=""

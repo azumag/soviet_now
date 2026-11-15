@@ -331,7 +331,10 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         and type14_count < 2
         and not pre_russia_t13_setup
         and not pre_russia_t12_setup
-    ) or next_type < 8:
+    # 実測: ペア存在+健全盤面の適格ターンの約30%が next_type 6-7。
+    # 小弾でも山が安定していれば確証ヒットで押し出せるため閾値を緩和
+    # (2026-11-15 観測 95 turns @>=8 vs 41 turns @6-7)。
+    ) or next_type < 6:
         return None
 
     # Never spend an immediate, safe merge opportunity on a setup impact.
@@ -388,14 +391,6 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     first_key = (_as_float(first.get("y"), -10.0), abs(_as_float(first.get("x"), 0.0)))
     second_key = (_as_float(second.get("y"), -10.0), abs(_as_float(second.get("x"), 0.0)))
     target, other = (first, second) if first_key >= second_key else (second, first)
-    target_x = _as_float(target.get("x"), 0.0)
-    other_x = _as_float(other.get("x"), 0.0)
-    direction = 1.0 if target_x >= other_x else -1.0
-    target_radius = max(0.1, _as_float(target.get("r"), 1.0))
-    shot_x = target_x + direction * (
-        target_radius + max(0.35, _as_float(next_radius, 0.5))
-    )
-    shot_x = max(-3.0, min(3.0, shot_x))
 
     safe_no_merge = [
         candidate for candidate in results
@@ -408,34 +403,67 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     if not safe_no_merge:
         return None
 
-    # New analyzer results expose the first shape-aware collision target.
-    # Require the setup drop to actually hit the selected mobile piece.  The
-    # compatibility fallback is only for older/synthetic result payloads that
-    # do not carry landing_hit_id at all.
-    target_id = target.get("id")
-    target_hits = [
-        candidate for candidate in safe_no_merge
-        if candidate.get("landing_hit_id") == target_id
-    ]
-    if target_hits:
-        safe_no_merge = target_hits
-    elif any("landing_hit_id" in candidate for candidate in safe_no_merge):
-        return None
-    elif pre_russia_t13_setup or pre_russia_t12_setup:
-        # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
-        # 旧ペイロード互換フォールバックで発火させると、既存の
-        # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
-        return None
+    def _lane_for(pusher, pushed):
+        """Return the confirmed drop that shoves pusher toward pushed."""
+        pusher_x = _as_float(pusher.get("x"), 0.0)
+        pushed_x = _as_float(pushed.get("x"), 0.0)
+        direction = 1.0 if pusher_x >= pushed_x else -1.0
+        pusher_radius = max(0.1, _as_float(pusher.get("r"), 1.0))
+        shot_x = pusher_x + direction * (
+            pusher_radius + max(0.35, _as_float(next_radius, 0.5))
+        )
+        shot_x = max(-3.0, min(3.0, shot_x))
+        hits = [
+            candidate for candidate in safe_no_merge
+            if candidate.get("landing_hit_id") == pusher.get("id")
+        ]
+        if not hits:
+            return None
+        pick = min(
+            hits,
+            key=lambda candidate: (
+                abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+                _as_float(candidate.get("landing_y"), 99.0),
+            ),
+        )
+        if abs(_as_float(pick.get("x"), 0.0) - shot_x) > 0.75:
+            return None
+        return pick
 
-    selected = min(
-        safe_no_merge,
-        key=lambda candidate: (
-            abs(_as_float(candidate.get("x"), 0.0) - shot_x),
-            _as_float(candidate.get("landing_y"), 99.0),
-        ),
-    )
-    if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
-        return None
+    # New analyzer results expose the first shape-aware collision target.
+    # Require the setup drop to actually hit the mobile piece.  When the
+    # primary member has no confirmed lane, pushing the partner toward it
+    # closes the same gap — try both directions before giving up.
+    selected = _lane_for(target, other)
+    if selected is None:
+        selected = _lane_for(other, target)
+
+    if selected is None:
+        if any("landing_hit_id" in candidate for candidate in safe_no_merge):
+            return None
+        if pre_russia_t13_setup or pre_russia_t12_setup:
+            # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
+            # 旧ペイロード互換フォールバックで発火させると、既存の
+            # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
+            return None
+        # Compatibility fallback for payloads without landing_hit_id.
+        target_x = _as_float(target.get("x"), 0.0)
+        other_x = _as_float(other.get("x"), 0.0)
+        direction = 1.0 if target_x >= other_x else -1.0
+        target_radius = max(0.1, _as_float(target.get("r"), 1.0))
+        shot_x = target_x + direction * (
+            target_radius + max(0.35, _as_float(next_radius, 0.5))
+        )
+        shot_x = max(-3.0, min(3.0, shot_x))
+        selected = min(
+            safe_no_merge,
+            key=lambda candidate: (
+                abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+                _as_float(candidate.get("landing_y"), 99.0),
+            ),
+        )
+        if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
+            return None
 
     if selected_type == 15:
         reason = "SOVIET_T15_CONTACT_SHOT"
@@ -1581,6 +1609,30 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 key=lambda c: (0 if c.get("danger_direct_merge_available") else 1, float(c.get("risk_top_y_after_drop", 99.0) or 99.0), float(c.get("landing_y", 99.0) or 99.0)),
             )
             return {"x": float(__dlg_best.get("x", -1.7617) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE_CROSSING"}
+        # issue #864: pre/post-Russia 接触ショットは「マージが無い手の安全な着地」を
+        # 分離ペア押し合いへ変換する設計だが、デッドラインガードが臨界盤面で全て早返し
+        # するため、まさに設計対象の終盤 (margin<0.78 / 超過中) では到達不能だった
+        # (実戦 26 試合で発火 0)。安全な DIRECT/NEAR・v747 の交差 DIRECT は上で既に
+        # 優先済みなので、ここで残るのは受動的な着地だけ — 接触ショットを先に試す。
+        __dlg_contact = _select_post_russia_contact_candidate(
+            __dlg_game_state.get("pieces", []),
+            __dlg_cands,
+            (__dlg_game_state.get("next") or {}).get("type", -1)
+            if isinstance(__dlg_game_state.get("next"), dict)
+            else -1,
+            _as_float((__dlg_game_state.get("next") or {}).get("r"), 0.5)
+            if isinstance(__dlg_game_state.get("next"), dict)
+            else 0.5,
+        )
+        if __dlg_contact is not None:
+            __dlg_selected, __dlg_reason = __dlg_contact
+            return {
+                "x": round(
+                    max(-3.0, min(3.0, _as_float(__dlg_selected.get("x"), 0.0))),
+                    4,
+                ),
+                "reason": __dlg_reason,
+            }
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
             c for c in __dlg_cands

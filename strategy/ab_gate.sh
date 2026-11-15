@@ -125,6 +125,7 @@ PY
 	rm -rf "$AB_CANDIDATE_DIR"
 	mv "$tmpd" "$AB_CANDIDATE_DIR" || return 1
 	log "[AB-GATE] candidate_ready: base=${base:0:12} cand=${cand:0:12}"
+	command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "candidate_ready"
 	return 0
 }
 
@@ -291,6 +292,7 @@ PY
 		./set_toggle.sh "SOREN_AB_ALT_STRATEGY=$AB_ALT_FILE" >/dev/null 2>&1 &&
 		./set_toggle.sh "SOREN_AB_PATTERN=$pattern" >/dev/null 2>&1 || { log "[AB] set_toggle 失敗"; return 1; }
 	log "[AB] start A=${a:0:12} (root) B=${b:0:12} ($src) pattern=$pattern helpers=${helpers_src:-none} bundle A=${bundle_a:-?} B=${bundle_b:-?} rule=v2:k10/UCB99"
+	command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "start"
 	return 0
 }
 
@@ -500,6 +502,7 @@ PY
 	mv "$AB_STATE_FILE" "$AB_HISTORY_DIR/ab_${ts}_state.json" || return 1
 	python3 "${ELOOP_LIB_DIR:-.}/lib/corner_boundary.py" "$TMP_STATE_DIR" improvement || true
 	log "[AB] finish 完了: winner=$winner root=$(_ab_hash "${STRATEGY_FILE:-strategy.py}") 記録 $AB_HISTORY_DIR/ab_${ts}_*"
+	command -v _ab_status_publish_async >/dev/null 2>&1 && _ab_status_publish_async "finish winner=$winner"
 	return 0
 }
 

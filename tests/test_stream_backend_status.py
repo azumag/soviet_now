@@ -220,35 +220,42 @@ class StreamBackendStatusTests(unittest.TestCase):
 
     def test_status_dashboard_header_includes_selected_backend(self) -> None:
         """既定 (配信画面が通る経路) でヘッダーが配信バックエンドを出すこと。"""
-        env = os.environ.copy()
-        env["SOREN_STREAM_BACKEND"] = "ffmpeg"
-        env.pop("STATUS_DASHBOARD_TOP_PANEL", None)
-        result = subprocess.run(
-            ["python3", "status_dashboard.py"],
-            cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["SOREN_STREAM_BACKEND"] = "ffmpeg"
+            # 空の fixture dir を指させ、ライブホストパス
+            # (/home/ubuntu/docich/run-soren-live) や隣接 checkout を
+            # stat しに行かないようにする (#885)。
+            env["DOCICH_STATE_DIR"] = temp_dir
+            env.pop("STATUS_DASHBOARD_TOP_PANEL", None)
+            result = subprocess.run(
+                ["python3", "status_dashboard.py"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SOREN/FFMPEG", result.stdout)
 
     def test_ai_backoff_mode_omits_the_header(self) -> None:
         """show-status-g の経路ではヘッダーごと省く。"""
-        env = os.environ.copy()
-        env["SOREN_STREAM_BACKEND"] = "ffmpeg"
-        env["STATUS_DASHBOARD_TOP_PANEL"] = "ai_backoff"
-        result = subprocess.run(
-            ["python3", "status_dashboard.py"],
-            cwd=REPO_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=20,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["SOREN_STREAM_BACKEND"] = "ffmpeg"
+            env["STATUS_DASHBOARD_TOP_PANEL"] = "ai_backoff"
+            env["DOCICH_STATE_DIR"] = temp_dir
+            result = subprocess.run(
+                ["python3", "status_dashboard.py"],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("SOREN/FFMPEG", result.stdout)
 
