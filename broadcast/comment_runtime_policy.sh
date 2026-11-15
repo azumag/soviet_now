@@ -356,10 +356,11 @@ _comment_card_consolidation_gate() {
 		_comment_card_hold_clear "$source"
 		return 0
 	fi
-	# Production draws by one viewer land ~1-2 minutes apart (measured
-	# 31-600s), so a 20s quiet window replied to every single card.
-	quiet=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_QUIET_SEC:-150}" 150 300)
-	max=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_MAX_SEC:-420}" 420 600)
+	# 連続ドローはまとめたいが、カード通知が数分読まれないのはオーナー体験を
+	# 損なう (2026-11-15)。15s quiet / 45s max に短縮し、45s 以内の連続ドロー
+	# だけを1返信へまとめる。env で長くしても hard cap (60/90) を超えない。
+	quiet=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_QUIET_SEC:-15}" 15 60)
+	max=$(_comment_debounce_uint "${COMMENT_CARD_CONSOLIDATE_MAX_SEC:-45}" 45 90)
 	[ "$max" -lt "$quiet" ] && max="$quiet"
 	state_file=$(_comment_card_hold_state_path "$source")
 	mkdir -p "$(dirname "$state_file")" 2>/dev/null || true
