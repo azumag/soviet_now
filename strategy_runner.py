@@ -2471,7 +2471,10 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         return decision
 
     replacement_source = "generic"
-    if "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text:
+    if (
+        "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
+        and "RUNTIME_DEADLINE_SAFETY_OVERRIDE" not in reason_text
+    ):
         _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
         if _birth_replacement is not None:
             _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)))
@@ -3091,7 +3094,13 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         else ""
     )
     suffix = f"RUNTIME_DEADLINE_SAFETY_OVERRIDE_{old_grade}_TO_{new_grade}_{replacement_source}{visual_suffix}"
-    new_decision["reason"] = f"{reason}_{suffix}" if reason else suffix
+    # A decision that already carries the override marker must not grow the
+    # suffix again — repeated application produced unbounded reason strings
+    # that polluted game-history analytics (observed live 2026-11-15).
+    if "RUNTIME_DEADLINE_SAFETY_OVERRIDE" in reason:
+        new_decision["reason"] = reason
+    else:
+        new_decision["reason"] = f"{reason}_{suffix}" if reason else suffix
     log(
         "RUNTIME_DEADLINE_SAFETY_OVERRIDE: "
         f"x={chosen_x:.2f}/{old_grade}/cross -> x={new_decision['x']:.2f}/{new_grade}"
