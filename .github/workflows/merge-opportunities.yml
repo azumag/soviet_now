@@ -69,7 +69,7 @@ jobs:
           python3 -m unittest
           tests.test_soviet_continuation
           tests.test_twitch_clip_delivery tests.test_settle_wait
-          tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_buried_exposed_merge_candidate tests.test_merge_burial_baseline tests.test_strategy_hash
+          tests.test_merge_opportunity_preservation tests.test_merge_opportunity_trace tests.test_post_russia_contact tests.test_buried_exposed_merge_candidate tests.test_merge_burial_baseline tests.test_strategy_hash
           tests.test_policy_bundle tests.test_v747_endgame_merge
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
           tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct
