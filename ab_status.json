@@ -1,0 +1,21 @@
+{
+ "schema_version": 1,
+ "observed_at": "2026-11-15T13:47:28",
+ "observed_epoch": 1794718048,
+ "active": false,
+ "aborted": false,
+ "candidate_pending": false,
+ "a_hash": null,
+ "b_hash": null,
+ "pattern": null,
+ "primary": null,
+ "started_at": null,
+ "games_recorded": 0,
+ "ledger_rows": 0,
+ "confirmation_phase": null,
+ "confirmation_required": false,
+ "verified_improvement": false,
+ "retroactive": null,
+ "root_hash": "daf14856b9fb",
+ "root_matches_a": null
+}
