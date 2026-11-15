@@ -271,13 +271,71 @@ def _clip_final_drop_x(value, has_russia, fallback=False):
     return round(max(lower, min(upper, value)), 1 if fallback else 4)
 
 
-def _select_post_russia_contact_candidate(pieces, results, next_type, next_radius):
+def _contact_shot_trace_values(target, shot_x, results, safe_no_merge):
+    """Compact 6-value contact-shot trace for issue #894.
+
+    The four hit flags are the measurement needed to re-cut the #890
+    ``landing_hit_id`` mismatch bucket without recomputing the analyzer:
+
+    - ``target_hit_safe``: the target is the first hit of a candidate the
+      selector may use (this is the selector's own ``target_hits`` condition).
+    - ``target_hit_unsafe``: some candidate outside the safe pool hits the
+      target (deadline-crossing, margin < 0.35, or a merge candidate).
+    - ``first_hit_other`` / ``first_hit_floor``: no candidate hits the
+      target; the nearest safe candidate to ``shot_x`` hits another piece or
+      the floor.  These two only describe that nearest safe candidate, so
+      together with the target flags they partition the rejection reasons.
+    """
+    target_id = target.get("id")
+    safe_ids = {id(candidate) for candidate in safe_no_merge}
+    target_hit_safe = any(
+        candidate.get("landing_hit_id") == target_id
+        for candidate in safe_no_merge
+    )
+    target_hit_unsafe = any(
+        id(candidate) not in safe_ids
+        and candidate.get("landing_hit_id") == target_id
+        for candidate in results
+        if isinstance(candidate, dict)
+    )
+    first_hit_other = False
+    first_hit_floor = False
+    if safe_no_merge and not target_hit_safe and not target_hit_unsafe:
+        nearest = min(
+            safe_no_merge,
+            key=lambda candidate: (
+                abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+                _as_float(candidate.get("landing_y"), 99.0),
+            ),
+        )
+        hit_id = nearest.get("landing_hit_id")
+        if hit_id is None:
+            first_hit_floor = True
+        else:
+            first_hit_other = hit_id != target_id
+    return {
+        "target_id": target_id,
+        "shot_x": round(_as_float(shot_x, 0.0), 4),
+        "target_hit_safe": bool(target_hit_safe),
+        "target_hit_unsafe": bool(target_hit_unsafe),
+        "first_hit_other": bool(first_hit_other),
+        "first_hit_floor": bool(first_hit_floor),
+    }
+
+
+def _select_post_russia_contact_candidate(
+    pieces, results, next_type, next_radius, trace=None
+):
     """Choose a safe outer-side impact that closes the next Soviet-chain pair.
 
     The normal production scorer is intentionally left untouched until a real
     T15 exists.  Once Russia is on the board, direct/near merges still win; on
     a no-merge turn, a sufficiently large incoming piece can push the more
     mobile member of the highest separated pair toward its partner.
+
+    When ``trace`` is a dict it receives the compact 6-value trace (issue
+    #894) on every setup turn, including the turns where the shot is rejected.
+    ``record_turn`` copies it into ``game_history``.
     """
     if not isinstance(pieces, list) or not isinstance(results, list):
         return None
@@ -350,15 +408,6 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     ) or next_type < 6:
         return None
 
-    # Never spend an immediate, safe merge opportunity on a setup impact.
-    if any(
-        isinstance(candidate, dict)
-        and candidate.get("merge_grade") in ("DIRECT", "NEAR")
-        and not candidate.get("crosses_deadline", True)
-        and not candidate.get("merge_result_crosses_deadline", False)
-        for candidate in results
-    ):
-        return None
 
     pair_types = (15,) if type15_count >= 2 else (14, 13, 12)
     selected_pair = None
@@ -413,6 +462,31 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         and not candidate.get("merge_result_crosses_deadline", False)
         and _as_float(candidate.get("deadline_margin"), -1.0) >= 0.35
     ]
+    if isinstance(trace, dict):
+        try:
+            target_x = _as_float(target.get("x"), 0.0)
+            other_x = _as_float(other.get("x"), 0.0)
+            direction = 1.0 if target_x >= other_x else -1.0
+            target_radius = max(0.1, _as_float(target.get("r"), 1.0))
+            trace_shot_x = target_x + direction * (
+                target_radius + max(0.35, _as_float(next_radius, 0.5))
+            )
+            trace_shot_x = max(-3.0, min(3.0, trace_shot_x))
+            trace.update(
+                _contact_shot_trace_values(target, trace_shot_x, results, safe_no_merge)
+            )
+        except Exception:
+            trace.clear()
+
+    # Never spend an immediate, safe merge opportunity on a setup impact.
+    if any(
+        isinstance(candidate, dict)
+        and candidate.get("merge_grade") in ("DIRECT", "NEAR")
+        and not candidate.get("crosses_deadline", True)
+        and not candidate.get("merge_result_crosses_deadline", False)
+        for candidate in results
+    ):
+        return None
     if not safe_no_merge:
         return None
 
@@ -1492,7 +1566,7 @@ def _select_visible_same_country_contact(
     return min(contact_options, key=lambda option: option[:-1])[-1]
 
 
-def _decide_base(game_state: dict, analysis: dict) -> dict:
+def _decide_base(game_state: dict, analysis: dict, _contact_trace=None) -> dict:
     """候補ドロップ位置ごとに評価軸を積算し、最良の x を返す。
 
     デッドラインガード（危険域での安全確保・即時併合優先）を最優先で通過させたあと、
@@ -1855,7 +1929,7 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = board_stats.has_near_for_type(near_pairs, next_type)
 
     post_russia_contact = _select_post_russia_contact_candidate(
-        pieces, results, next_type, next_radius
+        pieces, results, next_type, next_radius, _contact_trace
     )
     if post_russia_contact is not None:
         selected, reason = post_russia_contact
@@ -3472,7 +3546,12 @@ def _v742_open_twin(pieces, ttype):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    base = _decide_base(game_state, analysis)
+    _contact_trace = {}
+    base = _decide_base(game_state, analysis, _contact_trace)
+    if _contact_trace and isinstance(base, dict):
+        # issue #894: 接触ショットの判定根拠を game_history へ残す。
+        # selector が None を返した手でも trace は埋まる。
+        base["contact_shot_trace"] = dict(_contact_trace)
     try:
         reason = str(base.get("reason", ""))
         reason_tags.attach_reason_tags(base)
