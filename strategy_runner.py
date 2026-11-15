@@ -26,6 +26,7 @@ import sys
 import time
 import uuid
 
+from lib import reason_tags as reason_tag_lib
 from lib.country_names import country_named_reason
 from lib.game_terminal import is_terminal as is_terminal_game_state
 from lib.game_founding_boundary import FoundingBoundaryWitness
@@ -942,6 +943,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         for p in pieces
     ]
 
+    decision_tags = reason_tag_lib.tags_for_decision(decision)
     record = {
         "turn": turn,
         "score": score,
@@ -957,7 +959,11 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "next_type": next_type,
         "next_next_type": int(nxt2.get("type", 0) or 0),
         "decision_x": round(decision.get("x", 0), 3),
-        "decision_reason": decision.get("reason", ""),
+        # Structured form of the same reason (soviet_now#877 Phase 1).  The
+        # renderer is the single string-generation point for the recorded
+        # reason; Phase 1 round-trips the legacy text byte for byte.
+        "decision_reason": reason_tag_lib.render_reason(decision_tags),
+        "reason_tags": decision_tags,
         "merge_available": has_merge,
         "best_merge_grade": best_grade,
         "visual_same_type_count": len(same_type_pieces),
@@ -1012,8 +1018,8 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         strategy_module is not None
         and bool(getattr(strategy_module, "DEADLINE_ALLOW_DIRECT_CROSS", False))
         and (
-            ("DEADLINE_GUARD_DIRECT_MERGE_CROSSING" in str(decision.get("reason", "")) and chosen.get("merge_grade", "NO") == "DIRECT")
-            or ("OPEN_TWIN_MERGE_DESPERATE" in str(decision.get("reason", "")))
+            (reason_tag_lib.has_marker(decision, "DEADLINE_GUARD_DIRECT_MERGE_CROSSING") and chosen.get("merge_grade", "NO") == "DIRECT")
+            or reason_tag_lib.has_marker(decision, "OPEN_TWIN_MERGE_DESPERATE")
         )
     ):
         return decision
@@ -1445,6 +1451,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         )
 
     reason_text = str(decision.get("reason", "") or "")
+    decision_tags = reason_tag_lib.tags_for_decision(decision)
 
     def pre_russia_t12_lane_replacement_for(candidate):
         """Keep deadline overrides near the T12/T11 rebuild lane.
@@ -1456,15 +1463,15 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
+        if not reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
                 "PRE_RUSSIA_T12_CONSOLIDATE",
                 "PRE_RUSSIA_T11_DENSITY_LATCH",
                 "PRE_RUSSIA_SINGLE_T12_ANCHOR_LADDER",
                 "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR",
                 "PRE_RUSSIA_NEXT_UP_LATCH",
-            )
+            ),
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
@@ -1490,9 +1497,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             or piece_count < 26
         ):
             return None
-        single_t12_anchor_reason = (
-            "PRE_RUSSIA_SINGLE_T12_ANCHOR_LADDER" in reason_text
-            or "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR" in reason_text
+        single_t12_anchor_reason = reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
+                "PRE_RUSSIA_SINGLE_T12_ANCHOR_LADDER",
+                "DEADLINE_GUARD_PRE_RUSSIA_SINGLE_T12_ANCHOR",
+            ),
         )
         t12_targets = [
             p for p in pieces if int(p.get("type", 0) or 0) == 12
@@ -1612,7 +1622,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
                 continue
             _second_birth_counts[_birth_type] = _second_birth_counts.get(_birth_type, 0) + 1
         if (
-            "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
+            reason_tag_lib.has_marker(decision_tags, "ANCHOR_SECOND_T13_CONTACT_SHOT")
             and _second_birth_counts.get(14, 0) == 0
             and _second_birth_counts.get(15, 0) == 0
             and _second_birth_counts.get(13, 0) == 1
@@ -1852,7 +1862,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """Keep a lone T13 plus T12 bank from choosing a high hard-deadline lane."""
         if not isinstance(candidate, dict):
             return None
-        if "PRE_RUSSIA_SINGLE_T13_T12_COMPRESS" not in reason_text:
+        if not reason_tag_lib.has_marker(decision_tags, "PRE_RUSSIA_SINGLE_T13_T12_COMPRESS"):
             return None
         pieces = (game_state or {}).get("pieces") or []
         if not pieces or next_type not in (6, 7, 8, 9, 10, 11, 12):
@@ -2028,12 +2038,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """Keep one-T14 / two-T12 boards on the second-Russia pair lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
+        if not reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
                 "SECOND_RUSSIA_T12_PAIR_LOCK",
                 "DEADLINE_GUARD_SECOND_RUSSIA_T12_PAIR_LOCK",
-            )
+            ),
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
@@ -2111,12 +2121,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """Keep one-T14 / single-T12 rebuild boards on the second-Russia lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
+        if not reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
                 "SECOND_RUSSIA_T12_LADDER",
                 "DEADLINE_GUARD_SECOND_RUSSIA_T12_LADDER",
-            )
+            ),
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
@@ -2236,12 +2246,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """Keep one-T14 / two-T13 boards on the second-T14 lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
+        if not reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
                 "FIRST_RUSSIA_T13_PAIR_LIFT",
                 "DEADLINE_GUARD_FIRST_RUSSIA_T13_PAIR_LIFT",
-            )
+            ),
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
@@ -2329,12 +2339,12 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         """Keep one-T14 / one-T13 / T12-bank boards on the second-T14 lane."""
         if not isinstance(candidate, dict):
             return None
-        if not any(
-            marker in reason_text
-            for marker in (
+        if not reason_tag_lib.has_any_marker(
+            decision_tags,
+            (
                 "FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT",
                 "DEADLINE_GUARD_FIRST_RUSSIA_SINGLE_T13_T12_BANK_LIFT",
-            )
+            ),
         ):
             return None
         pieces = (game_state or {}).get("pieces") or []
@@ -2448,15 +2458,14 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
 
     country_route_reason = (
         10 <= next_type <= 12
-        and (
-            "SAME_COUNTRY" in reason_text
-            or "RUSSIA_RESOURCE" in reason_text
-            or "UKRAINE_PAIR" in reason_text
+        and reason_tag_lib.has_any_marker(
+            decision_tags,
+            ("SAME_COUNTRY", "RUSSIA_RESOURCE", "UKRAINE_PAIR"),
         )
     )
     if (
         country_route_reason
-        and "ANCHOR_SECOND_T13_CONTACT_SHOT" not in reason_text
+        and not reason_tag_lib.has_marker(decision_tags, "ANCHOR_SECOND_T13_CONTACT_SHOT")
         and not urgent_direct_pressure
         and not urgent_merge_pressure
         and not risky_merge_result_deadline(chosen)
@@ -2472,18 +2481,18 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
 
     replacement_source = "generic"
     if (
-        "ANCHOR_SECOND_T13_CONTACT_SHOT" in reason_text
-        and "RUNTIME_DEADLINE_SAFETY_OVERRIDE" not in reason_text
+        reason_tag_lib.has_marker(decision_tags, "ANCHOR_SECOND_T13_CONTACT_SHOT")
+        and not reason_tag_lib.has_marker(decision_tags, "RUNTIME_DEADLINE_SAFETY_OVERRIDE")
     ):
         _birth_replacement = pre_russia_t13_pair_replacement_for(decision)
         if _birth_replacement is not None:
             _birth_x = max(GAME_X_MIN, min(GAME_X_MAX, float(_birth_replacement.get("x", chosen_x) or 0.0)))
             _birth_old_grade = chosen.get("merge_grade", "NO")
             _birth_new_grade = _birth_replacement.get("merge_grade", "NO")
-            return {
+            return reason_tag_lib.attach_reason_tags({
                 "x": _birth_x,
                 "reason": f"{reason_text}_RUNTIME_DEADLINE_SAFETY_OVERRIDE_{_birth_old_grade}_TO_{_birth_new_grade}_pre_russia_t13_pair_lane",
-            }
+            })
     # Keep this local definitely assigned on every branch; the static validator
     # treats the conditional above as a branch that can skip its first binding.
     _birth_replacement = None
@@ -2583,7 +2592,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
         not chosen.get("crosses_deadline", False)
         and chosen.get("merge_grade", "NO") == "NO"
         and safe
-        and "MEDIUM_TOWER" in str(decision.get("reason", "") or "")
+        and reason_tag_lib.has_marker(decision_tags, "MEDIUM_TOWER")
         and chosen_top >= deadline_y - 0.35
         and current_top_edge_y >= deadline_y - 1.40
     ):
@@ -2957,7 +2966,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
                 replacement_source = f"{replacement_source}_geometry_lower_postcondition"
 
     if (
-        "FIRST_RUSSIA_T13_PAIR_LIFT" in reason_text
+        reason_tag_lib.has_marker(decision_tags, "FIRST_RUSSIA_T13_PAIR_LIFT")
         and replacement.get("crosses_deadline", False)
         and replacement.get("merge_grade", "NO") == "NO"
         and not non_crossing_safe
@@ -3097,10 +3106,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
     # A decision that already carries the override marker must not grow the
     # suffix again — repeated application produced unbounded reason strings
     # that polluted game-history analytics (observed live 2026-11-15).
-    if "RUNTIME_DEADLINE_SAFETY_OVERRIDE" in reason:
+    if reason_tag_lib.has_marker(reason_tag_lib.parse_reason(reason), "RUNTIME_DEADLINE_SAFETY_OVERRIDE"):
         new_decision["reason"] = reason
     else:
         new_decision["reason"] = f"{reason}_{suffix}" if reason else suffix
+    reason_tag_lib.attach_reason_tags(new_decision)
     log(
         "RUNTIME_DEADLINE_SAFETY_OVERRIDE: "
         f"x={chosen_x:.2f}/{old_grade}/cross -> x={new_decision['x']:.2f}/{new_grade}"
@@ -3196,6 +3206,7 @@ def apply_merge_opportunity_policy(strategy_module, decision, analysis, game_sta
             out["merge_opportunity_trace"] = trace
             out["x"] = x
             out["reason"] = str(proposed.get("reason") or "MERGE_OPPORTUNITY")
+            reason_tag_lib.attach_reason_tags(out)
             return out
         if trace["attempts"]:
             out = dict(decision)

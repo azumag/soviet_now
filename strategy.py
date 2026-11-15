@@ -57,6 +57,7 @@ import math
 
 from strategy_helpers import board_stats
 from strategy_helpers import reactive_pair
+from strategy_helpers import reason_tags
 
 
 # --- v763: 落下後に「露出したまま残る型の数」を評価する（v757 SURFACE_DIVERSITY の再設計） ---
@@ -3462,11 +3463,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     base = _decide_base(game_state, analysis)
     try:
         reason = str(base.get("reason", ""))
+        reason_tags.attach_reason_tags(base)
         _reactor0 = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
-        _desperate0 = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(_reactor0.get("deadline_crossed"))
-        if "DIRECT_MERGE" in reason or "CHAIN_MERGE" in reason or "CLUSTER_SETUP" in reason:
+        _desperate0 = reason_tags.has_marker(base, "DEADLINE_GUARD_NO_VALID") or bool(_reactor0.get("deadline_crossed"))
+        if reason_tags.has_any_marker(base, ("DIRECT_MERGE", "CHAIN_MERGE", "CLUSTER_SETUP")):
             return base
-        if "DEADLINE_GUARD" in reason and not _desperate0:
+        if reason_tags.has_marker(base, "DEADLINE_GUARD") and not _desperate0:
             return base
         results = analysis.get("results") or []
         if any(str(q.get("merge_grade", "NO")) in ("DIRECT", "NEAR") for q in results):
@@ -3478,7 +3480,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         reactor = analysis.get("reactor") if isinstance(analysis.get("reactor"), dict) else {}
         # v747: 「有効な非超過候補が無い」(NO_VALID) か既に超過状態のときは、どうせ超過するので
         # 露出同型の真上（併合率 60%+）を優先する（desperate モード: margin/超過/壁回転フィルタを外す）。
-        _desperate = ("DEADLINE_GUARD_NO_VALID" in reason) or bool(reactor.get("deadline_crossed"))
+        _desperate = reason_tags.has_marker(base, "DEADLINE_GUARD_NO_VALID") or bool(reactor.get("deadline_crossed"))
         if not _desperate and float(reactor.get("deadline_margin", 99) or 99) < 2.0:
             return base
         if not results:
@@ -3509,8 +3511,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         out = dict(base)
         out["x"] = best[1]
         out["reason"] = reason + ("|OPEN_TWIN_MERGE_DESPERATE" if _desperate else "|OPEN_TWIN_MERGE")
+        reason_tags.attach_reason_tags(out)
         return out
     except Exception:
+        reason_tags.attach_reason_tags(base)
         return base
 
 
@@ -3585,16 +3589,15 @@ def merge_opportunity_alternatives(game_state, analysis, decision):
                     continue
                 pairs.append((lo, hi, bottom, top))
 
-        _reason = str(decision.get('reason', ''))
+        _reason_tags = reason_tags.tags_for_decision(decision)
         # "NO_MERGE" contains "MERGE" but marks an ordinary non-merge candidate,
         # which is exactly where the burial loss has to apply. Only a genuine
         # merge reason (a MERGE occurrence that is not part of NO_MERGE) keeps
-        # the hook away from the runtime choice.
-        _upper_reason = _reason.upper()
-        _merge_decision = (_upper_reason.count('MERGE') - _upper_reason.count('NO_MERGE')) > 0
-        _generic = not (_merge_decision or any(k in _reason for k in (
-            'RUSSIA', 'ANCHOR', 'CONTACT', 'OPEN_TWIN', 'DEADLINE_GUARD',
-            'DIRECT', 'PROBABLE')))
+        # the hook away from the runtime choice. Both branches and the
+        # non-generic inventory live in strategy_helpers/reason_tags.py (shared
+        # with tools/merge_burial_baseline.py) so the two cannot drift apart.
+        _merge_decision = reason_tags.is_merge_decision(_reason_tags)
+        _generic = reason_tags.is_generic(_reason_tags)
 
         def losses(q):
             px, py = float(q['x']), float(q['landing_y'])
@@ -3607,8 +3610,10 @@ def merge_opportunity_alternatives(game_state, analysis, decision):
             return gaps, cap
 
         old_losses = losses(chosen)
-        reason = str(decision.get('reason', ''))
-        keep_contact = ('OPEN_TWIN_MERGE' in reason and 'RUNTIME_DEADLINE_SAFETY_OVERRIDE' not in reason)
+        keep_contact = (
+            reason_tags.has_marker(_reason_tags, 'OPEN_TWIN_MERGE')
+            and not reason_tags.has_marker(_reason_tags, 'RUNTIME_DEADLINE_SAFETY_OVERRIDE')
+        )
         alternatives = []
         for q in results:
             qx, qy, risk = (float(q[k]) for k in ('x', 'landing_y', 'risk_top_y_after_drop'))

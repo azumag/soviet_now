@@ -825,6 +825,7 @@ import json
 import re
 import sys
 
+from lib import reason_tags
 from lib.country_names import country_named_reason, last_drop_turn_country_label
 
 path = sys.argv[1]
@@ -870,7 +871,7 @@ except Exception:
     labels = []
 labels = sorted(set(labels), key=len, reverse=True)
 
-matches = [label for label in labels if label and label in reason]
+matches = [label for label in labels if label and reason_tags.has_marker(reason, label)]
 noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
 decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
 if not decision:

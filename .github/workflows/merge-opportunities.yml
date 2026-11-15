@@ -24,6 +24,10 @@ on:
       - 'tests/test_buried_exposed_merge_candidate.py'
       - 'tests/test_merge_burial_baseline.py'
       - 'tools/merge_burial_baseline.py'
+      - 'lib/reason_tags.py'
+      - 'tests/test_reason_tags.py'
+      - 'tests/test_reason_tags_shadow.py'
+      - 'tests/test_reason_tags_runner.py'
       - 'tests/fixtures/merge_opportunities/**'
       - 'tests/test_v763_weight_constant.py'
       - '.github/workflows/merge-opportunities.yml'
@@ -52,6 +56,10 @@ on:
       - 'tests/test_buried_exposed_merge_candidate.py'
       - 'tests/test_merge_burial_baseline.py'
       - 'tools/merge_burial_baseline.py'
+      - 'lib/reason_tags.py'
+      - 'tests/test_reason_tags.py'
+      - 'tests/test_reason_tags_shadow.py'
+      - 'tests/test_reason_tags_runner.py'
       - 'tests/fixtures/merge_opportunities/**'
       - '.github/workflows/merge-opportunities.yml'
 permissions:
@@ -74,3 +82,4 @@ jobs:
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
           tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct
           tests.test_strategy_semantic_lint tests.test_v763_weight_constant
+          tests.test_reason_tags tests.test_reason_tags_shadow tests.test_reason_tags_runner

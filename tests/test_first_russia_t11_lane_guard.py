@@ -371,7 +371,14 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
         self.assertEqual(events, [("clip", False), ("guard", 0.1234)])
         self.assertEqual(
             decision,
-            {"x": 0.35, "reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID"},
+            {
+                "x": 0.35,
+                "reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
+                "reason_tags": {
+                    "main": "FIRST",
+                    "aux": ["RUSSIA", "T11", "LANE", "COVER", "AVOID"],
+                },
+            },
         )
 
 
