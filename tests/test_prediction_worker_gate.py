@@ -30,13 +30,15 @@ class PredictionWorkerGateTests(unittest.TestCase):
         cls.source = WORKER.read_text(encoding="utf-8")
         cls.functions = "\n\n".join(
             _extract_function(cls.source, name)
-            for name in ("_prediction_notice_mode", "_prediction_ab_test_running",
+            for name in ("_prediction_notice_mode", "_prediction_corner_active",
+                         "_prediction_ab_test_running",
                          "_prediction_cycle_start_allowed")
         )
         cls.prediction_source = PREDICTION_SCRIPT.read_text(encoding="utf-8")
         cls.create_context_function = "\n\n".join(
             _extract_function(cls.prediction_source, name)
-            for name in ("_prediction_notice_mode", "_prediction_create_context_allowed")
+            for name in ("_prediction_notice_mode", "_prediction_corner_active",
+                         "_prediction_create_context_allowed")
         )
 
     def run_gate(
@@ -50,6 +52,7 @@ class PredictionWorkerGateTests(unittest.TestCase):
         improve_lock=False,
         hot_streak=False,
         notice=None,
+        game_switch=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
@@ -63,6 +66,10 @@ class PredictionWorkerGateTests(unittest.TestCase):
             if notice is not None:
                 (docich_state / "next_corner.json").write_text(
                     json.dumps(notice), encoding="utf-8"
+                )
+            if game_switch is not None:
+                (docich_state / "game_switch.json").write_text(
+                    json.dumps(game_switch), encoding="utf-8"
                 )
             if ab_state:
                 (state_dir / "ab_state.json").write_text("{}", encoding="utf-8")
@@ -110,6 +117,7 @@ fi
         improve_lock=False,
         hot_streak=False,
         notice=None,
+        game_switch=None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             state_dir = Path(directory)
@@ -123,6 +131,10 @@ fi
             if notice is not None:
                 (docich_state / "next_corner.json").write_text(
                     json.dumps(notice), encoding="utf-8"
+                )
+            if game_switch is not None:
+                (docich_state / "game_switch.json").write_text(
+                    json.dumps(game_switch), encoding="utf-8"
                 )
             if count is not None:
                 (state_dir / "accumulated_games.json").write_text(
@@ -229,6 +241,14 @@ fi
             self.assertEqual(result.returncode, 0)
             return curl_log.read_text(encoding="utf-8") if curl_log.exists() else ""
 
+    def switch(self, game="sorengame", phase="ready"):
+        return {
+            "schema_version": 2,
+            "phase": phase,
+            "active": {"game": game,
+                       "adapter": "soren" if game == "sorengame" else game.split("-")[0]},
+        }
+
     def notice(self, hold, **extra):
         now = int(time.time())
         payload = {
@@ -265,6 +285,29 @@ fi
     def test_unknown_hold_blocks_a_new_prediction(self):
         self.assertEqual(self.run_gate(notice=self.notice("weather")), "blocked")
 
+    def test_running_corner_blocks_a_new_prediction(self):
+        self.assertEqual(
+            self.run_gate(game_switch=self.switch("paper-view")), "blocked"
+        )
+
+    def test_corner_blocks_even_during_the_pending_handoff(self):
+        self.assertEqual(
+            self.run_gate(notice=self.notice("prediction-pending"),
+                          game_switch=self.switch("paper-view")),
+            "blocked",
+        )
+
+    def test_switch_transition_or_failure_blocks_a_new_prediction(self):
+        for phase in ("draining", "stopping", "failed", "recovery_required"):
+            with self.subTest(phase=phase):
+                self.assertEqual(
+                    self.run_gate(game_switch=self.switch(phase=phase)), "blocked"
+                )
+
+    def test_soren_on_air_keeps_the_existing_gate(self):
+        self.assertEqual(self.run_gate(game_switch=self.switch()), "allowed")
+        self.assertEqual(self.run_gate(games=10, game_switch=self.switch()), "blocked")
+
     def test_creation_is_allowed_only_for_clean_48_game_cycle(self):
         self.assertEqual(self.run_gate(), "allowed")
         self.assertEqual(self.run_gate(threshold="12"), "blocked")
@@ -288,6 +331,23 @@ fi
             "decided_at": now, "updated_at": now,
         }
         self.assertEqual(self.run_create_context(count=0, notice=notice), "blocked")
+
+    def test_create_context_blocks_while_a_corner_is_on_air(self):
+        self.assertEqual(
+            self.run_create_context(count=0, game_switch=self.switch("paper-view")),
+            "blocked",
+        )
+        self.assertEqual(
+            self.run_create_context(
+                count=10, improve_status="running", improve_lock=True,
+                notice=self.notice("prediction-pending"),
+                game_switch=self.switch("paper-view"),
+            ),
+            "blocked",
+        )
+        self.assertEqual(
+            self.run_create_context(count=0, game_switch=self.switch()), "allowed"
+        )
 
     def test_create_context_pending_bypasses_acc_and_improvement_only(self):
         now = int(time.time())

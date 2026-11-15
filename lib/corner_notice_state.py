@@ -1,4 +1,4 @@
-"""Read docich's next-corner notice for Soren's prediction/improvement gates.
+"""Read docich's corner state for Soren's prediction/improvement gates.
 
 The corner rotation publishes ``next_corner.json`` next to its ledger. While a
 clock is promised there, the 48-game prediction must not start: its corner
@@ -7,15 +7,22 @@ corner the rotation may publish ``hold="prediction-pending"`` so the next
 prediction starts before a new clock is promised, and while the prediction is
 in flight it publishes ``hold="prediction"`` plus the round's remaining games.
 
+While a corner actually runs, ``game_switch.json`` names its view (for example
+``paper-view``) and no ``next_corner.json`` is out. A new prediction must wait
+there too: the Soren game is parked, so nobody is playing the promised 48
+matches. See :func:`corner_active`.
+
 This module deliberately does not import docich: the Soren worker only needs
-the bounded public projection, and an unreadable/missing notice means there is
-no promise (clear), so a broken projection cannot stall the game.
+the bounded public projections, and an unreadable/missing projection means
+there is no promise or corner proof (clear), so a broken projection cannot
+stall the game.
 """
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import time
 
@@ -33,6 +40,30 @@ DEFAULT_DOCICH_STATE_DIR = Path("/home/ubuntu/docich/run-soren-live")
 CORNER_LIMIT = 64
 LABEL_LIMIT = 40
 WHEN_LIMIT = 16
+# Canonical as-on-air projection. The Soren game is the only active game that
+# keeps its own 48-game cycle playable; every other active game is a corner
+# (or a failed/transitioning switch) that has parked the Soren loop.
+GAME_SWITCH_FILE = "game_switch.json"
+GAME_SWITCH_LIMIT = 262144
+SOREN_GAME = "sorengame"
+# Phases from the GameSwitch contract. An unknown phase means the file is not
+# a state this module understands, so it is treated as absent (fail-open)
+# rather than as a corner that would block every new prediction.
+GAME_SWITCH_PHASES = frozenset({
+    "idle",
+    "validating",
+    "preparing",
+    "draining",
+    "quiescing",
+    "starting",
+    "probing",
+    "committing",
+    "ready",
+    "stopping",
+    "rolling_back",
+    "failed",
+    "recovery_required",
+})
 
 
 def resolve_state_dir(value=None) -> Path:
@@ -120,13 +151,64 @@ def mode(state_dir=None, *, now=None) -> str:
     return "prediction"
 
 
+def _read_game_switch(state_dir=None):
+    """Read the bounded canonical game_switch projection, or ``None``.
+
+    A missing, unreadable, oversized, symlinked or non-object file is absent:
+    it is not proof that a corner owns the screen.
+    """
+    path = resolve_state_dir(state_dir) / GAME_SWITCH_FILE
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_size > GAME_SWITCH_LIMIT:
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def corner_active(state_dir=None) -> bool:
+    """True when a corner (not the Soren game) owns the on-air screen.
+
+    ``game_switch.json`` is the canonical projection of what docich is showing.
+    Only a readable record with a known phase counts:
+
+    * ``ready`` with ``active.game == "sorengame"`` is the playable Soren game;
+    * every other known phase is a corner, a recovery, or a switch in progress,
+      where a 48-game prediction has no game to cover;
+    * an unknown phase is treated as absent so a future/invalid shape cannot
+      block predictions forever (the next_corner gate still applies).
+    """
+    record = _read_game_switch(state_dir)
+    if record is None:
+        return False
+    phase = record.get("phase")
+    if phase not in GAME_SWITCH_PHASES:
+        return False
+    if phase != "ready":
+        return True
+    active = record.get("active")
+    if not isinstance(active, dict):
+        return True
+    game = active.get("game")
+    return not (isinstance(game, str) and game == SOREN_GAME)
+
+
 def prediction_blocked(state_dir=None, *, now=None) -> bool:
     """True when a new 48-game prediction must not start.
 
     ``pending`` is the one held state that permits a start: the rotation wants
     the next prediction to begin before it promises another clock. ``clear``
-    keeps the existing prediction gates in the worker/script.
+    keeps the existing prediction gates in the worker/script. A corner that is
+    running (``corner_active``) always blocks, including during ``pending``:
+    the next_corner notice is withdrawn as soon as the corner starts.
     """
+    if corner_active(state_dir):
+        return True
     return mode(state_dir, now=now) not in ("clear", "pending")
 
 
@@ -140,6 +222,9 @@ def main(argv=None) -> int:
     command = argv[0] if argv else "mode"
     if command == "mode":
         print(mode())
+        return 0
+    if command == "corner":
+        print("1" if corner_active() else "0")
         return 0
     if command == "blocked":
         target = argv[1] if len(argv) > 1 else ""

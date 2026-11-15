@@ -215,6 +215,7 @@ PY
 
 HOT_STREAK_PREDICTION_PENDING_FILE="$TMP_STATE_DIR/hot_streak_prediction_pending"
 _PREDICTION_NOTICE_LOGGED=""
+_PREDICTION_CORNER_LOGGED=""
 
 _prediction_notice_mode() {
 	# docich publishes the next-corner promise next to its rotation ledger.
@@ -226,6 +227,17 @@ _prediction_notice_mode() {
 	clear | time | pending | prediction | blocked) printf '%s\n' "$mode" ;;
 	*) printf 'clear\n' ;;
 	esac
+}
+
+_prediction_corner_active() {
+	# docich's canonical game_switch names a non-Soren view while a corner owns
+	# the screen (PAPER is ``paper-view``). The Soren loop is parked there, so
+	# a new 48-game prediction must wait for the game to come back. A missing
+	# or broken projection is not corner proof (fail-open): the next_corner
+	# gate still guards a promised clock.
+	local active
+	active=$(python3 lib/corner_notice_state.py corner 2>/dev/null) || return 1
+	[ "$active" = "1" ]
 }
 
 _prediction_cycle_start_allowed() {
@@ -252,6 +264,16 @@ _prediction_cycle_start_allowed() {
 	case "$_notice_mode" in
 	time | prediction | blocked) return 1 ;;
 	esac
+	# A running corner has no Soren game to cover: the next_corner notice is
+	# withdrawn at the same moment, so check the canonical on-air state too.
+	if _prediction_corner_active; then
+		if [ "$_PREDICTION_CORNER_LOGGED" != "1" ]; then
+			_log "予想作成スキップ: コーナー実行中"
+			_PREDICTION_CORNER_LOGGED=1
+		fi
+		return 1
+	fi
+	_PREDICTION_CORNER_LOGGED=0
 	_prediction_ab_test_running && return 1
 	[ ! -f "$HOT_STREAK_PREDICTION_PENDING_FILE" ] || return 1
 	if [ "$_notice_mode" = "pending" ]; then
