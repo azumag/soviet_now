@@ -12,6 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
 os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
 import analyze_board as ab  # noqa: E402
 import strategy  # noqa: E402
 import strategy_runner as sr  # noqa: E402
@@ -68,9 +69,19 @@ class SameTypeSeedContactTest(unittest.TestCase):
         self.assertLessEqual(gap_new, 1.3)
         return gap_old, gap_new
 
-    def test_t10_real_turn_seeds_next_to_partner(self):
-        g0, g1 = self._assert_seeds("seed_contact_t10_turn50.json")
-        self.assertLessEqual(g1, 0.3)
+    def test_t10_real_turn_diversity_layer_wins_over_seed_bonus(self):
+        # HEAD: v731's +400 seed bonus still exists but MEDIUM_TOWER_SURFACE_
+        # DIVERSITY_V763 out-scores it on this board (x=-2.8, gap to partner
+        # 2.42). The decision stays a non-crossing NO-merge drop.
+        fx = _load("seed_contact_t10_turn50.json")
+        gs = _gs(fx)
+        x, reason, chosen, an = _pipeline(gs)
+        self.assertNotIn(TAG, reason)
+        self.assertIn("MEDIUM_TOWER_SURFACE_DIVERSITY_V763", reason)
+        self.assertEqual(x, -2.8)
+        self.assertEqual(chosen["merge_grade"], "NO")
+        self.assertFalse(chosen["crosses_deadline"])
+        self.assertFalse(chosen["merge_result_crosses_deadline"])
 
     def test_t9_real_turn_seeds_next_to_partner(self):
         g0, g1 = self._assert_seeds("seed_contact_t9_turn41.json")

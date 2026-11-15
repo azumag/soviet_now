@@ -34,6 +34,41 @@ on:
       - 'tests/test_low_drop_high_lane_cover.py'
       - 'tests/fixtures/low_drop_cover_*.json'
       - 'tests/fixtures/seed_contact_t11_turn15.json'
+      - 'tests/test_anchor_lane_seed_contact.py'
+      - 'tests/test_decide_missing_defaults.py'
+      - 'tests/test_first_russia_t11_lane_guard.py'
+      - 'tests/test_merge_top_model.py'
+      - 'tests/test_post_russia_chain_cover.py'
+      - 'tests/test_pre_russia_chain_cover.py'
+      - 'tests/test_pre_russia_ukraine_pair_lane.py'
+      - 'tests/test_probable_merge_contact.py'
+      - 'tests/test_reactive_pair_helper.py'
+      - 'tests/test_reactive_pair_strategy_contract.py'
+      - 'tests/test_same_type_seed_contact.py'
+      - 'tests/test_strategy_accumulate_shadow.py'
+      - 'tests/test_strategy_run_journal.py'
+      - 'tests/test_strategy_runner_child_reaping.py'
+      - 'tests/test_surface_flatness_axis.py'
+      - 'tests/test_v744_exposure.py'
+      - 'tests/test_v748_seat_lanes.py'
+      - 'tests/test_v759_cover_tier.py'
+      - 'tests/test_v760_ceiling.py'
+      - 'tests/test_v762_roughness.py'
+      - 'tests/test_v763_diversity.py'
+      - 'tests/test_v764_nextnext_lane.py'
+      - 'tests/test_visible_same_country_contact.py'
+      - 'tests/fixtures/anchor_lane_*.json'
+      - 'tests/fixtures/first_russia_uzbekistan_turn67.json'
+      - 'tests/fixtures/manual_visible_*.json'
+      - 'tests/fixtures/merge_top_model_*.json'
+      - 'tests/fixtures/post_russia_chain_cover_turn130.json'
+      - 'tests/fixtures/pre_russia_chain_cover_turn57.json'
+      - 'tests/fixtures/pre_russia_ukraine_pair_*.json'
+      - 'tests/fixtures/probable_merge_*.json'
+      - 'tests/fixtures/seed_contact_*.json'
+      - 'tests/fixtures/v744_*.json'
+      - 'tests/fixtures/v748_*.json'
+      - 'tests/fixtures/vertical_lane_direct_*.json'
       - '.github/workflows/merge-opportunities.yml'
   push:
     branches: [main]
@@ -69,6 +104,41 @@ on:
       - 'tests/test_low_drop_high_lane_cover.py'
       - 'tests/fixtures/low_drop_cover_*.json'
       - 'tests/fixtures/seed_contact_t11_turn15.json'
+      - 'tests/test_anchor_lane_seed_contact.py'
+      - 'tests/test_decide_missing_defaults.py'
+      - 'tests/test_first_russia_t11_lane_guard.py'
+      - 'tests/test_merge_top_model.py'
+      - 'tests/test_post_russia_chain_cover.py'
+      - 'tests/test_pre_russia_chain_cover.py'
+      - 'tests/test_pre_russia_ukraine_pair_lane.py'
+      - 'tests/test_probable_merge_contact.py'
+      - 'tests/test_reactive_pair_helper.py'
+      - 'tests/test_reactive_pair_strategy_contract.py'
+      - 'tests/test_same_type_seed_contact.py'
+      - 'tests/test_strategy_accumulate_shadow.py'
+      - 'tests/test_strategy_run_journal.py'
+      - 'tests/test_strategy_runner_child_reaping.py'
+      - 'tests/test_surface_flatness_axis.py'
+      - 'tests/test_v744_exposure.py'
+      - 'tests/test_v748_seat_lanes.py'
+      - 'tests/test_v759_cover_tier.py'
+      - 'tests/test_v760_ceiling.py'
+      - 'tests/test_v762_roughness.py'
+      - 'tests/test_v763_diversity.py'
+      - 'tests/test_v764_nextnext_lane.py'
+      - 'tests/test_visible_same_country_contact.py'
+      - 'tests/fixtures/anchor_lane_*.json'
+      - 'tests/fixtures/first_russia_uzbekistan_turn67.json'
+      - 'tests/fixtures/manual_visible_*.json'
+      - 'tests/fixtures/merge_top_model_*.json'
+      - 'tests/fixtures/post_russia_chain_cover_turn130.json'
+      - 'tests/fixtures/pre_russia_chain_cover_turn57.json'
+      - 'tests/fixtures/pre_russia_ukraine_pair_*.json'
+      - 'tests/fixtures/probable_merge_*.json'
+      - 'tests/fixtures/seed_contact_*.json'
+      - 'tests/fixtures/v744_*.json'
+      - 'tests/fixtures/v748_*.json'
+      - 'tests/fixtures/vertical_lane_direct_*.json'
       - '.github/workflows/merge-opportunities.yml'
 permissions:
   contents: read
@@ -97,3 +167,15 @@ jobs:
           tests.test_low_drop_high_lane_cover
           tests.test_strategy_semantic_lint tests.test_v763_weight_constant
           tests.test_reason_tags tests.test_reason_tags_shadow tests.test_reason_tags_runner
+          tests.test_anchor_lane_seed_contact tests.test_decide_missing_defaults
+          tests.test_first_russia_t11_lane_guard tests.test_merge_top_model
+          tests.test_post_russia_chain_cover tests.test_pre_russia_chain_cover
+          tests.test_pre_russia_ukraine_pair_lane tests.test_probable_merge_contact
+          tests.test_reactive_pair_helper tests.test_reactive_pair_strategy_contract
+          tests.test_same_type_seed_contact tests.test_strategy_accumulate_shadow
+          tests.test_strategy_run_journal tests.test_strategy_runner_child_reaping
+          tests.test_surface_flatness_axis tests.test_v744_exposure
+          tests.test_v748_seat_lanes tests.test_v759_cover_tier
+          tests.test_v760_ceiling tests.test_v762_roughness
+          tests.test_v763_diversity tests.test_v764_nextnext_lane
+          tests.test_visible_same_country_contact
