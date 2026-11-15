@@ -212,6 +212,27 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             )
         )
 
+    def test_reverse_direction_lane_still_fires(self):
+        # When the primary member has no confirmed lane, pushing the partner
+        # toward it closes the same gap.
+        pieces = [
+            piece("t13-left", 13, -2.2, -2.0, 1.0),
+            piece("t13-right", 13, 1.1, -1.0, 1.0),
+        ]
+        results = [
+            candidate(-3.0, landing_hit_id="t13-left"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], -3.0)
+        self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
+
     def test_vertical_t13_pair_falls_through_to_horizontal_t12_pair(self):
         pieces = [
             piece("t13-buried", 13, 0.9, -3.5, 1.0),
