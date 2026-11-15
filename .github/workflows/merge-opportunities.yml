@@ -31,6 +31,7 @@ on:
       - 'tests/fixtures/merge_opportunities/**'
       - 'tests/test_v763_weight_constant.py'
       - 'tests/test_post_russia_contact.py'
+      - 'tests/test_low_drop_high_lane_cover.py'
       - '.github/workflows/merge-opportunities.yml'
   push:
     branches: [main]
@@ -63,6 +64,7 @@ on:
       - 'tests/test_reason_tags_runner.py'
       - 'tests/fixtures/merge_opportunities/**'
       - 'tests/test_post_russia_contact.py'
+      - 'tests/test_low_drop_high_lane_cover.py'
       - '.github/workflows/merge-opportunities.yml'
 permissions:
   contents: read
@@ -88,5 +90,6 @@ jobs:
           tests.test_runner_direct_cross_hook tests.test_post_first_russia_pair_tether
           tests.test_post_first_russia_lane_cover tests.test_vertical_lane_direct
           tests.test_post_russia_contact
+          tests.test_low_drop_high_lane_cover
           tests.test_strategy_semantic_lint tests.test_v763_weight_constant
           tests.test_reason_tags tests.test_reason_tags_shadow tests.test_reason_tags_runner
