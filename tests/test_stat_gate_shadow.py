@@ -139,8 +139,8 @@ def _run_check_regression(td, mode, timeout=60):
             f"check_regression failed (mode={mode})\nstdout={res.stdout}\nstderr={res.stderr}")
     text = res.stdout
     text = text.split("OUT_START", 1)[1].rsplit("OUT_END", 1)[0]
-    # Strip leading [HH:MM:SS] timestamps so the comparison is content-only.
-    lines = [re.sub(r"^\[\d{2}:\d{2}:\d{2}\] ", "", ln) for ln in text.splitlines()]
+    # Strip leading [YYYY-MM-DD HH:MM:SS] timestamps so the comparison is content-only.
+    lines = [re.sub(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ", "", ln) for ln in text.splitlines()]
     return lines
 
 

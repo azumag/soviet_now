@@ -1581,6 +1581,30 @@ def _decide_base(game_state: dict, analysis: dict) -> dict:
                 key=lambda c: (0 if c.get("danger_direct_merge_available") else 1, float(c.get("risk_top_y_after_drop", 99.0) or 99.0), float(c.get("landing_y", 99.0) or 99.0)),
             )
             return {"x": float(__dlg_best.get("x", -1.7617) or -1.759), "reason": "DEADLINE_GUARD_DIRECT_MERGE_CROSSING"}
+        # issue #864: pre/post-Russia 接触ショットは「マージが無い手の安全な着地」を
+        # 分離ペア押し合いへ変換する設計だが、デッドラインガードが臨界盤面で全て早返し
+        # するため、まさに設計対象の終盤 (margin<0.78 / 超過中) では到達不能だった
+        # (実戦 26 試合で発火 0)。安全な DIRECT/NEAR・v747 の交差 DIRECT は上で既に
+        # 優先済みなので、ここで残るのは受動的な着地だけ — 接触ショットを先に試す。
+        __dlg_contact = _select_post_russia_contact_candidate(
+            __dlg_game_state.get("pieces", []),
+            __dlg_cands,
+            (__dlg_game_state.get("next") or {}).get("type", -1)
+            if isinstance(__dlg_game_state.get("next"), dict)
+            else -1,
+            _as_float((__dlg_game_state.get("next") or {}).get("r"), 0.5)
+            if isinstance(__dlg_game_state.get("next"), dict)
+            else 0.5,
+        )
+        if __dlg_contact is not None:
+            __dlg_selected, __dlg_reason = __dlg_contact
+            return {
+                "x": round(
+                    max(-3.0, min(3.0, _as_float(__dlg_selected.get("x"), 0.0))),
+                    4,
+                ),
+                "reason": __dlg_reason,
+            }
         #        Even when __dlg_has_clean=False, NO_MERGE crossing placements violate mandatory_themes
         __dlg_safe_no_merge = [
             c for c in __dlg_cands

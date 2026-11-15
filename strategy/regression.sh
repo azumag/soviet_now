@@ -3473,11 +3473,11 @@ _orig_print = print
 
 
 def _emit_statgate(legacy_label):
-    """Print a single STATGATE: key=value line (observational). Never raises.
+    r"""Print a single STATGATE: key=value line (observational). Never raises.
 
     The format uses `legacy= stat= agree=` key=value pairs (not JSON) so the
     design's shadow aggregation one-liner works verbatim:
-        grep '\[STATGATE\]' <log> | sed 's/.*legacy=\([A-Z]*\).*stat=\([A-Z_]*\).*/\\1 \\2/' | sort | uniq -c
+        grep '\[STATGATE\]' <log> | sed 's/.*legacy=\([A-Z]*\).*stat=\([A-Z_]*\).*/\1 \2/' | sort | uniq -c
     """
     if not _statgate_enabled:
         return

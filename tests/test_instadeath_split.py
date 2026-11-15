@@ -76,10 +76,12 @@ PY
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")
 
     def test_rolling_log_line_format_unchanged(self):
+        # NOTE: log() のタイムスタンプは #870 項目1 で [HH:MM:SS] から
+        # [YYYY-MM-DD HH:MM:SS] へ変わった。行の残りの書式は不変であること。
         with tempfile.TemporaryDirectory() as td:
             script = _preamble(td) + """\
-                ROLLING_SCORE_STRATEGY_HASH=h1 update_rolling_scores 10000 '' 2>&1 | grep -E '^\\[[0-9:]+\\] \\[ROLLING\\] updated: hash=h1 n=1 total=1 score=10000 file=$'
-                _update_current_strategy_run h1 10000 '' 2>&1 | grep -E '^\\[[0-9:]+\\] \\[CURRENT-RUN\\] updated: hash=h1 n=1 total=1 score=10000 file=$'
+                ROLLING_SCORE_STRATEGY_HASH=h1 update_rolling_scores 10000 '' 2>&1 | grep -E '^\\[[0-9-]+ [0-9:]+\\] \\[ROLLING\\] updated: hash=h1 n=1 total=1 score=10000 file=$'
+                _update_current_strategy_run h1 10000 '' 2>&1 | grep -E '^\\[[0-9-]+ [0-9:]+\\] \\[CURRENT-RUN\\] updated: hash=h1 n=1 total=1 score=10000 file=$'
                 """
             result = _run(script)
             self.assertEqual(result.returncode, 0, msg=f"stdout={result.stdout}\nstderr={result.stderr}")

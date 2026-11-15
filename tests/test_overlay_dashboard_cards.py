@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from lib.overlay_dashboard_cards import (
+    _load_docich_dashboard_cards,
     _root_disk_metric,
     dashboard_css,
     render_game_dashboard,
@@ -217,6 +218,14 @@ Last8: 4100 4800 5300 5100 6200 6800 7200 8080"""
                     with patch.dict(os.environ, {"SOREN_DIRECT_AV_SYNC_STATE_FILE": str(state)}):
                         html = render_ops_dashboard("  HEALTH\n    ● Workers     9/9 ONLINE")
                 self.assertNotIn("AVSync FAILED", html)
+
+    def test_load_docich_dashboard_cards_returns_none_on_unreadable_root(self):
+        # Path.is_file() only swallows ENOENT/ENOTDIR; an untraversable
+        # DOCICH_ROOT (e.g. EACCES on a CI runner) must fall back, not fail
+        # the import (#891).
+        with patch.dict(os.environ, {"DOCICH_ROOT": "/nonexistent-root"}):
+            with patch.object(Path, "is_file", side_effect=PermissionError(13, "Permission denied")):
+                self.assertIsNone(_load_docich_dashboard_cards())
 
 
 if __name__ == "__main__":
