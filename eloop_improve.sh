@@ -1579,9 +1579,12 @@ except Exception:
 print(data.get("reason") or "")
 PY
 )
-				if [ "${wildcard_parallel_fail_reason:-}" = "infra_failed" ] && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1" ]; then
-					log "[WILDCARD] parallel infra_failed → direct wildcard perturb fallback"
-					_improve_progress "wildcard" "30" "parallel_infra_failed_direct_fallback"
+				if { [ "${wildcard_parallel_fail_reason:-}" = "infra_failed" ] || [ "${wildcard_parallel_fail_reason:-}" = "infra_circuit_open" ]; } && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1" ]; then
+					# #868: infra_circuit_open は同日同シグネチャの infra_failed 反復で
+					# wildcard_parallel.py 側がスロット起動を抑止したケース。脱出自体は
+					# direct perturb で継続する。
+					log "[WILDCARD] parallel ${wildcard_parallel_fail_reason:-infra_failed} → direct wildcard perturb fallback"
+					_improve_progress "wildcard" "30" "parallel_${wildcard_parallel_fail_reason:-infra_failed}_direct_fallback"
 					wildcard_parallel_cleanup_sessions
 					wildcard_parallel_restore_once
 					wildcard_parallel_fallback_direct=1

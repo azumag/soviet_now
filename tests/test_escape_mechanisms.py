@@ -2374,14 +2374,133 @@ class TestWildcardReasonProcessBoundary(unittest.TestCase):
         improve = (REPO_ROOT / "eloop_improve.sh").read_text()
 
         self.assertIn('wildcard_parallel_fail_reason=$(python3 - "$wildcard_parallel_result_file"', improve)
-        self.assertIn('= "infra_failed" ] && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1"', improve)
-        self.assertIn("parallel infra_failed → direct wildcard perturb fallback", improve)
+        self.assertIn('= "infra_failed" ]', improve)
+        self.assertIn('= "infra_circuit_open" ]', improve)
+        self.assertIn('[ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1"', improve)
+        self.assertIn("→ direct wildcard perturb fallback", improve)
         self.assertIn("wildcard_parallel_fallback_direct=1", improve)
         self.assertIn('if [ "${wildcard_parallel_fallback_direct:-0}" != "1" ]; then', improve)
         self.assertLess(
-            improve.index("parallel infra_failed → direct wildcard perturb fallback"),
+            improve.index("→ direct wildcard perturb fallback"),
             improve.rindex('HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE"'),
         )
+
+    def test_wildcard_parallel_infra_circuit_stops_same_day_same_signature(self):
+        """#868: 同日に同じ失敗シグネチャの infra_failed が閾値に達したら回路を開く。"""
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "wildcard_failures.jsonl"
+            # 任意のTZで「同日昼」になる固定エポックを使い日付境界の flake を避ける
+            now = time.mktime(time.strptime("2026-11-15 12:00:00", "%Y-%m-%d %H:%M:%S"))
+            row = {
+                "ts": now - 60,
+                "ok": False,
+                "reason": "infra_failed",
+                "failures": [
+                    {
+                        "job_id": "cand-1",
+                        "status": "failed",
+                        "error": "bridge exited rc=1 | stderr: process did exit: signal=SIGTRAP cpufreq/scaling_max_freq: No such file or directory",
+                        "games": 0,
+                    }
+                ],
+            }
+            for _ in range(3):
+                with log_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(row) + "\n")
+
+            opened, signature, count = wildcard_parallel.infra_circuit_state(log_path, now=now, max_same=3)
+            self.assertTrue(opened)
+            self.assertEqual(count, 3)
+            self.assertIn("SIGTRAP", signature)
+
+            opened, _, _ = wildcard_parallel.infra_circuit_state(log_path, now=now, max_same=4)
+            self.assertFalse(opened)
+
+    def test_wildcard_parallel_infra_circuit_ignores_other_days_and_reasons(self):
+        """#868: 前日の失敗や infra_failed 以外の行は同日回路の判定材料にしない。"""
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "wildcard_failures.jsonl"
+            now = time.mktime(time.strptime("2026-11-15 12:00:00", "%Y-%m-%d %H:%M:%S"))
+            yesterday = now - 86400
+            failure = {
+                "job_id": "cand-1",
+                "status": "failed",
+                "error": "bridge exited rc=1 | stderr: signal=SIGTRAP",
+                "games": 0,
+            }
+            rows = [
+                {"ts": yesterday, "reason": "infra_failed", "failures": [failure]},
+                {"ts": yesterday - 3600, "reason": "infra_failed", "failures": [failure]},
+                {"ts": yesterday - 7200, "reason": "infra_failed", "failures": [failure]},
+                {"ts": now - 60, "reason": "no_candidate", "failures": [failure]},
+                {"ts": now - 30, "reason": "infra_circuit_open", "failures": []},
+            ]
+            log_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+            opened, _, _ = wildcard_parallel.infra_circuit_state(log_path, now=now, max_same=3)
+            self.assertFalse(opened)
+
+            # 同日に2件だけなら max_same=2 で開く
+            rows[0]["ts"] = now - 120
+            rows[1]["ts"] = now - 90
+            log_path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+            opened, signature, count = wildcard_parallel.infra_circuit_state(log_path, now=now, max_same=2)
+            self.assertTrue(opened)
+            self.assertEqual(count, 2)
+
+    def test_wildcard_parallel_infra_circuit_is_fail_open_on_missing_or_bad_log(self):
+        """#868: ログ欠損・壊れ行だけでは試行を止めない。"""
+        import wildcard_parallel
+
+        with tempfile.TemporaryDirectory() as td:
+            missing = Path(td) / "nope.jsonl"
+            self.assertEqual(
+                wildcard_parallel.infra_circuit_state(missing),
+                (False, "", 0),
+            )
+            bad = Path(td) / "bad.jsonl"
+            bad.write_text("{not json\n\n{}\n", encoding="utf-8")
+            self.assertEqual(
+                wildcard_parallel.infra_circuit_state(bad),
+                (False, "", 0),
+            )
+
+    def test_wildcard_parallel_infra_failure_signature_normalizes(self):
+        """#868: 同一原因は同じシグネチャに正規化され、空入力は空を返す。"""
+        import wildcard_parallel
+
+        sig_a = wildcard_parallel.infra_failure_signature(
+            "bridge exited rc=1 | stderr: process did exit: signal=SIGTRAP"
+        )
+        sig_b = wildcard_parallel.infra_failure_signature(
+            "bridge exited rc=1 | stderr: process did exit: signal=SIGTRAP"
+        )
+        self.assertEqual(sig_a, sig_b)
+        self.assertIn("SIGTRAP", sig_a)
+        self.assertEqual(wildcard_parallel.infra_failure_signature(""), "")
+
+    def test_wildcard_parallel_infra_circuit_hooked_before_slot_launch(self):
+        """#868: 回路判定はスロット生成・bridge 起動より前に行う。"""
+        parallel = (REPO_ROOT / "wildcard_parallel.py").read_text()
+        config = (REPO_ROOT / "core" / "config.sh").read_text()
+        status = (REPO_ROOT / "show_status.sh").read_text()
+
+        self.assertIn("infra_circuit_state(", parallel)
+        self.assertIn('"reason": "infra_circuit_open"', parallel)
+        self.assertIn("WILDCARD_PARALLEL_INFRA_CIRCUIT_ENABLED", parallel)
+        self.assertIn("WILDCARD_PARALLEL_INFRA_CIRCUIT_MAX_SAME", parallel)
+        # 回路判定が run_perturb による候補生成より前にあること
+        self.assertLess(
+            parallel.index("infra_circuit_state("),
+            parallel.index("run_perturb(args, index, session_dir)"),
+        )
+        self.assertIn('export WILDCARD_PARALLEL_INFRA_CIRCUIT_ENABLED="${WILDCARD_PARALLEL_INFRA_CIRCUIT_ENABLED:-1}"', config)
+        self.assertIn('export WILDCARD_PARALLEL_INFRA_CIRCUIT_MAX_SAME="${WILDCARD_PARALLEL_INFRA_CIRCUIT_MAX_SAME:-3}"', config)
+        self.assertIn('"infra_circuit_open"', status)
 
     def test_obs_control_supports_wildcard_parallel_transform(self):
         """OBS helper は wildcardParallelOverlay を表示し、候補6面を3列x2行に配置できる。"""
