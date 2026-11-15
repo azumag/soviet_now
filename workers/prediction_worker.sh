@@ -229,12 +229,13 @@ _prediction_notice_mode() {
 	esac
 }
 
-_prediction_corner_active() {
-	# docich's canonical game_switch names a non-Soren view while a corner owns
-	# the screen (PAPER is ``paper-view``). The Soren loop is parked there, so
-	# a new 48-game prediction must wait for the game to come back. A missing
-	# or broken projection is not corner proof (fail-open): the next_corner
-	# gate still guards a promised clock.
+_prediction_corner_busy() {
+	# docich's canonical state names a corner in two windows: a confirmed slot
+	# that is about to start (corner_rotation.json pending/manual_pending) and
+	# the corner's own view on air (game_switch.json active.game != sorengame,
+	# PAPER is ``paper-view``). The Soren loop is parked for both, so a new
+	# 48-game prediction must wait. A missing/broken projection is fail-open:
+	# the next_corner gate still guards a promised clock.
 	local active
 	active=$(python3 lib/corner_notice_state.py corner 2>/dev/null) || return 1
 	[ "$active" = "1" ]
@@ -264,11 +265,12 @@ _prediction_cycle_start_allowed() {
 	case "$_notice_mode" in
 	time | prediction | blocked) return 1 ;;
 	esac
-	# A running corner has no Soren game to cover: the next_corner notice is
-	# withdrawn at the same moment, so check the canonical on-air state too.
-	if _prediction_corner_active; then
+	# A running (or just-confirmed) corner has no Soren game to cover: the
+	# next_corner notice is withdrawn at the same moment, so check the
+	# canonical pending/on-air state too.
+	if _prediction_corner_busy; then
 		if [ "$_PREDICTION_CORNER_LOGGED" != "1" ]; then
-			_log "予想作成スキップ: コーナー実行中"
+			_log "予想作成スキップ: コーナー実行中/開始準備中"
 			_PREDICTION_CORNER_LOGGED=1
 		fi
 		return 1

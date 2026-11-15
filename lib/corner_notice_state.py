@@ -46,6 +46,12 @@ WHEN_LIMIT = 16
 GAME_SWITCH_FILE = "game_switch.json"
 GAME_SWITCH_LIMIT = 262144
 SOREN_GAME = "sorengame"
+# Canonical rotation ledger. A confirmed slot keeps ``pending`` (or
+# ``manual_pending``) until the corner actually starts, and the next-corner
+# notice is withdrawn at the same moment; this is the only projection that
+# covers the gap between the two.
+ROTATION_FILE = "corner_rotation.json"
+ROTATION_SCHEMA = 1
 # Phases from the GameSwitch contract. An unknown phase means the file is not
 # a state this module understands, so it is treated as absent (fail-open)
 # rather than as a corner that would block every new prediction.
@@ -151,24 +157,28 @@ def mode(state_dir=None, *, now=None) -> str:
     return "prediction"
 
 
-def _read_game_switch(state_dir=None):
-    """Read the bounded canonical game_switch projection, or ``None``.
+def _read_state_file(state_dir, name, limit):
+    """Read one bounded state projection, or ``None``.
 
     A missing, unreadable, oversized, symlinked or non-object file is absent:
-    it is not proof that a corner owns the screen.
+    it is not proof of a corner.
     """
-    path = resolve_state_dir(state_dir) / GAME_SWITCH_FILE
+    path = resolve_state_dir(state_dir) / name
     try:
         info = path.lstat()
     except OSError:
         return None
-    if not stat.S_ISREG(info.st_mode) or info.st_size > GAME_SWITCH_LIMIT:
+    if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, UnicodeError):
         return None
     return raw if isinstance(raw, dict) else None
+
+
+def _read_game_switch(state_dir=None):
+    return _read_state_file(state_dir, GAME_SWITCH_FILE, GAME_SWITCH_LIMIT)
 
 
 def corner_active(state_dir=None) -> bool:
@@ -198,16 +208,35 @@ def corner_active(state_dir=None) -> bool:
     return not (isinstance(game, str) and game == SOREN_GAME)
 
 
+def corner_pending(state_dir=None) -> bool:
+    """True while a corner slot is confirmed and about to start.
+
+    The dispatcher sets ``pending``/``manual_pending`` in
+    ``corner_rotation.json`` and withdraws ``next_corner.json`` at the same
+    time, then waits for the game boundary / audio before the game switch.
+    A new prediction created in that gap would be open when the corner appears.
+    A missing/invalid ledger is not proof of a slot (fail-open).
+    """
+    record = _read_state_file(state_dir, ROTATION_FILE, GAME_SWITCH_LIMIT)
+    if record is None or record.get("schema_version") != ROTATION_SCHEMA:
+        return False
+    for key in ("pending", "manual_pending"):
+        value = record.get(key)
+        if isinstance(value, dict) and value:
+            return True
+    return False
+
+
 def prediction_blocked(state_dir=None, *, now=None) -> bool:
     """True when a new 48-game prediction must not start.
 
-    ``pending`` is the one held state that permits a start: the rotation wants
-    the next prediction to begin before it promises another clock. ``clear``
-    keeps the existing prediction gates in the worker/script. A corner that is
-    running (``corner_active``) always blocks, including during ``pending``:
-    the next_corner notice is withdrawn as soon as the corner starts.
+    ``pending`` is the one held notice state that permits a start: the rotation
+    wants the next prediction to begin before it promises another clock.
+    ``clear`` keeps the existing prediction gates in the worker/script. A
+    running corner (``corner_active``) or a confirmed slot that has not started
+    yet (``corner_pending``) always blocks, including during that notice hold.
     """
-    if corner_active(state_dir):
+    if corner_active(state_dir) or corner_pending(state_dir):
         return True
     return mode(state_dir, now=now) not in ("clear", "pending")
 
@@ -224,7 +253,7 @@ def main(argv=None) -> int:
         print(mode())
         return 0
     if command == "corner":
-        print("1" if corner_active() else "0")
+        print("1" if (corner_active() or corner_pending()) else "0")
         return 0
     if command == "blocked":
         target = argv[1] if len(argv) > 1 else ""
