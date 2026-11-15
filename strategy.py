@@ -388,14 +388,6 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     first_key = (_as_float(first.get("y"), -10.0), abs(_as_float(first.get("x"), 0.0)))
     second_key = (_as_float(second.get("y"), -10.0), abs(_as_float(second.get("x"), 0.0)))
     target, other = (first, second) if first_key >= second_key else (second, first)
-    target_x = _as_float(target.get("x"), 0.0)
-    other_x = _as_float(other.get("x"), 0.0)
-    direction = 1.0 if target_x >= other_x else -1.0
-    target_radius = max(0.1, _as_float(target.get("r"), 1.0))
-    shot_x = target_x + direction * (
-        target_radius + max(0.35, _as_float(next_radius, 0.5))
-    )
-    shot_x = max(-3.0, min(3.0, shot_x))
 
     safe_no_merge = [
         candidate for candidate in results
@@ -408,34 +400,67 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     if not safe_no_merge:
         return None
 
-    # New analyzer results expose the first shape-aware collision target.
-    # Require the setup drop to actually hit the selected mobile piece.  The
-    # compatibility fallback is only for older/synthetic result payloads that
-    # do not carry landing_hit_id at all.
-    target_id = target.get("id")
-    target_hits = [
-        candidate for candidate in safe_no_merge
-        if candidate.get("landing_hit_id") == target_id
-    ]
-    if target_hits:
-        safe_no_merge = target_hits
-    elif any("landing_hit_id" in candidate for candidate in safe_no_merge):
-        return None
-    elif pre_russia_t13_setup or pre_russia_t12_setup:
-        # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
-        # 旧ペイロード互換フォールバックで発火させると、既存の
-        # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
-        return None
+    def _lane_for(pusher, pushed):
+        """Return the confirmed drop that shoves pusher toward pushed."""
+        pusher_x = _as_float(pusher.get("x"), 0.0)
+        pushed_x = _as_float(pushed.get("x"), 0.0)
+        direction = 1.0 if pusher_x >= pushed_x else -1.0
+        pusher_radius = max(0.1, _as_float(pusher.get("r"), 1.0))
+        shot_x = pusher_x + direction * (
+            pusher_radius + max(0.35, _as_float(next_radius, 0.5))
+        )
+        shot_x = max(-3.0, min(3.0, shot_x))
+        hits = [
+            candidate for candidate in safe_no_merge
+            if candidate.get("landing_hit_id") == pusher.get("id")
+        ]
+        if not hits:
+            return None
+        pick = min(
+            hits,
+            key=lambda candidate: (
+                abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+                _as_float(candidate.get("landing_y"), 99.0),
+            ),
+        )
+        if abs(_as_float(pick.get("x"), 0.0) - shot_x) > 0.75:
+            return None
+        return pick
 
-    selected = min(
-        safe_no_merge,
-        key=lambda candidate: (
-            abs(_as_float(candidate.get("x"), 0.0) - shot_x),
-            _as_float(candidate.get("landing_y"), 99.0),
-        ),
-    )
-    if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
-        return None
+    # New analyzer results expose the first shape-aware collision target.
+    # Require the setup drop to actually hit the mobile piece.  When the
+    # primary member has no confirmed lane, pushing the partner toward it
+    # closes the same gap — try both directions before giving up.
+    selected = _lane_for(target, other)
+    if selected is None:
+        selected = _lane_for(other, target)
+
+    if selected is None:
+        if any("landing_hit_id" in candidate for candidate in safe_no_merge):
+            return None
+        if pre_russia_t13_setup or pre_russia_t12_setup:
+            # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
+            # 旧ペイロード互換フォールバックで発火させると、既存の
+            # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
+            return None
+        # Compatibility fallback for payloads without landing_hit_id.
+        target_x = _as_float(target.get("x"), 0.0)
+        other_x = _as_float(other.get("x"), 0.0)
+        direction = 1.0 if target_x >= other_x else -1.0
+        target_radius = max(0.1, _as_float(target.get("r"), 1.0))
+        shot_x = target_x + direction * (
+            target_radius + max(0.35, _as_float(next_radius, 0.5))
+        )
+        shot_x = max(-3.0, min(3.0, shot_x))
+        selected = min(
+            safe_no_merge,
+            key=lambda candidate: (
+                abs(_as_float(candidate.get("x"), 0.0) - shot_x),
+                _as_float(candidate.get("landing_y"), 99.0),
+            ),
+        )
+        if abs(_as_float(selected.get("x"), 0.0) - shot_x) > 0.75:
+            return None
 
     if selected_type == 15:
         reason = "SOVIET_T15_CONTACT_SHOT"
