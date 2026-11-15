@@ -331,7 +331,10 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         and type14_count < 2
         and not pre_russia_t13_setup
         and not pre_russia_t12_setup
-    ) or next_type < 8:
+    # 実測: ペア存在+健全盤面の適格ターンの約30%が next_type 6-7。
+    # 小弾でも山が安定していれば確証ヒットで押し出せるため閾値を緩和
+    # (2026-11-15 観測 95 turns @>=8 vs 41 turns @6-7)。
+    ) or next_type < 6:
         return None
 
     # Never spend an immediate, safe merge opportunity on a setup impact.
