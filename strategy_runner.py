@@ -990,6 +990,9 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
 
     if isinstance(decision.get("merge_opportunity_trace"), dict):
         record["merge_opportunity_trace"] = decision["merge_opportunity_trace"]
+    if isinstance(decision.get("contact_shot_trace"), dict):
+        # issue #894: issue #890 の landing_hit_id 不一致を再計算なしで切り分ける。
+        record["contact_shot_trace"] = decision["contact_shot_trace"]
 
     if russia_created:
         record["russia_created"] = True
@@ -3150,6 +3153,13 @@ def apply_strategy_final_decision(strategy_module, decision, analysis, game_stat
         return decision
     finalized = dict(finalized)
     finalized["x"] = final_x
+    if (
+        "contact_shot_trace" not in finalized
+        and isinstance(decision.get("contact_shot_trace"), dict)
+    ):
+        # issue #894: finalize_decision が新しい dict を返しても、
+        # その手の接触ショット判定根拠は失わない。
+        finalized["contact_shot_trace"] = decision["contact_shot_trace"]
     # Strategy postconditions may only refine a safe decision; they must never
     # become a way around the runtime's deadline and shape invariants.  Re-run
     # the complete safety pass because an analyzer-safe lane can still be

@@ -1,4 +1,6 @@
 import copy
+import io
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -402,6 +404,14 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
                 "reason_tags": {
                     "main": "POST",
                     "aux": ["RUSSIA", "T12", "CONTACT", "SHOT"],
+                },
+                "contact_shot_trace": {
+                    "target_id": "t12-right",
+                    "shot_x": 3.0,
+                    "target_hit_safe": True,
+                    "target_hit_unsafe": False,
+                    "first_hit_other": False,
+                    "first_hit_floor": False,
                 },
             },
         )
@@ -882,6 +892,133 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(decision["x"], 3.0)
         self.assertEqual(decision["reason"], "POST_RUSSIA_T12_CONTACT_SHOT")
+
+
+class ContactShotTraceTest(unittest.TestCase):
+    """issue #894: the compact trace must explain the #890 rejection bucket."""
+
+    def setUp(self):
+        self.pieces = [
+            piece("russia", 15, -2.0, -2.7, 1.35),
+            piece("t12-left", 12, 0.0, -2.0, 0.9),
+            piece("t12-right", 12, 2.2, -1.5, 0.9),
+        ]
+        self.results = [
+            candidate(-2.0),
+            candidate(0.0),
+            candidate(3.0, landing_hit_id="t12-right"),
+        ]
+
+    def trace_for(self, results, next_type=10):
+        trace = {}
+        selected = strategy._select_post_russia_contact_candidate(
+            self.pieces, results, next_type, 0.5, trace
+        )
+        return selected, trace
+
+    def test_trace_records_safe_target_hit(self):
+        selected, trace = self.trace_for(self.results)
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(
+            trace,
+            {
+                "target_id": "t12-right",
+                "shot_x": 3.0,
+                "target_hit_safe": True,
+                "target_hit_unsafe": False,
+                "first_hit_other": False,
+                "first_hit_floor": False,
+            },
+        )
+        self.assertEqual(len(trace), 6)
+
+    def test_trace_flags_unsafe_target_hit(self):
+        results = [
+            candidate(3.0, margin=0.2, landing_hit_id="t12-right"),
+            candidate(0.0, landing_hit_id="russia"),
+        ]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertFalse(trace["target_hit_safe"])
+        self.assertTrue(trace["target_hit_unsafe"])
+        self.assertFalse(trace["first_hit_other"])
+        self.assertFalse(trace["first_hit_floor"])
+
+    def test_trace_flags_covered_target(self):
+        results = [
+            candidate(3.0, landing_hit_id="russia"),
+            candidate(0.0, landing_hit_id="t12-left"),
+        ]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertFalse(trace["target_hit_safe"])
+        self.assertFalse(trace["target_hit_unsafe"])
+        self.assertTrue(trace["first_hit_other"])
+        self.assertFalse(trace["first_hit_floor"])
+
+    def test_trace_flags_floor_landing(self):
+        floor = candidate(3.0)
+        floor["landing_hit_id"] = None
+        results = [floor, candidate(0.0, landing_hit_id="russia")]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertFalse(trace["target_hit_safe"])
+        self.assertFalse(trace["target_hit_unsafe"])
+        self.assertFalse(trace["first_hit_other"])
+        self.assertTrue(trace["first_hit_floor"])
+
+    def test_trace_is_recorded_when_safe_merge_wins(self):
+        results = self.results + [candidate(1.5, grade="DIRECT")]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertTrue(trace["target_hit_safe"])
+
+    def test_trace_flags_safe_target_hit_outside_the_window(self):
+        # The 6-hand bucket in #890: the target is reachable, but only far
+        # from the computed shot lane, so the selector rejects on distance.
+        results = [
+            candidate(-3.0, landing_hit_id="t12-right"),
+            candidate(0.0, landing_hit_id="russia"),
+        ]
+    def test_finalize_decision_preserves_trace(self):
+        class Finalizer:
+            def finalize_decision(self, game_state, analysis, decision):
+                return {"x": decision["x"], "reason": "TEST_FINALIZED"}
+
+        analysis = {
+            "results": self.results,
+            "reactor": {
+                "deadline_margin": 1.5,
+                "deadline_crossed": False,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+        game_state = {
+            "pieces": self.pieces,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+        }
+        _, trace = self.trace_for(self.results)
+        decision = {"x": 3.0, "reason": "TEST", "contact_shot_trace": trace}
+
+        result = strategy_runner.apply_strategy_final_decision(
+            Finalizer(), decision, analysis, game_state
+        )
+
+        self.assertEqual(result["x"], 3.0)
+        self.assertEqual(result["contact_shot_trace"], trace)
 
 
 if __name__ == "__main__":
