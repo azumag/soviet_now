@@ -257,6 +257,7 @@ _AST_GATE_ALLOWED_IMPORT_MODULES = {
     "math", "random", "typing", "dataclasses", "itertools", "functools",
     "collections", "statistics", "enum",
     "json", "sys",  # __main__ ガード内のCLIスモークテストのみで使用
+    "re", "__future__",  # strategy_helpers/reason_tags.py (#901) が使用する stdlib
     "strategy_helpers", "analyze_board",
 }
 
