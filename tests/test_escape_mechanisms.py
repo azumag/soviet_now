@@ -4036,10 +4036,11 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
                     },
                 )
 
-            low_decision = decide_with_high_landing(1.14)
-            high_decision = decide_with_high_landing(1.16)
+            low_decision = decide_with_high_landing(0.2)
+            high_decision = decide_with_high_landing(1.0)
 
-            self.assertEqual(low_decision["x"], -2.8)
+            self.assertEqual(low_decision["x"], 1.2)
+            self.assertEqual(low_decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_TOWER_DEGRADE_NEXTNEXT_ACCESS')
             self.assertEqual(high_decision["x"], -2.8)
             self.assertEqual(high_decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_HIGH_TOWER')
 
@@ -4695,7 +4696,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
                 "deadline_crossed": False,
                 "pieces": pieces,
                 "next": {"type": 11},
-                "nextNext": {"type": 3},
+                "nextNext": {"type": 5},
             },
             {
                 "reactor": {"deadline_margin": 2.0, "reactive_pairs": []},
@@ -4725,8 +4726,8 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
-        self.assertEqual(decision["x"], 3.0)
-        self.assertEqual(decision["reason"], 'HIGH_LAYER')
+        self.assertEqual(decision["x"], -1.2)
+        self.assertEqual(decision["reason"], 'HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
     def test_pre_russia_single_t13_no_t12_rebuild_feeds_low_type_to_rebuild_lane(self):
         import strategy
@@ -7314,7 +7315,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertEqual(decision["x"], 2.8)
         self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_SAME_TYPE_SEED_CONTACT_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER')
 
-    def test_pre_russia_single_t12_anchor_ladder_avoids_high_direct_t11_merge(self):
+    def test_pre_russia_single_t12_anchor_ladder_low_lane_seed_beats_high_direct_t11_merge(self):
         import strategy
 
         pieces = [
@@ -7371,6 +7372,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
             },
         )
 
+        self.assertNotEqual(decision["x"], -0.7)
         self.assertEqual(decision["x"], -3.0)
         self.assertEqual(decision["reason"], 'T12_CHAIN_LANE_GUIDANCE_HIGH_LAYER_SURFACE_DIVERSITY_V763')
 
