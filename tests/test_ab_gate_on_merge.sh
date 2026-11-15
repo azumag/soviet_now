@@ -2,7 +2,7 @@
 # tests/test_ab_gate_on_merge.sh - unit tests for strategy/ab_gate_on_merge.sh
 #
 # Covers the active-A/B detector: file-based state, live toggle, .env flag,
-# pause, lock, and abort markers. Exit codes 0 (clear) / 1 (active) / 2
+# pause, and abort markers. Exit codes 0 (clear) / 1 (active) / 2
 # (unknown) are exercised.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,10 +56,6 @@ scenario_improve_paused() {
 	mkdir -p tmp/state
 	touch tmp/state/improve_daemon.paused
 }
-scenario_improve_lock() {
-	mkdir -p tmp/state
-	touch tmp/state/improve.lock
-}
 scenario_regression_disabled() {
 	echo 'REGRESSION_DISABLED=1' > .env
 }
@@ -67,9 +63,6 @@ scenario_unreadable_state() {
 	mkdir -p tmp/state
 	printf '%s' '{"a_hash":"AAA"}' > tmp/state/ab_state.json
 	chmod 000 tmp/state/ab_state.json
-}
-cleanup_unreadable() {
-	chmod 644 tmp/state/ab_state.json
 }
 
 # --- 1) no state, no toggles --------------------------------------------
@@ -90,18 +83,24 @@ run_check "alt-strategy-set" scenario_alt_strategy_set 1
 # --- 6) improve daemon paused ----------------------------------------------------
 run_check "improve-daemon-paused" scenario_improve_paused 1
 
-# --- 7) improve lock -------------------------------------------------------------
-run_check "improve-lock" scenario_improve_lock 1
-
-# --- 8) REGRESSION_DISABLED=1 in .env ---------------------------------------------
+# --- 7) REGRESSION_DISABLED=1 in .env ---------------------------------------------
 run_check "regression-disabled" scenario_regression_disabled 1
 
-# --- 9) empty state file -> clear (no a_hash/b_hash, no crash) ---------------------------------
+# --- 8) empty state file -> clear (no a_hash/b_hash, no crash) ---------------------------------
 scenario_empty_state() {
 	mkdir -p tmp/state
 	: > tmp/state/ab_state.json
 }
 run_check "empty-state" scenario_empty_state 0
+
+# --- 9) unreadable state file -> rc=2 (fail-closed, not a silent clear) ------------------------
+# chmod 000 is only effective for a non-root runner: root can still read the
+# file, so skip there instead of asserting an environment-specific result.
+if [ "$(id -u)" -eq 0 ]; then
+	printf 'skip unreadable-state (running as root: chmod 000 stays readable)\n'
+else
+	run_check "unreadable-state" scenario_unreadable_state 2
+fi
 
 echo
 if [ "$RES" -eq 0 ]; then echo "ALL ok"; else echo "SOME FAILED"; fi

@@ -28,10 +28,14 @@ The check looks at:
    - `SOREN_AB_ALT_STRATEGY` non-empty (live arm selected)
    - `.env` `REGRESSION_DISABLED=1`
    - `tmp/state/improve_daemon.paused`
-   - `tmp/state/improve.lock`
 
-These are the same markers the A/B interleaving layer uses to declare an
-experiment active. Any one is sufficient to report "active".
+Any one is sufficient to report "active". `improve.lock` is intentionally not
+a signal: its real path is `tmp/improve.lock`, not `tmp/state/`, and the
+repository convention treats it as a game-history data file that is normally
+present. `ab_interleave.sh` requires "pause present AND improve.lock absent"
+for an A/B, so a present lock is evidence *against* an A/B, not for one.
+`REGRESSION_DISABLED=1` is not A/B-exclusive (it has been used to freeze other
+improvements); over-detection is accepted because the gate is fail-closed.
 
 ### Where it must run
 
@@ -43,6 +47,8 @@ experiment active. Any one is sufficient to report "active".
   applied).
 
 Fail-closed: exit 2 (unknown) and exit 1 (active) both abort the merge/reflect.
+An `ab_state.json` that exists but cannot be read returns 2 rather than
+falling through to the remaining signals.
 
 ### Note on CI
 

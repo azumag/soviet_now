@@ -18,7 +18,13 @@
 #     selected for the next game)
 #   - .env carries REGRESSION_DISABLED=1 (the A/B gate is enabled)
 #   - tmp/state/improve_daemon.paused exists (improve paused for A/B)
-#   - tmp/state/improve.lock exists (improve stopped, A/B occupies the loop)
+#
+# Deliberately NOT a signal: improve.lock. The real path is
+# tmp/improve.lock (core/config.sh: IMPROVE_LOCK_FILE), not tmp/state/, and
+# the repository convention treats it as a game-history data file that is
+# normally present, so it cannot mark an A/B (lib/ai_generate.sh,
+# broadcast/radio_engine.sh). ab_interleave.sh actually requires
+# "improve_daemon.paused present AND improve.lock absent" for A/B.
 #
 # Runtime hooks (source with AB_STATE_FILE, AB_ENV_FILE, and the tmp/state
 # directory already configured, or call check_without_state():
@@ -39,7 +45,7 @@ set -u
 
 _ab_gate_on_merge_file_exists() {
 	[ -f "$1" ] || return 1
-	# unreadable or empty-ish state files are fail-closed (2)
+	# unreadable state file -> indeterminate, fail-closed (2)
 	if [ ! -r "$1" ]; then return 2; fi
 	local n
 	n=$(wc -c < "$1" 2>/dev/null || echo 0)
@@ -64,7 +70,15 @@ _ab_gate_on_merge_check() {
 	local rc=0
 
 	# 1) recorded experiment: ab_state.json with a_hash/b_hash and no abort
-	if _ab_gate_on_merge_file_exists "$AB_STATE_FILE"; then
+	local file_rc=0
+	_ab_gate_on_merge_file_exists "$AB_STATE_FILE" || file_rc=$?
+	if [ "$file_rc" -eq 2 ]; then
+		# present but unreadable: fail-closed, do not fall through to the
+		# other (possibly clear) signals.
+		AB_GATE_ON_MERGE_RC=2
+		return 0
+	fi
+	if [ "$file_rc" -eq 0 ]; then
 		local a b
 		a=$(_ab_gate_on_merge_contains "$AB_STATE_FILE" "a_hash")
 		b=$(_ab_gate_on_merge_contains "$AB_STATE_FILE" "b_hash")
@@ -86,6 +100,10 @@ _ab_gate_on_merge_check() {
 	fi
 
 	# 3) gate enabled in .env
+	# REGRESSION_DISABLED=1 is not an A/B-exclusive marker (it has been used
+	# to freeze other improvements too), so this signal can over-detect. That
+	# is accepted here: the gate is fail-closed and an unnecessary block is
+	# preferable to merging under a live A/B.
 	if [ -f "$AB_ENV_FILE" ]; then
 		if grep -Eq "^REGRESSION_DISABLED=(1|true|TRUE)" "$AB_ENV_FILE" 2>/dev/null; then
 			AB_GATE_ON_MERGE_RC=1
@@ -95,12 +113,6 @@ _ab_gate_on_merge_check() {
 
 	# 4) improve paused for A/B
 	if [ -f "${TMP_STATE_DIR:-tmp/state}/improve_daemon.paused" ]; then
-		AB_GATE_ON_MERGE_RC=1
-		return 0
-	fi
-
-	# 5) alt strategy in flight (improve stopped, A/B occupies the loop)
-	if [ -f "${TMP_STATE_DIR:-tmp/state}/improve.lock" ]; then
 		AB_GATE_ON_MERGE_RC=1
 		return 0
 	fi
@@ -120,7 +132,8 @@ _ab_gate_on_merge_status() {
 }
 
 _ab_gate_on_merge_help() {
-	sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+	# print the leading comment block (kept in sync automatically)
+	awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 _ab_gate_on_merge_main() {
