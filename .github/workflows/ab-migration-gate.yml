@@ -1,0 +1,39 @@
+name: A/B migration gate
+
+on:
+  pull_request:
+    paths:
+      - 'strategy/ab_gate_on_merge.sh'
+      - 'tests/test_ab_gate_on_merge.sh'
+      - '.github/workflows/ab-migration-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'strategy/ab_gate_on_merge.sh'
+      - 'tests/test_ab_gate_on_merge.sh'
+      - '.github/workflows/ab-migration-gate.yml'
+  # Fail-closed guard: any strategy.py PR is also surfaced as a warning that
+  # the merge-side A/B check must run at the orchestrator boundary.
+
+jobs:
+  # --- script + unit-test gate ---
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: bash -n strategy/ab_gate_on_merge.sh && echo OK-syntax
+      - run: bash tests/test_ab_gate_on_merge.sh
+      - name: info - tmp/state is not in the repo
+        run: |
+          echo "NOTE: tmp/state/ab_state.json and ab_alt_strategy.py are runtime"
+          echo "artifacts (gitignored), so CI cannot see them. The merge/reflection"
+          echo "boundary MUST call strategy/ab_gate_on_merge.sh before merge/reflection;"
+          echo "this CI only validates the gate's syntax and logic."
+      - name: info - runtime enforcement point
+        run: |
+          echo "The orchestrator MUST run 'strategy/ab_gate_on_merge.sh check' before"
+          echo "reflecting a strategy.py change; exit 1 means an A/B is active."
+          echo "See docs/ab-migration-gate.md."
