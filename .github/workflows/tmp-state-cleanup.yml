@@ -1,0 +1,22 @@
+name: tmp/state orphan cleanup (#869)
+on:
+  pull_request:
+    paths: ['eloop_improve.sh', 'strategy/improve.sh', 'start_all.sh', 'show_status.sh', 'improve_daemon.sh', 'tests/test_tmp_state_cleanup_869.py', '.github/workflows/tmp-state-cleanup.yml']
+  push:
+    branches: [main]
+    paths: ['eloop_improve.sh', 'strategy/improve.sh', 'start_all.sh', 'show_status.sh', 'improve_daemon.sh', 'tests/test_tmp_state_cleanup_869.py', '.github/workflows/tmp-state-cleanup.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest tests.test_tmp_state_cleanup_869 -v
+      - run: bash -n eloop_improve.sh
+      - run: bash -n strategy/improve.sh
+      - run: bash -n start_all.sh
+      - run: bash -n show_status.sh
+      - run: bash -n improve_daemon.sh

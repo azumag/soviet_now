@@ -659,9 +659,79 @@ PY
 	fi
 }
 
+# soviet_now#869: 起動時に tmp/state の孤児一時ファイルを回収する。
+# tmp/state は docich と共有のため、以下の allowlist パターンだけを対象とし、
+# 持ち主の判定ができないものは残す (fail-closed)。shadow-once-* は
+# docich の operator receipt のため対象外。improve_daemon_stall.json は
+# improve_daemon 側の回復記録（項目4）に任せる。
+# - worker_duplicates.ps.<pid>.txt / show_status_worker_ps.<pid>.txt:
+#   <pid> が死んでいれば孤児。生きていてもコマンドが start_all.sh /
+#   show_status.sh でなければ PID 再利用とみなし孤児。ps が読めない等
+#   判定不能なら残す。
+# - eloop_improve_runtime.*.sh: live worker の cmdline に無ければ孤児。
+# - host_integrity_before.*: PID 情報が無いため live eloop_improve
+#   worker がゼロのときだけ孤児。
+# 全パターンに age floor (-mmin +60、TMP_STATE_ORPHAN_MIN_AGE_MIN で変更可)
+# を付け、作成直後の writer とのレースを避ける。
+_cleanup_orphan_tmp_state_files() {
+	local state_dir="tmp/state"
+	local age_min="${TMP_STATE_ORPHAN_MIN_AGE_MIN:-60}"
+	local file pid cmd base
+	[ -d "$state_dir" ] || return 0
+	case "$age_min" in ''|*[!0-9]*) age_min=60 ;; esac
+
+	# --- <pid> 付き ps スナップショット ---
+	for file in "$state_dir"/worker_duplicates.ps.*.txt "$state_dir"/show_status_worker_ps.*.txt; do
+		[ -f "$file" ] || continue
+		[ -n "$(find "$file" -mmin +"$age_min" -print 2>/dev/null)" ] || continue
+		# ファイル名末尾の .<pid>.txt から PID を抜く
+		#（worker_duplicates.ps.<pid>.txt / show_status_worker_ps.<pid>.txt 両対応）。
+		pid="${file%.txt}"
+		pid="${pid##*.}"
+		case "$pid" in ''|*[!0-9]*) continue ;; esac
+		if kill -0 "$pid" 2>/dev/null; then
+			cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+			case "$cmd" in
+			*start_all.sh*|*show_status.sh*) continue ;;
+			"") continue ;; # ps が読めない = 判定不能 → 残す
+			esac
+			# ここに来るのは「PID は生きているが別コマンド」= PID 再利用
+		fi
+		_log "孤児一時ファイルを削除: $file (pid=$pid)"
+		rm -f "$file" 2>/dev/null || true
+	done
+
+	# --- eloop_improve_runtime.*.sh ---
+	for file in "$state_dir"/eloop_improve_runtime.*.sh; do
+		[ -f "$file" ] || continue
+		[ -n "$(find "$file" -mmin +"$age_min" -print 2>/dev/null)" ] || continue
+		base="$(basename "$file")"
+		# live worker の cmdline に basename があれば使用中とみなす
+		#（pgrep は自身を除外するため自己一致しない）。
+		if pgrep -f -- "$base" >/dev/null 2>&1; then
+			continue
+		fi
+		_log "孤児一時ファイルを削除: $file (live improve worker なし)"
+		rm -f "$file" 2>/dev/null || true
+	done
+
+	# --- host_integrity_before.* ---
+	# PID 情報が無いため、live eloop_improve worker がいるときは全て残す。
+	if pgrep -f 'eloop_improve' >/dev/null 2>&1; then
+		return 0
+	fi
+	for file in "$state_dir"/host_integrity_before.*; do
+		[ -f "$file" ] || continue
+		[ -n "$(find "$file" -mmin +"$age_min" -print 2>/dev/null)" ] || continue
+		_log "孤児一時ファイルを削除: $file (live improve worker なし)"
+		rm -f "$file" 2>/dev/null || true
+	done
+}
+
 # --- 起動時クリーンアップ ---
 rm -f tmp/stop
 mkdir -p tmp/state logs 2>/dev/null || true
+_cleanup_orphan_tmp_state_files
 
 # 多重起動防止
 if [ -f "$PID_FILE" ]; then
@@ -830,6 +900,10 @@ _cleanup() {
 	if [ -z "$active_pid" ] || [ "$active_pid" = "$$" ]; then
 		rm -f "$PID_FILE"
 	fi
+	# soviet_now#869: 自分が書いた worker_duplicates ps スナップショットを
+	# 消す（_detect_worker_duplicates の作成→削除の間に kill された残骸用）。
+	# $$ は supervisor 自身の PID で一意のため他プロセスのファイルに触れない。
+	rm -f "tmp/state/worker_duplicates.ps.$$.txt" 2>/dev/null || true
 	_log "supervisor 終了"
 }
 

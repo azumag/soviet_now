@@ -3124,7 +3124,9 @@ if [[ "$SHOW_STATUS_LATEST_DROP_ONLY" == "1" ]]; then
 	exit 0
 fi
 printf '\033[?25l'          # カーソル非表示
-trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
+# soviet_now#869: _worker_duplicates_from_ps_fallback の作成→削除の間に
+# kill された残骸を EXIT/INT/TERM 時に消す。$$ は自プロセスの PID で一意。
+trap 'rm -f "tmp/state/show_status_worker_ps.$$.txt" 2>/dev/null || true; printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア
 if [[ "$SHOW_STATUS_ONCE" == "1" ]]; then
 	_render_status_once

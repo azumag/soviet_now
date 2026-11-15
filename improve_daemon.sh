@@ -156,11 +156,61 @@ _daemon_cleanup() {
 trap '_daemon_cleanup' INT TERM
 _start_pid_heartbeat
 
+# soviet_now#869: supervisor が stall 判定で書いた improve_daemon_stall.json
+# を、daemon 自身の (再) 起動時に回復として更新する。status=stalled のまま
+# 残ると状態を読む人や監視を誤らせる。stalled_at は残し、recovered_at を
+# 併記する（status 値の追加・削除は診断専用ファイルのため安全）。
+# 原子上書き (tmp + os.replace)。判定不能・書込失敗時は残す (fail-closed)。
+_mark_improve_daemon_recovered() {
+	local stall_file="tmp/state/improve_daemon_stall.json"
+	[ -f "$stall_file" ] || return 0
+	grep -q '"status"[[:space:]]*:[[:space:]]*"stalled"' "$stall_file" 2>/dev/null || return 0
+	python3 - "$stall_file" <<'PY' 2>/dev/null || true
+import json
+import os
+import sys
+import time
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        data = {}
+except Exception:
+    data = {}
+if data.get("status") in ("ok", "recovered"):
+    raise SystemExit(0)
+now = int(time.time())
+stalled_at = data.get("stalled_at")
+if not isinstance(stalled_at, int):
+    updated = data.get("updated_at")
+    stalled_at = updated if isinstance(updated, int) else now
+new_data = {
+    "status": "recovered",
+    "updated_at": now,
+    "stalled_at": stalled_at,
+    "recovered_at": now,
+}
+if isinstance(data.get("pid"), int):
+    new_data["pid"] = data["pid"]
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(new_data, f, ensure_ascii=False, sort_keys=True)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+_mark_improve_daemon_recovered
+
 while true; do
 	if [ -f tmp/stop ]; then
 		echo "[$(date '+%H:%M:%S')] [improve_daemon] stop検出 → 終了"
 		break
 	fi
+
+	# stall 判定で kill されずに生き残った場合も、poll 毎に回復を記録する。
+	_mark_improve_daemon_recovered
 
 	# モジュール再読み込み（改善中に書き換わる可能性がある）。docich#4144: 読み込む
 	# ファイルが変わった時か WORKER_RELOAD_MAX_AGE_SEC 経過時だけ行う。

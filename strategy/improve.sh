@@ -3055,6 +3055,12 @@ _start_improvement_job() {
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
 		IMPROVE_PID=0
+		# soviet_now#869: 起動失敗時は runtime script のスナップショットが
+		# 残る。bash -n 失敗時と同型の case-guarded な削除を行う
+		#（cp 失敗時のフォールバック eloop_improve.sh 本体には当たらない）。
+		case "$runtime_script" in
+		"$runtime_root"/tmp/state/eloop_improve_runtime.*.sh) rm -f "$runtime_script" 2>/dev/null || true ;;
+		esac
 		_release_spawn_lock
 		return 1
 	fi
