@@ -1735,6 +1735,9 @@ PY
 # 判定は取り込み側が IRC の login から付けた identity metadata の flags=self だけで行い、
 # 表示名の一致や本文中の自己申告(「私はDoCiAI」等)では判定しない。
 # identity が不明・欠落した行は自己扱いせず、返信対象側に残す (#2373)。
+# ただし trusted-card (カード獲得通知) は投稿主が自分でも、獲得した視聴者への
+# 通知であり、返信対象に残す。自己投稿として文脈だけに送ると、ガチャ結果への
+# 返信が生成されない (2026-11-15)。
 _split_self_comment_batch() {
 	local batch_file="$1"
 	local metadata_file="$2"
@@ -1786,7 +1789,8 @@ for index, line in enumerate(lines):
         "line": line,
     }
     # メタデータと本文の対応を保ったまま、行ごとに所属を決める。
-    if "self" in entry["flags"]:
+    # trusted-card は自分名義の投稿でも返信対象にする (獲得した視聴者への通知)。
+    if "self" in entry["flags"] and "trusted-card" not in entry["flags"]:
         entry["line_index"] = len(self_lines)
         self_lines.append(line)
         self_entries.append(entry)

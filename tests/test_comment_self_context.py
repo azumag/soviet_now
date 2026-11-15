@@ -137,13 +137,31 @@ class CommentSelfContextTests(unittest.TestCase):
         self.assertEqual(out["self"], [])
         self.assertEqual(out["context"], "（なし）")
 
-    def test_trusted_card_self_line_keeps_both_flags(self):
+    def test_trusted_card_self_line_remains_a_reply_target(self):
         lines = ["aliceが【レア】赤いカードを獲得しました"]
         entries = [_entry(0, lines[0], login="dociai", flags=["self", "trusted-card"])]
         out = self._run(lines, entries)
-        self.assertEqual(out["reply"], [])
-        self.assertEqual(out["self"], lines)
-        self.assertEqual(out["self_meta"][0]["flags"], ["self", "trusted-card"])
+        # 自分名義でもカード獲得通知は獲得した視聴者への通知なので返信対象に残す。
+        self.assertEqual(out["reply"], lines)
+        self.assertEqual(out["self"], [])
+        self.assertEqual(out["reply_meta"][0]["flags"], ["self", "trusted-card"])
+        self.assertEqual(out["context"], "（なし）")
+
+    def test_trusted_card_stays_reply_while_plain_self_moves(self):
+        lines = [
+            "dociai: レトロゲームコーナーを開始します。",
+            "aliceが【レア】赤いカードを獲得しました",
+        ]
+        entries = [
+            _entry(0, lines[0], login="dociai", flags=["self"]),
+            _entry(1, lines[1], login="dociai", flags=["self", "trusted-card"]),
+        ]
+        out = self._run(lines, entries)
+        self.assertEqual(out["reply"], ["aliceが【レア】赤いカードを獲得しました"])
+        self.assertEqual(out["self"], ["dociai: レトロゲームコーナーを開始します。"])
+        self.assertEqual(out["reply_meta"][0]["flags"], ["self", "trusted-card"])
+        self.assertIn("レトロゲームコーナーを開始します。", out["context"])
+        self.assertNotIn("獲得しました", out["context"])
 
     def test_empty_self_batch_renders_none(self):
         lines = ["alice: こんにちは"]
