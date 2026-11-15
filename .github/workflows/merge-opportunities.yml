@@ -32,6 +32,8 @@ on:
       - 'tests/test_v763_weight_constant.py'
       - 'tests/test_post_russia_contact.py'
       - 'tests/test_low_drop_high_lane_cover.py'
+      - 'tests/fixtures/low_drop_cover_*.json'
+      - 'tests/fixtures/seed_contact_t11_turn15.json'
       - '.github/workflows/merge-opportunities.yml'
   push:
     branches: [main]
@@ -65,6 +67,8 @@ on:
       - 'tests/fixtures/merge_opportunities/**'
       - 'tests/test_post_russia_contact.py'
       - 'tests/test_low_drop_high_lane_cover.py'
+      - 'tests/fixtures/low_drop_cover_*.json'
+      - 'tests/fixtures/seed_contact_t11_turn15.json'
       - '.github/workflows/merge-opportunities.yml'
 permissions:
   contents: read
