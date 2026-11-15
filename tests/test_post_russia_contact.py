@@ -394,7 +394,17 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         decision = strategy.decide(game_state, analysis)
 
-        self.assertEqual(decision, {"x": 3.0, "reason": "POST_RUSSIA_T12_CONTACT_SHOT"})
+        self.assertEqual(
+            decision,
+            {
+                "x": 3.0,
+                "reason": "POST_RUSSIA_T12_CONTACT_SHOT",
+                "reason_tags": {
+                    "main": "POST",
+                    "aux": ["RUSSIA", "T12", "CONTACT", "SHOT"],
+                },
+            },
+        )
         final_decision = strategy_runner.enforce_deadline_safety(
             decision, analysis, game_state
         )
@@ -485,7 +495,17 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         decision = strategy.decide(game_state, analysis)
 
-        self.assertEqual(decision, {"x": -2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"})
+        self.assertEqual(
+            decision,
+            {
+                "x": -2.0,
+                "reason": "DEADLINE_GUARD_SAFE_LANDING",
+                "reason_tags": {
+                    "main": "DEADLINE_GUARD",
+                    "aux": ["SAFE_LANDING"],
+                },
+            },
+        )
 
     def test_deadline_guard_keeps_pre_russia_default_boundary(self):
         game_state = {
@@ -512,7 +532,14 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(
             decision,
-            {"x": 0.0, "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID"},
+            {
+                "x": 0.0,
+                "reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID",
+                "reason_tags": {
+                    "main": "NO_MERGE",
+                    "aux": ["DEADLINE_GUARD", "NO_VALID"],
+                },
+            },
         )
 
     def test_deadline_guard_preserves_e5_far_choice_before_russia(self):
@@ -539,7 +566,14 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(
             decision,
-            {"x": -2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+            {
+                "x": -2.0,
+                "reason": "DEADLINE_GUARD_SAFE_LANDING",
+                "reason_tags": {
+                    "main": "DEADLINE_GUARD",
+                    "aux": ["SAFE_LANDING"],
+                },
+            },
         )
 
     def test_deadline_guard_uses_safe_no_merge_after_russia(self):
@@ -566,7 +600,14 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(
             decision,
-            {"x": 2.0, "reason": "DEADLINE_GUARD_SAFE_LANDING"},
+            {
+                "x": 2.0,
+                "reason": "DEADLINE_GUARD_SAFE_LANDING",
+                "reason_tags": {
+                    "main": "DEADLINE_GUARD",
+                    "aux": ["SAFE_LANDING"],
+                },
+            },
         )
 
     def test_deadline_guard_uses_lowest_risk_real_candidate_when_all_cross(self):
@@ -596,7 +637,14 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(
             decision,
-            {"x": -2.0, "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS"},
+            {
+                "x": -2.0,
+                "reason": "NO_MERGE_DEADLINE_GUARD_MINIMAL_CROSS",
+                "reason_tags": {
+                    "main": "NO_MERGE",
+                    "aux": ["DEADLINE_GUARD", "MINIMAL_CROSS"],
+                },
+            },
         )
 
     def test_final_clip_uses_the_full_board_before_russia(self):

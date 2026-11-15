@@ -21,6 +21,7 @@ from collections import Counter, defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from lib import reason_tags  # noqa: E402
 from strategy_helpers import board_stats as bs  # noqa: E402
 
 hr, tr, br = bs.seed_horiz_radius, bs.seed_top_radius, bs.seed_bottom_radius
@@ -92,7 +93,7 @@ def analyze(files, since=None, hashes=None):
         for a, c in zip(L, L[1:]):
             r = a.get("decision_reason", "")
             for tag in ("SAME_TYPE_SEED_CONTACT", "ANCHOR_LANE_SEED_CONTACT"):
-                if tag in r:
+                if reason_tags.has_marker(r, tag):
                     s["tags"][tag] += 1
             if a.get("best_merge_grade") == "DIRECT":
                 s["direct"] += 1

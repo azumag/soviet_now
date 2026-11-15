@@ -20,6 +20,7 @@ from collections import Counter
 from glob import glob
 from pathlib import Path
 
+from lib import reason_tags
 from lib.ai_backoff_status import load_status as load_ai_backoff_status
 from lib.country_names import (
     country_name,
@@ -1486,7 +1487,7 @@ def load_latest_drop():
         labels = []
     labels = sorted(set(labels), key=len, reverse=True)
 
-    matches = [label for label in labels if label and label in reason]
+    matches = [label for label in labels if label and reason_tags.has_marker(reason, label)]
     noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
     decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
     if not decision:

@@ -30,25 +30,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import strategy  # noqa: E402  (read-only geometry import; decide() is not called)
 
-SPECIFIC_KEYS = ('RUSSIA', 'ANCHOR', 'CONTACT', 'OPEN_TWIN', 'DEADLINE_GUARD',
-                 'DIRECT', 'PROBABLE', 'MERGE')
+from lib.reason_tags import SPECIFIC_KEYS, is_generic as _registry_is_generic  # noqa: E402
 
 
 def is_generic(reason: str) -> bool:
-    """Mirrors merge_opportunity_alternatives after soviet_now PR #681: a MERGE
-    occurrence that belongs to NO_MERGE is not a merge decision."""
-    low = reason or ''
-    for key in SPECIFIC_KEYS:
-        idx = 0
-        while True:
-            idx = low.find(key, idx)
-            if idx < 0:
-                break
-            if key == 'MERGE' and low[max(0, idx - 3):idx] == 'NO_':
-                idx += len(key)
-                continue
-            return False
-    return True
+    """Single-registry mirror of ``merge_opportunity_alternatives``.
+
+    Phase 1 of soviet_now#877 moved the classification into
+    ``strategy_helpers/reason_tags.py`` (re-exported by ``lib/reason_tags.py``)
+    so this tool and strategy.py cannot drift apart.
+    A MERGE occurrence that belongs to NO_MERGE is not a merge decision.
+    """
+    return _registry_is_generic(reason or '')
 
 
 def pair_gaps(pieces, nt):

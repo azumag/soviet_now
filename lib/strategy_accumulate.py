@@ -13,6 +13,11 @@ import json
 import os
 import sys
 
+try:  # imported as ``lib.strategy_accumulate``
+    from . import reason_tags
+except ImportError:  # imported as top-level ``strategy_accumulate`` (tests)
+    import reason_tags  # type: ignore[no-redef]
+
 
 def summarize_archive(path):
     """archive JSONL を走査して (max_type, frontier_hint, peak_counts,
@@ -32,7 +37,7 @@ def summarize_archive(path):
                     row = json.loads(raw)
                 except Exception:
                     continue
-                if 'DEADLINE_GUARD' in str(row.get('decision_reason') or ''):
+                if reason_tags.has_marker(row.get('decision_reason') or '', 'DEADLINE_GUARD'):
                     deadline_guard_count += 1
                 pieces = ((row.get('state_snapshot') or {}).get('pieces') or [])
                 for piece in pieces:
