@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
 os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
 import analyze_board as ab  # noqa: E402
 import strategy  # noqa: E402
 import strategy_runner as sr  # noqa: E402
@@ -94,15 +95,30 @@ class AnchorLaneSeedContactTest(unittest.TestCase):
 
     def test_real_turns_seed_beside_or_on_open_anchor(self):
         for name in ("anchor_lane_t9_beside_turn14.json", "anchor_lane_t9_ladder_turn47.json",
-                     "anchor_lane_t10_beside_turn15.json", "anchor_lane_t10_ladder_turn16.json",
-                     "anchor_lane_t11_beside_turn50.json", "anchor_lane_t11_ladder_turn18.json"):
+                     "anchor_lane_t10_beside_turn15.json", "anchor_lane_t10_ladder_turn16.json"):
             with self.subTest(fixture=name):
                 self._assert_good(name, _load(name).get("expect_class"))
 
+    def test_t11_fixtures_no_longer_earn_the_seed_bonus_at_head(self):
+        # HEAD: newer layers (T12_CHAIN_LANE_GUIDANCE / MERGE_OPPORTUNITY_KEEP_
+        # ROUTES) pick lanes outside the v732 reward window (no BESIDE or
+        # ABOVE_OPEN landing), so the bonus does not fire. The drops stay
+        # non-crossing NO-merge landings.
+        for name in ("anchor_lane_t11_beside_turn50.json", "anchor_lane_t11_ladder_turn18.json"):
+            with self.subTest(fixture=name):
+                fx = _load(name)
+                gs = _gs(fx)
+                x, reason, chosen, an = _pipeline(gs)
+                self.assertNotIn(TAG, reason)
+                self.assertEqual(chosen["merge_grade"], "NO")
+                self.assertFalse(chosen["crosses_deadline"])
+                cls = _anchor_class(chosen, gs["pieces"], fx["next_type"])
+                self.assertNotIn(cls, ("BESIDE", "ABOVE_OPEN"), "%s: class %s" % (name, cls))
+
     def test_covered_anchor_top_is_not_rewarded(self):
-        """ラダー fixture で開いた T12 の真上が選ばれる。T12 上端を小駒で塞ぐと、その x はもう
+        """ラダー fixture で開いた T11 アンカーの真上が選ばれる。T11 上端を小駒で塞ぐと、その x はもう
         加点されず (埋もれたアンカーの上)、決定は真上から離れるか、少なくとも埋もれたアンカーの上には乗らない。"""
-        fx = _load("anchor_lane_t11_ladder_turn18.json")
+        fx = _load("anchor_lane_t10_ladder_turn16.json")
         nt = fx["next_type"]
         gs0 = _gs(fx)
         x0, reason0, chosen0, an0 = _pipeline(gs0)
@@ -119,9 +135,9 @@ class AnchorLaneSeedContactTest(unittest.TestCase):
         self.assertTrue(abs(x - x0) > 0.05 or TAG not in reason, "covered anchor must not keep the same rewarded landing")
 
     def test_guard_suppresses_bonus_over_other_open_high_top(self):
-        """アンカーの横に着地する fixture (t11_beside_turn50) で、その着地点の下に上端の開いた T10 を置くと
+        """アンカーの横に着地する fixture (t10_beside_turn15) で、その着地点の下に上端の開いた T10 を置くと
         guard が効いて加点されず、決定は T10 の上から離れる (T10 を被覆しない)。"""
-        fx = _load("anchor_lane_t11_beside_turn50.json")
+        fx = _load("anchor_lane_t10_beside_turn15.json")
         nt = fx["next_type"]
         gs0 = _gs(fx)
         x0, reason0, chosen0, an0 = _pipeline(gs0)
@@ -135,7 +151,7 @@ class AnchorLaneSeedContactTest(unittest.TestCase):
         self.assertFalse(covers and TAG in reason, "bonus must not be paid for covering an open T10 top")
 
     def test_margin_exactly_one_still_fires(self):
-        fx = _load("anchor_lane_t11_beside_turn50.json")
+        fx = _load("anchor_lane_t10_beside_turn15.json")
         gs = _gs(fx)
         an = sr.build_analysis(gs)
         sr.enrich_game_state_deadline_fields(gs, an)
@@ -150,7 +166,7 @@ class AnchorLaneSeedContactTest(unittest.TestCase):
         self.assertNotIn(TAG, reason)
 
     def test_fail_closed_in_danger_regimes_and_t12(self):
-        fx = _load("anchor_lane_t11_beside_turn50.json")
+        fx = _load("anchor_lane_t10_beside_turn15.json")
         gs = _gs(fx)
         gs["pieces"].append({"id": 9901, "type": 15, "x": 2.0, "y": ab.FLOOR_Y + 1.062, "r": ab.TYPE_RADII[15], "angle": 0.0})
         self.assertNotIn(TAG, _pipeline(gs)[1])

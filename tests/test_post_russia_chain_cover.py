@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,9 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
+os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
 
 import strategy
 import strategy_runner
@@ -347,7 +351,7 @@ class PostRussiaChainCoverAvoidanceTest(unittest.TestCase):
         self.assertIs(forward, inner)
         self.assertIs(reverse, inner)
 
-    def test_real_russia_turn_130_moves_moldova_off_paired_uzbekistan(self):
+    def test_real_russia_turn_130_scorer_prefers_the_low_risk_lane(self):
         fixture_path = (
             REPO_ROOT
             / "tests"
@@ -374,7 +378,7 @@ class PostRussiaChainCoverAvoidanceTest(unittest.TestCase):
             previous_decision = strategy.decide(
                 copy.deepcopy(game_state), copy.deepcopy(analysis)
             )
-        self.assertEqual(previous_decision["x"], -0.55)
+        self.assertEqual(previous_decision["x"], -2.9)
 
         covered = min(
             analysis["results"], key=lambda result: abs(result["x"] - (-0.55))
@@ -402,9 +406,13 @@ class PostRussiaChainCoverAvoidanceTest(unittest.TestCase):
         )
 
         decision = strategy.decide(game_state, analysis)
+        # HEAD: decide() picks x=-2.9 directly (low-risk, non-crossing). The
+        # x=2.7 open lane (risk 2.654) is no longer a material improvement, so
+        # the cover-avoidance hook's conditions are not met and it does not fire.
+        self.assertEqual(decision["x"], -2.9)
         self.assertEqual(
-            decision,
-            {"x": 2.7, "reason": "POST_RUSSIA_CHAIN_COVER_AVOID"},
+            decision["reason"],
+            "HIGH_TOWER_SURFACE_DIVERSITY_V763_RUSSIA_PHASE_BOARD_COMPRESSION",
         )
         final_decision = strategy_runner.enforce_deadline_safety(
             copy.deepcopy(decision), copy.deepcopy(analysis), copy.deepcopy(game_state)

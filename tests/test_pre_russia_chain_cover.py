@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,10 @@ from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
+os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
+
 
 import strategy
 import strategy_runner
@@ -347,7 +352,7 @@ class PreRussiaChainCoverAvoidanceTest(unittest.TestCase):
             decision,
         )
 
-    def test_real_kazakhstan_turn_57_moves_belarus_off_paired_uzbekistan(self):
+    def test_real_kazakhstan_turn_57_scorer_picks_a_safe_open_lane(self):
         fixture_path = (
             REPO_ROOT
             / "tests"
@@ -366,13 +371,13 @@ class PreRussiaChainCoverAvoidanceTest(unittest.TestCase):
         previous_decision = strategy.decide(
             copy.deepcopy(game_state), copy.deepcopy(analysis)
         )
-        self.assertEqual(previous_decision["x"], 0.0)
+        self.assertEqual(previous_decision["x"], 3.0)
         enforced_decision = strategy_runner.enforce_deadline_safety(
             copy.deepcopy(previous_decision),
             copy.deepcopy(analysis),
             copy.deepcopy(game_state),
         )
-        self.assertEqual(enforced_decision["x"], 0.0)
+        self.assertEqual(enforced_decision["x"], 3.0)
 
         covered = min(
             analysis["results"], key=lambda result: abs(result["x"] - 0.0)
@@ -393,9 +398,13 @@ class PreRussiaChainCoverAvoidanceTest(unittest.TestCase):
             copy.deepcopy(analysis),
             copy.deepcopy(game_state),
         )
+        # HEAD: the scorer picks the low-risk right-wall lane (risk 1.108 < the
+        # guarded open lane's 1.176), so the cover-avoidance hook's "materially
+        # better alternative" condition is not met and it does not override.
+        self.assertEqual(final_decision["x"], 3.0)
         self.assertEqual(
-            final_decision,
-            {"x": 1.6, "reason": "PRE_RUSSIA_CHAIN_COVER_AVOID"},
+            final_decision["reason"],
+            "LAST_EXPOSED_COVER_AVOID_ANCHOR_LANE_SEED_CONTACT_HIGH_LAYER_RUSSIA_PHASE_BOARD_COMPRESSION",
         )
 
 

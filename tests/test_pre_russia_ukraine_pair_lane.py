@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
+os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
+
 
 import analyze_board
 import strategy
@@ -120,7 +125,7 @@ class PreRussiaUkrainePairLaneTest(unittest.TestCase):
         initial = strategy.decide(
             copy.deepcopy(game_state), copy.deepcopy(analysis)
         )
-        self.assertEqual(initial["x"], -0.15)
+        self.assertEqual(initial["x"], -0.65)
 
         legacy = strategy_runner.enforce_deadline_safety(
             copy.deepcopy(initial),

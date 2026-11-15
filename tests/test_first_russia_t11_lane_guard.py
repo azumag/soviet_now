@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,10 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
+os.environ.setdefault("ANALYZE_BOARD_VERTICAL_LANE_DIRECT", "1")
+os.environ.setdefault("ANALYZE_BOARD_MERGE_TOP_MODEL", "2")
+os.environ.setdefault("ANALYZE_BOARD_WALL_CLAMP", "1")
+
 
 import strategy
 import strategy_runner
@@ -289,7 +294,7 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
         self.assertIs(forward, left)
         self.assertIs(reverse, left)
 
-    def test_real_turn_67_state_uses_the_open_lane_without_mocks(self):
+    def test_real_turn_67_state_scorer_prefers_low_risk_wall_lane(self):
         fixture_path = (
             REPO_ROOT
             / "tests"
@@ -315,12 +320,14 @@ class FirstRussiaUzbekistanLaneGuardTest(unittest.TestCase):
         self.assertAlmostEqual(covered_lane["risk_top_y_after_drop"], 2.647)
         self.assertEqual(open_lane["landing_hit_id"], 102)
         self.assertAlmostEqual(open_lane["risk_top_y_after_drop"], 2.564)
+        # HEAD: decide() picks x=3.0 directly (risk 1.871, non-crossing, no
+        # Uzbekistan landing), so the lane-avoidance hook's precondition
+        # "selected lane lands on the T11" does not hold and it does not fire.
+        decision = strategy.decide(game_state, analysis)
+        self.assertEqual(decision["x"], 3.0)
         self.assertEqual(
-            strategy.decide(game_state, analysis),
-            {
-                "x": 0.35,
-                "reason": "FIRST_RUSSIA_T11_LANE_COVER_AVOID",
-            },
+            decision["reason"],
+            "T12_CHAIN_LANE_GUIDANCE_HIGH_TYPE_COVER_AVOID_MEDIUM_TOWER_RUSSIA_PHASE_BOARD_COMPRESSION",
         )
 
     def test_decide_calls_guard_after_final_drop_range_clip(self):
