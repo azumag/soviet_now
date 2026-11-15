@@ -326,11 +326,23 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
         and type12_count >= 2
         and pre_russia_no_t16
     )
+    # 実測ボトルネック (2026-11-15, 直近45試合): T13最高到達の終了24試合中
+    # 15試合 (62%) が2個目のT13を形成しないまま終了（垂直分離0, 合体可能
+    # 5, 直前形成4）。T14=0 + 孤立T13 + T12ペアでT12を寄せれば2個目T13が
+    # 生まれ、T13 pair 押し合い→T14 へ繋がる最大クラス。
+    pre_russia_t12_no_t14_setup = (
+        type15_count == 0
+        and type14_count == 0
+        and type13_count >= 1
+        and type12_count >= 2
+        and pre_russia_no_t16
+    )
     if (
         type15_count == 0
         and type14_count < 2
         and not pre_russia_t13_setup
         and not pre_russia_t12_setup
+        and not pre_russia_t12_no_t14_setup
     # 実測: ペア存在+健全盤面の適格ターンの約30%が next_type 6-7。
     # 小弾でも山が安定していれば確証ヒットで押し出せるため閾値を緩和
     # (2026-11-15 観測 95 turns @>=8 vs 41 turns @6-7)。
@@ -441,7 +453,7 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
     if selected is None:
         if any("landing_hit_id" in candidate for candidate in safe_no_merge):
             return None
-        if pre_russia_t13_setup or pre_russia_t12_setup:
+        if pre_russia_t13_setup or pre_russia_t12_setup or pre_russia_t12_no_t14_setup:
             # 新規の pre-Russia 押し合いは analyzer 確証 (landing_hit_id) が必須。
             # 旧ペイロード互換フォールバックで発火させると、既存の
             # SINGLE_T13_T12_BANK 系の誘導を未検証のまま上書きしてしまう。
@@ -467,7 +479,7 @@ def _select_post_russia_contact_candidate(pieces, results, next_type, next_radiu
 
     if selected_type == 15:
         reason = "SOVIET_T15_CONTACT_SHOT"
-    elif pre_russia_t13_setup or pre_russia_t12_setup:
+    elif pre_russia_t13_setup or pre_russia_t12_setup or pre_russia_t12_no_t14_setup:
         reason = f"PRE_RUSSIA_T{selected_type}_CONTACT_SHOT"
     else:
         reason = f"POST_RUSSIA_T{selected_type}_CONTACT_SHOT"

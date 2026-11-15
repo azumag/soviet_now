@@ -194,6 +194,29 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(result["x"], 2.6)
         self.assertEqual(reason, "PRE_RUSSIA_T13_CONTACT_SHOT")
 
+    def test_pre_russia_t12_pair_without_t14_creates_second_t13(self):
+        # Measured: 15/24 T13-max endings never formed a second T13.
+        # Pushing the T12 pair produces it.
+        pieces = [
+            piece("t13", 13, 0.4, -2.4, 1.0),
+            piece("t12-left", 12, -2.2, -2.0, 0.9),
+            piece("t12-right", 12, 1.1, -1.0, 0.9),
+        ]
+        results = [
+            candidate(-3.0),
+            candidate(2.5, landing_hit_id="t12-right"),
+            candidate(0.0),
+        ]
+
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, results, 10, 0.5
+        )
+
+        self.assertIsNotNone(selected)
+        result, reason = selected
+        self.assertEqual(result["x"], 2.5)
+        self.assertEqual(reason, "PRE_RUSSIA_T12_CONTACT_SHOT")
+
     def test_vertically_stacked_t13_pair_is_skipped(self):
         # Observed live (2026-11-15): a T13 pair separated by dy~3.6 wasted
         # a T9 projectile — horizontal pushing can never close that gap.
@@ -327,7 +350,7 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
     def test_small_piece_does_not_trigger_contact_shot(self):
         self.assertIsNone(
             strategy._select_post_russia_contact_candidate(
-                self.one_russia_with_t12_pair, self.results, 7, 0.35
+                self.one_russia_with_t12_pair, self.results, 5, 0.35
             )
         )
 
