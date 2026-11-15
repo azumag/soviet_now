@@ -12,7 +12,7 @@ SOURCE = ROOT / 'broadcast/comment.sh'
 CATEGORIES = ('chitchat', 'general_question', 'game_question', 'game_status',
               'strategy_advice', 'comment_advice', 'stream_bug_report',
               'subscription', 'bits', 'stream_goal', 'other', 'card_gacha',
-              'raid', 'sing_request')
+              'announcement', 'raid', 'sing_request')
 
 
 class PromptHarness(unittest.TestCase):

@@ -480,11 +480,16 @@ _fetch_nolock() {
 
 				# 自分の投稿は作者 identity を保ったまま self として印を付ける。
 				# 表示名や本文の一致では判定しない(なりすまし対策, #2373)。
+				# self 投稿は配信者自身のアナウンスでもあるため announcement も付ける。
+				# ガチャ/予想の trusted-* は daemon 側で付き、ここでは落とさない。
 				if _is_self_author_login "$author_login"; then
-					case ",${metadata_flags}," in
-					*,self,*) ;;
-					*) metadata_flags="${metadata_flags:+$metadata_flags,}self" ;;
-					esac
+					local _self_flag
+					for _self_flag in self announcement; do
+						case ",${metadata_flags}," in
+						*,"${_self_flag}",*) ;;
+						*) metadata_flags="${metadata_flags:+$metadata_flags,}${_self_flag}" ;;
+						esac
+					done
 				fi
 
                 local clean_line=""
