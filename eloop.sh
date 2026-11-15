@@ -22,6 +22,10 @@ if ! command -v strategy_archive_resolve_plaintext >/dev/null 2>&1; then
 fi
 
 PLAY_RECOVERED_RETRY_RC=75
+# rc=75 は decide 例外以外の理由 (bridge復旧延期, snapshot失敗, taint/phantom,
+# bridge_desync 等) でも返る。play_one_game は return 前に理由タグを
+# PLAY_RECOVERED_REASON へ入れ、soren_loop がそれをログに出す (issue #870)。
+PLAY_RECOVERED_REASON=""
 
 _follow_runner_output() {
 	local runner_pid="$1"
@@ -297,6 +301,7 @@ EOF
 
 #=== 1試合プレイ ===
 play_one_game() {
+	PLAY_RECOVERED_REASON=""
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] play_one_gameをスキップ（strategy停止中）"
 		LAST_SOVIET="false"
@@ -321,6 +326,7 @@ play_one_game() {
 			LAST_RUSSIA_ANNOUNCED="false"
 			LAST_SOVIET="false"
 			rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+			PLAY_RECOVERED_REASON="bridge_recovery_pending"
 			return "${PLAY_RECOVERED_RETRY_RC:-75}"
 		fi
 	fi
@@ -388,11 +394,13 @@ play_one_game() {
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 		LAST_SOVIET="false"
+		PLAY_RECOVERED_REASON="snapshot_create_failed"
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	fi
 	strategy_runtime_root=$(cd "$strategy_runtime_dir" && pwd -P) || {
 		log "[STRATEGY-SNAPSHOT] runtime path 解決失敗 → 試合開始を次周回へ延期"
 		rm -rf "$strategy_runtime_dir"
+		PLAY_RECOVERED_REASON="snapshot_path_resolve_failed"
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	}
 	strategy_runtime_file="$strategy_runtime_root/strategy.py"
@@ -544,6 +552,7 @@ PY
 			log "[RECOVERY-TAINT] 復旧起点ゲーム検知 (taint一致, turns=${LAST_TURNS:-?} score=${LAST_SCORE:-?} state=$_rr_state) → 後処理/regression を1回スキップ・taint消費"
 			rm -f "$_rr_taint" 2>/dev/null || true
 			rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+			PLAY_RECOVERED_REASON="recovery_taint_skip"
 			return "${PLAY_RECOVERED_RETRY_RC:-75}"
 		fi
 	fi
@@ -571,6 +580,7 @@ PY
 			fi
 		fi
 		rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+		PLAY_RECOVERED_REASON="phantom_game_bridge_down"
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	fi
 
@@ -585,6 +595,7 @@ PY
 				LAST_RUSSIA_ANNOUNCED="false"
 				LAST_SOVIET="false"
 				send_retry
+				PLAY_RECOVERED_REASON="decide_exception_ab_abort"
 				return "$PLAY_RECOVERED_RETRY_RC"
 			fi
 		fi
@@ -594,6 +605,7 @@ PY
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 		LAST_SOVIET="false"
+		PLAY_RECOVERED_REASON="decide_exception"
 		return "$PLAY_RECOVERED_RETRY_RC"
 	fi
 
@@ -627,6 +639,7 @@ PY
 		LAST_RUSSIA_ANNOUNCED="false"
 		LAST_SOVIET="false"
 		rm -f "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || true
+		PLAY_RECOVERED_REASON="bridge_desync"
 		return "${PLAY_RECOVERED_RETRY_RC:-75}"
 	fi
 
