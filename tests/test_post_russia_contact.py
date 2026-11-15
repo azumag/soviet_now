@@ -824,6 +824,17 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(decision["x"], 3.0)
         self.assertEqual(decision["reason"], "PRE_RUSSIA_T13_CONTACT_SHOT")
+        self.assertEqual(
+            decision["contact_shot_trace"],
+            {
+                "target_id": "t13-right",
+                "shot_x": 3.0,
+                "target_hit_safe": True,
+                "target_hit_unsafe": False,
+                "first_hit_other": False,
+                "first_hit_floor": False,
+            },
+        )
 
     def test_contact_shot_fires_when_deadline_already_crossed(self):
         pieces, results = self._critical_t13_pair_setup()
@@ -839,6 +850,17 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(decision["x"], 3.0)
         self.assertEqual(decision["reason"], "PRE_RUSSIA_T13_CONTACT_SHOT")
+        self.assertEqual(
+            decision["contact_shot_trace"],
+            {
+                "target_id": "t13-right",
+                "shot_x": 3.0,
+                "target_hit_safe": True,
+                "target_hit_unsafe": False,
+                "first_hit_other": False,
+                "first_hit_floor": False,
+            },
+        )
 
     def test_critical_board_keeps_safe_direct_merge_priority(self):
         pieces, results = self._critical_t13_pair_setup()
@@ -892,6 +914,17 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
 
         self.assertEqual(decision["x"], 3.0)
         self.assertEqual(decision["reason"], "POST_RUSSIA_T12_CONTACT_SHOT")
+        self.assertEqual(
+            decision["contact_shot_trace"],
+            {
+                "target_id": "t12-right",
+                "shot_x": 3.0,
+                "target_hit_safe": True,
+                "target_hit_unsafe": False,
+                "first_hit_other": False,
+                "first_hit_floor": False,
+            },
+        )
 
 
 class ContactShotTraceTest(unittest.TestCase):
@@ -989,6 +1022,72 @@ class ContactShotTraceTest(unittest.TestCase):
             candidate(-3.0, landing_hit_id="t12-right"),
             candidate(0.0, landing_hit_id="russia"),
         ]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertTrue(trace["target_hit_safe"])
+        self.assertFalse(trace["target_hit_unsafe"])
+        self.assertFalse(trace["first_hit_other"])
+        self.assertFalse(trace["first_hit_floor"])
+
+    def test_trace_is_empty_without_a_setup(self):
+        # next_type=5 keeps the setup invalid under the relaxed next_type>=6 gate.
+        selected, trace = self.trace_for(self.results, next_type=5)
+
+        self.assertIsNone(selected)
+        self.assertEqual(trace, {})
+
+    def test_trace_is_empty_when_safe_pool_is_empty(self):
+        results = [
+            candidate(3.0, crosses=True, landing_hit_id="russia"),
+            candidate(0.0, margin=0.2, landing_hit_id="t12-left"),
+        ]
+
+        selected, trace = self.trace_for(results)
+
+        self.assertIsNone(selected)
+        self.assertEqual(
+            trace,
+            {
+                "target_id": "t12-right",
+                "shot_x": 3.0,
+                "target_hit_safe": False,
+                "target_hit_unsafe": False,
+                "first_hit_other": False,
+                "first_hit_floor": False,
+            },
+        )
+
+    def test_record_turn_copies_trace(self):
+        analysis = {
+            "results": self.results,
+            "reactor": {
+                "deadline_margin": 1.5,
+                "deadline_crossed": False,
+                "danger_piece_count": 0,
+                "reactive_pairs": [],
+                "near_pairs": [],
+                "pipeline": [],
+            },
+        }
+        game_state = {
+            "pieces": self.pieces,
+            "next": {"type": 10, "r": 0.5},
+            "nextNext": {"type": 4, "r": 0.3},
+            "score": 100,
+        }
+
+        decision = strategy.decide(game_state, analysis)
+        output = io.StringIO()
+        strategy_runner.record_turn(
+            output, 1, game_state, decision, analysis, strategy_hash="test"
+        )
+
+        record = json.loads(output.getvalue())
+        self.assertEqual(record["contact_shot_trace"], decision["contact_shot_trace"])
+        self.assertIn("contact_shot_trace", decision)
+
     def test_finalize_decision_preserves_trace(self):
         class Finalizer:
             def finalize_decision(self, game_state, analysis, decision):

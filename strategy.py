@@ -1710,6 +1710,7 @@ def _decide_base(game_state: dict, analysis: dict, _contact_trace=None) -> dict:
             _as_float((__dlg_game_state.get("next") or {}).get("r"), 0.5)
             if isinstance(__dlg_game_state.get("next"), dict)
             else 0.5,
+            _contact_trace,
         )
         if __dlg_contact is not None:
             __dlg_selected, __dlg_reason = __dlg_contact
