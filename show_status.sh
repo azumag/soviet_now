@@ -1717,7 +1717,7 @@ def fmt_age(seconds):
     return f"{seconds // 3600}h"
 
 label = ""
-if phase in ("no_candidate", "infra_failed", "failed") and age <= 3600:
+if phase in ("no_candidate", "infra_failed", "infra_circuit_open", "failed") and age <= 3600:
     candidates = data.get("candidates", []) or []
     failed = [c for c in candidates if str(c.get("status", "") or "") in ("failed", "timeout")]
     zero_game = [c for c in candidates if int(c.get("games", 0) or 0) <= 0]
@@ -3125,7 +3125,9 @@ if [[ "$SHOW_STATUS_LATEST_DROP_ONLY" == "1" ]]; then
 	exit 0
 fi
 printf '\033[?25l'          # カーソル非表示
-trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
+# soviet_now#869: _worker_duplicates_from_ps_fallback の作成→削除の間に
+# kill された残骸を EXIT/INT/TERM 時に消す。$$ は自プロセスの PID で一意。
+trap 'rm -f "tmp/state/show_status_worker_ps.$$.txt" 2>/dev/null || true; printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア
 if [[ "$SHOW_STATUS_ONCE" == "1" ]]; then
 	_render_status_once

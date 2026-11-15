@@ -91,6 +91,17 @@ _prediction_notice_mode() {
 	esac
 }
 
+_prediction_corner_busy() {
+	# A confirmed corner slot (corner_rotation.json pending/manual_pending) or
+	# a running corner view on air (game_switch.json active.game != sorengame;
+	# PAPER is ``paper-view``) parks the Soren loop. There is no game for a new
+	# 48-game prediction to cover, and the next_corner notice is already
+	# withdrawn, so use the canonical pending/on-air projection instead.
+	local active
+	active=$(python3 lib/corner_notice_state.py corner 2>/dev/null) || return 1
+	[ "$active" = "1" ]
+}
+
 _prediction_create_context_allowed() {
 	[ "$_cfg_min_games" = "48" ] || {
 		_log "SKIP: prediction create requires the 48-game improvement cycle"
@@ -112,6 +123,12 @@ _prediction_create_context_allowed() {
 		return 1
 		;;
 	esac
+	# The notice is withdrawn as soon as a slot is confirmed, so also refuse
+	# while docich reports a pending slot or the corner's view as active.
+	if _prediction_corner_busy; then
+		_log "SKIP: prediction create blocked while a corner is starting/on air"
+		return 1
+	fi
 	local hot_streak_pending_file="${HOT_STREAK_PREDICTION_PENDING_FILE:-${TMP_STATE_DIR}/hot_streak_prediction_pending}"
 	[ ! -f "$hot_streak_pending_file" ] || {
 		_log "SKIP: prediction create blocked while hot-streak prediction is pending"

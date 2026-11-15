@@ -1055,6 +1055,106 @@ def build_parallel_result(
     return result, payload, 0 if winner else 2
 
 
+FAILURES_LOG_FILE = REPO_ROOT / "logs" / "wildcard_failures.jsonl"
+
+# Deterministic tokens extracted from a slot's bridge-launch error to build a
+# "same cause" signature. Volatile details (rc codes, paths, ports, timestamps)
+# are dropped so retries of the same underlying failure share one signature.
+INFRA_SIGNATURE_TOKENS = (
+    "SIGTRAP",
+    "SIGABRT",
+    "SIGSEGV",
+    "SIGILL",
+    "SIGBUS",
+    "SIGSYS",
+    "SIGKILL",
+    "EADDRINUSE",
+    "EACCES",
+    "No usable sandbox",
+    "zygote",
+    "Failed to connect to the bus",
+    "dbus",
+    "crashpad",
+    "process did exit",
+    "BRIDGE-EXIT",
+    "bridge exited",
+    "did not produce game_state",
+    "timed out",
+)
+
+
+def infra_failure_signature(text: str) -> str:
+    """エラー文字列から同一原因を束ねるための正規化シグネチャを返す (#868)。
+
+    決定的なトークンを拾い、見つからなければ先頭セグメントの数値を潰した
+    形をフォールバックに使う。空文字列の場合は空シグネチャを返す (原因
+    不明の失敗を誤って同一視しないため)。
+    """
+    if not text:
+        return ""
+    tokens = sorted({tok for tok in INFRA_SIGNATURE_TOKENS if tok in text})
+    if tokens:
+        return "+".join(tokens)
+    head = (text.split(" | ", 1)[0] or text[:80]).strip()
+    head = re.sub(r"\d+", "#", head)
+    head = re.sub(r"\s+", " ", head)
+    return head[:80]
+
+
+def infra_circuit_state(
+    failures_path: Path,
+    now: float | None = None,
+    max_same: int = 3,
+) -> tuple[bool, str, int]:
+    """同日に同じ原因の infra_failed が続いたかを履歴ログから判定する (#868)。
+
+    logs/wildcard_failures.jsonl の各行は1回の並列試行の要約。reason が
+    infra_failed の行をローカル暦日で絞り、行ごとの失敗シグネチャ
+    (failures[].error の union) を集計する。max_same 以上の同一
+    シグネチャがあれば (True, signature, count) を返す。ログ不在・
+    パース不能は fail-open (False, "", 0) とし、判定不能を理由に試行は
+    止めない。
+    """
+    if max_same <= 0:
+        return (False, "", 0)
+    if now is None:
+        now = time.time()
+    today = time.strftime("%Y-%m-%d", time.localtime(now))
+    counts: dict[str, int] = {}
+    try:
+        lines = failures_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return (False, "", 0)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(row, dict) or row.get("reason") != "infra_failed":
+            continue
+        try:
+            row_day = time.strftime("%Y-%m-%d", time.localtime(int(row.get("ts") or 0)))
+        except Exception:
+            continue
+        if row_day != today:
+            continue
+        errors = " ".join(
+            str(item.get("error") or "")
+            for item in (row.get("failures") or [])
+            if isinstance(item, dict)
+        )
+        signature = infra_failure_signature(errors)
+        if not signature:
+            continue
+        counts[signature] = counts.get(signature, 0) + 1
+        if counts[signature] >= max_same:
+            return (True, signature, counts[signature])
+    return (False, "", 0)
+
+
 def append_failure_summary(result: dict) -> None:
     """#94: persist per-candidate failure evidence beyond run-dir cleanup.
 
@@ -1087,7 +1187,7 @@ def append_failure_summary(result: dict) -> None:
             "session_dir": result.get("session_dir"),
             "failures": rows,
         }
-        path = REPO_ROOT / "logs" / "wildcard_failures.jsonl"
+        path = FAILURES_LOG_FILE
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(out, ensure_ascii=False) + "\n")
@@ -3942,6 +4042,43 @@ def main() -> int:
     _ACTIVE_HTML_FILE = args.html_file
 
     params = wildcard_parallel_params(args)
+
+    # #868: 同日に同じ原因の infra_failed が繰り返された場合、その日の並列
+    # 評価を打ち切る。スロットの Chromium を起こす前にここで即座に結果を
+    # 返し、呼び出し側の direct wildcard perturb fallback へ進ませる。
+    # WILDCARD_PARALLEL_INFRA_CIRCUIT_ENABLED=0 で無効化。
+    circuit_max_same = _int(os.getenv("WILDCARD_PARALLEL_INFRA_CIRCUIT_MAX_SAME"), 3)
+    if os.getenv("WILDCARD_PARALLEL_INFRA_CIRCUIT_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off"):
+        circuit_open, circuit_signature, circuit_count = infra_circuit_state(
+            FAILURES_LOG_FILE, max_same=circuit_max_same
+        )
+        if circuit_open:
+            detail = (
+                f"infra_circuit_open: same infra_failed signature '{circuit_signature}' "
+                f"already hit {circuit_count} times today; skipping parallel slots"
+            )
+            payload = {
+                "phase": "infra_circuit_open",
+                "session_dir": str(session_dir),
+                "params": params,
+                "block_main_loop": bool(args.block_main_loop),
+                "detail": detail,
+                "candidates": [],
+            }
+            result = {
+                "ok": False,
+                "reason": "infra_circuit_open",
+                "detail": detail,
+                "session_dir": str(session_dir),
+                "params": params,
+                "candidates": [],
+            }
+            render_overlay(args.status_file, args.html_file, payload)
+            atomic_json(result_file, result)
+            append_failure_summary(result)
+            print(json.dumps(result, ensure_ascii=False))
+            return 2
+
     payload = {
         "phase": "generating",
         "session_dir": str(session_dir),

@@ -41,6 +41,36 @@ class CornerNoticeStateTest(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
+    def write_rotation(self, *, pending=None, manual=None, schema=1, **overrides):
+        payload = {
+            "schema_version": schema,
+            "pending": pending,
+            "manual_pending": manual,
+            "schedule_mode": "interval",
+            "status": "waiting",
+            "next_due_at": None,
+        }
+        payload.update(overrides)
+        path = self.state / "corner_rotation.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def write_switch(self, **overrides):
+        payload = {
+            "schema_version": 2,
+            "phase": "ready",
+            "active": {
+                "game": "sorengame",
+                "adapter": "soren",
+                "runtime_id": "g1-abcdef12",
+                "lease_id": "lease-1",
+            },
+        }
+        payload.update(overrides)
+        path = self.state / "game_switch.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
     def mode(self, **overrides):
         if overrides:
             self.write(**overrides)
@@ -100,6 +130,105 @@ class CornerNoticeStateTest(unittest.TestCase):
             path.write_text(payload, encoding="utf-8")
             self.assertEqual(cns.mode(self.state, now=self.now), "clear")
 
+    def test_soren_game_on_air_allows_prediction(self):
+        self.write_switch()
+        self.assertFalse(cns.corner_active(self.state))
+        self.assertFalse(cns.prediction_blocked(self.state, now=self.now))
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+
+    def test_corner_view_blocks_prediction_even_during_pending_handoff(self):
+        # The rotation withdraws next_corner.json when the corner starts; a
+        # leftover pending notice must not override the on-air corner.
+        self.write(hold="prediction-pending")
+        self.write_switch(active={"game": "paper-view", "adapter": "paper"})
+        self.assertTrue(cns.corner_active(self.state))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_confirmed_slot_blocks_prediction_before_the_switch(self):
+        slot = {"corner": "paper", "phase": "selected", "request_id": "r1"}
+        self.write_rotation(pending=slot)
+        self.assertFalse(cns.corner_active(self.state))
+        self.assertTrue(cns.corner_pending(self.state))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+        # Improvement accumulation is not changed by a slot reservation.
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+        self.write_rotation(pending=None, manual=slot)
+        self.assertTrue(cns.corner_pending(self.state))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_imminent_interval_slot_blocks_prediction(self):
+        self.write_rotation(next_due_at=self.now + 60)
+        self.assertTrue(cns.corner_pending(self.state, now=self.now))
+        self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now + cns.LEAD_SECONDS + 60)
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now - 60)
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+
+    def test_imminent_slot_only_applies_to_interval_waiting(self):
+        self.write_rotation(next_due_at=self.now + 60, schedule_mode="queue")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at=self.now + 60, status="running")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+        self.write_rotation(next_due_at="soon")
+        self.assertFalse(cns.corner_pending(self.state, now=self.now))
+
+    def test_corner_slot_pending_does_not_override_a_clear_rotation(self):
+        self.write_rotation(pending={}, manual={})
+        self.write_switch()
+        self.assertFalse(cns.corner_pending(self.state))
+        self.assertFalse(cns.prediction_blocked(self.state, now=self.now))
+
+    def test_missing_or_invalid_rotation_is_clear(self):
+        self.assertFalse(cns.corner_pending(self.state))
+        path = self.state / "corner_rotation.json"
+        for payload in ("{", "[]", json.dumps({"schema_version": 2, "pending": {"corner": "paper"}})):
+            path.write_text(payload, encoding="utf-8")
+            self.assertFalse(cns.corner_pending(self.state), payload)
+        path.write_text("x" * (cns.GAME_SWITCH_LIMIT + 1), encoding="utf-8")
+        self.assertFalse(cns.corner_pending(self.state))
+
+    def test_corner_view_does_not_block_improvement_accumulation(self):
+        # Improvement is gated by the notice only: a game completed at the
+        # corner boundary must still be accumulated into its batch.
+        self.write_switch(active={"game": "paper-view", "adapter": "paper"})
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+
+    def test_transition_and_failed_phases_block_prediction(self):
+        for phase in ("validating", "draining", "stopping", "rolling_back",
+                      "failed", "recovery_required", "idle"):
+            self.write_switch(phase=phase)
+            self.assertTrue(cns.corner_active(self.state), phase)
+            self.assertTrue(cns.prediction_blocked(self.state, now=self.now), phase)
+
+    def test_ready_without_active_game_blocks_prediction(self):
+        self.write_switch(active=None)
+        self.assertTrue(cns.corner_active(self.state))
+        self.write_switch(active={"adapter": "soren"})
+        self.assertTrue(cns.corner_active(self.state))
+
+    def test_missing_or_invalid_game_switch_is_clear(self):
+        self.assertFalse(cns.corner_active(self.state))
+        path = self.state / "game_switch.json"
+        for payload in ("{", "[]", json.dumps({"phase": "future-phase"}),
+                        json.dumps({"active": {"game": "paper-view"}})):
+            path.write_text(payload, encoding="utf-8")
+            self.assertFalse(cns.corner_active(self.state), payload)
+            self.assertFalse(cns.prediction_blocked(self.state, now=self.now), payload)
+
+    def test_game_switch_symlink_and_oversize_are_clear(self):
+        target = self.root / "outside.json"
+        target.write_text(json.dumps({
+            "phase": "ready", "active": {"game": "paper-view"},
+        }), encoding="utf-8")
+        link = self.state / "game_switch.json"
+        link.symlink_to(target)
+        self.assertFalse(cns.corner_active(self.state))
+        link.unlink()
+        link.write_text("x" * (cns.GAME_SWITCH_LIMIT + 1), encoding="utf-8")
+        self.assertFalse(cns.corner_active(self.state))
+
     def test_resolve_state_dir_prefers_explicit_then_env(self):
         self.assertEqual(cns.resolve_state_dir(self.state), self.state)
         old = os.environ.get("DOCICH_STATE_DIR")
@@ -142,6 +271,29 @@ class CornerNoticeStateTest(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "0")
         result = subprocess.run(
             [sys.executable, str(script), "blocked", "improvement"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "1")
+        self.write_switch(active={"game": "paper-view", "adapter": "paper"})
+        result = subprocess.run(
+            [sys.executable, str(script), "corner"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "1")
+        result = subprocess.run(
+            [sys.executable, str(script), "blocked", "prediction"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "1")
+        self.write_switch()
+        result = subprocess.run(
+            [sys.executable, str(script), "corner"],
+            env=env, capture_output=True, text=True, check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "0")
+        self.write_rotation(pending={"corner": "paper", "phase": "selected"})
+        result = subprocess.run(
+            [sys.executable, str(script), "corner"],
             env=env, capture_output=True, text=True, check=True,
         )
         self.assertEqual(result.stdout.strip(), "1")

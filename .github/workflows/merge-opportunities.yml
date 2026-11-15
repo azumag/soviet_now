@@ -73,6 +73,10 @@ jobs:
         with:
           persist-credentials: false
       - run: bash tests/test_eloop_runner_tail_cleanup.sh
+      - name: ab migration gate lint + unit test
+        run: |
+          bash -n strategy/ab_gate_on_merge.sh
+          bash tests/test_ab_gate_on_merge.sh
       - run: >-
           python3 -m unittest
           tests.test_soviet_continuation

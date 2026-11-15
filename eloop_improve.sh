@@ -110,6 +110,15 @@ _improve_cleanup_active_ai() {
 		rm -f "$runtime_script" 2>/dev/null || true
 		;;
 	esac
+	# soviet_now#869: 自分が作った host_integrity_before スナップショットも
+	# 全終了経路で消す（正常フロー末尾の削除だけではシグナル終了時に残る）。
+	# case guard で置き場を絞り、想定外のパスは絶対に消さない。
+	local integrity_before="${HOST_INTEGRITY_BEFORE_FILE:-}"
+	case "$integrity_before" in
+	"$HOST_ROOT/${TMP_STATE_DIR:-tmp/state}/host_integrity_before."*)
+		rm -f "$integrity_before" 2>/dev/null || true
+		;;
+	esac
 }
 
 _improve_handle_signal() {
@@ -1570,9 +1579,12 @@ except Exception:
 print(data.get("reason") or "")
 PY
 )
-				if [ "${wildcard_parallel_fail_reason:-}" = "infra_failed" ] && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1" ]; then
-					log "[WILDCARD] parallel infra_failed → direct wildcard perturb fallback"
-					_improve_progress "wildcard" "30" "parallel_infra_failed_direct_fallback"
+				if { [ "${wildcard_parallel_fail_reason:-}" = "infra_failed" ] || [ "${wildcard_parallel_fail_reason:-}" = "infra_circuit_open" ]; } && [ "${WILDCARD_PARALLEL_INFRA_FALLBACK_DIRECT:-1}" = "1" ]; then
+					# #868: infra_circuit_open は同日同シグネチャの infra_failed 反復で
+					# wildcard_parallel.py 側がスロット起動を抑止したケース。脱出自体は
+					# direct perturb で継続する。
+					log "[WILDCARD] parallel ${wildcard_parallel_fail_reason:-infra_failed} → direct wildcard perturb fallback"
+					_improve_progress "wildcard" "30" "parallel_${wildcard_parallel_fail_reason:-infra_failed}_direct_fallback"
 					wildcard_parallel_cleanup_sessions
 					wildcard_parallel_restore_once
 					wildcard_parallel_fallback_direct=1
