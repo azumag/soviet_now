@@ -289,6 +289,9 @@ with open(tmp, "w", encoding="utf-8") as fh:
 os.replace(tmp, state_file)
 print("[AB] recorded idx=%s arm=%s eval=%s tainted=%s" % (idx, arm, ev, tainted))
 PY
+	# soviet_now#865: record ごとの publish はしない (games_recorded が毎回変わり
+	# runtime/ab-state の commit が試合数だけ増える)。lifecycle イベントで即時、
+	# それ以外は monitor_improve_runtime.sh からの heartbeat で更新される。
 }
 
 _ab_abort() {
