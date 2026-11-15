@@ -1719,7 +1719,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
                             if abs(_geom_num(r.get("x")) - target_x) < current_dx
                             and abs(_geom_num(r.get("x")) - target_x) <= 1.45
                             and not (
-                                hard_deadline_birth_pressure
+                                (hard_deadline_birth_pressure or safe)
                                 and r.get("crosses_deadline", False)
                                 and r.get("merge_grade", "NO") == "NO"
                             )
@@ -1844,7 +1844,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.45
             and not (
-                hard_deadline_pair_pressure
+                (hard_deadline_pair_pressure or safe)
                 and r.get("crosses_deadline", False)
                 and r.get("merge_grade", "NO") == "NO"
             )
@@ -2016,7 +2016,7 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.45
             and not (
-                hard_deadline_single_t13_pressure
+                (hard_deadline_single_t13_pressure or safe)
                 and r.get("crosses_deadline", False)
                 and r.get("merge_grade", "NO") == "NO"
             )
@@ -2107,6 +2107,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.2
+            and not (
+                safe
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
             and risk_top(r) <= max(risk_top(candidate) + 0.9, min_risk_top + 1.8)
         ]
         if not lane_band:
@@ -2225,6 +2230,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.30
+            and not (
+                safe
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
             and risk_top(r) <= max(risk_top(candidate) + 1.15, min_risk_top + 2.05)
         ]
         if not lane_band:
@@ -2232,6 +2242,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
                 r for r in pool
                 if abs(_geom_num(r.get("x")) - target_x) < current_dx
                 and abs(_geom_num(r.get("x")) - target_x) <= 1.60
+                and not (
+                    safe
+                    and r.get("crosses_deadline", False)
+                    and r.get("merge_grade", "NO") == "NO"
+                )
                 and risk_top(r) <= max(risk_top(candidate) + 1.35, min_risk_top + 2.30)
             ]
         if not lane_band:
@@ -2321,6 +2336,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.3
+            and not (
+                safe
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
             and risk_top(r) <= lane_risk_limit
         ]
         if not lane_band and redline_lane_pressure:
@@ -2446,6 +2466,11 @@ def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module
             r for r in pool
             if abs(_geom_num(r.get("x")) - target_x) < current_dx
             and abs(_geom_num(r.get("x")) - target_x) <= 1.35
+            and not (
+                safe
+                and r.get("crosses_deadline", False)
+                and r.get("merge_grade", "NO") == "NO"
+            )
             and risk_top(r) <= max(risk_top(candidate) + 1.15, min_risk_top + 2.05)
         ]
         if not lane_band:
