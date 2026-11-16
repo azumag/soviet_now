@@ -2785,12 +2785,18 @@ def summarize_nation_progress(paths):
             prev_peak = peak_type_counts.get(max_type - 1, 0)
             frontier_hint = f"T{max_type}_peak={max_peak} prev_T{max_type - 1}_peak={prev_peak}"
         guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(3)) or "none"
+        t13_pair = peak_type_counts.get(13, 0) >= 2
+        t14_reached = max_type >= 14
         t14_pair = peak_type_counts.get(14, 0) >= 2
         double_russia = peak_type_counts.get(15, 0) >= 2
         post_2nd_material = (
             post_russia_peaks.get(14, 0) >= 2 or post_russia_peaks.get(15, 0) >= 2
         )
         funnel_stage = "low"
+        if t13_pair:
+            funnel_stage = "T13x2"
+        if t14_reached:
+            funnel_stage = "T14"
         if t14_pair:
             funnel_stage = "T14x2"
         if first_russia_turn is not None:
@@ -2816,6 +2822,8 @@ def summarize_nation_progress(paths):
             "deadline_guard_count": deadline_guard_count,
             "deadline_guard_rate": deadline_guard_count / max(1, len(rows)),
             "deadline_guard_reason_top": guard_reason_top,
+            "t13_pair": t13_pair,
+            "t14_reached": t14_reached,
             "t14_pair": t14_pair,
             "double_russia": double_russia,
             "post_2nd_material": post_2nd_material,
@@ -2854,11 +2862,15 @@ def summarize_nation_progress(paths):
             except Exception:
                 pass
     deadline_guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(5)) or "none"
+    funnel_t13pair = sum(1 for g in games if g.get("t13_pair"))
+    funnel_t14 = sum(1 for g in games if g.get("t14_reached"))
     funnel_t14pair = sum(1 for g in games if g.get("t14_pair"))
     funnel_2nd_mat = sum(1 for g in games if g.get("post_2nd_material"))
     funnel_t15pair = sum(1 for g in games if g.get("double_russia"))
     funnel_rows = [
-        ("T14x2", funnel_t14pair, len(games)),
+        ("T13x2", funnel_t13pair, len(games)),
+        ("T14", funnel_t14, funnel_t13pair),
+        ("T14x2", funnel_t14pair, funnel_t14),
         ("T15", russia_count, funnel_t14pair),
         ("2nd_mat", funnel_2nd_mat, russia_count),
         ("T15x2", funnel_t15pair, funnel_2nd_mat),

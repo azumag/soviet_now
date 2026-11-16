@@ -16,7 +16,7 @@ class FoundingFunnelContract(unittest.TestCase):
         text = (ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
         self.assertIn("funnel_transitions", text)
         self.assertIn("条件付き移行率", text)
-        for stage in ("T14x2", "T15", "2nd_mat", "T15x2", "soviet"):
+        for stage in ("T13x2", "T14", "T14x2", "T15", "2nd_mat", "T15x2", "soviet"):
             self.assertIn(f'"{stage}"', text)
 
     def test_per_game_funnel_fields_tracked(self):
