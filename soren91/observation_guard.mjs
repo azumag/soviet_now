@@ -4,6 +4,46 @@ import { isUsableCalibration } from './calibration_contract.mjs';
 const observations = new WeakMap();
 const pendingDrops = new WeakMap();
 
+// Persistent unrecognized frames are the shape the connection-error dialog
+// leaves when the analyzer still reports a low-confidence DROP: the WAITING
+// branch that owns connection-error recovery never runs, so the bot sits on the
+// dialog and sends no input. Probe after a bounded streak (animation frames are
+// short) and keep an env kill switch for the next live acceptance.
+export const DEFAULT_UNKNOWN_FRAME_LIMIT = 20;
+export const MIN_UNKNOWN_FRAME_LIMIT = 5;
+export const MAX_UNKNOWN_FRAME_LIMIT = 200;
+
+export function unknownFrameLimit(env = process.env) {
+  const raw = Number(env?.SOREN91_CONNECTION_ERROR_UNKNOWN_FRAMES);
+  if (!Number.isInteger(raw) || raw < MIN_UNKNOWN_FRAME_LIMIT || raw > MAX_UNKNOWN_FRAME_LIMIT) {
+    return DEFAULT_UNKNOWN_FRAME_LIMIT;
+  }
+  return raw;
+}
+
+export function isUnrecognizedObservation(perception) {
+  return perception?.ready === false || perception?.reason === 'unknown-current';
+}
+
+export function createConnectionErrorProbe({ limit = DEFAULT_UNKNOWN_FRAME_LIMIT } = {}) {
+  const threshold = Number.isInteger(limit) && limit >= MIN_UNKNOWN_FRAME_LIMIT
+    && limit <= MAX_UNKNOWN_FRAME_LIMIT ? limit : DEFAULT_UNKNOWN_FRAME_LIMIT;
+  let streak = 0;
+  return {
+    observe(perception) {
+      streak = isUnrecognizedObservation(perception) ? streak + 1 : 0;
+      return streak;
+    },
+    // WAITING/GAMEOVER already probe connection errors on every frame.
+    shouldProbe(state) {
+      return streak >= threshold && state !== 'WAITING' && state !== 'GAMEOVER';
+    },
+    reset() { streak = 0; },
+    get streak() { return streak; },
+    get threshold() { return threshold; },
+  };
+}
+
 export const DEFAULT_MAX_STALE_MS = 15_000;
 export const DEFAULT_POSTDROP_BOARD_ADVANCE_MS = 3_000;
 // Remote (Mac renderer) captures cost ~2.2-2.4s each, so consecutive

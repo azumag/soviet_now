@@ -21,7 +21,8 @@ import {
   captureJpegQuality,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
-import { createHoldEscapePolicy, markDropSent as markObservationDropSent,
+import { createHoldEscapePolicy, createConnectionErrorProbe,
+  markDropSent as markObservationDropSent, unknownFrameLimit,
   usableCalibration } from './observation_guard.mjs';
 import { rejectedFrameReason, saveRejectedFrame } from './rejected_frame_diagnostics.mjs';
 import { midgameCommentStatus } from './commentary_schedule.mjs';
@@ -1590,6 +1591,11 @@ async function gameLoop(page, calibration, gameNumber) {
   });
   // Bounded escape for a persistent recognition hold (docich#414).
   const holdEscape = createHoldEscapePolicy(process.env);
+  // Bounded recovery probe for a connection-error dialog that the analyzer
+  // still reads as a low-confidence DROP (see observation_guard).
+  const connectionErrorProbe = createConnectionErrorProbe({
+    limit: unknownFrameLimit(process.env),
+  });
   let consecutiveErrors = 0;
   let waitingLogged = false;
   let waitingCount = 0;
@@ -1607,6 +1613,46 @@ async function gameLoop(page, calibration, gameNumber) {
   let awaitingFreshRoundAfterResult = false;
   let interRoundWaitingSeen = false;
 
+
+  // Shared connection-error recovery: the WAITING/GAMEOVER branch probes every
+  // waiting frame, and a persistent unrecognized frame (below) probes too, so
+  // both paths must abandon the partial game and re-enter the title identically.
+  const recoverAbandonedGame = async (logLine) => {
+    console.log(logLine);
+    await recoverFromConnectionError(page);
+    if (turn > 0 || existsSync(historyFile)) {
+      // Abandoned partials stay available as retained evidence under the
+      // normal retention window instead of being silently deleted.
+      // Turn/gameNumber reset below is unchanged (gameplay untouched).
+      try {
+        const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
+        if (archived) {
+          console.log(`[game] Abandoned partial history preserved: ${archived} (game #${gameNumber})`);
+        }
+      } catch (err) {
+        console.log(`[game] Partial history archival failed for game #${gameNumber}: ${err.message}`);
+      }
+      gameNumber++;
+      historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
+      currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+      holdEscape.reset(); // Bounded per round: a new round starts fresh.
+      console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
+    }
+    turn = 0;
+    lastKnownRank = null;
+    rankingDetected = false;
+    roundResultConfirmed = false;
+    roundEnded = false;
+    waitingCount = 0;
+    waitingLogged = false;
+    holdUsedThisTurn = false;
+    midgameCommentSent = false;
+    roundStartedAt = null;
+    startBeatSent = false;
+    pinchBeatSent = false;
+    connectionErrorProbe.reset();
+    await sleep(1000);
+  };
 
   console.log('[game] Game loop started');
   try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
@@ -1645,6 +1691,7 @@ async function gameLoop(page, calibration, gameNumber) {
         return analyzeScreenshot(screenshotPath, calibration);
       });
       latency.observe(boardState);
+      connectionErrorProbe.observe(boardState.perception);
       const rejectedReason = rejectedFrameReason(boardState.state, boardState.perception?.reason);
       if (rejectedReason) {
         try {
@@ -1711,39 +1758,7 @@ async function gameLoop(page, calibration, gameNumber) {
         try {
           const { detectConnectionErrorScreen } = await loadModule('./screenshot_analyzer.mjs');
           if (await detectConnectionErrorScreen(screenshotPath)) {
-            console.log(`[game] Connection error screen detected; abandoning game #${gameNumber} without ranking comment`);
-            await recoverFromConnectionError(page);
-            if (turn > 0 || existsSync(historyFile)) {
-              // Abandoned partials stay available as retained evidence under
-              // the normal retention window instead of being silently deleted.
-              // Turn/gameNumber reset below is unchanged (gameplay untouched).
-              try {
-                const archived = archiveLatestHistory(HISTORY_DIR, gameNumber);
-                if (archived) {
-                  console.log(`[game] Abandoned partial history preserved: ${archived} (game #${gameNumber})`);
-                }
-              } catch (err) {
-                console.log(`[game] Partial history archival failed for game #${gameNumber}: ${err.message}`);
-              }
-              gameNumber++;
-              historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
-              currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
-              holdEscape.reset(); // Bounded per round: a new round starts fresh.
-              console.log(`[game] Next round strategy fixed after reconnect: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
-            }
-            turn = 0;
-            lastKnownRank = null;
-            rankingDetected = false;
-            roundResultConfirmed = false;
-            roundEnded = false;
-            waitingCount = 0;
-            waitingLogged = false;
-            holdUsedThisTurn = false;
-            midgameCommentSent = false;
-            roundStartedAt = null;
-            startBeatSent = false;
-            pinchBeatSent = false;
-            await sleep(1000);
+            await recoverAbandonedGame(`[game] Connection error screen detected; abandoning game #${gameNumber} without ranking comment`);
             continue;
           }
         } catch (e) {
@@ -1919,6 +1934,22 @@ async function gameLoop(page, calibration, gameNumber) {
         }
         await sleep(1000); // WAITING中は1秒間隔でチェック
         continue;
+      }
+
+      // A persistent unrecognized frame is the shape a connection-error dialog
+      // leaves when the analyzer still reports a low-confidence DROP, so the
+      // WAITING branch above never runs. Probe only after the bounded streak so
+      // ordinary animation frames never click the canvas.
+      if (connectionErrorProbe.shouldProbe(boardState.state)) {
+        try {
+          const { detectConnectionErrorScreen } = await loadModule('./screenshot_analyzer.mjs');
+          if (await detectConnectionErrorScreen(screenshotPath)) {
+            await recoverAbandonedGame(`[game] Connection error screen detected on unrecognized frames (state=${boardState.state}, streak=${connectionErrorProbe.streak}); abandoning game #${gameNumber} without ranking comment`);
+            continue;
+          }
+        } catch (e) {
+          console.log(`[game] Connection error detection failed: ${e.message}`);
+        }
       }
 
       if (awaitingFreshRoundAfterResult) {
