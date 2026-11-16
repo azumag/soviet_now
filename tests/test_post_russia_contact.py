@@ -328,6 +328,21 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
             )
         )
 
+    def test_plants_second_series_t13_seed_after_first_kazakhstan(self):
+        # issue #920: post-first-T14 boards with t13==0 + a T12 pair were the
+        # measured dominant stall (7/10 games). The seed push must fire.
+        pieces = [
+            piece("kazakhstan", 14, -2.0, -2.7, 1.35),
+            piece("t12-left", 12, 0.0, -2.0, 0.9),
+            piece("t12-right", 12, 2.2, -1.5, 0.9),
+        ]
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, self.results, 10, 0.5
+        )
+        self.assertIsNotNone(selected)
+        result, _ = selected
+        self.assertEqual(result["x"], 3.0)
+
     def test_keeps_safe_immediate_merge_priority(self):
         results = self.results + [candidate(1.5, grade="DIRECT")]
 
