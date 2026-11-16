@@ -94,10 +94,23 @@ class AnchorLaneSeedContactTest(unittest.TestCase):
         return x, chosen, gs, an
 
     def test_real_turns_seed_beside_or_on_open_anchor(self):
-        for name in ("anchor_lane_t9_beside_turn14.json", "anchor_lane_t9_ladder_turn47.json",
+        for name in ("anchor_lane_t9_beside_turn14.json",
                      "anchor_lane_t10_beside_turn15.json", "anchor_lane_t10_ladder_turn16.json"):
             with self.subTest(fixture=name):
                 self._assert_good(name, _load(name).get("expect_class"))
+
+    def test_t12_pair_seed_push_preempts_anchor_seed(self):
+        # The turn47 board carries a T12 pair with no T13/T14.  The first-T13
+        # seed-push arm (t13<=1 widening, issue #920 upstream) fires in the
+        # selector phase and legitimately preempts the v732 anchor seed,
+        # consolidating the pair into T13 material instead of seeding T9.
+        fx = _load("anchor_lane_t9_ladder_turn47.json")
+        gs = _gs(fx)
+        x, reason, chosen, an = _pipeline(gs)
+        self.assertNotIn(TAG, reason)
+        self.assertIn("PRE_RUSSIA_T12_CONTACT_SHOT", reason)
+        self.assertEqual(chosen["merge_grade"], "NO")
+        self.assertFalse(chosen["crosses_deadline"])
 
     def test_t11_fixtures_no_longer_earn_the_seed_bonus_at_head(self):
         # HEAD: newer layers (T12_CHAIN_LANE_GUIDANCE / MERGE_OPPORTUNITY_KEEP_
