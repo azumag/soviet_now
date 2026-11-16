@@ -2618,6 +2618,50 @@ def render_score_distribution(scores, bar_w=40):
     return lines
 
 
+def _strategy_anchor_line(rolling, entries):
+    """One bounded line that makes the protected anchor visible.
+
+    The comparison rows are score-ranked; the anchor can be far outside the
+    top rows (for example a Soviet-capable strategy at rank 52). Operators
+    need to see which hash the purge gate will compare against, and how fresh
+    its Soviet progress is, without opening best_strategy_anchor.json.
+    """
+    try:
+        anchor = json.loads(Path(BEST_STRATEGY_ANCHOR_FILE).read_text())
+    except Exception:
+        return ""
+    if not isinstance(anchor, dict):
+        return ""
+    anchor_hash = str(anchor.get("hash") or "")
+    if not anchor_hash:
+        return ""
+    rank = ""
+    for idx, entry in enumerate(entries, start=1):
+        if entry.get("hash") == anchor_hash:
+            rank = str(idx)
+            break
+    data = rolling.get(anchor_hash) or {}
+    recent = []
+    for value in data.get("max_types", []) or []:
+        try:
+            recent.append(int(value))
+        except (TypeError, ValueError):
+            pass
+    recent_soviet = sum(1 for value in recent if value >= 16)
+    try:
+        comp = int(float(anchor.get("comp") or 0))
+    except (TypeError, ValueError):
+        comp = 0
+    try:
+        soviet = int(anchor.get("soviet_count") or 0)
+    except (TypeError, ValueError):
+        soviet = 0
+    return (
+        f"  {DIM}anchor {anchor_hash[:8]} rk={rank or '-'} c={comp} "
+        f"sov={soviet} rct={recent_soviet}/{len(recent)}{RST}"
+    )
+
+
 def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None):
     bar_w = 22
     # marker1 + rank3 + space + hash8 + space + n/t6 + sep1 + bar22 + metrics
@@ -2690,11 +2734,14 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     live_arm_line = ""
     if played_arm:
         live_arm_line = f"  NOW: A/B arm={played_arm} hash={played_hash[:8]}"
+    anchor_line = _strategy_anchor_line(rolling, all_entries)
 
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
         if live_arm_line:
             lines.append(live_arm_line)
+        if anchor_line:
+            lines.append(anchor_line)
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -2743,6 +2790,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=*){RST}"]
     if live_arm_line:
         lines.append(live_arm_line)
+    if anchor_line:
+        lines.append(anchor_line)
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"

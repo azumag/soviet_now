@@ -999,6 +999,32 @@ class StrategyComparisonAbTest(unittest.TestCase):
 
         self._run_in_tempdir(_test)
 
+    def test_anchor_line_shows_hash_rank_and_recent_soviet_window(self):
+        """アンカーが上位7圏外でも、hash・順位・直近ソ連窓を1行で見せる。"""
+
+        def _test():
+            self._prep([self.A])
+            Path(sd.BEST_STRATEGY_ANCHOR_FILE).write_text(
+                json.dumps({"hash": self.A, "comp": 12345, "soviet_count": 3}),
+                encoding="utf-8",
+            )
+            rolling = {
+                self.A: {
+                    "scores": [12000] * 12,
+                    "games_total": 12,
+                    "max_types": [16, 13],
+                }
+            }
+            lines = sd.render_strategy_comparison(rolling, "", ab_status=None)
+            joined = self._plain(lines)
+            self.assertIn(f"anchor {self.A[:8]}", joined)
+            self.assertIn("sov=3", joined)
+            self.assertIn("rct=1/2", joined)
+            for line in sd.fit_dashboard_lines(lines):
+                self.assertLessEqual(sd.ansi_display_width(line), sd.W)
+
+        self._run_in_tempdir(_test)
+
     def test_no_candidate_pin_without_active_ab(self):
         """A/B 非稼働ではトップ7圏外の候補を特別に足さない (通常ランキングのみ)。"""
 
