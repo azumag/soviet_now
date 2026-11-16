@@ -93,6 +93,7 @@ check_quarantine() {
 		cp "$GATE_SCRIPT" strategy/ab_gate_on_merge.sh
 		printf '%s' '{"a_hash":"AAA","b_hash":"BBB"}' > tmp/state/ab_state.json
 		echo 'CANDIDATE' > candidate.py
+		echo 'CANDIDATE2' > candidate2.py
 		export SOREN_PROJECTION_ROOT="$WORK"
 		export ELOOP_LIB_DIR="$WORK"
 		export TMP_STATE_DIR="$WORK/tmp/state"
@@ -102,9 +103,13 @@ check_quarantine() {
 		unset AB_GATE_ON_MERGE_INTERNAL_ADOPT
 		source "$ROOT/core/helpers.sh" >/dev/null 2>&1 || exit 2
 		source "$ROOT/core/strategy_runtime.sh" >/dev/null 2>&1 || exit 2
+		# 同一シェル・同一秒の連続拒否でも両方の候補が残ること（quarantine dir 一意化の検証）
 		_strategy_runtime_ab_merge_guard "test" "candidate.py" "" >/dev/null 2>&1
 		[ $? -eq 3 ] || exit 1
-		find "$TMP_STATE_DIR/projection_guard" -name strategy.py -exec grep -l '^CANDIDATE$' {} \; 2>/dev/null | grep -q .
+		_strategy_runtime_ab_merge_guard "test" "candidate2.py" "" >/dev/null 2>&1
+		[ $? -eq 3 ] || exit 1
+		find "$TMP_STATE_DIR/projection_guard" -name strategy.py -exec grep -l '^CANDIDATE$' {} \; 2>/dev/null | grep -q . &&
+		find "$TMP_STATE_DIR/projection_guard" -name strategy.py -exec grep -l '^CANDIDATE2$' {} \; 2>/dev/null | grep -q .
 	)
 	rc=$?
 	rm -rf "$WORK"

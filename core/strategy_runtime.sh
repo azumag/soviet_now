@@ -364,8 +364,10 @@ _strategy_runtime_quarantine_candidate() {
 	local source_file="$1" helpers_source="${2:-}"
 	local state_dir quarantine_dir
 	state_dir="${TMP_STATE_DIR:-tmp/state}"
-	quarantine_dir="${state_dir}/projection_guard/$(date -u +%Y%m%dT%H%M%SZ)_$$"
-	mkdir -p "$quarantine_dir" 2>/dev/null || return 1
+	mkdir -p "${state_dir}/projection_guard" 2>/dev/null || return 1
+	# soviet_now#925 review: 同一シェルで同一秒に連続拒否すると従来の
+	# 時刻_$$ 命名で隔離先が衝突し検証済み候補が消失する。mktemp で毎回一意化する。
+	quarantine_dir=$(mktemp -d "${state_dir}/projection_guard/$(date -u +%Y%m%dT%H%M%SZ)_$$.XXXXXX" 2>/dev/null) || return 1
 	cp -p "$source_file" "$quarantine_dir/strategy.py" 2>/dev/null || return 1
 	if [ -n "$helpers_source" ] && [ -d "$helpers_source" ]; then
 		cp -RL "$helpers_source" "$quarantine_dir/strategy_helpers" 2>/dev/null || true
