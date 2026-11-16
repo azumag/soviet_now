@@ -5,8 +5,10 @@ on:
       - 'strategy/sandbox.sh'
       - 'strategy/isolated_runner/**'
       - 'strategy/improve_failure.sh'
+      - 'strategy/ab_gate_on_merge.sh'
       - 'core/strategy_runtime.sh'
       - 'core/strategy_runtime_strict.sh'
+      - 'core/version.sh'
       - 'eloop_lib.sh'
       - 'tests/test_strategy_sandbox_no_host_exec.py'
       - 'tests/test_isolated_runner_rootless.py'
@@ -14,6 +16,7 @@ on:
       - 'tests/test_improve_failure_history.py'
       - 'tests/test_projection_guard.py'
       - 'tests/test_projection_guard_strict.py'
+      - 'tests/test_ab_merge_gate_runtime.sh'
       - '.github/workflows/isolated-apply.yml'
   push:
     branches: [main]
@@ -21,8 +24,10 @@ on:
       - 'strategy/sandbox.sh'
       - 'strategy/isolated_runner/**'
       - 'strategy/improve_failure.sh'
+      - 'strategy/ab_gate_on_merge.sh'
       - 'core/strategy_runtime.sh'
       - 'core/strategy_runtime_strict.sh'
+      - 'core/version.sh'
       - 'eloop_lib.sh'
       - 'tests/test_strategy_sandbox_no_host_exec.py'
       - 'tests/test_isolated_runner_rootless.py'
@@ -30,6 +35,7 @@ on:
       - 'tests/test_improve_failure_history.py'
       - 'tests/test_projection_guard.py'
       - 'tests/test_projection_guard_strict.py'
+      - 'tests/test_ab_merge_gate_runtime.sh'
       - '.github/workflows/isolated-apply.yml'
 permissions:
   contents: read
@@ -48,4 +54,4 @@ jobs:
           tests.test_improve_failure_history
           tests.test_projection_guard
           tests.test_projection_guard_strict
-      - run: bash -n strategy/sandbox.sh core/strategy_runtime.sh core/strategy_runtime_strict.sh strategy/improve_failure.sh eloop_lib.sh
+      - run: bash -n strategy/sandbox.sh core/strategy_runtime.sh core/strategy_runtime_strict.sh strategy/improve_failure.sh strategy/ab_gate_on_merge.sh core/version.sh eloop_lib.sh

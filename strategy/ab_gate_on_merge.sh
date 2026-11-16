@@ -79,6 +79,19 @@ _ab_gate_on_merge_check() {
 		return 0
 	fi
 	if [ "$file_rc" -eq 0 ]; then
+		# Present, non-empty and readable but unparseable: indeterminate,
+		# fail-closed (2) — do not fall through to the clear signals.
+		if ! python3 - "$AB_STATE_FILE" <<'PY' >/dev/null 2>&1
+import json, sys
+try:
+    json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+PY
+		then
+			AB_GATE_ON_MERGE_RC=2
+			return 0
+		fi
 		local a b
 		a=$(_ab_gate_on_merge_contains "$AB_STATE_FILE" "a_hash")
 		b=$(_ab_gate_on_merge_contains "$AB_STATE_FILE" "b_hash")

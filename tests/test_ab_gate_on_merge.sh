@@ -93,6 +93,13 @@ scenario_empty_state() {
 }
 run_check "empty-state" scenario_empty_state 0
 
+# --- 8b) non-empty but unparseable state file -> rc=2 (fail-closed) -------------
+scenario_malformed_state() {
+	mkdir -p tmp/state
+	printf 'not-json{{{' > tmp/state/ab_state.json
+}
+run_check "malformed-state" scenario_malformed_state 2
+
 # --- 9) unreadable state file -> rc=2 (fail-closed, not a silent clear) ------------------------
 # chmod 000 is only effective for a non-root runner: root can still read the
 # file, so skip there instead of asserting an environment-specific result.

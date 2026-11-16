@@ -3419,6 +3419,28 @@ os.replace(tmp, sig_file)
 PY
 }
 
+_regression_rollback_apply() {
+	# <rollback_file> — replace live strategy.py with the chosen rollback target.
+	# soviet_now#925: A/B active / 状態不明の間は rollback の live 差し替えも止める
+	# （guard は backup 作成より前に置き、拒否時は何も書き換えない fail-closed）。
+	local rollback_file="$1"
+	if ! command -v _strategy_runtime_ab_merge_guard >/dev/null 2>&1 || ! _strategy_runtime_ab_merge_guard "regression_rollback"; then
+		log "[REGRESSION] A/B merge gate refused/unavailable → ロールバック中止 (fail-closed #925)"
+		return 1
+	fi
+
+	# 先に現在の戦略をバックアップ（失敗時はロールバック中止）
+	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak" || {
+		log "[REGRESSION] CRITICAL: バックアップ失敗、ロールバック中止"
+		return 1
+	}
+	if ! cp "$rollback_file" "$STRATEGY_FILE"; then
+		log "[REGRESSION] CRITICAL: ロールバックファイルコピー失敗、復元中"
+		cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
+		return 1
+	fi
+}
+
 check_regression() {
 	type reload_runtime_toggles >/dev/null 2>&1 && reload_runtime_toggles
 	# top1 anchor を固定基準にして branch 単位で評価する。
@@ -5125,16 +5147,7 @@ PY
 		local rollback_game_num rollback_analysis_summary
 		rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
-		# 先に現在の戦略をバックアップ（失敗時はロールバック中止）
-		cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak" || {
-			log "[REGRESSION] CRITICAL: バックアップ失敗、ロールバック中止"
-			return 1
-		}
-		if ! cp "$rollback_file" "$STRATEGY_FILE"; then
-			log "[REGRESSION] CRITICAL: ロールバックファイルコピー失敗、復元中"
-			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
-			return 1
-		fi
+		_regression_rollback_apply "$rollback_file" || return 1
 		local rollback_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_restore_validate_${rollback_hash:-unknown}_$$.py"
 		cp "$STRATEGY_FILE" "$rollback_validate_tmp" 2>/dev/null || true
 		if [ -f "$rollback_validate_tmp" ] && ! validate_strategy "$rollback_validate_tmp"; then

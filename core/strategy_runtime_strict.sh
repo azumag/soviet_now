@@ -66,6 +66,9 @@ strategy_runtime_projection_apply_gate() {
 	local policy repo rel verdict quarantine_dir reviewed_mode
 
 	_STRATEGY_RUNTIME_TARGET_MODE=""
+	# soviet_now#925: A/B merge gate は projection policy と独立の fail-closed
+	# 不変条件として常に実行する（off/非projection でも active A/B の外部反映は止める）。
+	_strategy_runtime_ab_merge_guard "$tag" "$source_file" "$helpers_source" || return $?
 	policy=$(_strategy_runtime_live_apply_policy)
 
 	_strategy_runtime_strict_is_projection || return 0

@@ -12,7 +12,7 @@ _improve_failure_history_path() {
 _improve_failure_normalize_code() {
 	local raw="${1:-other}"
 	case "$raw" in
-	apply_bundle_failed|projection_guard_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change|strategy_persist_failed)
+	apply_bundle_failed|projection_guard_refused|ab_merge_gate_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change|strategy_persist_failed)
 		printf '%s\n' "$raw"
 		;;
 	*) printf '%s\n' other ;;
@@ -114,7 +114,7 @@ try:
     code = str(data.get("failure_code") or "")
 except Exception:
     raise SystemExit(1)
-if code not in ("apply_bundle_failed", "projection_guard_refused") or failed_at <= 0:
+if code not in ("apply_bundle_failed", "projection_guard_refused", "ab_merge_gate_refused") or failed_at <= 0:
     raise SystemExit(1)
 # A nonzero run start is authoritative. The age guard only covers legacy callers
 # that did not carry started_at, and prevents an old apply incident from being

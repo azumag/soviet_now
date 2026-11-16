@@ -13,6 +13,13 @@ class StrictProjectionGuardTest(unittest.TestCase):
         target = work / "strategy.py"
         source.write_text("NEW\n", encoding="utf-8")
         target.write_text("OLD\n", encoding="utf-8")
+        # soviet_now#925: the runtime root must carry strategy/ab_gate_on_merge.sh
+        # or _strategy_runtime_ab_merge_guard refuses every apply fail-closed.
+        strategy_dir = work / "strategy"
+        strategy_dir.mkdir(exist_ok=True)
+        (strategy_dir / "ab_gate_on_merge.sh").write_bytes(
+            (ROOT / "strategy" / "ab_gate_on_merge.sh").read_bytes()
+        )
         env = os.environ.copy()
         env.update(
             {

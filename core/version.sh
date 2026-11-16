@@ -204,6 +204,11 @@ archive_gameover_screenshots() {
 
 recover_strategy_backup() {
 	if [ ! -f "$STRATEGY_FILE" ] && [ -f "${STRATEGY_FILE}.bak" ]; then
+		# soviet_now#925: A/B active / 状態不明の間は .bak 復元も止める（fail-closed）
+		if ! command -v _strategy_runtime_ab_merge_guard >/dev/null 2>&1 || ! _strategy_runtime_ab_merge_guard "recover_strategy_backup"; then
+			log "[RECOVER] A/B merge gate refused/unavailable → .bak 復元中止 (fail-closed #925)"
+			return 1
+		fi
 		log "[RECOVER] .bak から復元"
 		cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 	fi

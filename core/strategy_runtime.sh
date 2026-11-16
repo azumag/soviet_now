@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 path, code, failed_at = sys.argv[1:4]
-if code not in ("apply_bundle_failed", "projection_guard_refused"):
+if code not in ("apply_bundle_failed", "projection_guard_refused", "ab_merge_gate_refused"):
     code = "apply_bundle_failed"
 payload = {
     "schema_version": 1,
@@ -298,14 +298,76 @@ finally:
 PY
 }
 
+_strategy_runtime_ab_merge_guard() {
+	# soviet_now#925: A/B 実験 active 中（または状態が読めない fail-closed 判定）
+	# の strategy.py live-byte 差し替えを止める merge/reflect 境界ガード。
+	# <tag> [source_file] [helpers_source]
+	# strategy/ab_gate_on_merge.sh check: 0=clear / 1=active / 2=unreadable-or-unknown。
+	# 1 と 2 はともに refusal を返す（root 変更時は A=Wait 方針、
+	# #865 issuecomment-6888744752）。_ab_finish の B adopt は実験の終了動作
+	# であり外部 merge ではないため ab_gate.sh 側が
+	# AB_GATE_ON_MERGE_INTERNAL_ADOPT=1 を立てて bypass する。
+	# refusal は projection guard と同様に候補を quarantine する（呼出側は
+	# rc=3 を「隔離済み」と記録するので、渡さないと検証済み候補が消失する）。
+	local tag="${1:-apply}" source_file="${2:-}" helpers_source="${3:-}"
+	local rc=0 reason gate_script root lib_abs=""
+	[ "${AB_GATE_ON_MERGE_INTERNAL_ADOPT:-0}" = "1" ] && return 0
+
+	# cd 前に絶対パスへ正規化する（相対 SOREN_PROJECTION_ROOT だと cd 後の
+	# gate_script が <root>/<root>/strategy/... を指して存在しても見失う）。
+	root=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' \
+		"${SOREN_PROJECTION_ROOT:-${ELOOP_LIB_DIR:-$PWD}}" 2>/dev/null) || root=""
+	[ -n "${ELOOP_LIB_DIR:-}" ] && \
+		lib_abs=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' \
+			"$ELOOP_LIB_DIR" 2>/dev/null) || lib_abs=""
+	gate_script="${root}/strategy/ab_gate_on_merge.sh"
+	if [ ! -f "$gate_script" ] && [ -n "$lib_abs" ] && [ "$root" != "$lib_abs" ]; then
+		gate_script="$lib_abs/strategy/ab_gate_on_merge.sh"
+	fi
+	if [ ! -f "$gate_script" ]; then
+		rc=2
+	else
+		(
+			cd "$root" 2>/dev/null || exit 2
+			# 非 export のシェル変数も子プロセスへ渡す（空はゲート側の既定値になる）。
+			env "TMP_STATE_DIR=${TMP_STATE_DIR:-tmp/state}" \
+				"AB_STATE_FILE=${AB_STATE_FILE:-}" \
+				"AB_ABORT_FILE=${AB_ABORT_FILE:-}" \
+				"AB_ENV_FILE=${AB_ENV_FILE:-}" \
+				"AB_ACTIVE_BRANCH_FILE=${AB_ACTIVE_BRANCH_FILE:-}" \
+				"SOREN_AB_ALT_STRATEGY=${SOREN_AB_ALT_STRATEGY:-}" \
+				bash "$gate_script" check >/dev/null 2>&1
+		) || rc=$?
+		case "$rc" in 0|1|2) ;; *) rc=2 ;; esac
+	fi
+	[ "$rc" -eq 0 ] && return 0
+	if [ "$rc" -eq 1 ]; then
+		reason="ab_merge_gate_active"
+	else
+		reason="ab_merge_gate_unknown"
+	fi
+	local quarantine_dir=""
+	if [ -f "$source_file" ]; then
+		quarantine_dir=$(_strategy_runtime_quarantine_candidate "$source_file" "$helpers_source") || quarantine_dir=""
+	fi
+	_strategy_runtime_record_guard_event "refused" "$(_strategy_runtime_live_apply_policy)" "$reason" "$quarantine_dir"
+	_strategy_runtime_record_apply_failure "ab_merge_gate_refused"
+	_strategy_runtime_log "[${tag}] ab_gate_on_merge refused live apply (rc=${rc}; ${reason}); candidate preserved at ${quarantine_dir:-<none>} — fail-closed #925"
+	command -v _ab_status_publish_async >/dev/null 2>&1 &&
+		_ab_status_publish_async "ab_merge_gate_refused rc=${rc}" >/dev/null 2>&1 || true
+	return "$_STRATEGY_RUNTIME_GUARD_REFUSED"
+}
+
 _strategy_runtime_quarantine_candidate() {
 	# <source_file> [helpers_source] — preserve the refused candidate so the
 	# persist/PR path can upstream it later. Echoes the quarantine directory.
 	local source_file="$1" helpers_source="${2:-}"
 	local state_dir quarantine_dir
 	state_dir="${TMP_STATE_DIR:-tmp/state}"
-	quarantine_dir="${state_dir}/projection_guard/$(date -u +%Y%m%dT%H%M%SZ)_$$"
-	mkdir -p "$quarantine_dir" 2>/dev/null || return 1
+	mkdir -p "${state_dir}/projection_guard" 2>/dev/null || return 1
+	# soviet_now#925 review: 同一シェルで同一秒に連続拒否すると従来の
+	# 時刻_$$ 命名で隔離先が衝突し検証済み候補が消失する。mktemp で毎回一意化する。
+	quarantine_dir=$(mktemp -d "${state_dir}/projection_guard/$(date -u +%Y%m%dT%H%M%SZ)_$$.XXXXXX" 2>/dev/null) || return 1
 	cp -p "$source_file" "$quarantine_dir/strategy.py" 2>/dev/null || return 1
 	if [ -n "$helpers_source" ] && [ -d "$helpers_source" ]; then
 		cp -RL "$helpers_source" "$quarantine_dir/strategy_helpers" 2>/dev/null || true
@@ -321,6 +383,10 @@ strategy_runtime_projection_apply_gate() {
 
 	# Never let a previous gated apply leak its reviewed mode into this one.
 	_STRATEGY_RUNTIME_TARGET_MODE=""
+
+	# soviet_now#925: A/B merge gate は projection policy と独立の fail-closed
+	# 不変条件として常に実行する（dry_run/off でも active A/B の外部反映は止める）。
+	_strategy_runtime_ab_merge_guard "$tag" "$source_file" "$helpers_source" || return $?
 
 	policy=$(_strategy_runtime_live_apply_policy)
 	[ "$policy" = "off" ] && return 0

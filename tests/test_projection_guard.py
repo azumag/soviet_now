@@ -101,6 +101,12 @@ class ProjectionGuardTests(unittest.TestCase):
             for name, text in files.items():
                 (helpers_dir / name).write_text(text, encoding="utf-8")
         (work / "state").mkdir()
+        # soviet_now#925: the runtime root must carry strategy/ab_gate_on_merge.sh
+        # or _strategy_runtime_ab_merge_guard refuses every apply fail-closed.
+        (work / "strategy").mkdir()
+        (work / "strategy" / "ab_gate_on_merge.sh").write_bytes(
+            (ROOT / "strategy" / "ab_gate_on_merge.sh").read_bytes()
+        )
         return work
 
     def _apply_script(self, kind: str) -> str:
