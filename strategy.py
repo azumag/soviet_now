@@ -357,9 +357,13 @@ def _select_post_russia_contact_candidate(
         if isinstance(piece, dict) and piece.get("type") == 13
     )
     # 実測ボトルネック (同じ 80試合窓で T14=1 終了 22試合中 9試合が最大クラス):
-    # T14=1 + T13=1 + T12 pair。T12+T12 を寄せれば 2個目 T13 → T13 pair 押し合い
-    # → 2個目 T14 → T15 へ繋がる。T13 が未生成 (0個) では一手寄せでは素材が
-    # 揃わないため対象外。
+    # T14=1 + T13<=1 + T12 pair。T12+T12 を寄せれば T13 生成 → T13 pair 押し合い
+    # → 2個目 T14 → T15 へ繋がる。
+    # 2026-11-16 実測 (直近24試合, issue #920): 第一T14到達10試合中 7試合が
+    # t13==0 + T12 pair の局面に滞在し、T14x2 到達は 0。種 (最初のT13) が
+    # 無ければ t13==1 軸も永遠に発火しない連鎖停止のため、t13==0 でも
+    # 種植えとして T12 ペア押し合いを許可する（旧来は「一手寄せでは素材が
+    # 揃わない」として対象外としていたが、連鎖開始には種が必須）。
     type12_count = sum(
         1 for piece in pieces
         if isinstance(piece, dict) and piece.get("type") == 12
@@ -381,7 +385,7 @@ def _select_post_russia_contact_candidate(
     pre_russia_t12_setup = (
         type15_count == 0
         and type14_count == 1
-        and type13_count == 1
+        and type13_count <= 1
         and type12_count >= 2
         and pre_russia_no_t16
     )
