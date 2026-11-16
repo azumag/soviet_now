@@ -3652,7 +3652,7 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         script = (REPO_ROOT / "broadcast/comment.sh").read_text()
 
         self.assertIn("_comment_category_allows_advice_append()", script)
-        self.assertIn("card_gacha | chitchat | bits", script)
+        self.assertIn("card_gacha | announcement | chitchat | bits", script)
         self.assertNotIn("card_gacha | chitchat | short_reaction", script)
         self.assertIn("stream_bug_report", script)
         self.assertIn("非助言カテゴリのためアドバイス保存を抑制", script)
