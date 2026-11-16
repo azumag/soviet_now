@@ -82,11 +82,24 @@ class CornerNoticeStateTest(unittest.TestCase):
         self.assertFalse(cns.prediction_blocked(self.state, now=self.now))
         self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
 
-    def test_clock_promise_blocks_prediction_and_improvement(self):
+    def test_far_clock_promise_blocks_prediction_but_not_improvement(self):
+        # The notice is published as soon as the next corner is decided; a
+        # clock hours away must not freeze the 48-game improvement cycle.
         self.write()
         self.assertEqual(self.mode(), "time")
         self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
-        self.assertTrue(cns.improvement_blocked(self.state, now=self.now))
+        self.assertFalse(cns.improvement_blocked(self.state, now=self.now))
+
+    def test_imminent_or_overdue_clock_promise_blocks_improvement(self):
+        for due_at in (
+            int(self.now + cns.LEAD_SECONDS - 1),
+            int(self.now - 60),
+        ):
+            with self.subTest(due_at=due_at):
+                self.write(due_at=due_at)
+                self.assertEqual(self.mode(), "time")
+                self.assertTrue(cns.prediction_blocked(self.state, now=self.now))
+                self.assertTrue(cns.improvement_blocked(self.state, now=self.now))
 
     def test_pending_allows_prediction_but_not_improvement(self):
         self.write(hold="prediction-pending")

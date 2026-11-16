@@ -2799,10 +2799,11 @@ _rolling_keep_limit_for_hash() {
 
 
 _corner_notice_blocks_improvement() {
-	# docich publishes the next-corner promise before a slot is due. Starting
-	# or advancing the improvement batch while that promise is out can reset
-	# the cycle and pause the game; keep playing matches instead. A
-	# missing/erroring projection is fail-open so it cannot stall the loop.
+	# docich publishes the next-corner promise as soon as the next corner is
+	# decided, often hours before it starts. The promise alone must not hold
+	# the improvement cycle: only a prediction in flight or a corner due within
+	# the lead window can be pushed by starting a new batch. A missing/erroring
+	# projection is fail-open so it cannot stall the loop.
 	local blocked
 	blocked=$(python3 "$ELOOP_LIB_DIR/lib/corner_notice_state.py" blocked improvement 2>/dev/null) || return 1
 	[ "$blocked" = "1" ] || return 1

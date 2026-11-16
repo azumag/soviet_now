@@ -12,6 +12,13 @@ While a corner actually runs, ``game_switch.json`` names its view (for example
 there too: the Soren game is parked, so nobody is playing the promised 48
 matches. See :func:`corner_active`.
 
+The improvement gate is deliberately narrower than the prediction gate. The
+rotation publishes the next corner as soon as it is decided, often hours before
+``due_at``; treating the notice's mere presence as an improvement blocker
+freezes the 48-game improvement cycle for as long as a promise is out (which
+is effectively always). Only a prediction in flight (a non-null ``hold``) or a
+notice due within :data:`LEAD_SECONDS` blocks a new improvement.
+
 This module deliberately does not import docich: the Soren worker only needs
 the bounded public projections, and an unreadable/missing projection means
 there is no promise or corner proof (clear), so a broken projection cannot
@@ -257,8 +264,21 @@ def prediction_blocked(state_dir=None, *, now=None) -> bool:
 
 
 def improvement_blocked(state_dir=None, *, now=None) -> bool:
-    """True while any live notice is out, so no new improvement may start."""
-    return mode(state_dir, now=now) != "clear"
+    """True only when a new improvement cycle could push the next corner.
+
+    ``next_corner.json`` is a viewer-facing promise and stays out between
+    corners. Blocking on its bare presence would never let the 48-game batch
+    start, so only a prediction in flight (a non-null ``hold``) or a notice due
+    within :data:`LEAD_SECONDS` blocks the improvement cycle. Missing or
+    invalid projections are fail-open, matching :func:`load`.
+    """
+    notice = load(state_dir, now=now)
+    if notice is None:
+        return False
+    if notice["hold"] is not None:
+        return True
+    now_value = time.time() if now is None else float(now)
+    return float(notice["due_at"]) - now_value <= LEAD_SECONDS
 
 
 def main(argv=None) -> int:
