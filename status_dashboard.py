@@ -2618,6 +2618,32 @@ def render_score_distribution(scores, bar_w=40):
     return lines
 
 
+def _soviet_frontier_count(data):
+    """Count repeatable 2nd-Russia frontier boards in the rolling window.
+
+    Mirrors strategy/regression.sh::_is_soviet_frontier without importing the
+    shell module: T15x2, or T15x1 together with T14x2 on one board. Single
+    Russia alone is not a frontier (2026-05-25 failure surface).
+    """
+    count = 0
+    peaks = data.get("peak_high_type_counts", []) or []
+    for peak in peaks:
+        types = {}
+        for token in str(peak or "").split():
+            if not token.startswith("T") or "x" not in token:
+                continue
+            try:
+                stage, n = token[1:].split("x", 1)
+                stage, n = int(stage), int(n)
+            except (TypeError, ValueError):
+                continue
+            if stage > 0 and n > 0:
+                types[stage] = max(types.get(stage, 0), n)
+        if types.get(15, 0) >= 2 or (types.get(15, 0) >= 1 and types.get(14, 0) >= 2):
+            count += 1
+    return count
+
+
 def _strategy_anchor_line(rolling, entries):
     """One bounded line that makes the protected anchor visible.
 
@@ -2641,6 +2667,8 @@ def _strategy_anchor_line(rolling, entries):
             rank = str(idx)
             break
     data = rolling.get(anchor_hash) or {}
+    peaks = data.get("peak_high_type_counts", []) or []
+    frontier = _soviet_frontier_count(data)
     recent = []
     for value in data.get("max_types", []) or []:
         try:
@@ -2658,7 +2686,8 @@ def _strategy_anchor_line(rolling, entries):
         soviet = 0
     return (
         f"  {DIM}anchor {anchor_hash[:8]} rk={rank or '-'} c={comp} "
-        f"sov={soviet} rct={recent_soviet}/{len(recent)}{RST}"
+        f"sov={soviet} rct={recent_soviet}/{len(recent)} "
+        f"fr={frontier}/{len(peaks)}{RST}"
     )
 
 
