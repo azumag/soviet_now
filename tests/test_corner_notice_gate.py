@@ -50,22 +50,32 @@ fi
         )
         return result.stdout.strip()
 
-    def notice(self, hold):
+    def notice(self, hold, *, due_in=600):
         now = int(time.time())
         return {
             "schema": 1, "corner": "ninvaders", "label": "スペースインベーダー",
-            "when": "18:00", "due_at": now + 600, "source": "auto",
+            "when": "18:00", "due_at": now + due_in, "source": "auto",
             "hold": hold, "remaining_games": None,
             "decided_at": now, "updated_at": now,
         }
 
-    def test_any_live_notice_blocks_a_new_improvement(self):
-        for hold in (None, "prediction-pending", "prediction", "weather"):
+    def test_future_clock_allows_improvement_and_imminent_or_hold_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "next_corner.json").write_text(
+                json.dumps(self.notice(None)), encoding="utf-8"
+            )
+            self.assertEqual(self.run_gate(tmp), "allowed")
+        for hold in ("prediction-pending", "prediction", "weather"):
             with self.subTest(hold=hold), tempfile.TemporaryDirectory() as tmp:
                 Path(tmp, "next_corner.json").write_text(
                     json.dumps(self.notice(hold)), encoding="utf-8"
                 )
                 self.assertEqual(self.run_gate(tmp), "blocked")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "next_corner.json").write_text(
+                json.dumps(self.notice(None, due_in=60)), encoding="utf-8"
+            )
+            self.assertEqual(self.run_gate(tmp), "blocked")
 
     def test_clear_or_stale_notice_keeps_the_existing_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,17 +98,17 @@ fi
         self.assertIn("[ \"${_cycle_acc_count:-0}\" -ge \"$MIN_GAMES_BEFORE_IMPROVE\" ] &&\n\t\t\t! _corner_notice_blocks_improvement; then",
                       self.loop_source)
 
-    def test_per_game_batch_accumulation_is_gated_without_a_loop_restart(self):
-        # improve.sh is re-sourced by eloop_lib.sh every loop, so the per-game
-        # accumulation gate activates on the next match without restarting the
-        # long-lived soren_loop process.
+    def test_per_game_batch_accumulation_continues_before_the_gate(self):
+        # #924: a game completed at the corner boundary is accumulated into its
+        # batch; the notice gate only defers the early-lock queue. improve.sh is
+        # re-sourced every loop, so this takes effect on the next match.
         start = self.source.index("record_completed_game_for_adaptive_improvement()")
         block = self.source[start:]
         gate = block.index("_corner_notice_blocks_improvement")
         first_accumulate = block.index("accumulate_game_data")
-        self.assertLess(gate, first_accumulate)
-        self.assertIn("改善バッチへの加算を保留", block)
-        self.assertEqual(block.count("accumulate_game_data"), 2)
+        self.assertLess(first_accumulate, gate)
+        self.assertNotIn("改善バッチへの加算を保留", block)
+        self.assertEqual(block.count('accumulate_game_data "$archive_file"'), 2)
 
 
 if __name__ == "__main__":
