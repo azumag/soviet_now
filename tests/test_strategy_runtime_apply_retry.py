@@ -65,6 +65,15 @@ strategy_runtime_atomic_apply_bundle_then \
                 "HELPERS_SOURCE": str(helpers_source),
                 "HELPERS_TARGET": str(helpers_target),
                 "TMP_STATE_DIR": str(root / "state"),
+                # soviet_now#925: pin every A/B gate probe away from the repo
+                # root — developer-local .env / tmp/state (REGRESSION_DISABLED,
+                # ab_state.json, ab_active_branch) would otherwise make the gate
+                # refuse (fail-closed) under cwd=ROOT.
+                "AB_ENV_FILE": str(root / ".env"),
+                "AB_STATE_FILE": str(root / "state" / "ab_state.json"),
+                "AB_ABORT_FILE": str(root / "state" / "ab_abort"),
+                "AB_ACTIVE_BRANCH_FILE": str(root / "state" / "ab_active_branch"),
+                "SOREN_AB_ALT_STRATEGY": "",
             }
             result = self._run(script, env)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -102,6 +111,11 @@ fi
                 "TARGET_FILE": str(target),
                 "HELPERS_TARGET": str(root / "strategy_helpers"),
                 "TMP_STATE_DIR": str(root / "state"),
+                "AB_ENV_FILE": str(root / ".env"),
+                "AB_STATE_FILE": str(root / "state" / "ab_state.json"),
+                "AB_ABORT_FILE": str(root / "state" / "ab_abort"),
+                "AB_ACTIVE_BRANCH_FILE": str(root / "state" / "ab_active_branch"),
+                "SOREN_AB_ALT_STRATEGY": "",
             }
             result = self._run(script, env)
             self.assertEqual(result.returncode, 0, result.stderr)

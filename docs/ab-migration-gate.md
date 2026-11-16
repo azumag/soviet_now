@@ -63,7 +63,22 @@ improvements); over-detection is accepted because the gate is fail-closed.
 Fail-closed: exit 2 (unknown) and exit 1 (active) both abort the merge/reflect.
 An `ab_state.json` that exists but cannot be read returns 2 rather than
 falling through to the remaining signals; a non-empty but unparseable state
-file also returns 2.
+file also returns 2. A missing gate script (`strategy/ab_gate_on_merge.sh`)
+under the resolved runtime root is treated as unknown — the guard refuses
+(rc=3) rather than letting an unverifiable apply through.
+
+Two operational consequences of covering the direct-writer paths:
+
+- **Startup `.bak` restore is gated.** If `strategy.py` is absent and an A/B
+  is active (or the state is unreadable) when `soren_loop.sh` runs
+  `recover_strategy_backup`, the restore is refused and the loop exits with
+  "strategy.py が見つかりません". The operational remedy is to retire the
+  experiment first — write `tmp/state/ab_abort` — then re-run the restore.
+- **`eloop.sh`'s fallback `cp` is unreachable in production.** `eloop_lib.sh`
+  lines 28-29 unconditionally source `core/strategy_runtime.sh` and
+  `core/strategy_runtime_strict.sh`, so `_strategy_runtime_ab_merge_guard` is
+  always defined in the production loop; the `command -v` fallback branch in
+  `eloop.sh` only exists for non-production sourcing.
 
 On refusal the runtime leaves evidence: a log line
 (`ab_gate_on_merge refused live apply`), the durable markers

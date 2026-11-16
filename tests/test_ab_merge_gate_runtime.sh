@@ -217,9 +217,84 @@ run_apply "apply-base-active"     scn_active_state "refused" base
 run_apply "apply-strict-clear"    scn_clear        "applied" strict
 run_apply "apply-strict-active"   scn_active_state "refused" strict
 
+# --- direct-writer execution paths -------------------------------------------
+# DSH review: exercise the two guarded direct writes for real.
+# (a) core/version.sh recover_strategy_backup: strategy.py absent + .bak present
+#     + active A/B -> refused, strategy.py stays missing; clear -> restored.
+# (b) strategy/regression.sh _regression_rollback_apply: active A/B -> refused,
+#     live strategy.py bytes unchanged; clear -> rollback file applied.
+check_recover_backup() {
+	local WORK rc=0
+	WORK=$(mktemp -d "${TMPDIR:-/tmp}/ab_merge_bak.XXXXXX") || { ng "tmp for recover-backup"; return; }
+	(
+		cd "$WORK" || exit 1
+		mkdir -p tmp/state strategy
+		cp "$GATE_SCRIPT" strategy/ab_gate_on_merge.sh
+		printf '%s' '{"a_hash":"AAA","b_hash":"BBB"}' > tmp/state/ab_state.json
+		echo 'BACKUP' > strategy.py.bak
+		export SOREN_PROJECTION_ROOT="$WORK"
+		export ELOOP_LIB_DIR="$WORK"
+		export TMP_STATE_DIR="$WORK/tmp/state"
+		export AB_ENV_FILE="$WORK/.env"
+		export STRATEGY_FILE="strategy.py"
+		export SOREN_AB_ALT_STRATEGY=""
+		unset AB_GATE_ON_MERGE_INTERNAL_ADOPT
+		source "$ROOT/core/helpers.sh" >/dev/null 2>&1 || exit 2
+		source "$ROOT/core/strategy_runtime.sh" >/dev/null 2>&1 || exit 2
+		source "$ROOT/core/version.sh" >/dev/null 2>&1 || exit 2
+		# active A/B -> refused, strategy.py must stay missing
+		recover_strategy_backup >/dev/null 2>&1 && exit 3
+		[ -f strategy.py ] && exit 4
+		# clear -> .bak restored
+		rm -f tmp/state/ab_state.json
+		recover_strategy_backup >/dev/null 2>&1 || exit 5
+		grep -q '^BACKUP$' strategy.py || exit 6
+	)
+	rc=$?
+	rm -rf "$WORK"
+	if [ "$rc" -eq 0 ]; then ok "recover-backup"; else ng "recover-backup (rc=$rc)"; fi
+}
+
+check_regression_rollback() {
+	local WORK rc=0
+	WORK=$(mktemp -d "${TMPDIR:-/tmp}/ab_merge_rb.XXXXXX") || { ng "tmp for regression-rollback"; return; }
+	(
+		cd "$WORK" || exit 1
+		mkdir -p tmp/state strategy
+		cp "$GATE_SCRIPT" strategy/ab_gate_on_merge.sh
+		printf '%s' '{"a_hash":"AAA","b_hash":"BBB"}' > tmp/state/ab_state.json
+		echo 'LIVE' > strategy.py
+		echo 'ANCHOR' > rollback_target.py
+		export SOREN_PROJECTION_ROOT="$WORK"
+		export ELOOP_LIB_DIR="$WORK"
+		export TMP_STATE_DIR="$WORK/tmp/state"
+		export AB_ENV_FILE="$WORK/.env"
+		export STRATEGY_FILE="strategy.py"
+		export SOREN_AB_ALT_STRATEGY=""
+		unset AB_GATE_ON_MERGE_INTERNAL_ADOPT
+		source "$ROOT/core/helpers.sh" >/dev/null 2>&1 || exit 2
+		source "$ROOT/core/strategy_runtime.sh" >/dev/null 2>&1 || exit 2
+		source "$ROOT/strategy/regression.sh" >/dev/null 2>&1 || exit 2
+		# active A/B -> refused, live bytes unchanged, no .bak written
+		_regression_rollback_apply "rollback_target.py" >/dev/null 2>&1 && exit 3
+		grep -q '^LIVE$' strategy.py || exit 4
+		[ -f strategy.py.bak ] && exit 5
+		# clear -> rollback target applied and .bak holds the pre-rollback bytes
+		rm -f tmp/state/ab_state.json
+		_regression_rollback_apply "rollback_target.py" >/dev/null 2>&1 || exit 6
+		grep -q '^ANCHOR$' strategy.py || exit 7
+		grep -q '^LIVE$' strategy.py.bak || exit 8
+	)
+	rc=$?
+	rm -rf "$WORK"
+	if [ "$rc" -eq 0 ]; then ok "regression-rollback"; else ng "regression-rollback (rc=$rc)"; fi
+}
+
 # --- durable evidence on refusal ---------------------------------------------
 check_markers
 check_quarantine
+check_recover_backup
+check_regression_rollback
 
 echo
 if [ "$RES" -eq 0 ]; then echo "ALL ok"; else echo "SOME FAILED"; fi
