@@ -2853,13 +2853,12 @@ record_completed_game_for_adaptive_improvement() {
 			INSTADEATH_RECORD_TURNS="${LAST_TURNS:-}" \
 				_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
-		if _corner_notice_blocks_improvement; then
-			# The match result is already in score/history and rolling/current
-			# run; only the improvement batch pauses. The 48-game prediction
-			# (v2) has its own counter and starts after the corner, so the
-			# viewer-facing promise is unaffected.
-			log "[CYCLE] 次コーナー掲示中のため改善バッチへの加算を保留 (game=${GAME_NUM:-?})"
-		elif command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
+		# 試合データの蓄積は掲示中も継続する。 accumulate_game_data は帳簿
+		# 更新だけで改善ジョブを起動せず、掲示中の加算保留は試合データを
+		# 失うだけで安全性上の利益がなかった (実測 2026-11-16: 予想掲示が
+		# コーナー間の大半を覆い improve_brief が 29 時間未再生成)。
+		# 起動系 (早期ロック・ジョブ開始) は引き続き掲示解除を待つ。
+		if command -v _ab_active >/dev/null 2>&1 && _ab_active >/dev/null 2>&1; then
 			# A/B 中: 改善用の蓄積は A 腕 (root) の試合だけ。同 hash ロックの更新も止める (腕が交互に変わるため)
 			# Freeze the reserved batch until the verdict. All subsequent AB
 			# games still reach rolling/current-run and the AB/history ledgers.
@@ -2869,7 +2868,11 @@ record_completed_game_for_adaptive_improvement() {
 			fi
 		else
 			accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
-			queue_fresh_objective_same_hash_lock_if_needed || true
+			if _corner_notice_blocks_improvement; then
+				: # 早期ロックのキューは掲示解除まで延期 (蓄積は済み)
+			else
+				queue_fresh_objective_same_hash_lock_if_needed || true
+			fi
 		fi
 	fi
 	if [ "${CURRENT_RUN_AUTO_REPAIR_ENABLED:-1}" = "1" ] && [ -x ./repair_current_run_from_history.sh ]; then
