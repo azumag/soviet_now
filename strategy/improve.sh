@@ -2360,6 +2360,10 @@ for x in entry.get("scores", []) or []:
 recent_archives = entry.get("_recent_archives", []) or []
 if not isinstance(recent_archives, list):
     recent_archives = []
+try:
+    objective_progress_keep = max(1, int(os.environ.get("OBJECTIVE_PROGRESS_KEEP", "100") or 100))
+except Exception:
+    objective_progress_keep = 100
 seed_scores = scores[-keep:]
 payload = {
     "hash": strategy_hash,
@@ -2368,7 +2372,7 @@ payload = {
     "_seeded_score_count": len(seed_scores),
     "_fresh_score_count": 0,
     "_fresh_games_total": 0,
-    "_recent_archives": recent_archives[-50:],
+    "_recent_archives": recent_archives[-objective_progress_keep:],
     "max_types": (entry.get("max_types", []) or [])[-keep:],
     "russia_count": int(entry.get("russia_count", 0) or 0),
     "soviet_count": int(entry.get("soviet_count", 0) or 0),
@@ -2610,9 +2614,16 @@ def nation_progress(path):
 # side. 2026-08-20 Phase 1 review, blocking issue B2.
 if archive_file and not _ID_DIV:
     recent_archives.append(archive_file)
-    recent_archives = recent_archives[-50:]
+try:
+    progress_keep = max(1, int(os.environ.get("OBJECTIVE_PROGRESS_KEEP", "100") or 100))
+except Exception:
+    progress_keep = 100
+recent_archives = recent_archives[-progress_keep:]
 run["_recent_archives"] = recent_archives
-progress_archives = recent_archives[-len(run["scores"]):] if run["scores"] else []
+if run["scores"]:
+    progress_archives = recent_archives[-min(len(run["scores"]), progress_keep):]
+else:
+    progress_archives = []
 progress = [nation_progress(path) for path in progress_archives]
 run["max_types"] = [item[0] for item in progress]
 run["best_max_type"] = max([int(run.get("best_max_type", 0) or 0)] + [item[0] for item in progress])

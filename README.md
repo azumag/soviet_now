@@ -330,6 +330,13 @@ rollback 候補が validation 後に別 hash へ正規化された場合は、�
 | `POST_IMPROVE_PARAM_PARALLEL_SERVE_BASE_PORT` | `18180` | post-improve 追加試行の候補 game server port 起点 |
 | `POST_IMPROVE_PARAM_PARALLEL_CDP_BASE_PORT` | `19320` | post-improve 追加試行の候補 Chrome CDP port 起点 |
 | `OBJECTIVE_ANCHOR_PRIORITY_ENABLED` | `0` | rollback anchor 選定 (`_refresh_best_strategy_anchor`) と rollback target 選定 (`_pick_best_rollback_candidate`) の両方で、目的進捗を score 近傍候補 (`near_score_leader`) の優先度に使う。優先順位は段階ラダー: ソ連到達 > **2nd-Russia/ソ連フロンティア再現** > その他。**単発ロシア(T15x1単独)は対象外** — score-only anchor を押しのけるのは 2026-05-25 のスコア崩壊の原因だったため。default 0 (安全)、本番は `.env=1` で有効。`near_score_leader` 帯 (comp比≥`OBJECTIVE_ANCHOR_MIN_COMP_RATIO` または gap≤`OBJECTIVE_ANCHOR_MAX_COMP_GAP`) の外の候補は保護しないので、大幅低comp戦略は昇格しない |
+| `OBJECTIVE_PROGRESS_KEEP` | `100` | 目的進捗の直近窓。anchor選定・ロシア率/ソ連率ゲートが使う `max_types` / `peak_high_type_counts` の保持数。`scores` の窓と揃える |
+| `OBJECTIVE_RATE_REGRESSION_ENABLED` | `1` | ロシア率(T15)/ソ連率(T16)の後退を `lost_russia_rate` / `lost_soviet_rate` として粛清理由にする。最小試合数・最小anchorヒット・率差・片側Fisherのすべてを要求 |
+| `OBJECTIVE_RATE_MIN_GAMES` | `20` | ロシア率/ソ連率ゲートの最小窓長（anchor/current 両方） |
+| `OBJECTIVE_RATE_MIN_ANCHOR_HITS` | `2` | anchor側に必要な最小到達数。単発ロシア/ソ連での誤粛清を防ぐ |
+| `OBJECTIVE_RATE_MIN_GAP` | `0.05` | anchor率 - current率 の最小絶対差（5ポイント） |
+| `OBJECTIVE_RATE_MIN_RATIO` | `0.50` | current率がanchor率のこの比率未満であること |
+| `OBJECTIVE_RATE_STAT_ALPHA` | `0.05` | 片側Fisherの有意水準 |
 | `OBJECTIVE_FRONTIER_MIN_GAMES` | `2` | 戦略を「ソ連フロンティア」とみなすのに必要な、2nd-Russia フロンティア局面 (一盤面に `T15x2`、または `T15x1`+`T14x2`) を達成した最小ゲーム数。`1` だと一発フロックも保護され局所解に固着するため `>=2` の再現性を要求する。`peak_high_type_counts` から判定 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_COUNT` | `2` | archive候補をロシア再現性ありとみなす最小建国回数 |
 | `ARCHIVE_RESTART_MIN_RUSSIA_RATE` | `0.15` | archive候補をロシア再現性ありとみなす最小建国率 |

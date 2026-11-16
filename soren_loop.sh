@@ -452,6 +452,8 @@ reason_map = {
     "lost_ukraine_gate": "ウクライナ段階未達",
     "lost_russia_path": "ロシア経路喪失",
     "lost_soviet_path": "ソ連経路喪失",
+    "lost_russia_rate": "ロシア率低下",
+    "lost_soviet_rate": "ソ連率低下",
     "archive_restart_objective_floor": "archive再起動目的未達",
     # Historical reason key retained for stored-result compatibility.
     "lost_turkmenistan_gate": "ウズベキスタン段階未達",
@@ -1217,6 +1219,8 @@ reason_map = {
     "archive_restart_objective_floor": "やり直し後も建国到達度が基準に届かなかった",
     "lost_soviet_path": "ソ連建国ルートを見失った",
     "lost_russia_path": "ロシア建国ルートを見失った",
+    "lost_russia_rate": "ロシア建国率が前より下がった",
+    "lost_soviet_rate": "ソ連建国率が前より下がった",
     "lost_ukraine_gate": "ウクライナ段階まで届かなくなった",
     # Historical reason key retained for stored-result compatibility.
     "lost_turkmenistan_gate": "ウズベキスタン段階まで届かなくなった",

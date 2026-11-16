@@ -2644,6 +2644,50 @@ def _soviet_frontier_count(data):
     return count
 
 
+def _rate_percent(data):
+    """Return (russia%, soviet%) over the recent max_types window, or None."""
+    values = []
+    for raw in (data or {}).get("max_types", []) or []:
+        try:
+            values.append(int(raw))
+        except (TypeError, ValueError):
+            pass
+    if not values:
+        return None
+    n = len(values)
+    return (
+        round(100 * sum(1 for value in values if value >= 15) / n),
+        round(100 * sum(1 for value in values if value >= 16) / n),
+    )
+
+
+def _strategy_rate_line(rolling, current_hash):
+    """Show the anchor/current Russia and Soviet rates used by the rate gate."""
+    try:
+        anchor = json.loads(Path(BEST_STRATEGY_ANCHOR_FILE).read_text())
+    except Exception:
+        return ""
+    if not isinstance(anchor, dict):
+        return ""
+    anchor_hash = str(anchor.get("hash") or "")
+    anchor_rate = _rate_percent(rolling.get(anchor_hash) or {})
+    if anchor_rate is None:
+        return ""
+    text = f"  {DIM}rates anchor rr={anchor_rate[0]}% sr={anchor_rate[1]}%"
+    if current_hash:
+        current_data = rolling.get(current_hash) or {}
+        try:
+            run = json.loads(Path(CURRENT_STRATEGY_RUN_FILE).read_text())
+            if isinstance(run, dict) and str(run.get("hash") or "") == current_hash:
+                current_data = run
+        except Exception:
+            pass
+        current_rate = _rate_percent(current_data)
+        if current_rate is not None:
+            text += f" | current rr={current_rate[0]}% sr={current_rate[1]}%"
+    return text + RST
+
+
 def _strategy_anchor_line(rolling, entries):
     """One bounded line that makes the protected anchor visible.
 
@@ -2764,6 +2808,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
     if played_arm:
         live_arm_line = f"  NOW: A/B arm={played_arm} hash={played_hash[:8]}"
     anchor_line = _strategy_anchor_line(rolling, all_entries)
+    rate_line = _strategy_rate_line(rolling, current_hash)
 
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(eval, mature n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
@@ -2771,6 +2816,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
             lines.append(live_arm_line)
         if anchor_line:
             lines.append(anchor_line)
+        if rate_line:
+            lines.append(rate_line)
         if current_entry or provisional_current:
             metric_header = "comp p50  p25"
             lone_current = current_entry or provisional_current
@@ -2821,6 +2868,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7, ab_status=None
         lines.append(live_arm_line)
     if anchor_line:
         lines.append(anchor_line)
+    if rate_line:
+        lines.append(rate_line)
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
