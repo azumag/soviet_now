@@ -2731,34 +2731,40 @@ def summarize_nation_progress(paths):
                     final_types.append(int(raw))
                 except Exception:
                     pass
+        seen_russia = False
+        post_russia_peaks = {}
         for row in rows:
             reason = str(row.get("decision_reason") or "")
             if "DEADLINE_GUARD" in reason:
                 deadline_guard_count += 1
                 deadline_guard_reasons[reason] += 1
             pieces = ((row.get("state_snapshot") or {}).get("pieces") or [])
+            row_type_counts = {}
             for piece in pieces:
                 try:
                     t = int(piece.get("type", 0) or 0)
                 except Exception:
                     continue
+                row_type_counts[t] = row_type_counts.get(t, 0) + 1
                 if t > max_type:
                     max_type = t
-                if t >= 10:
-                    same_type_count = 0
-                    for p in pieces:
-                        try:
-                            if int((p or {}).get("type", 0) or 0) == t:
-                                same_type_count += 1
-                        except Exception:
-                            pass
-                    peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
                 if t >= 15 and first_russia_turn is None:
                     first_russia_turn = row.get("turn", "?")
                 if t >= 16 and first_soviet_turn is None:
                     first_soviet_turn = row.get("turn", "?")
-            if row.get("russia_created") and first_russia_turn is None:
-                first_russia_turn = row.get("turn", "?")
+            for t, same_type_count in row_type_counts.items():
+                if t >= 10:
+                    peak_type_counts[t] = max(peak_type_counts.get(t, 0), same_type_count)
+            if seen_russia:
+                for t in (14, 15):
+                    if row_type_counts.get(t, 0) > post_russia_peaks.get(t, 0):
+                        post_russia_peaks[t] = row_type_counts[t]
+            if any(t >= 15 for t in row_type_counts):
+                seen_russia = True
+            if row.get("russia_created"):
+                seen_russia = True
+                if first_russia_turn is None:
+                    first_russia_turn = row.get("turn", "?")
             if row.get("soviet_created") and first_soviet_turn is None:
                 first_soviet_turn = row.get("turn", "?")
         if not final_types:
@@ -2779,6 +2785,22 @@ def summarize_nation_progress(paths):
             prev_peak = peak_type_counts.get(max_type - 1, 0)
             frontier_hint = f"T{max_type}_peak={max_peak} prev_T{max_type - 1}_peak={prev_peak}"
         guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(3)) or "none"
+        t14_pair = peak_type_counts.get(14, 0) >= 2
+        double_russia = peak_type_counts.get(15, 0) >= 2
+        post_2nd_material = (
+            post_russia_peaks.get(14, 0) >= 2 or post_russia_peaks.get(15, 0) >= 2
+        )
+        funnel_stage = "low"
+        if t14_pair:
+            funnel_stage = "T14x2"
+        if first_russia_turn is not None:
+            funnel_stage = "T15"
+        if post_2nd_material:
+            funnel_stage = "2nd_mat"
+        if double_russia:
+            funnel_stage = "T15x2"
+        if first_soviet_turn is not None:
+            funnel_stage = "soviet"
         games.append({
             "file": basename(path),
             "score": rows[-1].get("score", "?"),
@@ -2794,6 +2816,10 @@ def summarize_nation_progress(paths):
             "deadline_guard_count": deadline_guard_count,
             "deadline_guard_rate": deadline_guard_count / max(1, len(rows)),
             "deadline_guard_reason_top": guard_reason_top,
+            "t14_pair": t14_pair,
+            "double_russia": double_russia,
+            "post_2nd_material": post_2nd_material,
+            "funnel_stage": funnel_stage,
         })
     russia_count = sum(1 for g in games if g["russia"])
     soviet_count = sum(1 for g in games if g["soviet"])
@@ -2828,10 +2854,21 @@ def summarize_nation_progress(paths):
             except Exception:
                 pass
     deadline_guard_reason_top = ", ".join(f"{name}x{count}" for name, count in deadline_guard_reasons.most_common(5)) or "none"
+    funnel_t14pair = sum(1 for g in games if g.get("t14_pair"))
+    funnel_2nd_mat = sum(1 for g in games if g.get("post_2nd_material"))
+    funnel_t15pair = sum(1 for g in games if g.get("double_russia"))
+    funnel_rows = [
+        ("T14x2", funnel_t14pair, len(games)),
+        ("T15", russia_count, funnel_t14pair),
+        ("2nd_mat", funnel_2nd_mat, russia_count),
+        ("T15x2", funnel_t15pair, funnel_2nd_mat),
+        ("soviet", soviet_count, funnel_t15pair),
+    ]
     return {
         "games": games,
         "russia_count": russia_count,
         "soviet_count": soviet_count,
+        "funnel_rows": funnel_rows,
         "max_type": max_type,
         "stage_gates": gate_rows,
         "main_gate_target": main_gate_target,
@@ -3030,6 +3067,16 @@ if nation_progress["stage_gates"]:
     else:
         summary_lines.append(f"- stage_gate_rates: {gate_text}")
         summary_lines.append("- stage_gate_context: sampled reach rates are diagnostic, not a proof or a prerequisite for upper-stage work.")
+if nation_progress.get("funnel_rows"):
+    funnel_text = " ".join(
+        f"{name}={reached}/{total}" + (f"({reached / total:.0%})" if total else "")
+        for name, reached, total in nation_progress["funnel_rows"]
+    )
+    summary_lines.append(
+        f"- funnel_transitions: {funnel_text} — "
+        "各段は前段到達試合のみを分母とする条件付き移行率。分母0は未知として扱う。"
+        "T14x2→T15、第一T15→第二素材(2nd_mat)、T15x2→ソ連のどこで折れたかを対象選定に使う。"
+    )
 summary_lines.append("- high_type_counts is final-board type10+ inventory. If T14x2 appears without type15, prioritize the missed final merge route over generic score tuning.")
 summary_lines.append("- peak_high_type_counts/frontier_hint show whether the run created enough near-frontier pieces earlier, even if they were gone by gameover.")
 if nation_progress["games"]:
@@ -3040,7 +3087,7 @@ if nation_progress["games"]:
         if g["soviet"]:
             marks.append(f"type16_observed@T{g['soviet_turn']}")
         mark_text = " ".join(marks) if marks else "no-russia"
-        summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} high_type_counts={g['high_type_counts']} peak_high_type_counts={g['peak_high_type_counts']} frontier_hint={g['frontier_hint']} deadline_guard={g['deadline_guard_count']} rate={g['deadline_guard_rate']:.1%} guard_reason_top={g['deadline_guard_reason_top']} {mark_text}")
+        summary_lines.append(f"- {g['file']}: score={g['score']} turns={g['turns']} max_type={g['max_type']} funnel={g.get('funnel_stage', '?')} high_type_counts={g['high_type_counts']} peak_high_type_counts={g['peak_high_type_counts']} frontier_hint={g['frontier_hint']} deadline_guard={g['deadline_guard_count']} rate={g['deadline_guard_rate']:.1%} guard_reason_top={g['deadline_guard_reason_top']} {mark_text}")
 if nation_progress["max_type"] <= 13 and nation_progress["games"]:
     summary_lines.append("- hard_signal: type13以下で止まっている。AIは高得点の一般配置より、type13を2個作ってtype14へ進める終盤導線を優先して復旧すること。")
 if nation_progress["deadline_guard_rate"] >= 0.12:
