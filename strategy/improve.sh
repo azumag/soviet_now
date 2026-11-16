@@ -1642,11 +1642,11 @@ with open(rs_file, 'w') as f:
 					log "[IMPROVE] 蓄積${acc_count_discarded}試合を破棄 (旧戦略のデータ)"
 				fi
 			else
-				log "[IMPROVE] failed_no_apply: 戦略変更なし (phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
-				enqueue_audio_text "中華AI改善は適用可能な戦略変更を出せず終了しました。ロックを残してバックオフし、通常運転を続けます。" "improve_failed_no_apply" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+				# 戦略が変わっていない。A/B ゲート有効時は候補を root に適用せず
+				# tmp/state/ab_candidate/ に置くのが正常なので、ここでは失敗と決めない。
+				# 失敗の確定と failed_no_apply 通知は下の A/B 回収判定の後で行う。
+				log "[IMPROVE] 戦略変更なし (A/B候補/失敗は後段で判定, phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
 				# 戦略が変わっていない → 蓄積データはそのまま有効
-				# failed_no_apply タイムスタンプを記録 (連続再試行防止用)
-				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 
 			if _improve_keep_main_game_running; then
@@ -1729,6 +1729,12 @@ PY
 						_clear_improve_retry_batch
 					fi
 				fi
+				# ここまで来たときだけ「適用可能な戦略変更を出せなかった」と確定する。
+				# A/B 候補として回収できた場合は上の candidate_ready 分岐で成功扱いになる。
+				log "[IMPROVE] failed_no_apply: 戦略変更なし (phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
+				enqueue_audio_text "中華AI改善は適用可能な戦略変更を出せず終了しました。ロックを残してバックオフし、通常運転を続けます。" "improve_failed_no_apply" "${IMPROVE_AUDIO_SUMMARY_SPEAKER:-}" || true
+				# failed_no_apply タイムスタンプを記録 (連続再試行防止用)
+				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
