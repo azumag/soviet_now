@@ -1013,6 +1013,7 @@ class StrategyComparisonAbTest(unittest.TestCase):
                     "scores": [12000] * 12,
                     "games_total": 12,
                     "max_types": [16, 13],
+                    "peak_high_type_counts": ["T15x2 T14x1", "T14x2 T13x1"],
                 }
             }
             lines = sd.render_strategy_comparison(rolling, "", ab_status=None)
@@ -1020,6 +1021,7 @@ class StrategyComparisonAbTest(unittest.TestCase):
             self.assertIn(f"anchor {self.A[:8]}", joined)
             self.assertIn("sov=3", joined)
             self.assertIn("rct=1/2", joined)
+            self.assertIn("fr=1/2", joined)
             for line in sd.fit_dashboard_lines(lines):
                 self.assertLessEqual(sd.ansi_display_width(line), sd.W)
 
