@@ -214,6 +214,8 @@ def objective_triggered(reason_text):
         "lost_ukraine_gate",
         "lost_kazakhstan_gate",
         "lost_soviet_path",
+        "lost_russia_rate",
+        "lost_soviet_rate",
         "archive_restart_objective_floor",
     }
     return bool(reasons & objective_markers)
@@ -2918,7 +2920,11 @@ for a in stale_archives + actual_archives:
     if a not in seen:
         seen.add(a)
         merged_archives.append(a)
-merged_archives = merged_archives[-25:]
+try:
+    _progress_keep = max(1, int(os.environ.get("OBJECTIVE_PROGRESS_KEEP", "100") or 100))
+except Exception:
+    _progress_keep = 100
+merged_archives = merged_archives[-_progress_keep:]
 
 merged = dict(actual)
 merged["scores"] = merged_scores
@@ -3172,6 +3178,10 @@ except Exception:
 hot_enabled = str(sys.argv[7]).strip() == "1"
 normal_keep = max(1, normal_keep)
 hot_keep = max(normal_keep, hot_keep)
+try:
+    progress_keep = max(1, int(os.environ.get("OBJECTIVE_PROGRESS_KEEP", "100") or 100))
+except Exception:
+    progress_keep = 100
 if os.path.exists(rs_file):
     with open(rs_file) as f:
         rs = json.load(f)
@@ -3270,9 +3280,12 @@ rs[h]["games_total"] += 1
 # stale/zero data in current_strategy_run.json).
 if archive_file and not _ID_DIV:
     recent_archives.append(archive_file)
-    recent_archives = recent_archives[-25:]
+    recent_archives = recent_archives[-progress_keep:]
 rs[h]["_recent_archives"] = recent_archives
-progress_archives = recent_archives[-len(rs[h]["scores"]):] if rs[h]["scores"] else []
+if rs[h]["scores"]:
+    progress_archives = recent_archives[-min(len(rs[h]["scores"]), progress_keep):]
+else:
+    progress_archives = []
 progress = [nation_progress(path) for path in progress_archives]
 known_progress = [item for item in progress if item[0] > 0 or item[1] or item[2]]
 known_max_types = [item[0] for item in known_progress if item[0] > 0]
@@ -4391,6 +4404,70 @@ def stage_gate_shortfall_significant(hits_cur, n_cur, hits_ref, n_ref):
     except Exception:
         return True, 1.0, 0.0
 
+try:
+    objective_rate_enabled = str(os.environ.get("OBJECTIVE_RATE_REGRESSION_ENABLED", "1") or "1") != "0"
+except Exception:
+    objective_rate_enabled = True
+try:
+    objective_rate_min_games = max(1, int(os.environ.get("OBJECTIVE_RATE_MIN_GAMES", "20") or 20))
+except Exception:
+    objective_rate_min_games = 20
+try:
+    objective_rate_min_anchor_hits = max(1, int(os.environ.get("OBJECTIVE_RATE_MIN_ANCHOR_HITS", "2") or 2))
+except Exception:
+    objective_rate_min_anchor_hits = 2
+try:
+    objective_rate_min_gap = float(os.environ.get("OBJECTIVE_RATE_MIN_GAP", "0.05") or 0.05)
+except Exception:
+    objective_rate_min_gap = 0.05
+try:
+    objective_rate_min_ratio = float(os.environ.get("OBJECTIVE_RATE_MIN_RATIO", "0.50") or 0.50)
+except Exception:
+    objective_rate_min_ratio = 0.50
+try:
+    objective_rate_stat_alpha = float(os.environ.get("OBJECTIVE_RATE_STAT_ALPHA", "0.05") or 0.05)
+except Exception:
+    objective_rate_stat_alpha = 0.05
+
+
+def objective_rate_regression_reason(anchor_progress, current_progress):
+    """Russia (T15) / Soviet (T16) rate regression inside the recent window.
+
+    The stage gates cover the pre-Russia rungs; they intentionally do not use
+    T15/T16 because a rare single Russia used to be a false-purge source
+    (2026-05-25). This gate is the explicit objective-rate check the operator
+    asked for: require a minimum window, at least two anchor hits, a 5-point
+    absolute gap, current < half of the anchor rate, and a one-sided Fisher
+    p <= 0.05. All four must hold; otherwise return no reason.
+    """
+    if not objective_rate_enabled:
+        return "", ""
+    # Check the more specific Soviet rate first: a T16 board also satisfies
+    # T15>=15, so the Russia check would otherwise mask a Soviet-only loss.
+    for stage, reason in ((16, "lost_soviet_rate"), (15, "lost_russia_rate")):
+        anc_hits, anc_n = stage_gate_counts(anchor_progress, stage)
+        cur_hits, cur_n = stage_gate_counts(current_progress, stage)
+        if anc_n < objective_rate_min_games or cur_n < objective_rate_min_games:
+            continue
+        if anc_hits < objective_rate_min_anchor_hits:
+            continue
+        anc_rate = anc_hits / float(anc_n)
+        cur_rate = cur_hits / float(cur_n)
+        gap = anc_rate - cur_rate
+        if gap < objective_rate_min_gap:
+            continue
+        if cur_rate > anc_rate * objective_rate_min_ratio:
+            continue
+        p = stage_fisher_p_shortfall(cur_hits, cur_n, anc_hits, anc_n)
+        if p > objective_rate_stat_alpha:
+            continue
+        detail = (
+            f"rategate=type{stage}/cur{cur_hits}of{cur_n}/anc{anc_hits}of{anc_n}"
+            f"/p{p:.4f}/gap{gap:.3f}/min{objective_rate_min_gap:.3f}"
+        )
+        return reason, detail
+    return "", ""
+
 def russia_noninferior(cur_r, cur_n, anc_r, anc_n):
     """ロシア到達数の非劣後判定 (標本数を考慮)。n=13 で 0 回は n=100 で 1 回に劣っていない。
     分母は score 標本数 (russia_count は生涯最大値 sticky なので max_types 窓では過大評価)。
@@ -4680,6 +4757,13 @@ if current_hash != anchor_hash:
         objective_reasons.append(stage_gate_reason)
         if stage_gate_detail:
             objective_reasons.append(stage_gate_detail)
+    # Russia/Soviet rate regression is deliberately outside the score-noninferior
+    # grace: losing the objective rate is the regression this gate exists for.
+    rate_reason, rate_detail = objective_rate_regression_reason(anchor_objective, current_objective)
+    if rate_reason:
+        objective_reasons.append(rate_reason)
+        if rate_detail:
+            objective_reasons.append(rate_detail)
 if _STAGE_GATE_OBS:
     # 観測行 (bash 側で [STAGEGATE] として log し $result からは除去する)
     try:

@@ -1022,6 +1022,7 @@ class StrategyComparisonAbTest(unittest.TestCase):
             self.assertIn("sov=3", joined)
             self.assertIn("rct=1/2", joined)
             self.assertIn("fr=1/2", joined)
+            self.assertIn("rates anchor rr=50% sr=50%", joined)
             for line in sd.fit_dashboard_lines(lines):
                 self.assertLessEqual(sd.ansi_display_width(line), sd.W)
 

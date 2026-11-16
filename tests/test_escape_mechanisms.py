@@ -12672,6 +12672,20 @@ PY
         self.assertIn("int(bool(p.get(\"recent_soviet_frontier\", False)))", regression)
         self.assertIn("Single Russia is NOT a rung", regression)
 
+    def test_objective_progress_window_and_rate_gate_are_wired(self):
+        config = (REPO_ROOT / "core/config.sh").read_text()
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+
+        self.assertIn('OBJECTIVE_PROGRESS_KEEP="${OBJECTIVE_PROGRESS_KEEP:-100}"', config)
+        self.assertIn('recent_archives[-progress_keep:]', regression)
+        self.assertIn('recent_archives[-progress_keep:]', improve)
+        self.assertIn("OBJECTIVE_RATE_REGRESSION_ENABLED", config)
+        self.assertIn("lost_russia_rate", regression)
+        self.assertIn("lost_soviet_rate", regression)
+        self.assertIn("objective_rate_min_anchor_hits", regression)
+        self.assertIn("objective_rate_stat_alpha", regression)
+
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):
         improve = (REPO_ROOT / "strategy/improve.sh").read_text()
         eloop = (REPO_ROOT / "eloop_improve.sh").read_text()

@@ -190,6 +190,31 @@ outM=$(STAGE_GATE_GRACE_COMP_GAP_RATIO=0.005 run_check "$B" $CUR)
 assert_contains "graced=0" "$outM" "caseM(comp tolerance 5 < gap 100): grace withdrawn"
 assert_not_contains "REGRESSION:" "$outM" "caseM: stat gate still suppresses insignificant T11 shortfall"
 
+# --- rate gate: Russia/Soviet rate regression ---
+# R: anchor 15x10/13x90 (russia 10/100) vs current 13x100 (0/100) → lost_russia_rate
+R="$TMP/caseR"; mk_fixture "$R" $CUR $ANC $ANC_ARGS anc_mt=15x10,13x90 anc_russia=10 cur_scores=8000,100,4400 cur_mt=13x100 cur_russia=0 pad_top=8
+outR=$(run_check "$R" $CUR)
+assert_contains "REGRESSION:mode=objective_regression" "$outR" "caseR(russia 10/100 vs 0/100): rate regression purges"
+assert_contains "lost_russia_rate" "$outR" "caseR reason lost_russia_rate"
+assert_contains "rategate=type15/cur0of100/anc10of100" "$outR" "caseR reason carries rate evidence"
+
+# S: anchor 16x10/13x90 (soviet 10/100) vs current 13x100 → lost_soviet_rate
+S="$TMP/caseS"; mk_fixture "$S" $CUR $ANC $ANC_ARGS anc_mt=16x10,13x90 anc_soviet=10 anc_russia=10 cur_scores=8000,100,4400 cur_mt=13x100 cur_russia=0 pad_top=8
+outS=$(run_check "$S" $CUR)
+assert_contains "REGRESSION:mode=objective_regression" "$outS" "caseS(soviet 10/100 vs 0/100): rate regression purges"
+assert_contains "lost_soviet_rate" "$outS" "caseS reason lost_soviet_rate"
+
+# R2: a single anchor Russia in a 25-game window must not fire (2026-05-25 trap)
+R2="$TMP/caseR2"; mk_fixture "$R2" $CUR $ANC $ANC_ARGS anc_mt=15x1,13x24 anc_russia=1 cur_scores=8000,100,4400 cur_mt=13x100 cur_russia=0 pad_top=8
+outR2=$(run_check "$R2" $CUR)
+assert_not_contains "REGRESSION:" "$outR2" "caseR2(single anchor Russia): no rate purge"
+assert_not_contains "lost_russia_rate" "$outR2" "caseR2 no lost_russia_rate"
+
+# R3: 2/25 anchor Russia vs 0/100 is not statistically significant → no purge
+R3="$TMP/caseR3"; mk_fixture "$R3" $CUR $ANC $ANC_ARGS anc_mt=15x2,13x98 anc_russia=2 cur_scores=8000,100,4400 cur_mt=13x100 cur_russia=0 pad_top=8
+outR3=$(run_check "$R3" $CUR)
+assert_not_contains "REGRESSION:" "$outR3" "caseR3(2/100 vs 0/100, gap below floor): no rate purge"
+
 # --- case N: bash 側の STAGEGATE 除去ブロックを実コードから抽出して検証 ---
 STRIP="$TMP/strip.sh"
 awk '/^\tlocal _stagegate_line$/{f=1} f{print} f && /^\tfi$/{exit}' "$ROOT/strategy/regression.sh" > "$STRIP"
