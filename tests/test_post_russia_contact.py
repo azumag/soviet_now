@@ -149,7 +149,9 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         self.assertEqual(reason, "POST_RUSSIA_T12_CONTACT_SHOT")
 
     def test_does_not_change_pre_russia_policy(self):
-        pieces = self.one_russia_with_t12_pair[1:]
+        # Pre-Russia boards without any pair/setup still return None.  A lone
+        # T12 is not a pair, so no seed-push arm can fire.
+        pieces = self.one_russia_with_t12_pair[1:-1]
 
         self.assertIsNone(
             strategy._select_post_russia_contact_candidate(pieces, self.results, 10, 0.5)
@@ -333,6 +335,20 @@ class PostRussiaContactCandidateTest(unittest.TestCase):
         # measured dominant stall (7/10 games). The seed push must fire.
         pieces = [
             piece("kazakhstan", 14, -2.0, -2.7, 1.35),
+            piece("t12-left", 12, 0.0, -2.0, 0.9),
+            piece("t12-right", 12, 2.2, -1.5, 0.9),
+        ]
+        selected = strategy._select_post_russia_contact_candidate(
+            pieces, self.results, 10, 0.5
+        )
+        self.assertIsNotNone(selected)
+        result, _ = selected
+        self.assertEqual(result["x"], 3.0)
+
+    def test_plants_first_t13_seed_with_t12_pair_before_any_t13(self):
+        # Upstream of issue #920: t14==0 + t13==0 + T12 pair was uncovered, so
+        # the first T13 seed could never be pushed together (14/24 games).
+        pieces = [
             piece("t12-left", 12, 0.0, -2.0, 0.9),
             piece("t12-right", 12, 2.2, -1.5, 0.9),
         ]
