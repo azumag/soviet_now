@@ -195,6 +195,80 @@ _refresh_best_strategy_anchor "" 2>&1
             self.assertEqual(anchor["russia_count"], 1)
             self.assertEqual(anchor["soviet_count"], 1)
 
+    def test_anchor_selection_ignores_stale_cumulative_soviet_progress(self):
+        """直近窓にソ連がない戦略は、累計 soviet_count だけで anchor にならない。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            rs_file = td / "rolling_scores.json"
+            anchor_file = td / "best_strategy_anchor.json"
+            archive_dir = td / "by_hash"
+            archive_dir.mkdir()
+            rejected_file = td / "rejected.txt"
+            beh_file = td / "behavior_signatures.json"
+            tabu_file = td / "tabu.jsonl"
+            last_anchor_change_file = td / "last_anchor_change.md"
+
+            rs_file.write_text(
+                json.dumps(
+                    {
+                        "scoreOnly": {
+                            "scores": [1200] * 12,
+                            "games_total": 12,
+                            "_recent_archives": [],
+                            "max_types": [13] * 12,
+                            "best_max_type": 13,
+                            "russia_count": 0,
+                            "soviet_count": 0,
+                        },
+                        "staleSoviet": {
+                            "scores": [1120] * 12,
+                            "games_total": 400,
+                            "_recent_archives": [],
+                            "max_types": [13] * 12,
+                            "best_max_type": 16,
+                            "russia_count": 9,
+                            "soviet_count": 9,
+                        },
+                    }
+                )
+            )
+            stable_source = "# --- BEGIN DEADLINE GUARD (injected from current strategy deadline logic) ---\n"
+            (archive_dir / "scoreOnly.py").write_text(stable_source)
+            (archive_dir / "staleSoviet.py").write_text(stable_source)
+
+            env = os.environ.copy()
+            env["DIVERSITY_PREMIUM_ENABLED"] = "0"
+            env["TABU_ENABLED"] = "0"
+            env["OBJECTIVE_ANCHOR_PRIORITY_ENABLED"] = "1"
+            env["OBJECTIVE_ANCHOR_MIN_COMP_RATIO"] = "0.90"
+            env["OBJECTIVE_ANCHOR_MAX_COMP_GAP"] = "1500"
+            env["BEHAVIOR_SIGNATURES_FILE"] = str(beh_file)
+            env["TABU_SIGNATURES_FILE"] = str(tabu_file)
+            env["LAST_ANCHOR_CHANGE_FILE"] = str(last_anchor_change_file)
+
+            script = f"""
+source core/config.sh 2>/dev/null
+ROLLING_SCORES_FILE='{rs_file}'
+BEST_STRATEGY_ANCHOR_FILE='{anchor_file}'
+STRATEGY_HASH_ARCHIVE_DIR='{archive_dir}'
+REJECTED_HASHES_FILE='{rejected_file}'
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+source strategy/regression.sh 2>/dev/null
+_refresh_best_strategy_anchor "" 2>&1
+"""
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=REPO_ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=f"stderr: {result.stderr}\nstdout: {result.stdout}")
+            anchor = json.loads(anchor_file.read_text())
+            self.assertEqual(anchor["hash"], "scoreOnly")
+            self.assertEqual(anchor["soviet_count"], 0)
+
     def _run_frontier_anchor_case(self, td, frontier_peaks, frontier_min_games="2", enabled="1"):
         """Helper: scoreOnly (higher comp, no frontier) vs frontierStrain (near comp,
         peak_high_type_counts=frontier_peaks). Returns the selected anchor hash."""
@@ -12595,7 +12669,7 @@ PY
         self.assertIn("near_score_leader = (", regression)
         self.assertIn("objective_key = _objective_tuple(h, data)", regression)
         self.assertIn("*objective_key,\n        selection_score", regression)
-        self.assertIn("int(bool(p.get(\"soviet_frontier\", False)))", regression)
+        self.assertIn("int(bool(p.get(\"recent_soviet_frontier\", False)))", regression)
         self.assertIn("Single Russia is NOT a rung", regression)
 
     def test_russia_recovery_mode_suppresses_mechanical_wildcard(self):

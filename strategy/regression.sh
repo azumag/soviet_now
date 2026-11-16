@@ -1243,11 +1243,21 @@ def objective_progress(data, hash_value=""):
     # strongest frontier (keep the ladder monotone).
     frontier_n = sum(1 for p in (data.get("peak_high_type_counts", []) or []) if _is_soviet_frontier(p))
     soviet_frontier = frontier_n >= objective_frontier_min_games or soviet_count > 0
+    # Recent-window objective for anchor freshness. ``max_types`` is the same
+    # rolling window used by ``peak_high_type_counts`` (currently 25 games); a
+    # strategy whose Soviet is older than that no longer gets objective
+    # priority just because its lifetime count is high.
+    recent_soviet_count = sum(1 for value in max_types if value >= 16)
+    recent_soviet_frontier = (
+        frontier_n >= objective_frontier_min_games or recent_soviet_count > 0
+    )
     return {
         "best_max_type": best_max_type,
         "russia_count": russia_count,
         "soviet_count": soviet_count,
         "soviet_frontier": bool(soviet_frontier),
+        "recent_soviet_count": recent_soviet_count,
+        "recent_soviet_frontier": bool(recent_soviet_frontier),
     }
 
 # 候補リストを作る (raw metrics で comp 上位順)
@@ -1344,13 +1354,17 @@ def _selection_score(h, m, data):
 
 def _objective_tuple(h, data):
     p = objective_progress(data, h)
-    soviet = int(p.get("soviet_count", 0) or 0)
-    # Ladder (high→low): founded Soviet > soviet_count > repeatable 2nd-Russia frontier.
-    # Single Russia is NOT a rung (stays 0,0,0) — the 2026-05-25 failure surface.
+    soviet = int(p.get("recent_soviet_count", 0) or 0)
+    # Ladder (high→low): a Soviet founded inside the recent rolling window >
+    # recent Soviet count > repeatable 2nd-Russia frontier inside the same
+    # window. Cumulative soviet_count is deliberately not used here: it kept a
+    # five-month-old achievement as the anchor forever (2026-11-16); the raw
+    # count stays in the payload/log for context. Single Russia is NOT a rung
+    # (stays 0,0,0) — the 2026-05-25 failure surface.
     return (
         int(soviet > 0),
         soviet,
-        int(bool(p.get("soviet_frontier", False))),
+        int(bool(p.get("recent_soviet_frontier", False))),
     )
 
 def _anchor_rank_key(h, m, data, selection_score):
@@ -1482,7 +1496,8 @@ if last_anchor_change_file:
             f"- selection_score: {best_metrics['comp'] + best_premium:.2f}\n"
             f"- p50: {best_metrics['p50']:.2f}, p25: {best_metrics['p25']:.2f}, n: {best_metrics['n']}\n"
             f"- objective: best_type={best_objective.get('best_max_type', 0)} "
-            f"russia={best_objective.get('russia_count', 0)} soviet={best_objective.get('soviet_count', 0)}\n"
+            f"russia={best_objective.get('russia_count', 0)} soviet={best_objective.get('soviet_count', 0)} "
+            f"recent_soviet={best_objective.get('recent_soviet_count', 0)}/{len(best_data.get('max_types', []) or [])}\n"
             f"- objective_priority_enabled: {objective_anchor_enabled}, objective_rank_key: {best_rank_key[:7]}\n"
             f"- diversity_enabled: {diversity_enabled}, tabu_enabled: {tabu_enabled}, "
             f"tabu_active: {len(tabu_entries)}\n"
