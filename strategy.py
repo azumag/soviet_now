@@ -393,10 +393,14 @@ def _select_post_russia_contact_candidate(
     # 15試合 (62%) が2個目のT13を形成しないまま終了（垂直分離0, 合体可能
     # 5, 直前形成4）。T14=0 + 孤立T13 + T12ペアでT12を寄せれば2個目T13が
     # 生まれ、T13 pair 押し合い→T14 へ繋がる最大クラス。
+    # 2026-11-16 実測 (直近24試合): 14/24試合が T14/T15 不在 + t13==0 +
+    # T12ペア の局面に滞在し、うち13試合がT14未到達で終了。第一T13の種が
+    # 無ければ t13>=1 の軸も発火しない連鎖停止のため、t13==0 でも第一T13の
+    # 種植えとして T12 ペア押し合いを許可する (issue #920 の上流版)。
     pre_russia_t12_no_t14_setup = (
         type15_count == 0
         and type14_count == 0
-        and type13_count >= 1
+        and type13_count <= 1
         and type12_count >= 2
         and pre_russia_no_t16
     )
