@@ -8,7 +8,8 @@ import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { rejectedFrameReason } from '../soren91/rejected_frame_diagnostics.mjs';
-import { createHoldEscapePolicy, usableCalibration } from '../soren91/observation_guard.mjs';
+import { createConnectionErrorProbe, createHoldEscapePolicy, unknownFrameLimit,
+  usableCalibration } from '../soren91/observation_guard.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -315,13 +316,16 @@ function extract(name, end) {
 const loopSource = extract('gameLoop', '/**\n * HOLD').replaceAll('import.meta.url', '"file:///soren91/main.mjs"');
 async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDrops = 2, pieces = [],
   observation = null, diagnosticsEnabled = false, env = null, calibration: cal = calibration,
-  blockedReason = 'unknown-current', blockedState = 'DROP', source = loopSource } = {}) {
-  let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0;
+  blockedReason = 'unknown-current', blockedState = 'DROP', source = loopSource,
+  connectionErrorAt = null } = {}) {
+  let now = 0, shots = 0, drops = 0, holds = 0, decisions = 0, recoveries = 0;
   const dropTimes = [], writes = [], comments = [], diagnosticCalls = [], logs = [];
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
     DROP_COOLDOWN_MS: 1200, DROP_OBSERVATION_DELAY_MS: 800, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
-    createHoldEscapePolicy, usableCalibration,
+    createHoldEscapePolicy, createConnectionErrorProbe, unknownFrameLimit,
+    usableCalibration,
+    recoverFromConnectionError: async () => { recoveries++; },
     process: { env: env ?? {} },
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,
     performance: { now: () => now },
@@ -341,7 +345,7 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
     captureGameScreenshot: async () => { shots++; now += captureMs; return typeof observation === 'function' ? observation(shots) : observation; },
     loadModule: async () => ({
       generateMidgameComment: async (game, turn) => { comments.push({ game, turn, at: now }); return 'test'; },
-      detectConnectionErrorScreen: async () => false,
+      detectConnectionErrorScreen: async () => connectionErrorAt != null && shots >= connectionErrorAt,
       detectRankingScreen: async () => null,
       analyzeScreenshot: async () => ({ state: shots <= blocked
         ? (typeof blockedState === 'function' ? blockedState(shots) : blockedState) : 'MOVE',
@@ -355,8 +359,27 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   };
   const loop = vm.runInNewContext(`(${source})`, context);
   await loop({}, cal, 1);
-  return { now, shots, drops, holds, dropTimes, writes, comments, diagnosticCalls, logs };
+  return { now, shots, drops, holds, recoveries, dropTimes, writes, comments, diagnosticCalls, logs };
 }
+test('persistent unknown-current DROP frames probe and recover from a connection error', async () => {
+  // The dialog leaves the analyzer reporting DROP with reason=unknown-current,
+  // so the WAITING branch never probes; the bounded streak must reach it.
+  const result = await simulateLoop({
+    blocked: 6, connectionErrorAt: 5, maxDrops: 1,
+    env: { SOREN91_CONNECTION_ERROR_UNKNOWN_FRAMES: '5' },
+  });
+  assert.equal(result.recoveries, 1);
+  assert.ok(result.logs.some(message => message.includes('unrecognized frames')));
+});
+
+test('a recognized frame before the streak limit never probes the connection error', async () => {
+  const result = await simulateLoop({
+    blocked: 2, connectionErrorAt: 1, maxDrops: 2,
+    env: { SOREN91_CONNECTION_ERROR_UNKNOWN_FRAMES: '5' },
+  });
+  assert.equal(result.recoveries, 0);
+});
+
 test('real loop waits only for spawn before capturing, retaining the input cooldown', async () => {
   const s = await simulateLoop({ captureMs: 1200 });
   assert.deepEqual(s.dropTimes, [1400, 3600]);
