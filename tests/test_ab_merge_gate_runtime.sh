@@ -31,6 +31,23 @@ scn_improve_paused(){ touch tmp/state/improve_daemon.paused; }
 scn_broken_state()  { printf 'not-json{{{' > tmp/state/ab_state.json; }
 scn_gate_missing()  { rm -f strategy/ab_gate_on_merge.sh; }
 scn_internal_adopt(){ scn_active_state; export AB_GATE_ON_MERGE_INTERNAL_ADOPT=1; }
+# AB_STATE_FILE set as a plain (non-exported) shell var must still be detected:
+# the guard forwards it into the check subprocess explicitly.
+scn_unexported_state() {
+	mkdir -p alt_state
+	printf '%s' '{"a_hash":"AAA","b_hash":"BBB"}' > alt_state/ab_state.json
+	AB_STATE_FILE="$WORK/alt_state/ab_state.json"
+}
+# relative SOREN_PROJECTION_ROOT must not mis-refuse: the guard normalizes the
+# root before cd-ing into it.
+scn_rel_root() {
+	mkdir -p "$WORK/runtime/strategy" "$WORK/runtime/tmp/state"
+	cp "$GATE_SCRIPT" "$WORK/runtime/strategy/ab_gate_on_merge.sh"
+	SOREN_PROJECTION_ROOT="runtime"
+	ELOOP_LIB_DIR=""
+	TMP_STATE_DIR="tmp/state"
+	AB_ENV_FILE=".env"
+}
 
 # --- run a guard scenario ----------------------------------------------------
 # $1 label, $2 scenario func, $3 expected rc. Sets up an isolated runtime root
@@ -61,6 +78,37 @@ run_guard() { # label scenario expected_rc
 	local rc=$?
 	rm -rf "$WORK"
 	if [ "$rc" -eq "$expected" ]; then ok "$label"; else ng "$label (expected rc=$expected, got rc=$rc)"; fi
+}
+
+# --- refusal preserves the candidate ------------------------------------------
+# A/B refusal (rc=3) must quarantine the candidate like a projection-gate
+# refusal does — callers record rc=3 as "quarantined" and harvest would drop
+# an unpreserved candidate.
+check_quarantine() {
+	local WORK rc=0 qcount=0
+	WORK=$(mktemp -d "${TMPDIR:-/tmp}/ab_merge_q.XXXXXX") || { ng "tmp for quarantine"; return; }
+	(
+		cd "$WORK" || exit 1
+		mkdir -p tmp/state strategy
+		cp "$GATE_SCRIPT" strategy/ab_gate_on_merge.sh
+		printf '%s' '{"a_hash":"AAA","b_hash":"BBB"}' > tmp/state/ab_state.json
+		echo 'CANDIDATE' > candidate.py
+		export SOREN_PROJECTION_ROOT="$WORK"
+		export ELOOP_LIB_DIR="$WORK"
+		export TMP_STATE_DIR="$WORK/tmp/state"
+		export AB_ENV_FILE="$WORK/.env"
+		export STRATEGY_FILE="strategy.py"
+		export SOREN_AB_ALT_STRATEGY=""
+		unset AB_GATE_ON_MERGE_INTERNAL_ADOPT
+		source "$ROOT/core/helpers.sh" >/dev/null 2>&1 || exit 2
+		source "$ROOT/core/strategy_runtime.sh" >/dev/null 2>&1 || exit 2
+		_strategy_runtime_ab_merge_guard "test" "candidate.py" "" >/dev/null 2>&1
+		[ $? -eq 3 ] || exit 1
+		find "$TMP_STATE_DIR/projection_guard" -name strategy.py -exec grep -l '^CANDIDATE$' {} \; 2>/dev/null | grep -q .
+	)
+	rc=$?
+	rm -rf "$WORK"
+	if [ "$rc" -eq 0 ]; then ok "refusal-quarantine"; else ng "refusal-quarantine (rc=$rc)"; fi
 }
 
 # --- run an atomic apply through the full gate -------------------------------
@@ -155,6 +203,8 @@ run_guard "guard-improve-paused"   scn_improve_paused 3
 run_guard "guard-broken-state"     scn_broken_state   3
 run_guard "guard-gate-missing"     scn_gate_missing   3
 run_guard "guard-internal-adopt"   scn_internal_adopt 0
+run_guard "guard-unexported-state" scn_unexported_state 3
+run_guard "guard-relative-root"    scn_rel_root       0
 
 # --- apply-level regression (the actual merge/reflect boundary) --------------
 run_apply "apply-base-clear"      scn_clear        "applied" base
@@ -164,6 +214,7 @@ run_apply "apply-strict-active"   scn_active_state "refused" strict
 
 # --- durable evidence on refusal ---------------------------------------------
 check_markers
+check_quarantine
 
 echo
 if [ "$RES" -eq 0 ]; then echo "ALL ok"; else echo "SOME FAILED"; fi
