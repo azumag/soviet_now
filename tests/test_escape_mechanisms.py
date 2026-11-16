@@ -12438,6 +12438,30 @@ _prune_expired_rejected_hashes
         self.assertIn("停止に失敗したためrunning扱いを維持", improve)
         self.assertIn("通常改善が無音で固まったため", improve)
 
+    def test_improve_no_apply_audio_waits_for_ab_candidate_recovery(self):
+        """A/B候補として回収できた回は failed_no_apply と誤アナウンスしない。
+
+        A/Bゲート有効時は改善候補を root に適用せず tmp/state/ab_candidate/ に
+        置くため、改善ジョブ終了時点の hash は変わらない。候補の回収判定より前に
+        失敗通知を出すと、成功した改善でも失敗音声が流れる（2026-11-16 20:55 実測）。
+        """
+        improve = (REPO_ROOT / "strategy/improve.sh").read_text()
+        announce = improve.index("中華AI改善は適用可能な戦略変更を出せず終了しました")
+        candidate_ready = improve.index(
+            '_write_improve_state "idle" "0" "" "candidate_ready"'
+        )
+        ab_recovery = improve.index("_ab_gate_candidate_ready_since")
+        self.assertLess(
+            ab_recovery,
+            announce,
+            "A/B候補の回収判定より前に failed_no_apply の音声通知がある",
+        )
+        self.assertLess(
+            candidate_ready,
+            announce,
+            "candidate_ready の成功分岐より前に failed_no_apply の音声通知がある",
+        )
+
     def test_startup_validation_does_not_reset_current_run_hash(self):
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
