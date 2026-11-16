@@ -401,7 +401,8 @@ _ab_finish() {
 				log "[AB] bundle apply unavailable → B採用 fail-closed (docich#2487)"
 				return 1
 			fi
-			strategy_runtime_atomic_apply_bundle_then \
+			# B adopt は実験の終了動作なので ab merge gate を bypass する（#925）。
+			AB_GATE_ON_MERGE_INTERNAL_ADOPT=1 strategy_runtime_atomic_apply_bundle_then \
 				"$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" \
 				"$AB_ALT_HELPERS_DIR" "strategy_helpers" "" ||
 				{ log "[AB] root+helpers 差し替え失敗 (projection guard or apply)"; return 1; }
@@ -410,7 +411,8 @@ _ab_finish() {
 				log "[AB] atomic apply unavailable → B採用 fail-closed (docich#2487)"
 				return 1
 			fi
-			strategy_runtime_atomic_apply "$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" ||
+			# B adopt は実験の終了動作なので ab merge gate を bypass する（#925）。
+			AB_GATE_ON_MERGE_INTERNAL_ADOPT=1 strategy_runtime_atomic_apply "$AB_ALT_FILE" "${STRATEGY_FILE:-strategy.py}" ||
 				{ log "[AB] root 差し替え失敗 (projection guard or apply)"; return 1; }
 		fi
 		root_after=$(_ab_hash "${STRATEGY_FILE:-strategy.py}")

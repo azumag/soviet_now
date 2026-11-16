@@ -5,12 +5,18 @@ on:
     paths:
       - 'strategy/ab_gate_on_merge.sh'
       - 'tests/test_ab_gate_on_merge.sh'
+      - 'tests/test_ab_merge_gate_runtime.sh'
+      - 'core/strategy_runtime.sh'
+      - 'core/strategy_runtime_strict.sh'
       - '.github/workflows/ab-migration-gate.yml'
   push:
     branches: [main]
     paths:
       - 'strategy/ab_gate_on_merge.sh'
       - 'tests/test_ab_gate_on_merge.sh'
+      - 'tests/test_ab_merge_gate_runtime.sh'
+      - 'core/strategy_runtime.sh'
+      - 'core/strategy_runtime_strict.sh'
       - '.github/workflows/ab-migration-gate.yml'
   # Fail-closed guard: any strategy.py PR is also surfaced as a warning that
   # the merge-side A/B check must run at the orchestrator boundary.
@@ -26,6 +32,7 @@ jobs:
           persist-credentials: false
       - run: bash -n strategy/ab_gate_on_merge.sh && echo OK-syntax
       - run: bash tests/test_ab_gate_on_merge.sh
+      - run: bash tests/test_ab_merge_gate_runtime.sh
       - name: info - tmp/state is not in the repo
         run: |
           echo "NOTE: tmp/state/ab_state.json and ab_alt_strategy.py are runtime"
@@ -34,6 +41,9 @@ jobs:
           echo "this CI only validates the gate's syntax and logic."
       - name: info - runtime enforcement point
         run: |
-          echo "The orchestrator MUST run 'strategy/ab_gate_on_merge.sh check' before"
-          echo "reflecting a strategy.py change; exit 1 means an A/B is active."
-          echo "See docs/ab-migration-gate.md."
+          echo "soviet_now#925: the runtime now calls the check itself —"
+          echo "core/strategy_runtime.sh:_strategy_runtime_ab_merge_guard runs it"
+          echo "inside strategy_runtime_projection_apply_gate (base+strict) and on"
+          echo "the direct-writer paths (regression rollback, .bak restore)."
+          echo "The docich deploy plane (gateway.py deploy/reconcile) remains a"
+          echo "separate enforcement point tracked as a docich follow-up."

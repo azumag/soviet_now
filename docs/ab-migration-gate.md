@@ -42,19 +42,43 @@ improvements); over-detection is accepted because the gate is fail-closed.
 - **Before PR merge** of `strategy.py` (enforced by CI workflow
   `.github/workflows/ab-migration-gate.yml`, and wired into
   `merge-opportunities.yml`).
-- **Before live reflection** of `strategy.py` into the running agent
-  (orchestrator hook — the A/B gate must be cleared before the new root is
-  applied).
+- **Before live reflection** of `strategy.py` into the running agent.
+  Implemented (soviet_now#925): `core/strategy_runtime.sh`'s
+  `_strategy_runtime_ab_merge_guard` runs the check inside
+  `strategy_runtime_projection_apply_gate` — the shared choke point every
+  structured live-bytes writer passes through (improve adopt / revert,
+  `eloop.sh` recovery rollback + repair, `strategy/ab_gate.sh` B adopt) — and
+  in front of the two direct-writer paths that bypass that gate
+  (`strategy/regression.sh` auto-rollback and `core/version.sh`
+  `recover_strategy_backup`). `strategy/ab_gate.sh::_ab_finish` sets
+  `AB_GATE_ON_MERGE_INTERNAL_ADOPT=1` for the experiment's own B adopt so the
+  conclusion path does not deadlock on the gate.
+- **docich deploy/reconcile plane** (carve-out, tracked as a docich
+  follow-up): `ops/vm_actions/gateway.py`'s `deploy_git` (`_apply_projection`)
+  and `reconcile_presynced` (`reconcile_presynced_submodule.py`,
+  `LIVE_PROJECTION=/home/ubuntu/soren`) write reviewed bytes to the live root
+  outside this repo's runtime. The same check belongs in that plane before
+  the `games/soviet_now` projection is applied.
 
 Fail-closed: exit 2 (unknown) and exit 1 (active) both abort the merge/reflect.
 An `ab_state.json` that exists but cannot be read returns 2 rather than
-falling through to the remaining signals.
+falling through to the remaining signals; a non-empty but unparseable state
+file also returns 2.
+
+On refusal the runtime leaves evidence: a log line
+(`ab_gate_on_merge refused live apply`), the durable markers
+`tmp/state/projection_guard_last_event.json` (event `refused`, reason
+`ab_merge_gate_active` / `ab_merge_gate_unknown`) and
+`tmp/state/strategy_apply_last_failure.json` (failure_code
+`ab_merge_gate_refused`), plus an `_ab_status_publish_async` event when that
+publisher is loaded.
 
 ### Note on CI
 
 `tmp/state/` is gitignored, so CI cannot see the runtime A/B state. This CI
-workflow validates the gate's syntax and unit tests; the runtime enforcement
-point is the orchestrator reflection boundary. Document this to the team.
+workflow validates the gate's syntax and unit tests (including the runtime
+boundary regression tests in `tests/test_ab_merge_gate_runtime.sh`); the
+runtime enforcement point is the orchestrator reflection boundary.
 
 ## 3. Decision: handling a root change while an A/B is active
 

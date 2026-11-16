@@ -5125,6 +5125,12 @@ PY
 		local rollback_game_num rollback_analysis_summary
 		rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
+		# soviet_now#925: A/B active / 状態不明の間は rollback の live 差し替えも止める
+		if ! command -v _strategy_runtime_ab_merge_guard >/dev/null 2>&1 || ! _strategy_runtime_ab_merge_guard "regression_rollback"; then
+			log "[REGRESSION] A/B merge gate refused/unavailable → ロールバック中止 (fail-closed #925)"
+			return 1
+		fi
+
 		# 先に現在の戦略をバックアップ（失敗時はロールバック中止）
 		cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak" || {
 			log "[REGRESSION] CRITICAL: バックアップ失敗、ロールバック中止"
