@@ -12,6 +12,7 @@ import { execFile } from 'child_process';
 import { join } from 'path';
 import { analyzeGameplayScreenshotText, analyzeResultScreen } from './result_screen_ocr.mjs';
 import { generateTextWithFallbacks, stripAnsi, resolveTextAiConfig } from './text_ai.mjs';
+import { normalizeNaturalJapanese } from './natural_japanese.mjs';
 import { COUNTRY_NAMES, normalizeCountryReferences } from './country_names.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
@@ -507,7 +508,8 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     if (!comment) {
       comment = fallbackRankingComment(effectiveRank, gameNumber);
     }
-    comment = normalizeCountryReferences(appendStageStatsToComment(comment, stageInfo));
+    comment = normalizeNaturalJapanese(
+      normalizeCountryReferences(appendStageStatsToComment(comment, stageInfo)));
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -716,7 +718,8 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
   try {
     mkdirSync(queueDir, { recursive: true });
     const ts = Date.now();
-    const spokenComment = compactForSpeech(normalizeCountryReferences(comment));
+    const spokenComment = compactForSpeech(
+      normalizeNaturalJapanese(normalizeCountryReferences(comment)));
     const filename = `comment_soren91_${ts}_${contextLabel.replace(/[^a-zA-Z0-9_]/g, '_')}.txt`;
     const tmpFile = join(queueDir, `.${filename}.tmp`);
     const metaFile = join(queueDir, filename.replace(/\.txt$/u, '.meta.json'));
@@ -831,7 +834,7 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
         finalComment = retry;
       }
     }
-    finalComment = normalizeCountryReferences(finalComment);
+    finalComment = normalizeNaturalJapanese(normalizeCountryReferences(finalComment));
 
     console.log(`[midgame_comment] Generated: ${finalComment}`);
 
@@ -895,7 +898,7 @@ export async function generateBeatComment(gameNumber, beatType, beatInfo) {
         comment = retry;
       }
     }
-    comment = normalizeCountryReferences(comment);
+    comment = normalizeNaturalJapanese(normalizeCountryReferences(comment));
     if (!comment) return null;
 
     console.log(`[beat_comment] ${beatType} generated: ${comment}`);
