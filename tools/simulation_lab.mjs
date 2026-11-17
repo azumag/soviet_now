@@ -34,6 +34,20 @@ export async function closeLab(browser, staticServer, stop) {
   process.off('SIGINT', stop); process.off('SIGTERM', stop);
   if (results.some(r => r.status === 'rejected')) throw new Error('laboratory cleanup failed');
 }
+export async function launchOwnedBrowser(launch, signal) {
+  if (signal.aborted) throw Object.assign(new Error('interrupted'), { name: 'AbortError' });
+  let abandoned = false, owned, closed = false;
+  const close = async () => { if (owned && !closed) { closed = true; await owned.close(); } };
+  const pending = Promise.resolve().then(launch).then(async browser => {
+    owned = browser;
+    if (abandoned || signal.aborted) {
+      await close(); throw Object.assign(new Error('interrupted'), { name: 'AbortError' });
+    }
+    return browser;
+  });
+  try { return await abortable(pending, signal); }
+  catch (error) { abandoned = true; await close(); throw error; }
+}
 export function positive(value, name, max = Infinity) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > max) throw new Error(`invalid ${name}`);
@@ -313,9 +327,10 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     await staticServer.listen(0);
     const url = `http://127.0.0.1:${staticServer.server.address().port}`;
-    browser = await chromium.launch({ headless: true, channel: args.channel, env: localEnv(), timeout: 45000,
+    browser = await launchOwnedBrowser(() => chromium.launch({ headless: true, channel: args.channel, env: localEnv(), timeout: 45000,
+      handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
       args: ['--mute-audio', '--password-store=basic', '--use-mock-keychain', '--disable-translate',
-        '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] });
+        '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'] }), controller.signal);
     await Promise.all(Array.from({ length: Math.min(args.slots, jobs.length) }, async () => {
       while (jobs.length && !controller.signal.aborted) {
         const rec = await runGame(browser, url, jobs.shift(), args, controller.signal);

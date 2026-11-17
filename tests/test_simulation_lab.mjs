@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { positive, jobsFor, summarize, snapshotPolicies, runGame, abortable, closeLab } from '../tools/simulation_lab.mjs';
+import { positive, jobsFor, summarize, snapshotPolicies, runGame, abortable, closeLab, launchOwnedBrowser } from '../tools/simulation_lab.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const complete = (arm, seed, extra = {}) => ({ arm, seed, status: 'GAMEOVER', evidence_complete: true,
@@ -112,4 +112,21 @@ test('aborting a hung page initialization closes both context and policy', async
     assert.equal(result.status, 'interrupted');
     assert.equal(contextClosed, true); assert.equal(workerClosed, true);
   } finally { clearTimeout(timer); fs.rmSync(out, { recursive: true, force: true }); }
+});
+test('browser startup abort returns promptly and closes a late successful browser', async () => {
+  const signal = new AbortController();
+  let finishLaunch, closes = 0;
+  const launching = launchOwnedBrowser(() => new Promise(resolve => { finishLaunch = resolve; }), signal.signal);
+  await new Promise(resolve => setImmediate(resolve));
+  signal.abort();
+  await assert.rejects(launching, { name: 'AbortError' });
+  finishLaunch({ close: async () => { closes++; } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(closes, 1);
+});
+test('already-aborted browser startup never starts a browser', async () => {
+  const signal = new AbortController(); signal.abort();
+  let launched = false;
+  await assert.rejects(launchOwnedBrowser(async () => { launched = true; }, signal.signal), { name: 'AbortError' });
+  assert.equal(launched, false);
 });
