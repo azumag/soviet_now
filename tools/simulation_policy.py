@@ -55,7 +55,8 @@ def main():
             request = json.loads(line)
             with contextlib.redirect_stdout(sys.stderr):
                 if request["op"] == "config":
-                    result = {"policy_bundle": bundle(sys.argv[1], str(ROOT))[0],
+                    policy_hash, parts = bundle(sys.argv[1], str(ROOT))
+                    result = {"policy_bundle": policy_hash, "modes": parts["modes"],
                               "fast_drop": runner.strategy_fast_drop_deadline_contact_enabled(policy)}
                 elif request["op"] == "observe":
                     state = request["state"]

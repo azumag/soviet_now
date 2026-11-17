@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import plistlib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,18 @@ class SimulationBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build.prepare(Path(tmp) / "missing", out)
             self.assertFalse(out.exists())
+
+    def test_selected_editor_bundle_must_match_project_version(self):
+        with tempfile.TemporaryDirectory(prefix="simulation-build-unit-", dir=ROOT / "tmp") as tmp:
+            p = Path(tmp) / "Unity.app/Contents/Info.plist"
+            p.parent.mkdir(parents=True)
+            for version in ("6000.0.0f1", "2022.3.62f3"):
+                p.write_bytes(plistlib.dumps({"CFBundleVersion": version}))
+                if version == "2022.3.62f3":
+                    self.assertEqual(build.editor_version(p.parents[1]), version)
+                else:
+                    with self.assertRaises(ValueError):
+                        build.editor_version(p.parents[1])
 
 
 if __name__ == "__main__":

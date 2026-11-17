@@ -63,9 +63,12 @@ snapshot以外をmountせず、ホスト環境変数をcontainerへ渡さない�
 RPC stdoutは1行256KiB・累計16MiB、stderrは1MiB、各要求は30秒で打ち切る。
 
 判断は `build_analysis → enrich_deadline → decide → clamp → safety → finalizer → clamp`。
-静止判定とdeadline接触判定は現行runnerの関数を使う。3回の静止観測はゲーム内時刻で0.15秒間隔、
+静止判定とdeadline接触判定は現行runnerの関数を使う。静止観測はゲーム内時刻で0.15秒間隔、
 静止強制期限は30ゲーム秒。解析中は専用ビルドを止め、PythonやDockerの処理遅延による盤面変化を防ぐ。
 この停止やIPCの違いもあるため、配信runnerとの時間的同一性は別途検証する。
+既定は現行コードと同じ `--settle-required 1 --wall-clamp 0`。旧selfplay条件は
+`--settle-required 3 --wall-clamp 1` で明示する。本番の環境変数による実効値は読み込まない。
+両設定はmanifestとpolicy bundleに含まれるため、設定を混ぜた比較にはしない。
 
 ## 記録と判定
 
@@ -102,3 +105,6 @@ GAMEOVERと建国演出、実測した速度とCPU/メモリを記録する。�
 70手時点の中央値は解析約7.1ms、判断約1.5ms。試合全体の解析合計3.66秒、判断合計0.39秒。
 少なくともこの試合では主な待ち時間は落下・静止であり、判断コードよりゲーム進行の高速化を先に整える。
 これ一試合から現行戦略の平均性能や改善効果は推定しない。
+この初回計測と2並列の追加計測は旧selfplay条件（settle=3、wall-clamp=1）で実施した。
+2並列は84手/174.2秒/score=1,213/T13、142手/288.5秒/score=2,811/T14で完走した。
+現在のCLI既定とは区別する。高速倍率・同seed再現・1xとの物理差は、Editorライセンス有効化後に実測する。

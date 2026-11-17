@@ -39,10 +39,22 @@ def decide(gs, an):
     assert.equal(image.status, 0, 'requires local python:3.12-slim image');
     worker = policyWorker('A', snapshot, image.stdout.trim(), path.join(out, 'A.stderr.log'));
     const config = await worker.request('config'); assert.ok(config.policy_bundle);
+    assert.equal(config.modes.SOREN_SETTLE_REQUIRED, '1');
+    assert.equal(config.modes.ANALYZE_BOARD_WALL_CLAMP, '0');
     const observed = await worker.request('observe', { pieces: [] }); assert.equal(observed.settled, true);
     await worker.close(); worker = undefined;
     const cid = fs.readFileSync(path.join(out, 'A.cid'), 'utf8').trim();
     assert.equal(spawnSync('docker', ['inspect', cid], { stdio: 'ignore' }).status, 1);
+    worker = policyWorker('A', snapshot, image.stdout.trim(), path.join(out, 'alternate.stderr.log'), 0, 3, '1');
+    const alternate = await worker.request('config');
+    assert.equal(alternate.modes.SOREN_SETTLE_REQUIRED, '3');
+    assert.equal(alternate.modes.ANALYZE_BOARD_WALL_CLAMP, '1');
+    assert.notEqual(config.policy_bundle, alternate.policy_bundle);
+    await worker.close(); worker = undefined;
+    worker = policyWorker('A', snapshot, image.stdout.trim(), path.join(out, 'early-close.stderr.log'));
+    await worker.close(); worker = undefined;
+    const earlyCid = fs.readFileSync(path.join(out, 'early-close.cid'), 'utf8').trim();
+    assert.equal(spawnSync('docker', ['inspect', earlyCid], { stdio: 'ignore' }).status, 1);
     assert.equal(fs.readFileSync(secretPath, 'utf8'), 'fake test secret');
   } finally {
     await worker?.close();

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { positive, jobsFor, summarize, snapshotPolicies, runGame } from '../tools/simulation_lab.mjs';
+import { positive, jobsFor, summarize, snapshotPolicies, runGame, abortable, closeLab } from '../tools/simulation_lab.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const complete = (arm, seed, extra = {}) => ({ arm, seed, status: 'GAMEOVER', evidence_complete: true,
@@ -71,4 +71,45 @@ test('context setup and close failures still close workers', async () => {
     assert.equal(closed, 1);
     assert.equal(rec.status, 'error');
   }
+});
+test('browser close failure still closes server and removes signal listeners', async () => {
+  let serverClosed = false;
+  const stop = () => {};
+  process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  await assert.rejects(closeLab({ close: async () => { throw new Error('browser failed'); } }, {
+    server: { closeAllConnections() {}, close(cb) { serverClosed = true; cb(); } },
+  }, stop), /cleanup failed/);
+  assert.equal(serverClosed, true);
+  assert.equal(process.listeners('SIGINT').includes(stop), false);
+  assert.equal(process.listeners('SIGTERM').includes(stop), false);
+});
+test('abort interrupts initialization waits without waiting for page timeout', async () => {
+  const signal = new AbortController();
+  const waiting = abortable(new Promise(() => {}), signal.signal);
+  signal.abort();
+  await assert.rejects(waiting, { name: 'AbortError' });
+});
+test('already-aborted operations cannot leak late rejections', async () => {
+  const signal = new AbortController(); signal.abort();
+  let reject;
+  const operation = new Promise((_, r) => { reject = r; });
+  await assert.rejects(abortable(operation, signal.signal), { name: 'AbortError' });
+  reject(new Error('late worker shutdown'));
+  await new Promise(resolve => setImmediate(resolve));
+});
+test('aborting a hung page initialization closes both context and policy', async () => {
+  const out = fs.mkdtempSync(path.join(ROOT, 'tmp/simulation-abort-unit-'));
+  const signal = new AbortController();
+  let contextClosed = false, workerClosed = false;
+  const context = { route: async () => {}, addInitScript: async () => {},
+    newPage: async () => ({ goto: () => new Promise(() => {}) }),
+    close: async () => { contextClosed = true; } };
+  const worker = { request: async () => ({}), close: async () => { workerClosed = true; } };
+  const timer = setTimeout(() => signal.abort(), 20);
+  try {
+    const result = await runGame({ newContext: async () => context }, 'http://127.0.0.1:1234',
+      { arm: 'A', seed: 1 }, { out }, signal.signal, () => worker);
+    assert.equal(result.status, 'interrupted');
+    assert.equal(contextClosed, true); assert.equal(workerClosed, true);
+  } finally { clearTimeout(timer); fs.rmSync(out, { recursive: true, force: true }); }
 });

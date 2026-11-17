@@ -4,11 +4,20 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def editor_version(editor):
+    """Validate the actual selected macOS Editor bundle, not just the source project."""
+    version = plistlib.loads((Path(editor) / "Contents/Info.plist").read_bytes()).get("CFBundleVersion")
+    if version != "2022.3.62f3":
+        raise ValueError(f"requires Unity Editor 2022.3.62f3; selected bundle is {version}")
+    return version
 
 
 def prepare(source, project):
@@ -55,9 +64,11 @@ def main():
     ap.add_argument("--unity-cli", default=str(Path.home() / ".unity/bin/unity"))
     ap.add_argument("--timeout", type=int, default=1800)
     args = ap.parse_args()
+    selected_version = editor_version(args.editor)
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     manifest = prepare(args.source, out / "project")
+    manifest["editor_bundle_version"] = selected_version
     (out / "inputs.json").write_text(json.dumps(manifest, indent=2) + "\n")
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "TMPDIR", "LANG")}
     env["SOREN_SIMULATION_BUILD"] = str(out / "build")

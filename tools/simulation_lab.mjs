@@ -12,6 +12,28 @@ import { createStaticFileServer } from '../lib/static_file_server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+export async function abortable(operation, signal) {
+  const observed = Promise.resolve(operation);
+  // The operation may already be in flight when a signal arrives at the call boundary.
+  observed.catch(() => {});
+  let onAbort;
+  const interrupted = () => Object.assign(new Error('interrupted'), { name: 'AbortError' });
+  try {
+    if (signal.aborted) throw interrupted();
+    const abort = new Promise((_, reject) => { onAbort = () => reject(interrupted()); signal.addEventListener('abort', onAbort, { once: true }); });
+    return await Promise.race([observed, abort]);
+  } finally { if (onAbort) signal.removeEventListener('abort', onAbort); }
+}
+export async function closeLab(browser, staticServer, stop) {
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => browser?.close()),
+    Promise.resolve().then(() => {
+      staticServer.server.closeAllConnections();
+      return new Promise(resolve => staticServer.server.close(resolve));
+    })]);
+  process.off('SIGINT', stop); process.off('SIGTERM', stop);
+  if (results.some(r => r.status === 'rejected')) throw new Error('laboratory cleanup failed');
+}
 export function positive(value, name, max = Infinity) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > max) throw new Error(`invalid ${name}`);
@@ -89,20 +111,27 @@ export function snapshotPolicies(out, policies) {
   return snapshot;
 }
 
-export function policyWorker(arm, snapshot, image, logPath, seed = 0) {
+export function policyWorker(arm, snapshot, image, logPath, seed = 0, settleRequired = 1, wallClamp = '0') {
   logPath = path.resolve(logPath);
   const stderr = fs.openSync(logPath, 'w');
   const container = `soren-lab-${randomUUID()}`;
   const cidFile = logPath.replace('.stderr.log', '.cid');
   if (fs.existsSync(cidFile)) { fs.closeSync(stderr); throw new Error('container receipt already exists'); }
   fs.writeFileSync(logPath.replace('.stderr.log', '.container.json'), JSON.stringify({ container, cidFile }));
-  const proc = spawn('docker', ['run', '--rm', '--init', '--pull=never', '--log-driver', 'none',
+  const created = spawnSync('docker', ['create', '--rm', '--init', '--pull=never', '--log-driver', 'none',
     '--name', container, '--cidfile', cidFile, '--network', 'none', '--read-only',
     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '16', '--memory', '512m',
     '--cpus', '1', '--user', '65534:65534', '--interactive', '--mount', `type=bind,source=${snapshot},target=/input,readonly`,
     '--workdir', '/input', '--env', 'ANALYZE_BOARD_VERTICAL_LANE_DIRECT=1', '--env', 'ANALYZE_BOARD_MERGE_TOP_MODEL=2',
-    '--env', 'ANALYZE_BOARD_WALL_CLAMP=1', '--env', 'ANALYZE_BOARD_LANDING_ARC=0', '--env', 'SOREN_SETTLE_REQUIRED=3',
+    '--env', `ANALYZE_BOARD_WALL_CLAMP=${wallClamp}`, '--env', 'ANALYZE_BOARD_LANDING_ARC=0', '--env', `SOREN_SETTLE_REQUIRED=${settleRequired}`,
     '--env', 'PYTHONHASHSEED=0', image, 'python3', '-s', '-B', '/input/tools/simulation_policy.py', `/input/policies/${arm}.py`, String(seed)],
+    { cwd: snapshot, env: localEnv(), encoding: 'utf8', timeout: 10000 });
+  if (created.status !== 0 || !/^[a-f0-9]{64}$/.test(created.stdout.trim())) {
+    spawnSync('docker', ['rm', '-f', container], { env: localEnv(), timeout: 10000, stdio: 'ignore' });
+    fs.closeSync(stderr); throw new Error('container creation failed: ' + String(created.stderr).slice(0, 500));
+  }
+  // Creation is complete before returning an owned resource; cleanup cannot race a pending create.
+  const proc = spawn('docker', ['start', '--attach', '--interactive', container],
     { cwd: snapshot, env: localEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
   let pending;
   const completed = new Promise(resolve => proc.once('close', resolve));
@@ -169,7 +198,8 @@ export async function runGame(browser, url, job, args, signal, createWorker = po
   let turns = 0, maxType = 0, state, status = 'error', error, analysisMs = 0, decisionMs = 0, config, evidenceComplete = false;
   const queue = [];
   try {
-    worker = createWorker(job.arm, args.snapshot, args.image, path.join(args.out, `${id}.stderr.log`), job.seed);
+    if (signal.aborted) throw Object.assign(new Error('interrupted'), { name: 'AbortError' });
+    worker = createWorker(job.arm, args.snapshot, args.image, path.join(args.out, `${id}.stderr.log`), job.seed, args['settle-required'], args['wall-clamp']);
     context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     history = fs.openSync(path.join(args.out, `${id}.jsonl`), 'w');
     // Reject all external requests, including any game ranking/analytics calls.
@@ -183,16 +213,17 @@ export async function runGame(browser, url, job, args, signal, createWorker = po
       window.__sorenSimulationPaused = false;
     }, { seed: job.seed, speed: args.speed });
     const page = await context.newPage();
-    config = await worker.request('config');
-    await page.goto(url);
-    await page.waitForFunction(() => window.__sorenGameState?.state, null, { timeout: 120000 });
-    state = await page.evaluate(() => window.__sorenGameState);
+    const evaluate = (...a) => abortable(page.evaluate(...a), signal);
+    config = await abortable(worker.request('config'), signal);
+    await abortable(page.goto(url), signal);
+    await abortable(page.waitForFunction(() => window.__sorenGameState?.state, null, { timeout: 120000 }), signal);
+    state = await evaluate(() => window.__sorenGameState);
     if (!args.legacy && (state.simulation?.schema !== 1 || state.simulation.seed !== job.seed || state.simulation.speed !== args.speed))
       throw new Error('requires a simulation build with matching seed and speed; use --legacy only for unpaired baseline probes');
     let moveAt, sampleAt = -Infinity, settle = 0;
     while (performance.now() - started < args.timeout * 1000) {
       if (signal.aborted) { status = 'interrupted'; break; }
-      state = await page.evaluate(() => window.__sorenGameState);
+      state = await evaluate(() => window.__sorenGameState);
       maxType = Math.max(maxType, ...state.pieces.map(p => p.type));
       if (state.state === 'GAMEOVER') { status = 'GAMEOVER'; break; }
       if (turns >= args['turn-limit']) { status = 'turn_limit'; break; }
@@ -201,30 +232,30 @@ export async function runGame(browser, url, job, args, signal, createWorker = po
       if (moveAt === undefined) moveAt = t;
       if (t - sampleAt < 0.15) { await sleep(5); continue; }
       sampleAt = t;
-      const motion = await worker.request('observe', state);
+      const motion = await abortable(worker.request('observe', state), signal);
       settle = motion.settled ? settle + 1 : 0;
-      if (!(config.fast_drop && motion.contact) && settle < 3 && t - moveAt < 30) continue;
+      if (!(config.fast_drop && motion.contact) && settle < args['settle-required'] && t - moveAt < 30) continue;
       if (!args.legacy) {
-        await page.evaluate(() => { window.__sorenSimulationPaused = true; });
-        await page.waitForFunction(() => window.__sorenGameState.simulation.paused || window.__sorenGameState.state !== 'MOVE', null, { timeout: 10000 });
-        state = await page.evaluate(() => window.__sorenGameState);
-        if (state.state !== 'MOVE') { await page.evaluate(() => { window.__sorenSimulationPaused = false; }); continue; }
+        await evaluate(() => { window.__sorenSimulationPaused = true; });
+        await abortable(page.waitForFunction(() => window.__sorenGameState.simulation.paused || window.__sorenGameState.state !== 'MOVE', null, { timeout: 10000 }), signal);
+        state = await evaluate(() => window.__sorenGameState);
+        if (state.state !== 'MOVE') { await evaluate(() => { window.__sorenSimulationPaused = false; }); continue; }
       }
-      const result = await worker.request('decide', state);
+      const result = await abortable(worker.request('decide', state), signal);
       queue.push(state.next.type);
       analysisMs += result.analysis_ms; decisionMs += result.decision_ms;
       fs.writeSync(history, JSON.stringify({ turn: turns + 1, state, ...result }) + '\n');
-      await page.evaluate(x => { window.__sorenCommand = `DROP:${x}`; window.__sorenSimulationPaused = false; }, result.decision.x);
+      await evaluate(x => { window.__sorenCommand = `DROP:${x}`; window.__sorenSimulationPaused = false; }, result.decision.x);
       // Acknowledge command consumption before considering another drop.
-      await page.waitForFunction(() => !window.__sorenCommand, null, { timeout: 10000 });
+      await abortable(page.waitForFunction(() => !window.__sorenCommand, null, { timeout: 10000 }), signal);
       turns++; moveAt = undefined; sampleAt = -Infinity; settle = 0;
       if (turns % 20 === 0) console.log(`${id}: ${turns} turns score=${state.score} max=T${maxType}`);
     }
     if (status === 'error') status = 'timeout';
-    await page.screenshot({ path: path.join(args.out, `${id}.png`) });
+    await abortable(page.screenshot({ path: path.join(args.out, `${id}.png`) }), signal);
     fs.writeSync(history, JSON.stringify({ terminal: status, state }) + '\n');
     evidenceComplete = true;
-  } catch (e) { error = e.message; status = 'error'; }
+  } catch (e) { error = e.message; status = e.name === 'AbortError' ? 'interrupted' : 'error'; }
   finally {
     const cleanups = await Promise.allSettled([
       Promise.resolve().then(() => { if (history !== undefined) fs.closeSync(history); }),
@@ -233,6 +264,7 @@ export async function runGame(browser, url, job, args, signal, createWorker = po
   }
   const elapsed = (performance.now() - started) / 1000;
   return { ...job, status, error, policy_bundle: config?.policy_bundle,
+    modes: config?.modes,
     seeded: !args.legacy, speed: args.speed, evidence_complete: evidenceComplete, queue, turns, score: state?.score, max_type: maxType,
     makeSorenCount: state?.makeSorenCount, elapsed_sec: elapsed, simulation_sec: state?.simulation?.time,
     analysis_ms: analysisMs, decision_ms: decisionMs,
@@ -247,11 +279,14 @@ export async function main(argv = process.argv.slice(2)) {
     seeds: { type: 'string', default: '1,2' }, slots: { type: 'string', default: '1' },
     speed: { type: 'string', default: '8' }, out: { type: 'string', default: 'tmp/simulation-run' },
     image: { type: 'string', default: 'python:3.12-slim' }, timeout: { type: 'string', default: '600' },
+    'settle-required': { type: 'string', default: '1' }, 'wall-clamp': { type: 'string', default: '0' },
     channel: { type: 'string' },
     'turn-limit': { type: 'string', default: '10000' }, legacy: { type: 'boolean', default: false }
   } });
   args.slots = positive(args.slots, 'slots', 4); args.speed = positive(args.speed, 'speed', 16);
   args.timeout = positive(args.timeout, 'timeout'); args['turn-limit'] = positive(args['turn-limit'], 'turn-limit');
+  args['settle-required'] = positive(args['settle-required'], 'settle-required', 10);
+  if (!['0', '1'].includes(args['wall-clamp'])) throw new Error('invalid wall-clamp');
   const seeds = args.seeds.split(',').map(s => {
     const seed = Number(s); if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error('invalid seed'); return seed;
   });
@@ -293,10 +328,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(JSON.stringify(report));
     if (controller.signal.aborted || report.incomplete || jobs.length || (args.candidate && !report.comparison_valid)) process.exitCode = 1;
   } finally {
-    await browser?.close();
-    staticServer.server.closeAllConnections();
-    await new Promise(r => staticServer.server.close(r));
-    process.off('SIGINT', stop); process.off('SIGTERM', stop);
+    await closeLab(browser, staticServer, stop);
   }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
