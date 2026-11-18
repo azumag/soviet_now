@@ -1,7 +1,7 @@
 {
  "schema_version": 1,
- "observed_at": "2026-11-19T05:51:33",
- "observed_epoch": 1795035093,
+ "observed_at": "2026-11-19T05:52:08",
+ "observed_epoch": 1795035128,
  "active": false,
  "aborted": false,
  "candidate_pending": false,
@@ -16,6 +16,6 @@
  "confirmation_required": false,
  "verified_improvement": false,
  "retroactive": null,
- "root_hash": "556d98ef3f33",
+ "root_hash": "b92c7ce20be7",
  "root_matches_a": null
 }
