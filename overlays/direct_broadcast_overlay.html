@@ -122,11 +122,19 @@ html[data-prediction-active="1"] #feed { height: 578px; }
   border-top: 1px solid rgba(103, 232, 249, .18);
 }
 .feed-panel.panel-i { display: none; }
+.feed-panel.panel-n { display: none; }
 html[data-improve-active="1"] .feed-panel.panel-g { display: none; }
 html[data-improve-active="1"] .feed-panel.panel-s { flex: 1 1 38%; }
 html[data-improve-active="1"] .feed-panel.panel-i {
   display: block;
   flex: 1 1 62%;
+}
+html[data-nethack-active="1"] .feed-panel.panel-g { display: none; }
+html[data-nethack-active="1"] .feed-panel.panel-s { display: none; }
+html[data-nethack-active="1"] .feed-panel.panel-i { display: none; }
+html[data-nethack-active="1"] .feed-panel.panel-n {
+  display: block;
+  flex: 1 1 100%;
 }
 .panel-head {
   height: 13px;
@@ -159,6 +167,11 @@ html[data-improve-active="1"] .feed-panel.panel-i {
   color: #fdba74;
   background: rgba(249, 115, 22, .15);
   border: 1px solid rgba(249, 115, 22, .55);
+}
+.badge-n {
+  color: #a3e635;
+  background: rgba(132, 204, 22, .15);
+  border: 1px solid rgba(132, 204, 22, .55);
 }
 .panel-name { color: #9fb3c8; letter-spacing: .06em; font-size: 7px; }
 .panel-status { min-width: 0; color: #fbbf24; font-size: 7px; font-weight: 900; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1177,6 +1190,10 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
         <div class="panel-head"><span class="badge badge-i">AI</span><span class="panel-name">IMPROVE</span><span class="panel-status" id="feed-i-status"></span><span class="panel-meta" id="feed-i-lines">0L</span></div>
         <div class="feed-lines" id="feed-i"></div>
       </section>
+      <section class="feed-panel panel-n">
+        <div class="panel-head"><span class="badge badge-n">GAME</span><span class="panel-name">NETHACK</span><span class="panel-meta" id="feed-n-lines">0L</span></div>
+        <div class="feed-lines" id="feed-n"></div>
+      </section>
     </div>
     <div class="feed-foot"><span>STATUS MERGE · READ ONLY</span><span id="feed-progress">0L</span></div>
   </aside>
@@ -1191,11 +1208,13 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
   const feedG = document.getElementById('feed-g');
   const feedS = document.getElementById('feed-s');
   const feedI = document.getElementById('feed-i');
+  const feedN = document.getElementById('feed-n');
   const feedGLines = document.getElementById('feed-g-lines');
   const feedSLines = document.getElementById('feed-s-lines');
   const feedGState = document.getElementById('feed-g-state');
   const feedSState = document.getElementById('feed-s-state');
   const feedILines = document.getElementById('feed-i-lines');
+  const feedNLines = document.getElementById('feed-n-lines');
   const feedIStatus = document.getElementById('feed-i-status');
   const feedLabel = document.getElementById('feed-label');
   const feedAge = document.getElementById('feed-age');
@@ -1218,6 +1237,7 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     observer: { position: 0, direction: 1, waitUntil: 0 } };
   let lastFeedSKey = '';
   let lastFeedIKey = '';
+  let lastFeedNKey = '';
   let lastSummaryKey = '';
   let lastToastKey = '';
 
@@ -2537,12 +2557,15 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
     const g = state?.feeds?.showStatusG;
     const s = state?.feeds?.showStatus;
     const i = state?.feeds?.improve;
+    const n = state?.feeds?.nethack;
     const improveActive = Boolean(i?.active);
     const [gameStateLabel, gameStateTone] = gamePanelState(g);
     const [opsStateLabel, opsStateTone] = opsPanelState(s);
     setPanelState(feedGState, gameStateLabel, gameStateTone);
     setPanelState(feedSState, opsStateLabel, opsStateTone);
     document.documentElement.dataset.improveActive = improveActive ? '1' : '';
+    const nethackActive = Boolean(n?.active);
+    document.documentElement.dataset.nethackActive = nethackActive ? '1' : '';
     const hanjuku = hanjukuView(g, Date.now() / 1000);
     if (hanjuku && state.gameGapEnabled !== true) hanjuku.gap = null;
     document.documentElement.dataset.hanjukuActive = hanjuku ? '1' : '';
@@ -2583,12 +2606,26 @@ html[data-soren-region="bottom"] #hanjuku-gap { display: none !important; }
       }
       feedLabel.textContent = 'GAME + OPS';
     }
+    if (nethackActive) {
+      const nKey = `${n?.logUpdatedAt || 0}:${(n?.logLines || []).join('\n')}`;
+      if (nKey !== lastFeedNKey) {
+        renderFeedLines(feedN, (n?.logLines || []).join('\n') || 'NETHACK ログを待機中…');
+        feedNLines.textContent = `${n?.lineCount || 0}L`;
+        lastFeedNKey = nKey;
+      }
+      feedLabel.textContent = 'NETHACK';
+    } else if (lastFeedNKey !== '') {
+      feedN.replaceChildren();
+      feedNLines.textContent = '0L';
+      lastFeedNKey = '';
+    }
     feedAge.textContent = ageLabel(Math.max(
       g?.updatedAt || 0,
       s?.updatedAt || 0,
       improveActive ? (i?.logUpdatedAt || 0) : (i?.updatedAt || 0),
+      nethackActive ? (n?.logUpdatedAt || 0) : 0,
     ));
-    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0)}L`;
+    feedProgress.textContent = `${(g?.lineCount || 0) + (s?.lineCount || 0) + (improveActive ? (i?.lineCount || 0) : 0) + (nethackActive ? (n?.lineCount || 0) : 0)}L`;
     adaptSorenMonitor(feedG);
     adaptOpsDashboard(feedS);
     // Raw feeds retain every source row. New panel chrome must not push the last
