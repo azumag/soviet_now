@@ -7,7 +7,14 @@ tests/test_strategy_semantic_lint.py（CI 凍結）と strategy/ab_gate.sh（採
 
 使い方:
     python3 tools/strategy_semantic_lint.py <path/to/strategy.py>
+    python3 tools/strategy_semantic_lint.py --baseline <base.py> <path/to/strategy.py>
 検出0件で rc=0、1件以上で rc=1（ヒット内容を stdout へ）。
+
+--baseline を渡すと、baseline 側（通常は現 live strategy.py）の検出結果を
+セクション名＋検出内容の安定キーで差し引き、**新規に増えた欠陥だけ**を
+表示・rc=1 にする。live のコピーを base に生成される改善候補は base の既存
+欠陥をそのまま継承するため、継承欠陥で候補を全拒否しないための差分判定。
+baseline が読めない場合は rc=2（環境要因。呼出側は警告のみで継続する）。
 """
 import ast
 import os
@@ -173,8 +180,8 @@ def _impossible_count_compare(tree):
     return sorted(hits)
 
 
-def check_file(path):
-    """4 検出器を走らせ、欠陥があれば 1 を返す。"""
+def collect_problems(path):
+    """4 検出器を走らせ、セクション名→ヒット一覧 を返す（出力しない）。"""
     with open(path, encoding="utf-8") as fh:
         src = fh.read()
     tree = ast.parse(src)
@@ -191,20 +198,113 @@ def check_file(path):
     count = _impossible_count_compare(tree)
     if count:
         problems.append(("impossible_count_compare", count))
+    return problems
+
+
+def _hit_key(hit):
+    """行番号に依存しない安定キー（検出内容そのもの）を返す。"""
+    return repr(hit)
+
+
+def diff_problems(current, baseline):
+    """baseline 分を差し引き、新規に増えたヒットだけを残す。
+
+    同一キーが複数行にある場合（別行の同じ `--1` 等）は出現回数で差し引く。
+    1 件でも新規が残ればそのセクションを返す。
+    """
+    remaining = {}
+    for name, hits in baseline:
+        bucket = remaining.setdefault(name, {})
+        for hit in hits:
+            key = _hit_key(hit)
+            bucket[key] = bucket.get(key, 0) + 1
+    new_problems = []
+    for name, hits in current:
+        bucket = remaining.get(name, {})
+        added = []
+        for hit in hits:
+            key = _hit_key(hit)
+            if bucket.get(key, 0) > 0:
+                bucket[key] -= 1
+                continue
+            added.append(hit)
+        if added:
+            new_problems.append((name, added))
+    return new_problems
+
+
+def _report(problems):
     for name, hits in problems:
         print("semantic-lint %s: %s" % (name, hits))
     return 1 if problems else 0
 
 
+def check_file(path):
+    """4 検出器を走らせ、欠陥があれば 1 を返す（既定経路。CI の凍結テスト用）。"""
+    return _report(collect_problems(path))
+
+
+def _parse_args(argv):
+    """(--baseline 無し) の従来呼び出しも含めて解釈する。(path, baseline, err)"""
+    path = None
+    baseline = None
+    idx = 1
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--baseline":
+            if idx + 1 >= len(argv):
+                return None, None, "--baseline には値が必要"
+            baseline = argv[idx + 1]
+            idx += 2
+        elif arg.startswith("--baseline="):
+            baseline = arg.split("=", 1)[1]
+            idx += 1
+        elif not arg.startswith("-") and path is None:
+            path = arg
+            idx += 1
+        else:
+            return None, None, "unexpected argument: %s" % arg
+    if path is None:
+        return None, None, "missing path"
+    return path, baseline, None
+
+
 def main(argv):
-    if len(argv) != 2:
-        print("usage: strategy_semantic_lint.py <path>", file=sys.stderr)
+    path, baseline_path, err = _parse_args(argv)
+    if err is not None:
+        print(
+            "usage: strategy_semantic_lint.py [--baseline <base.py>] <path>",
+            file=sys.stderr,
+        )
         return 2
-    path = argv[1]
     if not os.path.isfile(path):
         print("semantic-lint: file not found: %s" % path, file=sys.stderr)
         return 2
-    return check_file(path)
+    if baseline_path is None:
+        return check_file(path)
+    # baseline 読み取り不能 = 環境要因。0/1 と混同しないよう rc=2 で返し、
+    # 呼出側（ab_gate / regression）は警告のみで継続する。
+    if not os.path.isfile(baseline_path):
+        print("semantic-lint: baseline not found: %s" % baseline_path, file=sys.stderr)
+        return 2
+    try:
+        baseline_problems = collect_problems(baseline_path)
+    except (OSError, SyntaxError, ValueError) as exc:
+        print(
+            "semantic-lint: baseline unreadable: %s: %s" % (baseline_path, exc),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        current_problems = collect_problems(path)
+    except SyntaxError as exc:
+        # 候補自身が壊れている場合は欠陥（rc=1）。baseline の環境要因とは区別する。
+        print("semantic-lint: candidate parse failed: %s" % exc, file=sys.stderr)
+        return 1
+    except (OSError, ValueError) as exc:
+        print("semantic-lint: file unreadable: %s: %s" % (path, exc), file=sys.stderr)
+        return 2
+    return _report(diff_problems(current_problems, baseline_problems))
 
 
 if __name__ == "__main__":

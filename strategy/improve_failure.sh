@@ -12,7 +12,7 @@ _improve_failure_history_path() {
 _improve_failure_normalize_code() {
 	local raw="${1:-other}"
 	case "$raw" in
-	apply_bundle_failed|projection_guard_refused|ab_merge_gate_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change|strategy_persist_failed)
+	apply_bundle_failed|projection_guard_refused|ab_merge_gate_refused|validation_failed|model_no_response|deadline_exhausted|isolated_runner_unavailable|analysis_evidence_invalid|wall_timeout|rate_limited|analysis_failed|analysis_contract_invalid|analysis_hold|process_exited_without_apply|manual_no_change|strategy_persist_failed|candidate_lint_rejected|candidate_unchanged)
 		printf '%s\n' "$raw"
 		;;
 	*) printf '%s\n' other ;;

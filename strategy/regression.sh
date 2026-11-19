@@ -3419,17 +3419,75 @@ os.replace(tmp, sig_file)
 PY
 }
 
+_regression_rollback_target_gate() {
+	# <rollback_file> — 粛清対象を live へ書く**前**に検証する fencing。
+	# 設計判断 (2026-11): core/strategy_runtime.sh の projection guard は HEAD blob
+	# 限定で「未レビューの archived 版」を一律拒否するため、粛清対象（過去の
+	# reviewed 版ではなく archive 由来の版）はほぼ全て弾かれ、粛清が全停止する。
+	# この経路では projection guard を呼ばない代わりに、**lint-clean でない
+	# archived 版へは戻さない**を不変条件にする:
+	#   - semantic lint (dead 条件・sentinel 反転・到達不能分岐) が rc=1 なら拒否
+	#   - validate_strategy (ast-deny-gate / decide 契約) が失敗なら拒否
+	# rc=0 で通過、rc=1 で拒否（呼出側は live を一切変更しない）。
+	# 一時コピーで検証するのは、validate_strategy の許可リスト・相対解決が
+	# live ファイルの場所に依存するため（対象ファイルは直接渡さない）。
+	local target="$1" target_hash="" lint_rc=0 validate_tmp="" validate_out="" validate_rc=0
+	[ -f "$target" ] || {
+		log "[REGRESSION] rollback target rejected: file missing (${target})"
+		return 1
+	}
+	target_hash=$(python3 extract_decide_hash.py "$target" 2>/dev/null || echo "")
+	[ -n "$target_hash" ] || target_hash="unknown:$(basename "$target")"
+	python3 tools/strategy_semantic_lint.py "$target" >/dev/null 2>&1 || lint_rc=$?
+	if [ "$lint_rc" = "1" ]; then
+		log "[REGRESSION] rollback target rejected: semantic lint failed (hash=${target_hash})"
+		return 1
+	elif [ "$lint_rc" != "0" ]; then
+		log "[REGRESSION] rollback target semantic lint unavailable (rc=${lint_rc}, hash=${target_hash}) → 警告のみで検証継続"
+	fi
+	if ! command -v validate_strategy >/dev/null 2>&1; then
+		# validator 未配置は環境要因（lint の rc=2 と同じ扱い）。検証できないことを
+		# 理由に粛清経路そのものを恒久停止させない。
+		log "[REGRESSION] validate_strategy unavailable → 警告のみで rollback 続行 (hash=${target_hash})"
+		return 0
+	fi
+	validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_prevalidate_${target_hash}_$$.py"
+	mkdir -p "$(dirname "$validate_tmp")" 2>/dev/null || true
+	if ! cp "$target" "$validate_tmp" 2>/dev/null; then
+		log "[REGRESSION] rollback target rejected: validate copy failed (hash=${target_hash})"
+		return 1
+	fi
+	validate_out=$(validate_strategy "$validate_tmp" 2>&1) || validate_rc=$?
+	rm -f "$validate_tmp" 2>/dev/null || true
+	if [ "$validate_rc" -ne 0 ]; then
+		log "[REGRESSION] rollback target rejected: validate_strategy failed (hash=${target_hash}) $(printf '%s' "$validate_out" | tail -n 5 | tr '\n' ' ' | cut -c1-500)"
+		return 1
+	fi
+	return 0
+}
+
 _regression_rollback_apply() {
 	# <rollback_file> — replace live strategy.py with the chosen rollback target.
 	# soviet_now#925: A/B active / 状態不明の間は rollback の live 差し替えも止める
 	# （guard は backup 作成より前に置き、拒否時は何も書き換えない fail-closed）。
+	# 2026-11: A/B guard の後・コピー前に _regression_rollback_target_gate を通し、
+	# semantic lint / validate_strategy に落ちる archived 版へは戻さない
+	# （旧実装はコピー後に検証し、失敗しても policy 名目で続行する fail-open だった。
+	# 本番実測: ast-deny-gate が候補を拒否した後も rollback が強行され、欠陥版が
+	# live へ入って改善候補が全滅した）。拒否時は live を一切変更しない
+	# （バックアップも作らない）。
 	local rollback_file="$1"
 	if ! command -v _strategy_runtime_ab_merge_guard >/dev/null 2>&1 || ! _strategy_runtime_ab_merge_guard "regression_rollback"; then
 		log "[REGRESSION] A/B merge gate refused/unavailable → ロールバック中止 (fail-closed #925)"
 		return 1
 	fi
 
-	# 先に現在の戦略をバックアップ（失敗時はロールバック中止）
+	if ! _regression_rollback_target_gate "$rollback_file"; then
+		log "[REGRESSION] rollback target fence refused → ロールバック中止 (live 未変更)"
+		return 1
+	fi
+
+	# 検証通過後に現在の戦略をバックアップ（失敗時はロールバック中止）
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak" || {
 		log "[REGRESSION] CRITICAL: バックアップ失敗、ロールバック中止"
 		return 1
@@ -4779,6 +4837,22 @@ if current_hash != anchor_hash:
         objective_reasons.append(stage_gate_reason)
         if stage_gate_detail:
             objective_reasons.append(stage_gate_detail)
+# Russia/Soviet rate regression は current と anchor の比較が前提。両者の strategy
+# hash が同一なら「同一戦略の自己比較」であり、粛清の根拠にしない。rollback 直後は
+# current_strategy_run の窓 (rollback 後の数試合) が rolling 側の anchor 窓と一致せず、
+# 同じ hash でも rate 差が出るため、ここを明示的に守らないと rollback → 即再粛清の
+# ループになる (本番実測: regression_streak=34)。rate gate 自体は従来どおり
+# 「目的 rate の喪失」だけを見るので、異なる hash 間では挙動を変えない。
+if current_hash == anchor_hash:
+    _self_rate_reason, _self_rate_detail = objective_rate_regression_reason(anchor_objective, current_objective)
+    if _self_rate_reason:
+        # bash 側で [REGRESSION] objective rate gate skipped として log し、
+        # $result からは除去する (parse_regression は ',' 分割で全体を読むため)。
+        try:
+            _orig_print("RATEGATE_SKIP:%s:%s:%s" % (current_hash, _self_rate_reason, _self_rate_detail))
+        except Exception:
+            pass
+else:
     # Russia/Soviet rate regression is deliberately outside the score-noninferior
     # grace: losing the objective rate is the regression this gate exists for.
     rate_reason, rate_detail = objective_rate_regression_reason(anchor_objective, current_objective)
@@ -5007,6 +5081,15 @@ PY
 	if [ -n "$_stagegate_line" ]; then
 		log "[STAGEGATE] ${_stagegate_line#STAGEGATE:}"
 	fi
+	# 目的 rate ゲートを同一 hash (自己比較) で発火させなかった観測行。固定ログで
+	# 「抑制された粛清」を可視化する。$result からは必ず除去する。
+	local _rategate_skip_line _rategate_skip_hash
+	_rategate_skip_line=$(echo "$result" | grep '^RATEGATE_SKIP:' | head -n 1 || true)
+	result=$(echo "$result" | grep -v '^RATEGATE_SKIP:' || true)
+	if [ -n "$_rategate_skip_line" ]; then
+		_rategate_skip_hash=$(printf '%s' "$_rategate_skip_line" | cut -d: -f2)
+		log "[REGRESSION] objective rate gate skipped: current strategy is the anchor (hash=${_rategate_skip_hash})"
+	fi
 
 	if echo "$result" | grep -q '^PROMOTE:'; then
 		log "[BRANCH] anchor昇格: $result"
@@ -5148,12 +5231,10 @@ PY
 		rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
 		_regression_rollback_apply "$rollback_file" || return 1
-		local rollback_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_restore_validate_${rollback_hash:-unknown}_$$.py"
-		cp "$STRATEGY_FILE" "$rollback_validate_tmp" 2>/dev/null || true
-		if [ -f "$rollback_validate_tmp" ] && ! validate_strategy "$rollback_validate_tmp"; then
-			log "[REGRESSION] rollback validation failed but accepted by policy"
-		fi
-		rm -f "$rollback_validate_tmp" 2>/dev/null || true
+		# 旧実装はここでコピー後に validate_strategy を走らせ、失敗しても
+		# policy 名目で続行する fail-open だった。検証は
+		# _regression_rollback_apply 内で**コピー前**に済ませており、拒否時は
+		# live が変更されていない（2026-11）。
 		local rolled_hash
 		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
@@ -5198,13 +5279,14 @@ PY
 				fi
 				if [ -n "$normalized_anchor_file" ]; then
 					log "[REGRESSION] normalized fallback target rejected; retry anchor rollback: ${normalized_anchor_hash}"
+					# この再試行も live へ書く直書き経路なので、同じ fencing
+					# (semantic lint + validate_strategy をコピー前に) を通す。
+					if ! _regression_rollback_target_gate "$normalized_anchor_file"; then
+						log "[REGRESSION] normalized fallback anchor rejected by rollback target fence; restoring pre-rollback strategy"
+						cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
+						return 1
+					fi
 					if cp "$normalized_anchor_file" "$STRATEGY_FILE"; then
-						local normalized_anchor_validate_tmp="${TMP_STATE_DIR:-tmp/state}/rollback_normalized_anchor_validate_${normalized_anchor_hash}_$$.py"
-						cp "$STRATEGY_FILE" "$normalized_anchor_validate_tmp" 2>/dev/null || true
-						if [ -f "$normalized_anchor_validate_tmp" ] && ! validate_strategy "$normalized_anchor_validate_tmp"; then
-							log "[REGRESSION] normalized fallback anchor validation failed but accepted by policy"
-						fi
-						rm -f "$normalized_anchor_validate_tmp" 2>/dev/null || true
 						rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 						_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
 						rollback_hash="$normalized_anchor_hash"

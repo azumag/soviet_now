@@ -14,6 +14,12 @@ AB_ALT_HELPERS_DIR="${AB_ALT_HELPERS_DIR:-${TMP_STATE_DIR:-tmp/state}/ab_alt_hel
 AB_HISTORY_DIR="${AB_HISTORY_DIR:-tmp/history}"
 AB_HISTORY_FILE="${AB_HISTORY_FILE:-${AB_HISTORY_DIR:-tmp/history}/ab_history.jsonl}"
 AB_REJECTED_FILE="${REJECTED_HASHES_FILE:-${TMP_STATE_DIR:-tmp/state}/rejected_hashes.txt}"
+# _ab_gate_emit_candidate が emit を中止した理由を呼出側へ渡す固定コード。
+#   candidate_unchanged      … hash が空、または base (live) と同一
+#   candidate_lint_rejected  … 候補が base に無い semantic lint 欠陥を持ち込んだ
+# eloop_improve.sh が IMPROVE_FAILURE_CODE へ反映し、failed_no_apply:<code> として
+# 記録する（全候補が同じ理由で落ち続けていることを運用面で識別できるようにする）。
+AB_GATE_EMIT_FAILURE_CODE=""
 
 _ab_gate_enabled() {
 	[ "$(_ab_env_value AB_GATE_ENABLED)" = "1" ]
@@ -87,19 +93,26 @@ PY
 # 改善ジョブの harvest ディレクトリから候補を取り出す (root は触らない)。
 _ab_gate_emit_candidate() {
 	local hd="$1" base="$2" gnum="${3:-}" scores="${4:-}" cand tmpd
+	AB_GATE_EMIT_FAILURE_CODE=""
 	[ -f "$hd/strategy.py.staging" ] || { log "[AB-GATE] harvest に strategy.py.staging がない"; return 1; }
 	cand=$(_ab_hash "$hd/strategy.py.staging")
 	if [ -z "$cand" ] || [ "$cand" = "$base" ]; then
 		log "[AB-GATE] candidate hash が空か base と同一 (${cand:0:12}) → 出力しない"
+		AB_GATE_EMIT_FAILURE_CODE="candidate_unchanged"
 		return 1
 	fi
-	# emit 時点で semantic lint を走らせ、dead 条件・sentinel 反転・到達不能分岐を
-	# 持つ欠陥候補の A/B 実験自体を省く（採用時ゲートと同じ検出器。欠陥候補を
-	# 実験へ回すだけの試合コストを防ぐ）。rc=2（lint 未配置等）は警告のみで継続。
+	# emit 時点で semantic lint を走らせ、候補が**新規に持ち込んだ** dead 条件・
+	# sentinel 反転・到達不能分岐だけを理由に A/B 実験自体を省く。base (live) を
+	# --baseline で差し引くのは、候補が live のコピーを base に生成されるため
+	# live 既存の欠陥を継承するのが常態であり、絶対判定だと全候補が毎回拒否されて
+	# 改善が永久に止まるため（本番実測: live が 10/26 archived 版へ巻き戻され
+	# semantic lint 欠陥を持ち、候補が毎回 rc=1 で emit 中止 → failed_no_apply）。
+	# rc=2（lint 未配置・baseline 読み取り不能等の環境要因）は警告のみで継続。
 	local _emit_lint_rc=0
-	python3 tools/strategy_semantic_lint.py "$hd/strategy.py.staging" >/dev/null 2>&1 || _emit_lint_rc=$?
+	python3 tools/strategy_semantic_lint.py --baseline "${STRATEGY_FILE:-strategy.py}" "$hd/strategy.py.staging" >/dev/null 2>&1 || _emit_lint_rc=$?
 	if [ "$_emit_lint_rc" = "1" ]; then
-		log "[AB-GATE] candidate ${cand:0:12} が semantic lint 不合格 → emit 中止 (実験コスト節約)"
+		log "[AB-GATE] candidate ${cand:0:12} が base に無い semantic lint 欠陥を持つ → emit 中止 (実験コスト節約)"
+		AB_GATE_EMIT_FAILURE_CODE="candidate_lint_rejected"
 		mkdir -p "$AB_HISTORY_DIR"
 		cp -p "$hd/strategy.py.staging" "$AB_HISTORY_DIR/lint_rejected_staging_${cand:0:12}.py" 2>/dev/null || true
 		return 1
@@ -367,12 +380,14 @@ _ab_finish() {
 			reason="${reason};alt_hash_mismatch"
 		else
 			# 数値変異が dead 条件・sentinel 反転・到達不能分岐を持ち込んだ候補を
-			# 本番適用前に止める（死んだ軸の再発経路を閉じる）。rc=1=欠陥検出のみ
-			# 中止し、rc=2（lint 未配置等の環境要因）は警告のみで採用を継続する。
+			# 本番適用前に止める（死んだ軸の再発経路を閉じる）。判定は live(=A) を
+			# baseline にした差分 — 候補は A のコピーを base に生成されるため、
+			# A が既に持つ欠陥を継承しているだけで採用を止めない。rc=1=新規欠陥
+			# のみ中止し、rc=2（lint 未配置等の環境要因）は警告のみで採用を継続する。
 			local _lint_rc=0
-			python3 tools/strategy_semantic_lint.py "$AB_ALT_FILE" >/dev/null 2>&1 || _lint_rc=$?
+			python3 tools/strategy_semantic_lint.py --baseline "${STRATEGY_FILE:-strategy.py}" "$AB_ALT_FILE" >/dev/null 2>&1 || _lint_rc=$?
 			if [ "$_lint_rc" = "1" ]; then
-				log "[AB] finish B: 代替ファイルが semantic lint 不合格 → 採用中止 (A を維持)"
+				log "[AB] finish B: 代替ファイルが base に無い semantic lint 欠陥を持つ → 採用中止 (A を維持)"
 				winner="A"
 				reason="${reason};semantic_lint_fail"
 			elif [ "$_lint_rc" != "0" ]; then

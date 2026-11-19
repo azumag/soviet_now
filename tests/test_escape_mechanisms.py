@@ -13470,10 +13470,22 @@ PY
         config = (REPO_ROOT / "core/config.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
 
-        self.assertIn('rollback_restore_validate_${rollback_hash:-unknown}_$$.py', regression)
-        self.assertIn('validate_strategy "$rollback_validate_tmp"', regression)
+        # 2026-11: コピー後に検証して失敗しても続行する fail-open
+        # ("rollback validation failed but accepted by policy") は廃止した。
+        # 粛清対象は live へ書く前に _regression_rollback_target_gate で
+        # semantic lint + validate_strategy に通し、失敗したら live を一切
+        # 変更しない (fail-closed)。
+        self.assertIn("_regression_rollback_target_gate() {", regression)
+        self.assertIn(
+            'log "[REGRESSION] rollback target rejected: semantic lint failed (hash=',
+            regression,
+        )
+        self.assertIn(
+            'rollback_prevalidate_${target_hash}_$$.py', regression
+        )
+        self.assertIn('validate_strategy "$validate_tmp"', regression)
+        self.assertNotIn("accepted by policy", regression)
         self.assertNotIn('validate_strategy "$STRATEGY_FILE"', regression)
-        self.assertIn("rollback validation failed but accepted by policy", regression)
         self.assertIn('cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"', regression)
         self.assertIn("ROLLBACK_REVALIDATE_TARGET_ENABLED", config)
         self.assertIn('if [ "${ROLLBACK_REVALIDATE_TARGET_ENABLED:-1}" = "1" ]; then', regression)
@@ -13487,6 +13499,21 @@ PY
         self.assertIn("再評価を優先", loop)
         self.assertIn("rollback revalidate fresh cycle 中", loop)
         self.assertIn("[EARLY_ESCAPE]", loop)
+
+    def test_objective_rate_gate_skips_self_comparison(self):
+        """同一 hash (rollback 直後の anchor 自己比較) では rate ゲートを発火させない。"""
+        regression = (REPO_ROOT / "strategy/regression.sh").read_text()
+
+        self.assertIn("if current_hash == anchor_hash:", regression)
+        self.assertIn('_orig_print("RATEGATE_SKIP:%s:%s:%s" % (current_hash, _self_rate_reason, _self_rate_detail))', regression)
+        self.assertIn("objective rate gate skipped: current strategy is the anchor", regression)
+        # 異なる hash では従来どおり rate gate を判定する
+        rate_call = 'rate_reason, rate_detail = objective_rate_regression_reason(anchor_objective, current_objective)'
+        self.assertIn(rate_call, regression)
+        self.assertLess(
+            regression.index("if current_hash == anchor_hash:"),
+            regression.index(rate_call),
+        )
 
     def test_recent_50_score_trend_graces_rollback_gates(self):
         regression = (REPO_ROOT / "strategy/regression.sh").read_text()
