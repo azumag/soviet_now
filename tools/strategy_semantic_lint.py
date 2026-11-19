@@ -297,6 +297,11 @@ def main(argv):
         return 2
     try:
         current_problems = collect_problems(path)
+    except UnicodeDecodeError as exc:
+        # 候補自身が UTF-8 として読めないのは候補の欠陥（rc=1）。環境要因の
+        # baseline 不能（rc=2）とは区別する。
+        print("semantic-lint: candidate is not valid UTF-8: %s" % exc, file=sys.stderr)
+        return 1
     except SyntaxError as exc:
         # 候補自身が壊れている場合は欠陥（rc=1）。baseline の環境要因とは区別する。
         print("semantic-lint: candidate parse failed: %s" % exc, file=sys.stderr)
