@@ -146,4 +146,28 @@ run_ai_list() {{ printf '%s' {q('soviet=0/1'+chr(10)+'```analysis_contract'+chr(
         self.assertFalse(record['ok']);self.assertIn('prose_founding_count_mismatch',record['errors'])
         self.assertIn('soviet=0/1',(self.root/'receipts/analysis-check-1.md').read_text())
 
+
+    def test_single_character_digest_copy_typo_is_repaired(self):
+        e=self.evidence([{'turn':1,'next_type':3}])
+        good=self.contract(e)['evidence_sha256']
+        cases={
+            'dropped':good[:-1],
+            'doubled':good[:10]+good[10]+good[10:],
+            'substituted':good[:20]+('0' if good[20]!='0' else '1')+good[21:],
+        }
+        for label,bad in cases.items():
+            with self.subTest(label=label):
+                c=self.contract(e);c['evidence_sha256']=bad
+                result=self.validate(c,e)
+                self.assertTrue(result['ok'],result)
+                self.assertTrue(result.get('evidence_digest_repaired'),result)
+                self.assertEqual(result['evidence_sha256'],good)
+
+    def test_unrelated_digest_is_still_rejected(self):
+        e=self.evidence([{'turn':1,'next_type':3}])
+        c=self.contract(e);c['evidence_sha256']='0'*64
+        result=self.validate(c,e)
+        self.assertFalse(result['ok']);self.assertIn('evidence_digest_mismatch',result['errors'])
+        self.assertNotIn('evidence_digest_repaired',result)
+
 if __name__=='__main__':unittest.main()
