@@ -66,8 +66,31 @@ const VISIBLE_SEC = 18;
   assert.equal(state.feeds.showStatusG.lineCount, 3);
   assert.equal(state.feeds.showStatus.text, 'OPS 1\nOPS 2');
   assert.equal(state.feeds.showStatus.lineCount, 2);
+  assert.equal(state.feeds.nethack.active, false);
+  assert.equal(state.feeds.nethack.lineCount, 0);
   assert.equal(state.notifications.visibleSec, 18);
   assert.doesNotMatch(JSON.stringify(state), new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  fs.rmSync(temp, { recursive: true, force: true });
+});
+
+
+test('nethack feed streams the corner action log only while nethack is the current game', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'soren-broadcast-nethack-'));
+  const nhLog = path.join(temp, 'nethack_action_log.txt');
+  const curGame = path.join(temp, 'current_game');
+  fs.writeFileSync(nhLog, '12:00:01 key:h\n12:00:02 key:j\n--- 2 件のアクションを実行 ---\n');
+  fs.writeFileSync(curGame, 'nethack\n');
+  const src = { nethackLogFile: nhLog, currentGameFile: curGame };
+  const active = buildDirectBroadcastOverlayState({ sources: src });
+  assert.equal(active.feeds.nethack.active, true);
+  assert.equal(active.feeds.nethack.lineCount, 3);
+  assert.match(active.feeds.nethack.logLines.join('\n'), /key:h/);
+  assert.equal(active.feeds.nethack.available, true);
+  fs.writeFileSync(curGame, 'sorengame\n');
+  const inactive = buildDirectBroadcastOverlayState({ sources: src });
+  assert.equal(inactive.feeds.nethack.active, false);
+  assert.equal(inactive.feeds.nethack.lineCount, 0);
+  assert.equal(inactive.feeds.nethack.available, false);
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
@@ -91,9 +114,14 @@ test('broadcast overlay owns the 720p data regions and never reloads or nests le
   assert.match(html, /id="feed-s"/);
   assert.match(html, /id="feed-i"/);
   assert.match(html, /id="feed-i-status"/);
+  assert.match(html, /id="feed-n"/);
+  assert.match(html, /id="feed-n-lines"/);
   assert.match(html, /panel-i/);
+  assert.match(html, /panel-n/);
   assert.match(html, /data-improve-active="1"/);
+  assert.match(html, /data-nethack-active="1"/);
   assert.match(html, /badge-i/);
+  assert.match(html, /badge-n/);
   assert.doesNotMatch(html, /FEED_PAGE_MS/);
   assert.doesNotMatch(html, /FEED_LINES_PER_PAGE/);
   assert.match(html, /feed-line /);
