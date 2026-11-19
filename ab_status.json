@@ -1,10 +1,10 @@
 {
  "schema_version": 1,
- "observed_at": "2026-11-19T21:48:56",
- "observed_epoch": 1795092536,
+ "observed_at": "2026-11-19T22:23:06",
+ "observed_epoch": 1795094586,
  "active": false,
  "aborted": false,
- "candidate_pending": false,
+ "candidate_pending": true,
  "a_hash": null,
  "b_hash": null,
  "pattern": null,
