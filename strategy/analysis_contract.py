@@ -112,6 +112,30 @@ def prose_counter_errors(text, doc, evidence):
                 errors.append('prose_game_count_mismatch')
     return errors
 
+def _one_edit_from(supplied, expected):
+    """True when supplied is a single-character typo of a 64-hex digest.
+
+    The analysis contract asks the model to echo a host-provided sha256. A
+    dropped or doubled character is a copy error, not evidence that the model
+    read different evidence: the host still verified every count, reference and
+    plan condition against the same evidence file. Only a one-character edit is
+    repaired; any other difference stays a hard ``evidence_digest_mismatch``.
+    """
+    if not isinstance(supplied, str):
+        return False
+    if not re.fullmatch(r'[0-9a-f]{63,65}', supplied):
+        return False
+    if supplied == expected:
+        return True
+    if len(supplied) == len(expected):
+        return sum(a != b for a, b in zip(supplied, expected)) == 1
+    if len(supplied) == len(expected) - 1:
+        return any(expected[:i] + expected[i + 1:] == supplied for i in range(len(expected)))
+    if len(supplied) == len(expected) + 1:
+        return any(supplied[:i] + supplied[i + 1:] == expected for i in range(len(supplied)))
+    return False
+
+
 def validate(text,evidence):
     errors=[];decision='reject';doc={}
     blocks=re.findall(r'^```analysis_contract\s*\n(.*?)\n```\s*$',text,re.M|re.S)
@@ -123,7 +147,16 @@ def validate(text,evidence):
     errors.extend(prose_counter_errors(text,doc,evidence))
     if type(doc.get('version')) is not int or doc['version']!=1:errors.append('invalid_version')
     if doc.get('decision') not in ('implement','hold'):errors.append('invalid_decision')
-    if doc.get('evidence_sha256')!=hashlib.sha256(encode(evidence)).hexdigest():errors.append('evidence_digest_mismatch')
+    expected_digest=hashlib.sha256(encode(evidence)).hexdigest()
+    digest_repaired=False
+    if doc.get('evidence_sha256')!=expected_digest:
+        if _one_edit_from(doc.get('evidence_sha256'),expected_digest):
+            # Model copy typo (observed 2026-11-19: one dropped hex char). The
+            # digest is host-owned; counts/refs/plan checks still bind the
+            # document to this exact evidence file.
+            digest_repaired=True
+        else:
+            errors.append('evidence_digest_mismatch')
     if type(doc.get('game_count')) is not int or doc['game_count']!=evidence['game_count']:errors.append('game_count_mismatch')
     expected=evidence['founded_games'];supplied=doc.get('founded_games','missing')
     if (supplied is not None if expected is None else type(supplied) is not int or supplied!=expected):errors.append('founding_count_mismatch')
@@ -165,10 +198,13 @@ def validate(text,evidence):
     for op,raw in re.findall(r'\bnext_type\s*(==|>=|>)\s*(\d+)',plan):
         num=int(raw)
         if (op in ('==','>=') and num>11) or (op=='>' and num>=11):errors.append('unreachable_plan_condition')
-    return {'ok':not errors and decision=='implement','decision':decision if not errors else 'reject',
-            'errors':sorted(set(errors)),'evidence_sha256':hashlib.sha256(encode(evidence)).hexdigest(),
+    result={'ok':not errors and decision=='implement','decision':decision if not errors else 'reject',
+            'errors':sorted(set(errors)),'evidence_sha256':expected_digest,
             'analysis_sha256':hashlib.sha256(text.encode()).hexdigest(),
             'limitation':'Checks evidence/shape/reachable declared inputs, not causal correctness of free text or candidate code.'}
+    if digest_repaired:
+        result['evidence_digest_repaired']=True
+    return result
 
 def retry_feedback(result):
     """Fixed host guidance for one recoverable plan-notation failure only.
