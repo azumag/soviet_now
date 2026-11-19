@@ -273,6 +273,19 @@ printf '%s\n' "$from_state_detail" > "$FROM_DETAIL_FILE"
                 "candidate_unchanged",
             )
 
+    def test_ab_gate_emit_failure_code_is_wired(self):
+        # emit 中止 → AB_GATE_EMIT_FAILURE_CODE → IMPROVE_FAILURE_CODE →
+        # failed_no_apply:<code> の配線を固定する (source contract)。
+        ab_gate = (ROOT / "strategy/ab_gate.sh").read_text(encoding="utf-8")
+        eloop = (ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+
+        self.assertIn('AB_GATE_EMIT_FAILURE_CODE="candidate_unchanged"', ab_gate)
+        self.assertIn('AB_GATE_EMIT_FAILURE_CODE="candidate_lint_rejected"', ab_gate)
+        self.assertIn('--baseline "${STRATEGY_FILE:-strategy.py}"', ab_gate)
+        self.assertIn('IMPROVE_FAILURE_CODE="$AB_GATE_EMIT_FAILURE_CODE"', eloop)
+        self.assertIn(
+            '"failed_no_apply:${IMPROVE_FAILURE_CODE:-validation_failed}"', eloop)
+
     def test_fixed_model_failure_survives_following_idle_write(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
