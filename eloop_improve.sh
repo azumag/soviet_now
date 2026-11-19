@@ -4136,6 +4136,13 @@ if $improve_ok; then
 				log "[IMPROVE] AB gate: candidate emitted (root untouched)"
 			else
 				VALIDATE_ERROR="AB gate: candidate emission failed"
+				# 全候補が同じ理由で emit され続けている状態を運用面で識別できるよう、
+				# 固定コードを failed_no_apply:<code> として記録する
+				# (candidate_unchanged / candidate_lint_rejected)。
+				if [ -n "${AB_GATE_EMIT_FAILURE_CODE:-}" ]; then
+					IMPROVE_FAILURE_CODE="$AB_GATE_EMIT_FAILURE_CODE"
+					VALIDATE_ERROR="AB gate: candidate emission failed (${AB_GATE_EMIT_FAILURE_CODE})"
+				fi
 				log "[IMPROVE] $VALIDATE_ERROR"
 				improve_ok=false
 			fi

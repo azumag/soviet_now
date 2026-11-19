@@ -219,6 +219,73 @@ _write_improve_state running 123 abc done 100 \
             data = json.loads(history.read_text(encoding="utf-8"))
             self.assertEqual(data["failure_code"], "ab_merge_gate_refused")
 
+    def test_ab_gate_emit_failure_codes_are_preserved(self):
+        # 2026-11: A/B gate の emit 中止理由 (candidate_lint_rejected /
+        # candidate_unchanged) を failed_no_apply:<code> としてそのまま残す。
+        # 全候補が同じ理由で落ち続けていることを運用面で識別するための固定コード。
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            capture = root / "captured_detail"
+            history = root / "improve_last_failure.json"
+            script = r'''
+set -euo pipefail
+_write_improve_state() {
+  printf '%s\n' "$6" > "$CAPTURE_FILE"
+}
+source strategy/improve_failure.sh
+IMPROVE_LAST_FAILURE_FILE="$HISTORY_FILE"
+normalized_lint=$(_improve_failure_normalize_code candidate_lint_rejected)
+normalized_unchanged=$(_improve_failure_normalize_code candidate_unchanged)
+from_state_lint=$(_improve_failure_code_from_state done "failed_no_apply:candidate_lint_rejected")
+from_state_detail=$(_improve_failure_code_from_state done "failed_no_apply:candidate_unchanged")
+printf '%s\n' "$normalized_lint" > "$NORMALIZED_LINT_FILE"
+printf '%s\n' "$normalized_unchanged" > "$NORMALIZED_UNCHANGED_FILE"
+printf '%s\n' "$from_state_lint" > "$FROM_STATE_FILE"
+printf '%s\n' "$from_state_detail" > "$FROM_DETAIL_FILE"
+'''
+            env = {
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "HOME": str(root),
+                "TMP_STATE_DIR": str(root / "state"),
+                "CAPTURE_FILE": str(capture),
+                "HISTORY_FILE": str(history),
+                "NORMALIZED_LINT_FILE": str(root / "normalized_lint"),
+                "NORMALIZED_UNCHANGED_FILE": str(root / "normalized_unchanged"),
+                "FROM_STATE_FILE": str(root / "from_state"),
+                "FROM_DETAIL_FILE": str(root / "from_detail"),
+            }
+            result = self._run(script, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (root / "normalized_lint").read_text(encoding="utf-8").strip(),
+                "candidate_lint_rejected",
+            )
+            self.assertEqual(
+                (root / "normalized_unchanged").read_text(encoding="utf-8").strip(),
+                "candidate_unchanged",
+            )
+            self.assertEqual(
+                (root / "from_state").read_text(encoding="utf-8").strip(),
+                "candidate_lint_rejected",
+            )
+            self.assertEqual(
+                (root / "from_detail").read_text(encoding="utf-8").strip(),
+                "candidate_unchanged",
+            )
+
+    def test_ab_gate_emit_failure_code_is_wired(self):
+        # emit 中止 → AB_GATE_EMIT_FAILURE_CODE → IMPROVE_FAILURE_CODE →
+        # failed_no_apply:<code> の配線を固定する (source contract)。
+        ab_gate = (ROOT / "strategy/ab_gate.sh").read_text(encoding="utf-8")
+        eloop = (ROOT / "eloop_improve.sh").read_text(encoding="utf-8")
+
+        self.assertIn('AB_GATE_EMIT_FAILURE_CODE="candidate_unchanged"', ab_gate)
+        self.assertIn('AB_GATE_EMIT_FAILURE_CODE="candidate_lint_rejected"', ab_gate)
+        self.assertIn('--baseline "${STRATEGY_FILE:-strategy.py}"', ab_gate)
+        self.assertIn('IMPROVE_FAILURE_CODE="$AB_GATE_EMIT_FAILURE_CODE"', eloop)
+        self.assertIn(
+            '"failed_no_apply:${IMPROVE_FAILURE_CODE:-validation_failed}"', eloop)
+
     def test_fixed_model_failure_survives_following_idle_write(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
