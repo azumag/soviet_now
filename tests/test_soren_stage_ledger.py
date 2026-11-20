@@ -211,6 +211,35 @@ class StageTests(unittest.TestCase):
         m.summarize(raw(), row)
         self.assertEqual(row, previous)
 
+    def test_trailing_match_end_record_is_not_a_decision_turn(self):
+        # soviet_now#943: strategy_runner appends a terminal-board trailer
+        # (record_kind=match_end) after the last decision turn. It carries no
+        # strategy_hash and its turn duplicates the last decision, so it must
+        # be excluded from the contiguous-turn lineage check.
+        rows = snapshots()
+        rows.append({
+            "record_kind": "match_end",
+            "turn": 3,
+            "score": 1234,
+            "final_state": "GAMEOVER",
+            "piece_count": 1,
+            "state_snapshot": {"pieces": [{"id": 1, "type": 16, "x": 0.0, "y": -3.0, "r": 0.5}]},
+        })
+        proof = m.summarize(raw(rows), record())
+        self.assertTrue(proof["stage_evidence"]["two_russias_observed"])
+        self.assertEqual(proof["stage_evidence"]["recorded_turns"], 3)
+
+    def test_match_end_away_from_the_tail_still_breaks_lineage(self):
+        rows = snapshots()
+        rows.insert(1, {
+            "record_kind": "match_end",
+            "turn": 1,
+            "final_state": "GAMEOVER",
+            "state_snapshot": {"pieces": []},
+        })
+        with self.assertRaises(m.EvidenceError):
+            m.summarize(raw(rows), record())
+
 
 class WriterTests(unittest.TestCase):
     def execute(self, directory, helper="real", source=None, verified=True):

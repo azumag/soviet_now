@@ -7,6 +7,13 @@ then checks whether that new piece's measured top is over the deadline. When it
 is, the monitor independently estimates whether a within-deadline landing at a
 different drop x or approximate same-type merge opportunity existed on the
 previous board.
+
+Events embed the firing transition's ``prev_pieces`` / ``curr_pieces`` board
+snapshots so each event can be replayed or turned into a regression case
+(soviet_now#943). A trailing ``record_kind=match_end`` history record written by
+strategy_runner at game end is additionally flushed as a ``kind=match_end``
+event, which preserves the final board and lets the last move be evaluated like
+any other transition. (feat(monitor): embed board snapshots in events and flush final board at match end (#943))
 """
 
 from __future__ import annotations
@@ -246,6 +253,29 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
         "lower_candidate_count": len(lower),
         "lower_only_candidate_count": len(lower_only),
         "deadline_y": DEADLINE_Y,
+        # soviet_now#943: イベント単位で盤面復元・回帰ケース化できるよう、
+        # 発火時の前後盤面スナップショットを同梱する。
+        "prev_pieces": before,
+        "curr_pieces": after,
+    }
+
+
+def _match_end_event(record: dict[str, Any]) -> dict[str, Any] | None:
+    """strategy_runner が試合終了時に書く match_end レコードを最終盤面
+    フラッシュとして監視ログへ写し取る (soviet_now#943)。最終手の盤面も
+    history 剪定と独立に保持される。"""
+    if record.get("record_kind") != "match_end":
+        return None
+    return {
+        "kind": "match_end",
+        "trigger": "match_end_record",
+        "turn": record.get("turn"),
+        "score": record.get("score"),
+        "final_state": record.get("final_state"),
+        "piece_count": record.get("piece_count"),
+        "decision_x": record.get("decision_x"),
+        "decision_reason": record.get("decision_reason", ""),
+        "pieces": _pieces(record),
     }
 
 
@@ -281,12 +311,18 @@ def process_records(
     written = 0
     last = prev
     for record in records:
-        if last is not None:
+        # match_end は試合境界なので、その後ろの遷移（次試合の初期盤面）は
+        # 評価しない。turn レコード→match_end の遷移は最終手として評価する。
+        if last is not None and last.get("record_kind") != "match_end":
             event = evaluate_transition(last, record)
             if event:
                 checked += 1
                 append_event(log_path, {**event, **(event_extra or {})})
                 written += 1
+        match_end = _match_end_event(record)
+        if match_end:
+            append_event(log_path, {**match_end, **(event_extra or {})})
+            written += 1
         last = record
     return checked, written, last
 

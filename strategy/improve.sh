@@ -1833,6 +1833,9 @@ def summarize_archive(path):
                     row = json.loads(raw)
                 except Exception:
                     continue
+                # soviet_now#943: 最終盤面フラッシュはターンではない。
+                if row.get("record_kind") == "match_end":
+                    continue
                 if 'DEADLINE_GUARD' in str(row.get('decision_reason') or ''):
                     deadline_guard_count += 1
                 pieces = ((row.get('state_snapshot') or {}).get('pieces') or [])
@@ -1946,6 +1949,9 @@ def archive_progress(path):
                 try:
                     row = json.loads(raw)
                 except Exception:
+                    continue
+                # soviet_now#943: 最終盤面フラッシュはターンではない。
+                if row.get("record_kind") == "match_end":
                     continue
                 russia = russia or bool(row.get("russia_created")) or bool(row.get("russia_announced"))
                 soviet = soviet or bool(row.get("soviet_created")) or bool(row.get("soviet_announced"))
@@ -2210,6 +2216,9 @@ def summarize_archive(path):
                 try:
                     row = json.loads(raw)
                 except Exception:
+                    continue
+                # soviet_now#943: 最終盤面フラッシュはターンではない。
+                if row.get("record_kind") == "match_end":
                     continue
                 if "DEADLINE_GUARD" in str(row.get("decision_reason") or ""):
                     deadline_guard_count += 1
@@ -2567,6 +2576,9 @@ def nation_progress(path):
                 try:
                     row = json.loads(raw)
                 except Exception:
+                    continue
+                # soviet_now#943: 最終盤面フラッシュはターンではない。
+                if row.get("record_kind") == "match_end":
                     continue
                 if "DEADLINE_GUARD" in str(row.get("decision_reason") or ""):
                     deadline_guard_count += 1

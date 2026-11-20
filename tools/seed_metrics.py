@@ -76,6 +76,8 @@ def analyze(files, since=None, hashes=None):
             continue
         try:
             L = [json.loads(l) for l in open(f, encoding="utf-8") if l.strip()]
+            # soviet_now#943: 最終盤面フラッシュ (match_end) はターンではない。
+            L = [d for d in L if not isinstance(d, dict) or d.get("record_kind") != "match_end"]
         except Exception:
             continue
         if not L:

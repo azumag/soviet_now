@@ -14891,5 +14891,217 @@ class TestSovietBoardAnalysis(unittest.TestCase):
         self.assertFalse(soviet["t15_merge_ready"])
 
 
+class TestDeadlineMonitorSnapshots943(unittest.TestCase):
+    """soviet_now#943: 監視イベントへの盤面スナップショット同梱と、
+    試合終了時の最終盤面フラッシュ (match_end) の回帰テスト。"""
+
+    @staticmethod
+    def _prev_record():
+        return {
+            "turn": 12,
+            "score": 100,
+            "piece_count": 2,
+            "decision_x": 1.0,
+            "decision_reason": "HIGH_TOWER",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {"id": 1, "type": 3, "x": -1.0, "y": -4.0, "r": 0.3},
+                    {"id": 2, "type": 4, "x": 1.0, "y": 2.8, "r": 0.4},
+                ]
+            },
+        }
+
+    @staticmethod
+    def _fatal_piece():
+        # 前盤面の id2 (x=1.0,y=2.8,r=0.4) と接触し、top=3.5 > 3.38 で
+        # デッドライン越えとなる落下ピース。
+        return {"id": 3, "type": 5, "x": 1.0, "y": 3.1, "r": 0.4}
+
+    def test_event_embeds_prev_and_curr_pieces(self):
+        import deadline_misplacement_monitor as monitor
+
+        prev = self._prev_record()
+        curr = {
+            "turn": 13,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [self._fatal_piece()]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["prev_pieces"], prev["state_snapshot"]["pieces"])
+        self.assertEqual(event["curr_pieces"], curr["state_snapshot"]["pieces"])
+
+    def test_final_move_fires_transition_on_match_end_record(self):
+        """最終手の結果盤面を持つ match_end レコードがあれば、試合境界でも
+        監視イベントとして検出できる (構造的盲点の解消)。"""
+        import deadline_misplacement_monitor as monitor
+
+        prev = self._prev_record()
+        match_end = {
+            "record_kind": "match_end",
+            "turn": 12,
+            "score": 100,
+            "final_state": "GAMEOVER",
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [self._fatal_piece()]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, match_end)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["trigger"], "actual_new_piece_top_over_deadline")
+        self.assertEqual(event["actual_new_piece"]["id"], 3)
+        self.assertEqual(event["curr_pieces"], match_end["state_snapshot"]["pieces"])
+
+    def test_match_end_record_is_flushed_to_monitor_log(self):
+        import deadline_misplacement_monitor as monitor
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "monitor.jsonl"
+            prev = self._prev_record()
+            match_end = {
+                "record_kind": "match_end",
+                "turn": 12,
+                "score": 100,
+                "final_state": "GAMEOVER",
+                "piece_count": 3,
+                "state_snapshot": {
+                    "pieces": prev["state_snapshot"]["pieces"] + [self._fatal_piece()]
+                },
+            }
+
+            _checked, written, _last = monitor.process_records(
+                [prev, match_end], log_path
+            )
+
+            events = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            match_end_events = [e for e in events if e.get("kind") == "match_end"]
+            self.assertEqual(len(match_end_events), 1)
+            flushed = match_end_events[0]
+            self.assertEqual(flushed["final_state"], "GAMEOVER")
+            self.assertEqual(flushed["turn"], 12)
+            self.assertEqual(flushed["pieces"], match_end["state_snapshot"]["pieces"])
+            self.assertEqual(flushed["detector"], "actual_snapshot_geometry")
+            # 最終手は締切超なので遷移イベントも 1 件発火する。
+            transition_events = [
+                e for e in events if e.get("kind") == "deadline_misplacement_check"
+            ]
+            self.assertEqual(len(transition_events), 1)
+            self.assertEqual(written, 2)
+
+    def test_match_end_without_deadline_crossing_still_flushes(self):
+        """最終手が締切内でも最終盤面フラッシュは保存される。"""
+        import deadline_misplacement_monitor as monitor
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "monitor.jsonl"
+            prev = {
+                "turn": 5,
+                "score": 40,
+                "decision_x": -1.0,
+                "next_type": 2,
+                "state_snapshot": {
+                    "pieces": [{"id": 1, "type": 3, "x": 1.0, "y": -4.0, "r": 0.3}]
+                },
+            }
+            # 床上に着地、top = -4.5 + 0.259 < 3.38 なのでイベントは発火しない。
+            match_end = {
+                "record_kind": "match_end",
+                "turn": 5,
+                "score": 40,
+                "final_state": "GAMEOVER",
+                "state_snapshot": {
+                    "pieces": prev["state_snapshot"]["pieces"] + [
+                        {"id": 2, "type": 2, "x": -1.0, "y": -4.741, "r": 0.259}
+                    ]
+                },
+            }
+
+            _checked, written, _last = monitor.process_records(
+                [prev, match_end], log_path
+            )
+
+            events = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["kind"], "match_end")
+            self.assertEqual(events[0]["pieces"], match_end["state_snapshot"]["pieces"])
+            self.assertEqual(written, 1)
+
+    def test_normal_record_does_not_emit_match_end(self):
+        import deadline_misplacement_monitor as monitor
+
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "monitor.jsonl"
+            prev = self._prev_record()
+            curr = {
+                "turn": 13,
+                "state_snapshot": {
+                    "pieces": prev["state_snapshot"]["pieces"] + [self._fatal_piece()]
+                },
+            }
+
+            monitor.process_records([prev, curr], log_path)
+
+            kinds = [
+                json.loads(line).get("kind")
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertNotIn("match_end", kinds)
+
+    def test_runner_record_match_end_writes_final_board(self):
+        """strategy_runner.record_match_end が最終盤面スナップショットを
+        match_end レコードとして履歴へ書き出す。"""
+        import io
+        import strategy_runner
+
+        history = io.StringIO()
+        game_state = {
+            "score": 123,
+            "pieces": [
+                {"id": 1, "type": 4, "x": -1.234, "y": -4.567, "r": 0.38},
+                {"id": 2, "type": 5, "x": 1.001, "y": 3.104, "r": 0.414, "rx": 0.4, "ry": 0.5, "angle": 12.34},
+            ],
+        }
+
+        strategy_runner.record_match_end(
+            history, 42, game_state, "GAMEOVER",
+            {"x": 0.5, "reason": "HIGH_TOWER"}, score_delta=17,
+            soviet_created=True,
+        )
+
+        record = json.loads(history.getvalue().splitlines()[-1])
+        self.assertEqual(record["record_kind"], "match_end")
+        self.assertEqual(record["turn"], 42)
+        self.assertEqual(record["score"], 123)
+        self.assertEqual(record["score_delta"], 17)
+        self.assertEqual(record["final_state"], "GAMEOVER")
+        self.assertEqual(record["piece_count"], 2)
+        self.assertEqual(record["decision_reason"], "HIGH_TOWER")
+        self.assertEqual(record["final_types"], [4, 5])
+        self.assertTrue(record["soviet_created"])
+        self.assertNotIn("russia_created", record)
+        snapshot = record["state_snapshot"]["pieces"]
+        self.assertEqual(len(snapshot), 2)
+        # record_turn と同じ軽量スナップショット形式 (x/y 小数第2位丸め)。
+        self.assertEqual(snapshot[0], {"id": 1, "type": 4, "x": -1.23, "y": -4.57, "r": 0.38})
+        self.assertEqual(snapshot[1]["rx"], 0.4)
+        self.assertEqual(snapshot[1]["ry"], 0.5)
+        self.assertEqual(snapshot[1]["angle"], 12.3)
+
+
 if __name__ == "__main__":
     unittest.main()

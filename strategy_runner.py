@@ -862,6 +862,35 @@ def enrich_game_state_deadline_fields(game_state, analysis):
     return game_state
 
 
+def _piece_snapshot_rows(pieces):
+    """盤面の軽量スナップショット（位置とtype中心、x/y は小数第2位丸め）。"""
+    return [
+        {
+            "id": p["id"],
+            "type": p["type"],
+            "x": round(p["x"], 2),
+            "y": round(p["y"], 2),
+            "r": round(float(p.get("r", 0.0) or 0.0), 3),
+            **(
+                {"rx": round(float(p.get("rx")), 3)}
+                if p.get("rx") is not None
+                else {}
+            ),
+            **(
+                {"ry": round(float(p.get("ry")), 3)}
+                if p.get("ry") is not None
+                else {}
+            ),
+            **(
+                {"angle": round(float(p.get("angle")), 1)}
+                if p.get("angle") is not None
+                else {}
+            ),
+        }
+        for p in pieces
+    ]
+
+
 def record_turn(history_f, turn, game_state, decision, analysis, russia_created=False, soviet_created=False, strategy_hash=None, score_delta=0):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
@@ -917,31 +946,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     ])
 
     # ピースのスナップショット（軽量化: 位置とtypeのみ）
-    piece_snapshot = [
-        {
-            "id": p["id"],
-            "type": p["type"],
-            "x": round(p["x"], 2),
-            "y": round(p["y"], 2),
-            "r": round(float(p.get("r", 0.0) or 0.0), 3),
-            **(
-                {"rx": round(float(p.get("rx")), 3)}
-                if p.get("rx") is not None
-                else {}
-            ),
-            **(
-                {"ry": round(float(p.get("ry")), 3)}
-                if p.get("ry") is not None
-                else {}
-            ),
-            **(
-                {"angle": round(float(p.get("angle")), 1)}
-                if p.get("angle") is not None
-                else {}
-            ),
-        }
-        for p in pieces
-    ]
+    piece_snapshot = _piece_snapshot_rows(pieces)
 
     decision_tags = reason_tag_lib.tags_for_decision(decision)
     record = {
@@ -1004,6 +1009,41 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     # Overlay deadline notifications are emitted only after the real post-drop
     # screen confirms contact. The conservative per-candidate crossing flag is
     # still recorded for strategy/audit use, but is too noisy for OBS alerts.
+
+
+def record_match_end(history_f, turn, game_state, final_state, last_decision=None,
+                     score_delta=0, russia_created=False, soviet_created=False):
+    """試合終了時の最終盤面を match_end レコードとして履歴へ追記 (soviet_now#943)。
+
+    監視は連続レコードの遷移からしか新ピースを検出できないため、最終手の
+    結果盤面が履歴に無いと「次レコード=次試合の初期盤面」となり試合境界が
+    構造的盲点になる。終端観測の盤面を最終レコードとして残し、最終手の
+    評価と最終盤面の保持を可能にする。アーカイブの最終行を読む修復系
+    (repair_current_run_from_history.sh 等) が最終スコア・最終盤面 type・
+    建国フラグを見失わないよう、それらも同梱する。
+    """
+    pieces = (game_state or {}).get("pieces", []) or []
+    decision_tags = reason_tag_lib.tags_for_decision(last_decision)
+    record = {
+        "record_kind": "match_end",
+        "turn": turn,
+        "score": (game_state or {}).get("score", 0),
+        "score_delta": score_delta,
+        "final_state": final_state,
+        "piece_count": len(pieces),
+        "max_y": round(max((p["y"] for p in pieces), default=-5.0), 2),
+        "decision_x": round(float((last_decision or {}).get("x", 0) or 0), 3),
+        "decision_reason": reason_tag_lib.render_reason(decision_tags),
+        "reason_tags": decision_tags,
+        "final_types": [p.get("type", 0) for p in pieces],
+        "state_snapshot": {"pieces": _piece_snapshot_rows(pieces)},
+    }
+    if russia_created:
+        record["russia_created"] = True
+    if soviet_created:
+        record["soviet_created"] = True
+    history_f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    history_f.flush()
 
 
 def enforce_deadline_safety(decision, analysis, game_state=None, strategy_module=None):
@@ -3493,6 +3533,16 @@ def run_game():
                     continue
                 final_score = gs.get("score", 0) if gs else 0
                 log(f"END s={final_score} t={turn} ({final_state})")
+                if player_policy == POLICY_EXISTING:
+                    try:
+                        record_match_end(
+                            history_f, turn, gs, final_state, last_decision,
+                            score_delta=final_score - prev_score,
+                            russia_created=russia_created,
+                            soviet_created=soviet_created,
+                        )
+                    except Exception as match_end_err:
+                        log(f"WARN: match_end record failed: {match_end_err}")
                 return finish_result({
                     "score": final_score,
                     "turns": turn,

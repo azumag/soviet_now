@@ -112,13 +112,17 @@ cleanup_tmp_files() {
 	[ -d "tmp/.radio_grounding_cache" ] && find "tmp/.radio_grounding_cache" -type f -mtime +1 -delete 2>/dev/null
 	[ -d "tmp/cache/radio_grounding" ] && find "tmp/cache/radio_grounding" -type f -mtime +1 -delete 2>/dev/null
 
-	# --- 肥大ログ: 20MB超は直近5000行を残して inode 維持トリム (追記中の writer を壊さない) ---
-	local _lg _lgsz
+	# --- 肥大ログ: 20MB超は直近の保持行数を残して inode 維持トリム (追記中の writer を壊さない) ---
+	local _lg _lgsz _keep
 	for _lg in logs/improve_daemon.log logs/audio_worker.log logs/chat_worker.log logs/radio_worker.log logs/improve_monitor.log logs/deadline_misplacement_monitor.jsonl; do
 		[ -f "$_lg" ] || continue
+		_keep=5000
+		# #943: 監視イベントは盤面スナップショット同梱で1行が大きい。
+		# 5000行のままだと 20MB 超で収束しないため保持行数を絞る。
+		[ "$_lg" = "logs/deadline_misplacement_monitor.jsonl" ] && _keep=1000
 		_lgsz=$(wc -c < "$_lg" 2>/dev/null | tr -d ' ')
 		if [ "${_lgsz:-0}" -gt 20971520 ]; then
-			tail -n 5000 "$_lg" > "${_lg}.trim" 2>/dev/null && cat "${_lg}.trim" > "$_lg" 2>/dev/null
+			tail -n "$_keep" "$_lg" > "${_lg}.trim" 2>/dev/null && cat "${_lg}.trim" > "$_lg" 2>/dev/null
 			rm -f "${_lg}.trim" 2>/dev/null
 		fi
 	done

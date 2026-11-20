@@ -2638,9 +2638,13 @@ def read_jsonl(path: str):
             if not raw:
                 continue
             try:
-                rows.append(json.loads(raw))
+                row = json.loads(raw)
             except Exception:
                 continue
+            # soviet_now#943: 最終盤面フラッシュはターンではない。
+            if isinstance(row, dict) and row.get("record_kind") == "match_end":
+                continue
+            rows.append(row)
     return rows
 
 def deadline_window(rows):

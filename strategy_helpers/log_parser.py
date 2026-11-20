@@ -8,6 +8,8 @@ def parse_log(path, last_n=8):
         lines = f.readlines()
     for line in lines[-last_n:]:
         d = json.loads(line)
+        if isinstance(d, dict) and d.get("record_kind") == "match_end":
+            continue
         t = d["turn"]
         pc = d["piece_count"]
         my = d["max_y"]
@@ -27,6 +29,8 @@ def parse_danger_turns(path, min_y=2.0):
     count = 0
     for line in lines:
         d = json.loads(line)
+        if isinstance(d, dict) and d.get("record_kind") == "match_end":
+            continue
         if d["max_y"] >= min_y:
             t = d["turn"]
             pc = d["piece_count"]
