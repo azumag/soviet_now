@@ -4,8 +4,9 @@
 This monitor intentionally does not call analyze_board. It watches consecutive
 history snapshots, detects the piece that was actually added by a drop, and only
 then checks whether that new piece's measured top is over the deadline. When it
-is, the monitor independently estimates whether a lower landing or approximate
-same-type merge opportunity existed on the previous board.
+is, the monitor independently estimates whether a within-deadline landing at a
+different drop x or approximate same-type merge opportunity existed on the
+previous board.
 """
 
 from __future__ import annotations
@@ -209,9 +210,16 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
     r = _radius(placed, next_type)
     candidates = [_landing_at_x(before, x, r) for x in _candidate_xs(decision_x, before)]
     chosen_estimate = _landing_at_x(before, decision_x, r)
-    lower = [c for c in candidates if _num(c.get("top_y")) + LOWER_EPS < actual_top]
+    chosen_x = round(max(DROP_X_MIN, min(DROP_X_MAX, decision_x)), 3)
+    alt_candidates = [c for c in candidates if _num(c.get("x")) != chosen_x]
+    lower = [c for c in alt_candidates if _num(c.get("top_y")) <= DEADLINE_Y]
+    lower_only = [
+        c
+        for c in alt_candidates
+        if DEADLINE_Y < _num(c.get("top_y")) and _num(c.get("top_y")) + LOWER_EPS < actual_top
+    ]
     best_lower = min(lower, key=lambda c: (_num(c.get("top_y")), abs(_num(c.get("x")))), default=None)
-    best_merge = _merge_alternative(before, next_type, r, candidates)
+    best_merge = _merge_alternative(before, next_type, r, alt_candidates)
     merge_improves_top = bool(
         best_merge and _num(best_merge.get("top_y")) + LOWER_EPS < actual_top
     )
@@ -236,6 +244,7 @@ def evaluate_transition(prev: dict[str, Any], curr: dict[str, Any]) -> dict[str,
         "best_lower_alternative": best_lower,
         "candidate_count": len(candidates),
         "lower_candidate_count": len(lower),
+        "lower_only_candidate_count": len(lower_only),
         "deadline_y": DEADLINE_Y,
     }
 
