@@ -10244,6 +10244,70 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
         self.assertFalse(event["has_lower_alternative"])
         self.assertNotEqual(event["best_merge_alternative"]["x"], 0.0)
 
+    def test_deadline_monitor_excludes_same_x_merge_alternative_walled_pocket(self):
+        """#945: 選択x直上に同種ピース、隣接xが壁で塞がれた盤面。
+
+        選択xにだけ見える併合機会が _merge_alternative へ渡す候補の絞り込み
+        (alt_candidates) で除外されることを、has_lower_alternative 経由の
+        差分ではなく同関数への直接呼び出しでも区別できることを確認する。
+        """
+        import deadline_misplacement_monitor as monitor
+
+        pieces = []
+        for i in range(16):
+            x = round(-3.0 + i * 0.4, 1)
+            if x in (0.6, 1.4):
+                continue  # ポケット内は空ける
+            if x in (0.2, 1.8):
+                # 選択x=1.0 から dx=0.8 (接触境界) の高い壁
+                pieces.append({"id": i + 1, "type": 4, "x": x, "y": 3.6, "r": 0.4})
+            elif x == 1.0:
+                # 選択x直上の同種ピース
+                pieces.append({"id": i + 1, "type": 5, "x": 1.0, "y": 2.4, "r": 0.4})
+            else:
+                pieces.append({"id": i + 1, "type": 4, "x": x, "y": 3.0, "r": 0.4})
+        prev = {
+            "turn": 95,
+            "score": 980,
+            "piece_count": 40,
+            "decision_x": 1.0,
+            "decision_reason": "DEADLINE_GUARD_DIRECT_MERGE",
+            "next_type": 5,
+            "state_snapshot": {"pieces": pieces},
+        }
+        curr = {
+            "turn": 96,
+            "state_snapshot": {
+                "pieces": pieces + [
+                    {"id": 99, "type": 5, "x": 1.0, "y": 3.2, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "appropriate")
+        self.assertFalse(event["has_merge_alternative"])
+        self.assertFalse(event["merge_alternative_improves_top"])
+        self.assertIsNone(event["best_merge_alternative"])
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertGreater(event["independent_chosen_estimate"]["top_y"], event["deadline_y"])
+
+        # _merge_alternative 自体で same-x 併合の有無を区別できることを確認:
+        # 選択xを含む候補集合では same-x 併合が見え、除外済み候補では None になる
+        r = 0.4
+        candidates = [
+            monitor._landing_at_x(pieces, x, r)
+            for x in monitor._candidate_xs(prev["decision_x"], pieces)
+        ]
+        same_x_merge = monitor._merge_alternative(pieces, 5, r, candidates)
+        self.assertIsNotNone(same_x_merge)
+        self.assertEqual(same_x_merge["x"], 1.0)
+        self.assertEqual(same_x_merge["target_id"], 11)
+        alt_candidates = [c for c in candidates if c["x"] != 1.0]
+        self.assertIsNone(monitor._merge_alternative(pieces, 5, r, alt_candidates))
+
     def test_validate_strategy_does_not_inject_deadline_guard(self):
         sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
