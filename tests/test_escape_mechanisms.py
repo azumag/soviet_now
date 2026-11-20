@@ -10026,6 +10026,224 @@ class TestSovietObjectiveImproveInputs(unittest.TestCase):
             self.assertEqual(events[-1]["detector"], "actual_snapshot_geometry")
             self.assertEqual(events[-1]["history"], str(history_path))
 
+    def test_deadline_monitor_ignores_lower_alternative_still_over_deadline(self):
+        """#867 A層: 別xの監視見積が実topより低くても締切超なら inappropriate にしない。"""
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 83,
+            "score": 900,
+            "piece_count": 40,
+            "decision_x": 0.0,
+            "decision_reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {
+                        "id": i + 1,
+                        "type": 4,
+                        "x": round(-3.0 + i * 0.4, 1),
+                        "y": 2.2 if round(-3.0 + i * 0.4, 1) in (-1.4, -1.0, -0.6) else 2.8,
+                        "r": 0.4,
+                    }
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 84,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 0.0, "y": 3.1, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "appropriate")
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertIsNone(event["best_lower_alternative"])
+        self.assertEqual(event["lower_candidate_count"], 0)
+        self.assertEqual(event["lower_only_candidate_count"], 1)
+
+    def test_deadline_monitor_flags_within_deadline_alternative_at_different_x(self):
+        """#867 B層 大余白: 別xに締切内(監視見積)の代替があれば inappropriate。"""
+        import deadline_misplacement_monitor as monitor
+
+        pieces = [
+            {
+                "id": i + 1,
+                "type": 4,
+                "x": round(-3.0 + i * 0.4, 1),
+                "y": 2.9,
+                "r": 0.4,
+            }
+            for i in range(13)
+        ]
+        pieces += [
+            {"id": 14, "type": 4, "x": 2.2, "y": 1.0, "r": 0.4},
+            {"id": 15, "type": 4, "x": 2.6, "y": 1.0, "r": 0.4},
+            {"id": 16, "type": 4, "x": 3.0, "y": 1.0, "r": 0.4},
+        ]
+        prev = {
+            "turn": 73,
+            "score": 700,
+            "piece_count": 30,
+            "decision_x": 0.65,
+            "decision_reason": "NO_VALID|OPEN_TWIN_MERGE_DESPERATE",
+            "next_type": 5,
+            "state_snapshot": {"pieces": pieces},
+        }
+        curr = {
+            "turn": 74,
+            "state_snapshot": {
+                "pieces": pieces + [
+                    {"id": 99, "type": 5, "x": 0.65, "y": 3.33, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "inappropriate")
+        self.assertTrue(event["has_lower_alternative"])
+        self.assertNotEqual(event["best_lower_alternative"]["x"], 0.65)
+        self.assertLessEqual(event["best_lower_alternative"]["top_y"], event["deadline_y"])
+        self.assertGreaterEqual(
+            event["actual_new_piece"]["top_y"] - event["best_lower_alternative"]["top_y"], 0.5
+        )
+        self.assertGreater(event["independent_chosen_estimate"]["top_y"], event["deadline_y"])
+
+    def test_deadline_monitor_excludes_same_x_lower_estimate(self):
+        """#867 C層: 監視見積で締切内なのが選択xのみなら same-x 循環として除外。"""
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 90,
+            "score": 950,
+            "piece_count": 40,
+            "decision_x": 1.0,
+            "decision_reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {
+                        "id": i + 1,
+                        "type": 4,
+                        "x": round(-3.0 + i * 0.4, 1),
+                        "y": 2.1 if round(-3.0 + i * 0.4, 1) in (0.6, 1.0, 1.4) else 2.9,
+                        "r": 0.4,
+                    }
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 91,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 1.0, "y": 3.5, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "appropriate")
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertFalse(event["has_merge_alternative"])
+        self.assertIsNone(event["best_lower_alternative"])
+        self.assertLessEqual(event["independent_chosen_estimate"]["top_y"], event["deadline_y"])
+        self.assertGreater(event["lower_only_candidate_count"], 0)
+
+    def test_deadline_monitor_excludes_same_x_merge_alternative(self):
+        """#867 併合付きsame-x: 選択xにだけ見える併合機会も循環として除外。"""
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 90,
+            "score": 950,
+            "piece_count": 40,
+            "decision_x": 1.0,
+            "decision_reason": "DEADLINE_GUARD_DIRECT_MERGE",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {
+                        "id": i + 1,
+                        "type": 5 if round(-3.0 + i * 0.4, 1) in (0.6, 1.0, 1.4) else 4,
+                        "x": round(-3.0 + i * 0.4, 1),
+                        "y": 1.5 if round(-3.0 + i * 0.4, 1) in (0.6, 1.0, 1.4) else 2.9,
+                        "r": 0.4,
+                    }
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 91,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 1.0, "y": 3.5, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "appropriate")
+        self.assertFalse(event["has_merge_alternative"])
+        self.assertFalse(event["merge_alternative_improves_top"])
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertIsNone(event["best_merge_alternative"])
+
+    def test_deadline_monitor_still_flags_merge_alternative_at_different_x(self):
+        """別xの併合機会(実topより低い)は引き続き inappropriate にする。"""
+        import deadline_misplacement_monitor as monitor
+
+        prev = {
+            "turn": 85,
+            "score": 910,
+            "piece_count": 40,
+            "decision_x": 0.0,
+            "decision_reason": "NO_MERGE_DEADLINE_GUARD_NO_VALID",
+            "next_type": 5,
+            "state_snapshot": {
+                "pieces": [
+                    {
+                        "id": i + 1,
+                        "type": 5 if round(-3.0 + i * 0.4, 1) in (-1.4, -1.0, -0.6) else 4,
+                        "x": round(-3.0 + i * 0.4, 1),
+                        "y": 2.2 if round(-3.0 + i * 0.4, 1) in (-1.4, -1.0, -0.6) else 2.8,
+                        "r": 0.4,
+                    }
+                    for i in range(16)
+                ]
+            },
+        }
+        curr = {
+            "turn": 86,
+            "state_snapshot": {
+                "pieces": prev["state_snapshot"]["pieces"] + [
+                    {"id": 99, "type": 5, "x": 0.0, "y": 3.1, "r": 0.4},
+                ]
+            },
+        }
+
+        event = monitor.evaluate_transition(prev, curr)
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event["status"], "inappropriate")
+        self.assertTrue(event["has_merge_alternative"])
+        self.assertTrue(event["merge_alternative_improves_top"])
+        self.assertFalse(event["has_lower_alternative"])
+        self.assertNotEqual(event["best_merge_alternative"]["x"], 0.0)
+
     def test_validate_strategy_does_not_inject_deadline_guard(self):
         sandbox = (REPO_ROOT / "strategy/sandbox.sh").read_text()
         loop = (REPO_ROOT / "soren_loop.sh").read_text()
