@@ -1,0 +1,30 @@
+name: Local strategy laboratory
+on:
+  pull_request:
+    paths:
+      - 'tools/simulation/**'
+      - 'tools/build_simulation.py'
+      - 'tools/simulation_*.py'
+      - 'tools/simulation_lab.mjs'
+      - 'tests/test_simulation_lab.mjs'
+      - 'tests/test_simulation_docker.mjs'
+      - 'tests/test_build_simulation.py'
+      - '.github/workflows/local-strategy-lab.yml'
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/test_simulation_lab.mjs
+      - run: python3 -m unittest discover -s tests -p test_build_simulation.py
+      - run: docker pull python:3.12-slim
+      - run: SOREN_TEST_DOCKER=1 node --test tests/test_simulation_docker.mjs
