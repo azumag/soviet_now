@@ -1533,6 +1533,9 @@ def load_decision_reasons(n_files=50):
             with open(fp) as f:
                 for line in f:
                     d = json.loads(line)
+                    # soviet_now#943: 最終盤面フラッシュはターンではない。
+                    if d.get("record_kind") == "match_end":
+                        continue
                     r = d.get("decision_reason", "")
                     if r:
                         reasons.append(r)

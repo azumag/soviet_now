@@ -105,6 +105,17 @@ def summarize(raw, row):
     except UnicodeError as exc:
         raise EvidenceError("archive_encoding") from exc
     lines = [line for line in lines if line.strip()]
+    # soviet_now#943: the runner may append one trailing record_kind=match_end
+    # line carrying the terminal board snapshot. It is not a decision turn, so
+    # only a single trailing match_end record is excluded from the
+    # contiguous-turn lineage check; any other placement still fails below.
+    if lines:
+        try:
+            tail_item = _decode(lines[-1])
+        except EvidenceError:
+            tail_item = None
+        if isinstance(tail_item, dict) and tail_item.get("record_kind") == "match_end":
+            lines = lines[:-1]
     if not 1 <= len(lines) <= MAX_ROWS or len(lines) != row["turns"]:
         raise EvidenceError("turn_count_mismatch")
     first_single = first_pair = None

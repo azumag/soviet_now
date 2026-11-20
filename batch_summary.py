@@ -29,7 +29,11 @@ def load_game(filepath):
             for line in f:
                 line = line.strip()
                 if line:
-                    turns.append(json.loads(line))
+                    d = json.loads(line)
+                    # soviet_now#943: 最終盤面フラッシュはターンではない。
+                    if isinstance(d, dict) and d.get("record_kind") == "match_end":
+                        continue
+                    turns.append(d)
     except Exception as e:
         print(f"WARNING: {filepath} の読み込み失敗: {e}", file=sys.stderr)
     return turns

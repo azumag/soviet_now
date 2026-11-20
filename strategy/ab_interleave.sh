@@ -199,9 +199,14 @@ try:
     with open(archive, encoding="utf-8") as fh:
         for line in fh:
             try:
-                rs.append(json.loads(line))
+                _row = json.loads(line)
             except Exception:
                 pass
+            else:
+                # soviet_now#943: 最終盤面フラッシュはターンではない。
+                if isinstance(_row, dict) and _row.get("record_kind") == "match_end":
+                    continue
+                rs.append(_row)
     if rs:
         merges = 0
         multi = 0

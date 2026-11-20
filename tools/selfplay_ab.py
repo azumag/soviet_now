@@ -40,9 +40,14 @@ def game_metrics(archive):
         with open(archive, encoding="utf-8") as fh:
             for line in fh:
                 try:
-                    rs.append(json.loads(line))
+                    row = json.loads(line)
                 except Exception:
                     pass
+                else:
+                    # soviet_now#943: 最終盤面フラッシュはターンではない。
+                    if isinstance(row, dict) and row.get("record_kind") == "match_end":
+                        continue
+                    rs.append(row)
     except Exception:
         return {}
     if not rs:

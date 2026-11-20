@@ -242,8 +242,13 @@ class SovietContinuationTest(unittest.TestCase):
                     json.loads(line)
                     for line in Path("game_history/latest.jsonl").read_text().splitlines()
                 ]
-                self.assertEqual(len(history), expected_turns)
+                # soviet_now#943: ターンレコードの後に最終盤面フラッシュ
+                # (record_kind=match_end) が1行追記される。
+                self.assertEqual(len(history), expected_turns + 1)
                 self.assertTrue(history[0]["soviet_created"])
+                self.assertEqual(history[-1]["record_kind"], "match_end")
+                self.assertEqual(history[-1]["final_state"], "GAMEOVER")
+                self.assertIn("pieces", history[-1]["state_snapshot"])
             finally:
                 os.chdir(old_cwd)
 
