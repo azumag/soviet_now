@@ -1,15 +1,15 @@
 {
  "schema_version": 1,
- "observed_at": "2026-11-22T12:20:23",
- "observed_epoch": 1795317623,
- "active": false,
+ "observed_at": "2026-11-22T12:23:44",
+ "observed_epoch": 1795317824,
+ "active": true,
  "aborted": false,
- "candidate_pending": true,
- "a_hash": null,
- "b_hash": null,
- "pattern": null,
- "primary": null,
- "started_at": null,
+ "candidate_pending": false,
+ "a_hash": "556d98ef3f33",
+ "b_hash": "036889f3a151",
+ "pattern": "ABBA",
+ "primary": "eval",
+ "started_at": "2026-11-22T12:23:44",
  "games_recorded": 0,
  "ledger_rows": 0,
  "confirmation_phase": null,
@@ -17,5 +17,5 @@
  "verified_improvement": false,
  "retroactive": null,
  "root_hash": "556d98ef3f33",
- "root_matches_a": null
+ "root_matches_a": true
 }
