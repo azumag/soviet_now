@@ -3012,6 +3012,13 @@ _start_improvement_job() {
 	*) runtime_dir="$runtime_root/$runtime_dir" ;;
 	esac
 	mkdir -p "$runtime_dir" 2>/dev/null || true
+	# soviet_now#869: 過去の失敗・中断で残った起動時スナップショットを回収する。
+	# 24時間より古い既知パターンだけを対象にし、想定外のファイルは触らない。
+	if [ -f "$_improve_shim_dir/lib/reclaim_improve_temps.sh" ]; then
+		# shellcheck disable=SC1091
+		source "$_improve_shim_dir/lib/reclaim_improve_temps.sh"
+		reclaim_improve_temps "$runtime_dir" >/dev/null 2>&1 || true
+	fi
 	runtime_script=$(mktemp "$runtime_dir/eloop_improve_runtime.XXXXXX.sh" 2>/dev/null || true)
 	if [ -n "$runtime_script" ] && cp ./eloop_improve.sh "$runtime_script" 2>/dev/null; then
 		chmod +x "$runtime_script" 2>/dev/null || true
