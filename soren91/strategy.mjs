@@ -502,6 +502,15 @@ const IMPOSSIBLE_HIGH_OVERLAP_MARGIN = 0.04;
  * not enough: a single isolated high piece stays risk-bearing. Impossible
  * overlap proves that the pair is inconsistent, not that both pieces are
  * ghosts, so the certain member must remain in geometry and risk evaluation.
+ *
+ * A fully detached low-certainty circle above the deadline is separate
+ * positive evidence: a settled piece always touches the floor, garbage, or
+ * another piece, and the 2026-11-27 battle logs show such detached circles
+ * (type 13 at y=4.11, type 2 at y=4.59). Keeping one as board geometry made
+ * every candidate look fatal and flipped one drop from a clear lane to a
+ * self-declared fatal one. Contact is required to disqualify the exception, so
+ * a real high stack piece (for example a built USSR resting on the pile) stays
+ * risk-bearing.
  */
 function filterUnsupportedHighObservations(pieces, columns = []) {
   const supported = new Set();
@@ -537,17 +546,34 @@ function filterUnsupportedHighObservations(pieces, columns = []) {
     }
   }
 
+  const ignored = new Set();
+  const touchesAnything = index => {
+    const p = pieces[index];
+    for (let j = 0; j < pieces.length; j++) {
+      if (j === index) continue;
+      const q = pieces[j];
+      if (Math.hypot(p.x - q.x, p.y - q.y) <= p.r + q.r + SUPPORT_GAP) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    if (certainty(p) >= 0.6 || p.y <= DEADLINE) continue;
+    if (touchesAnything(i)) continue;
+    ignored.add(i);
+  }
+
   const unsupportedHigh = [];
   for (let i = 0; i < pieces.length; i++) {
+    if (ignored.has(i)) continue;
     if (pieces[i].y + pieces[i].r >= UNSUPPORTED_HIGH_MIN_TOP && !supported.has(i)) {
       unsupportedHigh.push(i);
     }
   }
   if (supported.size === 0 || unsupportedHigh.length < 2 || unsupportedHigh.length > 3) {
-    return pieces;
+    return ignored.size === 0 ? pieces : pieces.filter((_p, i) => !ignored.has(i));
   }
 
-  const ignored = new Set();
   for (let a = 0; a < unsupportedHigh.length; a++) {
     const i = unsupportedHigh[a];
     const p = pieces[i];

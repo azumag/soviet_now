@@ -75,3 +75,60 @@ test('overlap without mixed certainty retains both high observations', () => {
     assert.equal(decision.diagnostics.risk, 2, JSON.stringify(decision));
   }
 });
+
+// Distilled from the 2026-11-27 battle log (game 5 turn 4). The type 13 circle
+// floats at y=4.11 with no contact; before the detached-above-deadline rule it
+// made every candidate fatal and flipped the drop from x=1.25 to x=-2.921.
+function retainedGame5Turn4() {
+  const columns = Array.from({ length: 28 }, (_, i) => ({
+    left: -3.5 + i * 0.25, right: -3.25 + i * 0.25, top: -3.0088888888888885,
+  }));
+  const pieces = [
+    piece(13, 1.8, 4.11, { r: 1.207, confidence: 0.45 }),
+    piece(9, 2.4, -2.29, { r: 0.746, confidence: 0.8145235864135864 }),
+    piece(5, 0.13, -2.37, { r: 0.414, confidence: 0.45 }),
+    piece(7, -0.77, -2.17, { r: 0.559, confidence: 0.45 }),
+    piece(3, -2.12, -2.13, { r: 0.316, confidence: 0.45 }),
+    piece(3, -2.33, -2.54, { r: 0.316, confidence: 0.8120103829623222 }),
+    piece(1, -0.06, -2.56, { r: 0.207, confidence: 0.7351476454928141 }),
+    piece(1, -1.45, -2.62, { r: 0.207, confidence: 0.8074652327074261 }),
+    piece(1, -1.72, -2.32, { r: 0.207, confidence: 0.6797106785309902 }),
+  ];
+  const current = piece(7, 0, 4.362569472056551, { r: 0.559, confidence: 0.79 });
+  return {
+    state: 'MOVE', pieces, next: current,
+    nextPieces: [current, piece(4, 0, 4.36, { confidence: 0.82 }), piece(3, 0, 4.36, { confidence: 0.81 })],
+    hold: null, holdKnownEmpty: false, canHold: false,
+    garbage: { ratio: 1 / 6, gauge: 0, columns },
+  };
+}
+
+test('detached low-certainty observation above the deadline cannot fabricate fatal risk', () => {
+  const state = retainedGame5Turn4();
+  const decision = decide(state);
+  assert.equal(decision.diagnostics.ignoredUnsupportedHigh, 1, JSON.stringify(decision));
+  assert.equal(decision.diagnostics.risk, 0, JSON.stringify(decision));
+  assert.equal(decision.diagnostics.pathRisk, 0, JSON.stringify(decision));
+  assert.equal(decision.x, 1.25, JSON.stringify(decision));
+
+  const clean = decide({ ...state, pieces: state.pieces.slice(1) });
+  assert.equal(clean.diagnostics.ignoredUnsupportedHigh, 0, JSON.stringify(clean));
+  assert.equal(decision.x, clean.x);
+  assert.equal(decision.hold, clean.hold);
+  assert.equal(decision.diagnostics.clearance, clean.diagnostics.clearance);
+});
+
+test('an above-deadline observation touching the stack stays risk-bearing', () => {
+  const state = retainedGame5Turn4();
+  const support = piece(9, 1.8, 2.2, { confidence: 0.82 });
+  const decision = decide({ ...state, pieces: [...state.pieces, support] });
+  assert.equal(decision.diagnostics.ignoredUnsupportedHigh, 0, JSON.stringify(decision));
+  assert.equal(decision.diagnostics.risk, 2, JSON.stringify(decision));
+});
+
+test('an isolated low-certainty observation below the deadline stays risk-bearing', () => {
+  const pieces = [piece(4, -1.2), piece(1, 0, 2.68, { confidence: 0.45 })];
+  const decision = decide({ state: 'MOVE', pieces, next: piece(2) });
+  assert.equal(decision.diagnostics.ignoredUnsupportedHigh, 0, JSON.stringify(decision));
+  assert.equal(decision.diagnostics.risk, 1, JSON.stringify(decision));
+});
