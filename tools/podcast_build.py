@@ -14,7 +14,8 @@ tools/podcast_build.py - 日次ポッドキャスト生成 (docich#10 / soviet_n
   --dry-run: 合成・MP3生成をスキップし、対象ファイルとRSSのみ表示
   --dummy: VOICEVOXが無い環境で無音WAVを生成 (テスト用)
 
-依存: python3, ffmpeg, ffprobe, voicevox_tts.sh (VOICEVOX) or docich voicevox synth
+依存: python3, node + dsh (DeepSeek Harness), ffmpeg, ffprobe,
+      voicevox_tts.sh (VOICEVOX) or docich voicevox synth
 任意: rclone/oci (アップロード時)
 
 RSSは RSS 2.0 + iTunes 拡張。feed.xml は冪等に更新 (最新50件)。
@@ -31,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -238,9 +240,16 @@ PODCAST_TARGET_CHARS = int(os.environ.get("PODCAST_TARGET_CHARS", "0"))
 PODCAST_SECTION_CHARS = int(os.environ.get("PODCAST_SECTION_CHARS", "1800"))
 PODCAST_TOPICS_PER_SECTION = int(os.environ.get("PODCAST_TOPICS_PER_SECTION", "5"))
 PODCAST_SOURCE_CHAR_BUDGET = int(os.environ.get("PODCAST_SOURCE_CHAR_BUDGET", "200000"))
-# 生成は codex CLI 経由 (ユーザー指定: codex + gpt luna)。
-PODCAST_LLM_BIN = os.environ.get("PODCAST_LLM_BIN", "codex")
-PODCAST_LLM_MODEL = os.environ.get("PODCAST_LLM_MODEL", "gpt-5.6-luna")
+# 生成は dsh (DeepSeek Harness) 経由。モデルは dsh 側の既定を使う。
+# launchd の PATH では shebang (#!/usr/bin/env node) が解決できない恐れがあるため、
+# node と bin.js は絶対パスで起動する。DSH_NODE が無い場合だけ PATH の node を使う。
+DSH_NODE = os.environ.get(
+    "DSH_NODE", "/Users/azumag/.nvm/versions/node/v24.22.1/bin/node"
+)
+DSH_JS = os.environ.get(
+    "DSH_JS",
+    "/Users/azumag/.local/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js",
+)
 PODCAST_LLM_TIMEOUT = int(os.environ.get("PODCAST_LLM_TIMEOUT", "900"))
 # 要約 (map) 段: 素材をまとめて 1 発で投げると API の時間上限に達するため小分けにする
 # (実測 2026-08-26: 59,909 字 1 発は 15 分でタイムアウト)。
@@ -361,10 +370,10 @@ WRITE_PROMPT = """あなたはポッドキャスト番組の構成作家です�
 
 
 def _extract_json(text: str) -> dict | None:
-    """JSON オブジェクトを取り出す。
+    """最終回答から JSON オブジェクトを取り出す。
 
-    --output-schema を付けているので通常は素の JSON が返るが、
-    コードフェンスや前置きが混じった場合も拾えるようにしておく。
+    dsh には JSON のみを出力するよう指示するが、コードフェンスや前置きが
+    混じった場合も拾えるようにしておく。
     """
     t = text.strip()
     fence = re.search(r"```(?:json)?\s*(.+?)```", t, re.S)
@@ -385,44 +394,231 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
+def _schema_matches(value: object, schema: dict | None) -> bool:
+    """``schema`` のうち dsh の生成物検証に必要な部分集合を再帰的に確認する。"""
+    if not isinstance(schema, dict):
+        return True
+    expected = schema.get("type")
+    if expected == "object":
+        if not isinstance(value, dict):
+            return False
+        properties = schema.get("properties") or {}
+        for key in schema.get("required") or []:
+            if key not in value:
+                return False
+        if schema.get("additionalProperties") is False:
+            if any(key not in properties for key in value):
+                return False
+        for key, subschema in properties.items():
+            if key in value and not _schema_matches(value[key], subschema):
+                return False
+        return True
+    if expected == "array":
+        if not isinstance(value, list):
+            return False
+        return all(_schema_matches(item, schema.get("items")) for item in value)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return True
+
+
+def _parse_dsh_events(stdout: str) -> tuple[str, str | None]:
+    """dsh の NDJSON 出力から (最終本文, reason.kind) を取り出す純粋関数。
+
+    壊れた行・辞書でない行は無視する。最終本文は最後の
+    ``{"type":"final",...}`` の text、reason.kind は final が無ければ None。
+    completed かどうかの判定は呼び出し側で行う。
+    """
+    text = ""
+    reason_kind: str | None = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict) or event.get("type") != "final":
+            continue
+        text = str(event.get("text") or "")
+        reason = event.get("reason")
+        kind = reason.get("kind") if isinstance(reason, dict) else None
+        reason_kind = str(kind) if kind is not None else None
+    return text, reason_kind
+
+
+def _dsh_failure_detail(stdout: str, stderr: str) -> str:
+    """dsh 失敗時の診断文字列。error イベントを優先し、無ければ stderr を返す。"""
+    last_error = ""
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict) or event.get("type") != "error":
+            continue
+        message = event.get("message") or event.get("error")
+        if message:
+            last_error = str(message)
+    return last_error or stderr
+
+
+def _dsh_command() -> list[str]:
+    """dsh を起動する argv を組み立てる（OS の PATH/shebang に依存しない）。"""
+    node = DSH_NODE
+    if not node or not os.path.isfile(node):
+        node = shutil.which("node") or ""
+    if not node:
+        raise RuntimeError(
+            "node が見つかりません。DSH_NODE に node の絶対パスを設定してください"
+        )
+    if not DSH_JS or not os.path.isfile(DSH_JS):
+        raise RuntimeError(
+            f"dsh の bin.js が見つかりません: {DSH_JS}"
+            "（DSH_JS に @deepseek-ai/dsh/lib/bin.js の絶対パスを設定してください）"
+        )
+    return [
+        node,
+        DSH_JS,
+        "--profile",
+        "headless",
+        "--approval-policy",
+        "never",
+        "--permission-mode",
+        "read-only",
+        "--json",
+        "-",
+    ]
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """dsh の子プロセス（node が起動したツール等）ごと確実に終了させる。"""
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:  # pragma: no cover - 本番は macOS / Linux
+            proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _resolve_llm_timeout(timeout: int | float | None) -> float:
+    """dsh の実行上限を返す。無制限実行は許さず、0以下でも1秒に丸める。"""
+    try:
+        value = float(timeout)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        value = float(PODCAST_LLM_TIMEOUT)
+    return value if value > 0 else 1.0
+
+
+def _run_dsh(prompt: str, timeout: int | float | None) -> str | None:
+    """空の一時 cwd で dsh を1回実行し、completed の最終本文を返す。
+
+    失敗・タイムアウト（プロセスグループごと kill）は None。
+    """
+    try:
+        cmd = _dsh_command()
+    except RuntimeError as exc:
+        log(f"llm 起動失敗: {exc}")
+        return None
+    effective_timeout = _resolve_llm_timeout(timeout)
+    # 与えた材料だけで書かせる段。dshのエージェントがbash・検索を勝手に使うと
+    # 数倍遅くなるため(doci側の実測で確認)、ツール不使用を明示する。
+    prompt = (
+        "【実行ルール】bash・ファイル読み書き・Web検索などのツールは一切使わず、"
+        "以下の指示と与えられた情報だけで、最終回答を直接1回で出力してください。\n\n"
+        + prompt
+    )
+    with tempfile.TemporaryDirectory(prefix="podcast_dsh_") as scratch:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=scratch,
+                start_new_session=(os.name == "posix"),
+            )
+        except OSError as exc:
+            log(f"llm 起動失敗 ({cmd[0]}): {exc}")
+            return None
+        try:
+            stdout, stderr = proc.communicate(prompt, timeout=effective_timeout)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            try:
+                proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            log(f"llm timeout ({effective_timeout:g}s)")
+            return None
+    stdout = stdout or ""
+    stderr = stderr or ""
+    if proc.returncode != 0:
+        detail = _dsh_failure_detail(stdout, stderr)
+        log(f"llm failed (rc={proc.returncode}): {detail[-600:]}")
+        return None
+    text, reason_kind = _parse_dsh_events(stdout)
+    if reason_kind is None:
+        detail = _dsh_failure_detail(stdout, stderr)
+        log(f"llm failed: 最終イベント(final)がありません: {detail[-600:]}")
+        return None
+    if reason_kind != "completed":
+        detail = _dsh_failure_detail(stdout, stderr)
+        log(f"llm failed: reason.kind={reason_kind}: {detail[-600:]}")
+        return None
+    if not text.strip():
+        log("llm の出力が空")
+        return None
+    return text
+
+
+def _json_schema_prompt(prompt: str, schema: dict) -> str:
+    """schema 指定時に、JSON のみを出力させる指示と schema をプロンプトへ足す。"""
+    return (
+        prompt.rstrip()
+        + "\n\n# 出力形式（厳守）\n"
+        + "次の JSON Schema を満たす JSON オブジェクトだけを出力してください。"
+        + "説明・前置き・コードフェンスは付けない。\n"
+        + json.dumps(schema, ensure_ascii=False)
+    )
+
+
 def llm_generate(prompt: str, timeout: int = PODCAST_LLM_TIMEOUT, schema: dict | None = None):
-    """codex CLI で 1 回生成する。schema を渡すと JSON を強制し dict で返す。
+    """dsh で 1 回生成する。schema を渡すと JSON を強制し dict で返す。
 
     失敗したら None を返し、呼び出し側で扱う。
     """
-    bin_path = shutil.which(PODCAST_LLM_BIN) or PODCAST_LLM_BIN
-    with tempfile.TemporaryDirectory(prefix="podcast_llm_") as td:
-        tdp = Path(td)
-        out_file = tdp / "out.txt"
-        cmd = [bin_path, "exec", "-m", PODCAST_LLM_MODEL, "--skip-git-repo-check",
-               "-C", str(tdp), "-o", str(out_file), "--color", "never"]
-        if schema is not None:
-            sf = tdp / "schema.json"
-            sf.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
-            cmd += ["--output-schema", str(sf)]
-        cmd.append(prompt)
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            log(f"llm timeout ({timeout}s)")
-            return None
-        except OSError as e:
-            log(f"llm 起動失敗 ({bin_path}): {e}")
-            return None
-        if not out_file.exists():
-            err = (r.stderr or r.stdout or "").strip()
-            log(f"llm failed (rc={r.returncode}): {err[-600:]}")
-            return None
-        raw = out_file.read_text(encoding="utf-8").strip()
-        if not raw:
-            log("llm の出力が空")
-            return None
-        if schema is None:
-            return raw
-        obj = _extract_json(raw)
-        if obj is None:
-            log(f"llm の JSON を解釈できなかった: {raw[:300]}")
-        return obj
+    if schema is not None:
+        prompt = _json_schema_prompt(prompt, schema)
+    raw = _run_dsh(prompt, timeout)
+    if raw is None:
+        return None
+    if schema is None:
+        return raw
+    obj = _extract_json(raw)
+    if obj is None:
+        log(f"llm の JSON を解釈できなかった: {raw[:300]}")
+        return None
+    if not _schema_matches(obj, schema):
+        log(f"llm の JSON が schema を満たさない: {raw[:300]}")
+        return None
+    return obj
 
 
 def _clean_body(src: Path) -> str:
@@ -493,7 +689,7 @@ def digest_sources(files: list[Path]) -> tuple[list[dict], dict[int, str]]:
     batches = [bodies[i:i + PODCAST_DIGEST_BATCH]
                for i in range(0, len(bodies), PODCAST_DIGEST_BATCH)]
     log(f"要約: {len(bodies)} 本 / {used} 字 を {len(batches)} バッチ "
-        f"(1 バッチ {PODCAST_DIGEST_BATCH} 本, 並列 {PODCAST_LLM_WORKERS}, model={PODCAST_LLM_MODEL})")
+        f"(1 バッチ {PODCAST_DIGEST_BATCH} 本, 並列 {PODCAST_LLM_WORKERS}, backend=dsh)")
     groups = _run_parallel(batches, lambda i, b: _digest_batch(i + 1, b), "要約")
     digests = [d for g in groups if g for d in g]
     if len(digests) < len(bodies):
@@ -896,7 +1092,13 @@ def generate_rss(episodes: list[dict], out_path: Path):
     out_path.write_text("\n".join(rss) + "\n", encoding="utf-8")
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="日次ポッドキャスト生成（編成は dsh / DeepSeek Harness）",
+        epilog=(
+            "LLM: dsh を DSH_NODE と DSH_JS の絶対パスで起動する。"
+            "1回の上限は PODCAST_LLM_TIMEOUT 秒（既定900、0以下は1秒）。"
+        ),
+    )
     ap.add_argument("--date", help="YYYYMMDD or YYYY-MM-DD (default: yesterday)")
     ap.add_argument("--dry-run", action="store_true", help="skip synth and mp3")
     ap.add_argument("--dummy", action="store_true", help="use silent wav instead of VOICEVOX (for test)")

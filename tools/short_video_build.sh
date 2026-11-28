@@ -14,7 +14,7 @@ if [[ ! -x "$NVM_NODE_BIN/node" ]]; then
   echo "Node.js 24.22.1 is required at $NVM_NODE_BIN; install it before running this job." >&2
   exit 1
 fi
-export PATH="$PROJ/tools/ffbin:$NVM_NODE_BIN:/Users/azumag/.local/bin:/Users/azumag/.opencode/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+export PATH="$PROJ/tools/ffbin:$NVM_NODE_BIN:/Users/azumag/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 # ログ
 LOG="$PROJ/output/soren_news_cron.log"
