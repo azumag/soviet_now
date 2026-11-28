@@ -221,9 +221,14 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     return gateObservation({ state: sceneState === 'MOVE' ? 'DROP' : sceneState,
       pieces: [], next: null, nextPieces: [null, null, null], hold: null,
       garbage: { ratio: 0, height: -5, gauge: 0, columns: [] }, rank: null,
-      confidence: 0, perception: { reason: 'uncalibrated' }, }, calibration);
+      confidence: 0, lossOverlay: false, perception: { reason: 'uncalibrated' }, }, calibration);
   }
   const state = sceneState === 'MOVE' && hasReadyBanner(data, width, height, calibration) ? 'WAITING' : sceneState;
+  // A finished round keeps a dark-red overlay above the deadline while the
+  // result screen is still pending. The state stays MOVE/DROP (the round-end
+  // transition is unchanged); only the bounded escape reads this signal so it
+  // never blind-drops onto a board that is already over.
+  const lossOverlay = state === 'WAITING' ? false : detectLossOverlay(data, width, height, calibration);
 
   // The controllable piece is in the arena above the deadline, independently
   // of the three horizontal future icons in the HUD. Only its identified
@@ -289,6 +294,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     holdObservedEmpty: hudObservation?.holdObservedEmpty === true,
     garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ, gauge: 0-1 おじゃまゲージレベル }
     confidence: Math.round(confidence * 100) / 100,
+    lossOverlay,
   }, calibration);
 }
 
@@ -507,6 +513,50 @@ function detectGameState(data, width, height, board) {
   }
 
   return 'WAITING';
+}
+
+/**
+ * 敗北オーバーレイ（盤面上部の暗赤色帯）を検出する。
+ *
+ * ゲーム終了直後は現在ピースが無く、ランキング画面が届くまで数秒かかる。
+ * この待機フレームを `unknown-current`（認識保留）と誤認すると bounded escape が
+ * 終了済みの盤面へ盲目投下してしまう（2026-11-27 の実測: escape 12回中5回）。
+ * 状態遷移は変えず、escape の入力を止めるためだけの補助信号として返す。
+ *
+ * 通常プレイの deadline 帯は暗い中立色で、暗赤色の比率は 0.01-0.11。
+ * 敗北フレームは 0.88-1.00 だったため、保守的に 0.6 以上で判定する。
+ */
+export function detectLossOverlay(data, width, height, calibration) {
+  const board = calibration?.board;
+  const arena = calibration?.arena || board;
+  if (!board || !arena) return false;
+  if (![board.left, board.right, board.top, board.bottom, arena.top].every(Number.isFinite)) return false;
+  if (!data || !Number.isInteger(width) || !Number.isInteger(height)
+      || data.length !== width * height * 4) return false;
+  const left = Math.round(board.left + 3);
+  const right = Math.round(board.right - 3);
+  const top = Math.round(arena.top + 2);
+  const bottom = Math.round(board.top - 2);
+  if (!(right - left >= 8 && bottom - top >= 4)) return false;
+
+  let darkRed = 0;
+  let neutral = 0;
+  let samples = 0;
+  for (let y = top; y < bottom; y += 2) {
+    for (let x = left; x < right; x += 2) {
+      const index = (y * width + x) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const brightness = (r + g + b) / 3;
+      const spread = Math.max(r, g, b) - Math.min(r, g, b);
+      samples += 1;
+      if (r > g + 18 && r > b + 18 && brightness < 150) darkRed += 1;
+      else if (spread < 22 && brightness < 90) neutral += 1;
+    }
+  }
+  if (samples === 0) return false;
+  return darkRed / samples >= 0.6 && neutral / samples <= 0.2;
 }
 
 /**
