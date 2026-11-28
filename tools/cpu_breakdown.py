@@ -15,7 +15,7 @@ RULES = [
   ('voice:voicevox-engine', r'/opt/voicevox/'),
   ('voice:playback(paplay/ffplay/sox)', r'\b(paplay|ffplay|sox|aplay|play)\b'),
   ('voice:audio_worker/say/cc', r'audio_worker\.sh|say_enqueue|closed_captions\.py|voicevox_|say_|audio_'),
-  ('ai:llm-cli(codex/opencode/claude)', r'\b(codex|opencode|claude|node .*opencode|node .*codex)\b'),
+  ('ai:llm-cli(dsh/claude)', r'\b(dsh|claude|node .*dsh|node .*claude)\b'),
   ('ai:chat/radio/kick/youtube workers', r'chat_worker|radio_worker|kick_worker|youtube_worker|comment\.sh|radio_|jiji|kick_chat_daemon'),
   ('ai:improve/strategy-runner(local AI)', r'improve_daemon|strategy_runner\.py|eloop|soren_loop\.sh|extract_decide_hash|strategy\.py'),
   ('bridge:node soviet_local', r'node soviet_local\.mjs'),
