@@ -3759,7 +3759,9 @@ class TestCommentReplyDepthPrompt(unittest.TestCase):
         self.assertIn("配信不具合レポートをCodexキューへ追加", comment)
         # The stream-bug vocabulary that decides the category is docich's
         # (azumag/docich comment_classifier golden); this repo only consumes it.
-        self.assertIn("codex exec -C", dispatcher)
+        # Codex agent execution is retired: the dispatcher preserves/quarantines
+        # reports but never spawns an agent (soviet_now#580).
+        self.assertNotIn("codex exec -C", dispatcher)
         self.assertIn("./codex_work_indicator.sh start", dispatcher)
         self.assertIn("./codex_work_indicator.sh stop", dispatcher)
         self.assertIn('./system_progress_report.sh "メリケンAI: ..."', dispatcher)
