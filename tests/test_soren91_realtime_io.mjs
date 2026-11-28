@@ -8,8 +8,8 @@ import { createCanvasIO, postDropProbeEnabled, probeBudget, boundedMs,
 import { LoopMetrics, writeMetricsAtomically } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { rejectedFrameReason } from '../soren91/rejected_frame_diagnostics.mjs';
-import { createConnectionErrorProbe, createHoldEscapePolicy, unknownFrameLimit,
-  usableCalibration } from '../soren91/observation_guard.mjs';
+import { createConnectionErrorProbe, createHoldEscapePolicy, holdEscapeObservationReason,
+  unknownFrameLimit, usableCalibration } from '../soren91/observation_guard.mjs';
 import { mkdtempSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -323,8 +323,8 @@ async function simulateLoop({ captureMs = 300, hold = false, blocked = 0, maxDro
   const context = {
     join, HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
     DROP_COOLDOWN_MS: 1200, DROP_OBSERVATION_DELAY_MS: 800, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
-    createHoldEscapePolicy, createConnectionErrorProbe, unknownFrameLimit,
-    usableCalibration,
+    createHoldEscapePolicy, createConnectionErrorProbe, holdEscapeObservationReason,
+    unknownFrameLimit, usableCalibration,
     recoverFromConnectionError: async () => { recoveries++; },
     process: { env: env ?? {} },
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55, MIN_RANKING_DETECTION_TURNS: 999,

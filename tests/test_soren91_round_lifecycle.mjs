@@ -7,8 +7,8 @@ import vm from 'node:vm';
 import { LoopMetrics } from '../soren91/loop_metrics.mjs';
 import { midgameCommentStatus } from '../soren91/commentary_schedule.mjs';
 import { rejectedFrameReason, saveRejectedFrame } from '../soren91/rejected_frame_diagnostics.mjs';
-import { createConnectionErrorProbe, createHoldEscapePolicy, unknownFrameLimit,
-  usableCalibration } from '../soren91/observation_guard.mjs';
+import { createConnectionErrorProbe, createHoldEscapePolicy, holdEscapeObservationReason,
+  unknownFrameLimit, usableCalibration } from '../soren91/observation_guard.mjs';
 
 // Exercise the production loop without a browser, disk writes, or network I/O.
 const mainSource = readFileSync(new URL('../soren91/main.mjs', import.meta.url), 'utf8');
@@ -31,8 +31,8 @@ async function replay(frames, {
     join, dirname, fileURLToPath,
     HISTORY_DIR: 'history', SCREENSHOT_DIR: 'screens', SCREENSHOT_EXTENSION: 'png',
     DROP_COOLDOWN_MS: 1200, DROP_OBSERVATION_DELAY_MS: 800, POLL_INTERVAL_MS: 200, HOLD_ESCAPE_X: 0,
-    createHoldEscapePolicy, createConnectionErrorProbe, unknownFrameLimit,
-    usableCalibration,
+    createHoldEscapePolicy, createConnectionErrorProbe, holdEscapeObservationReason,
+    unknownFrameLimit, usableCalibration,
     CALIBRATION_MIN_PIECES: 999, CALIBRATION_MIN_CONFIDENCE: 0.55,
     MIN_RANKING_DETECTION_TURNS: 10,
     performance: { now: () => now },

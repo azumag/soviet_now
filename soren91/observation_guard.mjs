@@ -191,6 +191,19 @@ export function createHoldEscapePolicy(env = process.env) {
   };
 }
 
+/**
+ * Reason fed to `createHoldEscapePolicy().observe()` for one rejected frame.
+ *
+ * Only a healthy frame that does not already show the round-over overlay may
+ * advance the bounded blind-drop stretch. The overlay is measured after the
+ * round ended (the result screen is still pending); a fallback drop there
+ * cannot help and only records a phantom turn (2026-11-27: 5 of 12 escapes
+ * landed on such frames). Any other input resets the stretch.
+ */
+export function holdEscapeObservationReason(reason, { frameHealthy = false, lossOverlay = false } = {}) {
+  return frameHealthy && !lossOverlay ? reason : 'uncalibrated';
+}
+
 export function markDropSent(calibration, now = Date.now()) {
   if (!calibration || typeof calibration !== 'object') return false;
   const previous = observations.get(calibration);

@@ -21,7 +21,7 @@ import {
   captureJpegQuality,
 } from './realtime_io.mjs';
 import { LoopMetrics, writeMetricsAtomically } from './loop_metrics.mjs';
-import { createHoldEscapePolicy, createConnectionErrorProbe,
+import { createHoldEscapePolicy, createConnectionErrorProbe, holdEscapeObservationReason,
   markDropSent as markObservationDropSent, unknownFrameLimit,
   usableCalibration } from './observation_guard.mjs';
 import { rejectedFrameReason, saveRejectedFrame } from './rejected_frame_diagnostics.mjs';
@@ -1591,6 +1591,7 @@ async function gameLoop(page, calibration, gameNumber) {
   });
   // Bounded escape for a persistent recognition hold (docich#414).
   const holdEscape = createHoldEscapePolicy(process.env);
+  let lossOverlaySkipLogged = false;
   // Bounded recovery probe for a connection-error dialog that the analyzer
   // still reads as a low-confidence DROP (see observation_guard).
   const connectionErrorProbe = createConnectionErrorProbe({
@@ -1995,11 +1996,24 @@ async function gameLoop(page, calibration, gameNumber) {
         const frameHeight = observation?.height;
         const escapeFrameHealthy = Number.isInteger(frameWidth) && Number.isInteger(frameHeight)
           && usableCalibration(calibration, frameWidth, frameHeight);
+        // A round that already shows the loss overlay is finished even though
+        // the result screen has not arrived. It must not count toward the
+        // blind-drop stretch: the click cannot help and would record a
+        // phantom turn. The round-end transition itself is unchanged below.
+        const lossOverlay = boardState.lossOverlay === true;
         // Feed every rejected observation to the policy. Short-circuiting on
         // unknown-current accumulated non-consecutive holds across settling
         // or invalid geometry, contrary to the bounded escape contract.
-        const escapeDue = holdEscape.observe(escapeFrameHealthy ? holdReason : 'uncalibrated', Date.now());
-        if (holdReason === 'unknown-current' && escapeFrameHealthy && escapeDue) {
+        const escapeDue = holdEscape.observe(holdEscapeObservationReason(holdReason, {
+          frameHealthy: escapeFrameHealthy, lossOverlay,
+        }), Date.now());
+        if (lossOverlay && holdReason === 'unknown-current' && !lossOverlaySkipLogged) {
+          console.log('[game] Round-over overlay detected; holding the fallback drop until the result screen');
+          lossOverlaySkipLogged = true;
+        } else if (!lossOverlay) {
+          lossOverlaySkipLogged = false;
+        }
+        if (holdReason === 'unknown-current' && escapeFrameHealthy && !lossOverlay && escapeDue) {
           console.log(`[game] Recognition hold escape: reason=${holdReason} -> fallback drop x=${HOLD_ESCAPE_X}`);
           await latency.measure('input', () => executeDrop(page, HOLD_ESCAPE_X, calibration, observation));
           holdUsedThisTurn = false;
