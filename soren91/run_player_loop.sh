@@ -17,6 +17,7 @@ RETRY_DELAY_SEC=$(docich_poll_interval "${SOREN91_RESTART_DELAY_SEC:-}" 3 1 2>/d
 RUNNER_LOCK_STALE_SEC="${SOREN91_RUNNER_LOCK_STALE_SEC:-120}"
 CHILD_MAIN_PID=""
 METRICS_PID=""
+JEV_SHADOW_PID=""
 
 # --- 停止フラグの所有権レコード (lib/mute_flag.py) ---
 # runner は soren91 セッションの耐久 owner。join した owner が生きている限り bridge
@@ -101,6 +102,34 @@ _ensure_metrics() {
 	METRICS_PID=$!
 }
 
+_stop_jev_shadow() {
+	local pid="$JEV_SHADOW_PID"
+	if _pid_alive "$pid"; then
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+	JEV_SHADOW_PID=""
+}
+
+_ensure_jev_shadow() {
+	[ "${SOREN91_JEV_SHADOW_ENABLED:-0}" = "1" ] || {
+		_stop_jev_shadow
+		return 0
+	}
+	if _pid_alive "$JEV_SHADOW_PID"; then
+		return 0
+	fi
+	JEV_SHADOW_PID=""
+	[ -r "$SCRIPT_DIR/jev_shadow.mjs" ] || return 0
+	# This is deliberately a separate process. Provider/network latency must not
+	# share an await chain, event loop or failure domain with main.mjs gameplay.
+	node "$SCRIPT_DIR/jev_shadow.mjs" --runtime-dir "$SCRIPT_DIR" \
+		>>"$SCRIPT_DIR/tmp/jev_shadow.log" 2>&1 &
+	JEV_SHADOW_PID=$!
+	printf '[%s] [runner] Jev shadow sidecar started pid=%s\n' \
+		"$(date '+%H:%M:%S')" "$JEV_SHADOW_PID" >>"$LOG_FILE" 2>/dev/null || true
+}
+
 _cleanup_lock() {
 	local owner=""
 	owner=$(sed -n 's/^pid=//p' "$RUNNER_LOCK_DIR/owner" 2>/dev/null | head -n 1)
@@ -158,6 +187,7 @@ _on_signal() {
 	_stop_child_main
 	_stop_metrics
 	_mute_leave
+	_stop_jev_shadow
 	_cleanup_lock
 	exit 0
 }
@@ -165,6 +195,7 @@ _on_signal() {
 _on_exit() {
 	local rc=$?
 	_stop_metrics
+	_stop_jev_shadow
 	printf '[%s] [runner] exit rc=%s\n' "$(date '+%H:%M:%S')" "$rc" >>"$LOG_FILE" 2>/dev/null || true
 	_mute_leave
 	_cleanup_lock
@@ -201,6 +232,7 @@ _acquire_runner_lock
 echo "$$" >"$PID_FILE" 2>/dev/null || true
 _mute_join
 _ensure_metrics
+_ensure_jev_shadow
 
 # rc=0-即時終了は「今は走るべきでない」(共有Chrome attach失敗等を main().catch が
 # 握り潰して rc=0 終了する) を意味する。3s固定で再試行すると、共有Chrome不安定時に
@@ -220,6 +252,7 @@ while true; do
 		exit 0
 	fi
 	_ensure_metrics
+	_ensure_jev_shadow
 
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
